@@ -20,7 +20,16 @@ export default function IntegrationNotice() {
         if (!text && !companyId) return;
 
         if (text) setNotice({ kind: params.has('integration_error') ? 'error' : 'notice', text: text.slice(0, 300) });
-        if (companyId && /^[a-f0-9]{24}$/i.test(companyId)) wm.open('company', { payload: { companyId, companyName: 'Company' } });
+        if (companyId && /^[a-f0-9]{24}$/i.test(companyId)) {
+            // Open with the real name so the window matches (and is focused, not duplicated) when
+            // the same company is later opened from the switcher.
+            void fetch(`/api/os/companies/${companyId}`)
+                .then((res) => (res.ok ? res.json() : null))
+                .then((data: { company?: { name?: string } } | null) => {
+                    if (data?.company?.name) wm.open('company', { payload: { companyId, companyName: data.company.name } });
+                })
+                .catch(() => {});
+        }
 
         for (const key of ['integration_error', 'integration_notice', 'company']) params.delete(key);
         const rest = params.toString();

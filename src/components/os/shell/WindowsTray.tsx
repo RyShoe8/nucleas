@@ -2,6 +2,7 @@
 
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import ModuleRegistry from '@/lib/os/moduleRegistry';
+import { windowLabel } from '@/lib/os/windowLabel';
 
 export default function WindowsTray() {
     const wm = useWindowManager();
@@ -13,10 +14,7 @@ export default function WindowsTray() {
             ) : (
                 wm.windows.map((w) => {
                     const mod = ModuleRegistry.get(w.moduleId);
-                    const label =
-                        w.moduleId === 'project-detail' && w.payload?.projectName
-                            ? w.payload.projectName
-                            : mod?.title ?? w.moduleId;
+                    const label = windowLabel(w, mod);
                     const isActive = wm.activeWindowId === w.id && !w.minimized;
                     return (
                         <button

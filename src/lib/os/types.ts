@@ -34,6 +34,8 @@ export interface ModuleDefinition {
     permissions: OsPermissionLevel;
     /** When true, hidden from the module launcher and palette open commands. */
     launcherHidden?: boolean;
+    /** Per-window label (title bar, tray, popout) derived from the payload, e.g. the company name. */
+    windowTitle?: (payload?: Record<string, string>) => string | undefined;
     /** Render the module body. Receives the owning window id for self-control. */
     render: (ctx: ModuleRenderContext) => ReactNode;
 }

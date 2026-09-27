@@ -3,6 +3,7 @@
 import { type ReactNode, useCallback, useRef, useState } from 'react';
 import type { ModuleDefinition, WindowState } from '@/lib/os/types';
 import { clampToViewport } from '@/lib/os/clampToViewport';
+import { windowLabel } from '@/lib/os/windowLabel';
 import {
     isNearPopoutEdge,
     isPointerOutsideOsViewport,
@@ -138,10 +139,7 @@ export default function FloatingWindow({ window: w, module, children }: Floating
     }, [wm, w.id]);
 
     const isActive = wm.activeWindowId === w.id;
-    const windowTitle =
-        w.moduleId === 'project-detail' && w.payload?.projectName
-            ? w.payload.projectName
-            : module.title;
+    const windowTitle = windowLabel(w, module);
 
     const style: React.CSSProperties = w.maximized
         ? {

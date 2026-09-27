@@ -44,6 +44,7 @@ export function registerOsModules(): void {
             canPopout: true,
             permissions: 'member',
             launcherHidden: true,
+            windowTitle: (payload) => payload?.companyName,
             render: (ctx) => createElement(CompanyModule, ctx),
         },
         {
@@ -85,6 +86,7 @@ export function registerOsModules(): void {
             canPopout: true,
             permissions: 'member',
             launcherHidden: true,
+            windowTitle: (payload) => payload?.projectName,
             render: (ctx) => createElement(ProjectDetailModule, ctx),
         },
         {

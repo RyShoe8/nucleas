@@ -6,6 +6,7 @@ import { registerOsModules } from '@/components/os/modules/registerModules';
 import { useOsAuth } from '@/hooks/os/useOsAuth';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import ModuleRegistry from '@/lib/os/moduleRegistry';
+import { windowLabel } from '@/lib/os/windowLabel';
 import { subscribePopoutSync } from '@/lib/os/popoutSync';
 import WindowManagerProvider from '@/components/os/state/WindowManagerProvider';
 
@@ -103,10 +104,7 @@ function PopoutContent() {
 
     const moduleDefinition = target ? ModuleRegistry.get(target.moduleId) : null;
 
-    const title =
-        target?.moduleId === 'project-detail' && target.payload?.projectName
-            ? target.payload.projectName
-            : moduleDefinition?.title ?? 'Module';
+    const title = target ? windowLabel(target, moduleDefinition ?? undefined) : 'Module';
 
     useEffect(() => {
         document.title = title;
