@@ -10,6 +10,7 @@ import PlaceholderModule from './PlaceholderModule';
 import CompaniesModule from './CompaniesModule';
 import CompanyModule from './CompanyModule';
 import TodayModule from './TodayModule';
+import IntegrationsModule from './IntegrationsModule';
 
 let registered = false;
 
@@ -57,6 +58,17 @@ export function registerOsModules(): void {
             launcherHidden: true,
             windowTitle: (payload) => payload?.companyName,
             render: (ctx) => createElement(CompanyModule, ctx),
+        },
+        {
+            id: 'integrations',
+            title: 'Integrations',
+            icon: '🔌',
+            defaultSize: { width: 720, height: 560 },
+            minSize: { width: 480, height: 320 },
+            canPopout: true,
+            permissions: 'member',
+            windowTitle: (payload) => (payload?.companyName ? `${payload.companyName} · Integrations` : undefined),
+            render: (ctx) => createElement(IntegrationsModule, ctx),
         },
         {
             id: 'projects',

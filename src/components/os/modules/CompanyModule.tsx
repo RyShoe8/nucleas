@@ -1,32 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
-import { useOsAuth } from '@/hooks/os/useOsAuth';
 import type { ModuleRenderContext } from '@/lib/os/types';
-import { DOMAIN_LABEL, RELATIONSHIP_LABEL, type OsCompanyDetail, type OsConnection } from './companyTypes';
+import { RELATIONSHIP_LABEL, type OsCompanyDetail, type OsConnection } from './companyTypes';
 import CompanySnapshot from './CompanySnapshot';
 import CompanyActivity from './CompanyActivity';
-import ResourcePicker from './ResourcePicker';
-import WebhookSetup from './WebhookSetup';
-
-const PINNABLE_PROVIDERS: Record<string, string> = { ga4: 'Choose property', gsc: 'Choose site', ahrefs: 'Choose project' };
-
-const STATUS_STYLE: Record<string, string> = {
-    connected: 'text-emerald-400 border-emerald-400/40',
-    declared: 'text-text-secondary border-border',
-    needs_reauth: 'text-amber-400 border-amber-400/40',
-    error: 'text-red-400 border-red-400/40',
-    disabled: 'text-text-secondary border-border',
-};
-
-const STATUS_LABEL: Record<string, string> = {
-    connected: 'Connected',
-    declared: 'Not connected',
-    needs_reauth: 'Reconnect',
-    error: 'Error',
-    disabled: 'Disabled',
-};
 
 export default function CompanyModule({ payload }: ModuleRenderContext) {
     const companyId = payload?.companyId;
@@ -84,9 +63,43 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                 onActivity={() => setActivityKey((k) => k + 1)}
             />
             <ProjectsSection projects={projects} />
-            <ConnectionsSection companyId={company.id} connections={connections} onChanged={load} />
             <CompanyActivity companyId={company.id} refreshKey={activityKey} />
+            <IntegrationsSummary companyId={company.id} companyName={company.name} connections={connections} />
         </div>
+    );
+}
+
+/** One line: connection counts, problems highlighted, and a link to the Integrations window. */
+function IntegrationsSummary({ companyId, companyName, connections }: { companyId: string; companyName: string; connections: OsConnection[] }) {
+    const wm = useWindowManager();
+    const connected = connections.filter((c) => c.status === 'connected');
+    const problems = connections.filter((c) => c.status === 'needs_reauth' || c.status === 'error');
+    const notConnected = connections.filter((c) => c.status === 'declared');
+    return (
+        <section
+            className={`flex items-center justify-between gap-2 rounded-md border px-3 py-2 ${problems.length ? 'border-amber-400/50' : 'border-border'}`}
+        >
+            <p className="text-xs min-w-0 truncate">
+                <span className="text-text-secondary">Integrations: </span>
+                {problems.length ? (
+                    <span className="text-amber-400">
+                        {problems.map((p) => p.providerName).join(', ')} need{problems.length === 1 ? 's' : ''} reconnecting ·{' '}
+                    </span>
+                ) : null}
+                <span>{connected.length} connected</span>
+                {notConnected.length ? <span className="text-text-secondary"> · {notConnected.length} not connected</span> : null}
+            </p>
+            <button
+                type="button"
+                onClick={(e) => {
+                    e.stopPropagation();
+                    wm.open('integrations', { payload: { companyId, companyName } });
+                }}
+                className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card flex-shrink-0"
+            >
+                Manage
+            </button>
+        </section>
     );
 }
 
@@ -125,247 +138,3 @@ function ProjectsSection({ projects }: { projects: OsCompanyDetail['projects'] }
     );
 }
 
-function ConnectionsSection({
-    companyId,
-    connections,
-    onChanged,
-}: {
-    companyId: string;
-    connections: OsConnection[];
-    onChanged: () => void;
-}) {
-    const auth = useOsAuth();
-    return (
-        <section>
-            <h3 className="text-[11px] uppercase tracking-wider text-text-secondary mb-2">Integrations</h3>
-            {connections.length === 0 ? (
-                <p className="text-sm text-text-secondary">No integrations declared yet.</p>
-            ) : (
-                <ul className="rounded-md border border-border divide-y divide-border">
-                    {connections.map((c) => (
-                        <ConnectionRow key={c.id} companyId={companyId} connection={c} onChanged={onChanged} />
-                    ))}
-                </ul>
-            )}
-            {auth.isManagerOrAdmin ? <AddIntegration companyId={companyId} onAdded={onChanged} /> : null}
-        </section>
-    );
-}
-
-function AddIntegration({ companyId, onAdded }: { companyId: string; onAdded: () => void }) {
-    const [providers, setProviders] = useState<{ id: string; name: string }[] | null>(null);
-    const [error, setError] = useState<string | null>(null);
-
-    const open = async () => {
-        setError(null);
-        const res = await fetch(`/api/os/companies/${companyId}/connections`);
-        const data = (await res.json().catch(() => ({}))) as { providers?: { id: string; name: string }[]; error?: string };
-        if (!res.ok) setError(data.error ?? `Failed (${res.status})`);
-        else setProviders(data.providers ?? []);
-    };
-
-    const add = async (provider: string) => {
-        const res = await fetch(`/api/os/companies/${companyId}/connections`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ provider }),
-        });
-        if (!res.ok) {
-            const data = (await res.json().catch(() => ({}))) as { error?: string };
-            setError(data.error ?? `Failed (${res.status})`);
-            return;
-        }
-        setProviders(null);
-        onAdded();
-    };
-
-    if (providers === null) {
-        return (
-            <div className="mt-2">
-                <button type="button" onClick={open} className="text-[11px] px-2 py-1 rounded border border-border hover:bg-background-card">
-                    + Add integration
-                </button>
-                {error ? <span className="ml-2 text-[11px] text-red-400">{error}</span> : null}
-            </div>
-        );
-    }
-    return (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            {providers.length === 0 ? (
-                <span className="text-[11px] text-text-secondary">Every available integration is already added.</span>
-            ) : (
-                providers.map((p) => (
-                    <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => add(p.id)}
-                        className="text-[11px] px-2 py-1 rounded border border-border hover:bg-background-card"
-                    >
-                        + {p.name}
-                    </button>
-                ))
-            )}
-            <button type="button" onClick={() => setProviders(null)} className="text-[11px] px-2 py-1 text-text-secondary">
-                Cancel
-            </button>
-            {error ? <span className="text-[11px] text-red-400">{error}</span> : null}
-        </div>
-    );
-}
-
-function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: string; connection: OsConnection; onChanged: () => void }) {
-    const auth = useOsAuth();
-    const [picking, setPicking] = useState(false);
-    const [editing, setEditing] = useState(false);
-    const [credential, setCredential] = useState('');
-    const [saving, setSaving] = useState(false);
-    const [message, setMessage] = useState<string | null>(null);
-
-    const submit = async (e: FormEvent) => {
-        e.preventDefault();
-        setSaving(true);
-        setMessage(null);
-        try {
-            const res = await fetch(`/api/os/connections/${c.id}/connect`, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ credential }),
-            });
-            const data = (await res.json().catch(() => ({}))) as { error?: string };
-            if (!res.ok) {
-                setMessage(data.error ?? `Failed (${res.status})`);
-                return;
-            }
-            setCredential('');
-            setEditing(false);
-            onChanged();
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const canConnect = c.connectable && auth.isManagerOrAdmin;
-
-    const remove = async () => {
-        const warning =
-            c.scope === 'org'
-                ? `Remove ${c.providerName}? It is a shared account, so this removes it for every company.`
-                : `Remove ${c.providerName} from this company? Its saved credential is deleted if nothing else uses it.`;
-        if (!window.confirm(warning)) return;
-        const res = await fetch(`/api/os/connections/${c.id}`, { method: 'DELETE' });
-        if (!res.ok) {
-            const data = (await res.json().catch(() => ({}))) as { error?: string };
-            setMessage(data.error ?? `Failed (${res.status})`);
-            return;
-        }
-        onChanged();
-    };
-    const detail = [
-        c.scope === 'org' ? 'Shared account' : null,
-        c.accountLabel,
-        c.credentialHint,
-        c.planLabel,
-    ].filter(Boolean);
-
-    return (
-        <li className="px-3 py-2">
-            <div className="flex items-center gap-2">
-                <span className="text-[11px] text-text-secondary w-20 flex-shrink-0">{DOMAIN_LABEL[c.domain] ?? c.domain}</span>
-                <span className="text-sm flex-1 min-w-0 truncate">{c.providerName}</span>
-                {c.planLimited ? (
-                    <span className="text-[11px] px-1.5 py-0.5 rounded border text-amber-400 border-amber-400/40">Plan-limited</span>
-                ) : null}
-                <span className={`text-[11px] px-1.5 py-0.5 rounded border ${STATUS_STYLE[c.status] ?? STATUS_STYLE.declared}`}>
-                    {STATUS_LABEL[c.status] ?? c.status}
-                </span>
-                {canConnect && !editing ? (
-                    <button
-                        type="button"
-                        onClick={() => setEditing(true)}
-                        className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card"
-                    >
-                        {c.status === 'connected' ? 'Replace key' : 'Connect'}
-                    </button>
-                ) : null}
-                {c.signIn === 'google' && auth.isManagerOrAdmin && c.companyId ? (
-                    <a
-                        href={`/api/os/integrations/google/start?companyId=${encodeURIComponent(c.companyId)}`}
-                        className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card"
-                    >
-                        {c.status === 'connected' ? 'Re-sign in' : 'Sign in with Google'}
-                    </a>
-                ) : null}
-                {c.webhook && auth.isManagerOrAdmin && !editing ? (
-                    <WebhookSetup connectionId={c.id} connected={c.status === 'connected'} onDone={onChanged} />
-                ) : null}
-                {PINNABLE_PROVIDERS[c.provider] && auth.isManagerOrAdmin && !editing && (c.status === 'connected' || c.signIn === 'google') ? (
-                    <button
-                        type="button"
-                        onClick={() => setPicking((v) => !v)}
-                        className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card"
-                    >
-                        {PINNABLE_PROVIDERS[c.provider]}
-                    </button>
-                ) : null}
-                {auth.isManagerOrAdmin && !editing ? (
-                    <button
-                        type="button"
-                        onClick={remove}
-                        title={`Remove ${c.providerName}`}
-                        aria-label={`Remove ${c.providerName}`}
-                        className="text-[11px] px-1.5 py-0.5 rounded text-text-secondary hover:text-red-400"
-                    >
-                        Remove
-                    </button>
-                ) : null}
-            </div>
-            {detail.length ? <p className="mt-0.5 ml-[5.5rem] text-[11px] text-text-secondary truncate">{detail.join(' · ')}</p> : null}
-            {c.lastError ? <p className="mt-0.5 ml-[5.5rem] text-[11px] text-red-400">{c.lastError}</p> : null}
-            {editing ? (
-                <form onSubmit={submit} className="mt-2 ml-[5.5rem] flex items-center gap-2">
-                    <input
-                        type="password"
-                        autoComplete="off"
-                        spellCheck={false}
-                        value={credential}
-                        onChange={(e) => setCredential(e.target.value)}
-                        placeholder={`${c.providerName} API key`}
-                        className="flex-1 min-w-0 h-8 px-2 rounded border border-border bg-background-elevated text-sm"
-                        autoFocus
-                    />
-                    <button
-                        type="submit"
-                        disabled={saving || !credential.trim()}
-                        className="h-8 px-3 rounded bg-primary text-white text-sm disabled:opacity-50"
-                    >
-                        {saving ? 'Verifying…' : 'Verify & save'}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setEditing(false);
-                            setCredential('');
-                            setMessage(null);
-                        }}
-                        className="h-8 px-2 text-sm text-text-secondary"
-                    >
-                        Cancel
-                    </button>
-                </form>
-            ) : null}
-            {picking ? (
-                <ResourcePicker
-                    companyId={companyId}
-                    provider={c.provider}
-                    onClose={() => setPicking(false)}
-                    onPinned={() => {
-                        setPicking(false);
-                        onChanged();
-                    }}
-                />
-            ) : null}
-            {editing && c.keyGuidance ? <p className="mt-1 ml-[5.5rem] text-[11px] text-text-secondary">{c.keyGuidance}</p> : null}
-            {message ? <p className="mt-1 ml-[5.5rem] text-[11px] text-red-400">{message}</p> : null}
-        </li>
-    );
-}
