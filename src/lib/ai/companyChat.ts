@@ -21,7 +21,7 @@ import { aiTransaction } from '@/lib/ai/control/transaction';
 import { classifyProbeFailure } from '@/lib/ai/probeDiagnostics';
 import { isFreeCredential } from '@/lib/ai/rolePipeline/modelMeta';
 import { gatewayFromModelProfile } from '@/lib/ai/rolePipeline/profiles';
-import { runIdeToolLoop } from '@/lib/ai/tools/runToolLoop';
+import { runIdeToolLoop, type ExtraToolSet } from '@/lib/ai/tools/runToolLoop';
 import type { IdeToolProfile } from '@/lib/ai/tools/definitions';
 import { imageSearch, webSearch } from '@/lib/ai/tools/webSearch';
 import {
@@ -202,6 +202,8 @@ export async function attemptCompanyCredentialChat(input: {
   maxOutputTokensOverride?: number;
   stopOnUpstreamFailure?: boolean;
   signal?: AbortSignal;
+  /** Caller-scoped tools (company capabilities). Presence always selects the tool loop. */
+  extraTools?: ExtraToolSet;
 }): Promise<TeamChatTurn> {
   let gateway: GatewayConfiguration;
   let profile: Awaited<ReturnType<typeof gatewayFromModelProfile>>['profile'];
@@ -409,6 +411,7 @@ export async function attemptCompanyCredentialChat(input: {
      */
     const preferToolLoop =
       Boolean(input.forceToolLoop) ||
+      Boolean(input.extraTools) ||
       (repoToolsOn && (toolNeedy || isLookup || projectInternal)) ||
       (!freeCredential && toolNeedy) ||
       (freeCredential && !repoToolsOn && toolNeedy && !isLookup && !isImageLookup);
@@ -636,12 +639,13 @@ export async function attemptCompanyCredentialChat(input: {
         includeImageTool: input.includeImageTool !== false,
         includeRepoTools: input.includeRepoTools !== false,
         toolProfile: input.toolProfile ?? 'full',
-        maxRounds: deepRepo ? 32 : undefined,
+        maxRounds: deepRepo ? 32 : input.extraTools ? 10 : undefined,
         organizationId: input.organizationId,
         projectId: input.projectId,
         userId: input.userId,
         runId,
         signal: input.signal,
+        extraTools: input.extraTools,
       });
     }
 

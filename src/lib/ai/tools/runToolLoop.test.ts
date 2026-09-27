@@ -154,3 +154,45 @@ describe('runIdeToolLoop message compaction', () => {
   });
 });
 
+
+describe('runIdeToolLoop extra tools', () => {
+  it('offers caller tools, routes their calls to the caller with the run id, and keeps IDE tools separate', async () => {
+    const runId = new Types.ObjectId();
+    const execute = vi.fn().mockResolvedValue(JSON.stringify({ ok: true, sessions: 42 }));
+    let offered: string[] = [];
+    let round = 0;
+    mockInvokeModelWithTools.mockImplementation(async (_gateway, req) => {
+      offered = req.tools.map((t: { function: { name: string } }) => t.function.name);
+      round += 1;
+      if (round === 1) {
+        return {
+          content: '',
+          toolCalls: [{ id: 'c1', type: 'function', function: { name: 'company_metrics', arguments: '{"days":28}' } }],
+          inputTokens: 1, outputTokens: 1, latencyMs: 1,
+        };
+      }
+      return { content: 'Sessions were 42.', toolCalls: [], inputTokens: 1, outputTokens: 1, latencyMs: 1 };
+    });
+
+    const result = await runIdeToolLoop({
+      gateway: { endpoint: 'https://x.test', model: 'm' } as never,
+      messages: [{ role: 'system', content: 's' }, { role: 'user', content: 'how are we doing?' }],
+      maxOutputTokens: 100,
+      includeImageTool: false,
+      includeRepoTools: false,
+      organizationId: 'org',
+      projectId: new Types.ObjectId(),
+      userId: 'u',
+      runId,
+      extraTools: {
+        definitions: [{ type: 'function', function: { name: 'company_metrics', description: 'm', parameters: { type: 'object', properties: {}, required: [] } } }],
+        execute,
+      },
+    });
+
+    expect(offered).toContain('company_metrics');
+    expect(offered).not.toContain('repo_read');
+    expect(execute).toHaveBeenCalledWith('company_metrics', '{"days":28}', { runId });
+    expect(result.content).toBe('Sessions were 42.');
+  });
+});

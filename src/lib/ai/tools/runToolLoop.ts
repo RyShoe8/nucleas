@@ -27,7 +27,17 @@ type LoopMessage = {
   tool_call_id?: string;
 };
 
+/**
+ * Additional tools supplied by the caller (e.g. company capabilities). They are authorized and
+ * scoped by the caller; the loop only offers them to the model and routes calls to execute().
+ */
+export interface ExtraToolSet {
+  definitions: ToolDefinition[];
+  execute: (name: string, argumentsJson: string, context: { runId: Types.ObjectId }) => Promise<string>;
+}
+
 export async function runIdeToolLoop(input: {
+  extraTools?: ExtraToolSet;
   gateway: GatewayConfiguration;
   messages: LoopMessage[];
   maxOutputTokens: number;
@@ -42,11 +52,15 @@ export async function runIdeToolLoop(input: {
   runId: Types.ObjectId;
   signal?: AbortSignal;
 }): Promise<ToolLoopResult> {
-  const tools: ToolDefinition[] = ideChatToolDefinitions({
-    includeImage: input.includeImageTool,
-    includeRepo: input.includeRepoTools !== false,
-    profile: input.toolProfile ?? 'full',
-  });
+  const extraNames = new Set((input.extraTools?.definitions ?? []).map((t) => t.function.name));
+  const tools: ToolDefinition[] = [
+    ...ideChatToolDefinitions({
+      includeImage: input.includeImageTool,
+      includeRepo: input.includeRepoTools !== false,
+      profile: input.toolProfile ?? 'full',
+    }).filter((t) => !extraNames.has(t.function.name)),
+    ...(input.extraTools?.definitions ?? []),
+  ];
   if (!tools.length) {
     throw new GatewayError('invalid_response', { kind: 'no_tools' });
   }
@@ -194,6 +208,24 @@ export async function runIdeToolLoop(input: {
         }).catch(() => undefined);
 
         let toolContent: string;
+        if (extraNames.has(call.function.name) && input.extraTools) {
+          try {
+            toolContent = await input.extraTools.execute(call.function.name, call.function.arguments, { runId: input.runId });
+            sequence += 1;
+            await AiRunEvent.create({
+              organizationId: input.organizationId,
+              projectId: input.projectId,
+              runId: input.runId,
+              sequence,
+              type: 'tool.completed',
+              summary: `Tool ${call.function.name} completed`.slice(0, 2000),
+            }).catch(() => undefined);
+          } catch (error) {
+            toolContent = JSON.stringify({ error: error instanceof Error ? error.message.slice(0, 500) : 'Tool failed.' });
+          }
+          messages.push({ role: 'tool', tool_call_id: call.id, content: toolContent.slice(0, 12000) });
+          continue;
+        }
         try {
           const executed = await executeIdeTool({
             name: call.function.name,

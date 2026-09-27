@@ -43,7 +43,7 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                     className="mt-1 h-3 w-3 rounded-full flex-shrink-0"
                     style={{ backgroundColor: company.color ?? '#64748b' }}
                 />
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                     <h2 className="text-lg font-semibold leading-tight">{company.name}</h2>
                     <p className="text-xs text-text-secondary">
                         {RELATIONSHIP_LABEL[company.relationship]}
@@ -55,6 +55,7 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                         <p className="mt-1 text-sm text-text-secondary line-clamp-2">{company.description}</p>
                     ) : null}
                 </div>
+                <AskButton companyId={company.id} companyName={company.name} />
             </header>
 
             <CompanySnapshot
@@ -66,6 +67,22 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
             <CompanyActivity companyId={company.id} refreshKey={activityKey} />
             <IntegrationsSummary companyId={company.id} companyName={company.name} connections={connections} />
         </div>
+    );
+}
+
+function AskButton({ companyId, companyName }: { companyId: string; companyName: string }) {
+    const wm = useWindowManager();
+    return (
+        <button
+            type="button"
+            onClick={(e) => {
+                e.stopPropagation();
+                wm.open('assistant', { payload: { companyId, companyName } });
+            }}
+            className="flex-shrink-0 text-xs px-3 py-1.5 rounded-md bg-primary text-white hover:opacity-90"
+        >
+            ✨ Ask Nucleas
+        </button>
     );
 }
 

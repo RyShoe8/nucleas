@@ -11,6 +11,7 @@ import CompaniesModule from './CompaniesModule';
 import CompanyModule from './CompanyModule';
 import TodayModule from './TodayModule';
 import IntegrationsModule from './IntegrationsModule';
+import AssistantModule from './AssistantModule';
 
 let registered = false;
 
@@ -58,6 +59,18 @@ export function registerOsModules(): void {
             launcherHidden: true,
             windowTitle: (payload) => payload?.companyName,
             render: (ctx) => createElement(CompanyModule, ctx),
+        },
+        {
+            id: 'assistant',
+            title: 'Ask Nucleas',
+            icon: '✨',
+            defaultSize: { width: 640, height: 640 },
+            minSize: { width: 400, height: 360 },
+            canPopout: true,
+            permissions: 'member',
+            launcherHidden: true,
+            windowTitle: (payload) => (payload?.companyName ? 'Ask Nucleas · ' + payload.companyName : undefined),
+            render: (ctx) => createElement(AssistantModule, ctx),
         },
         {
             id: 'integrations',
