@@ -8,6 +8,7 @@ import { defaultRange, isoDate } from '@/lib/capabilities/adapters/http';
 import { SEARCH_LAG_DAYS } from '@/lib/capabilities/registry';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { METRICS, SYNC_CAPABILITIES, type MetricPoint } from './catalog';
+import { dailyEventCounts, EVENTS_PROVIDER } from '@/lib/integrations/companyEvents';
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -103,6 +104,19 @@ export async function syncCompanyMetrics(
       await MetricSnapshot.bulkWrite(ops, { ordered: false });
       result.written += ops.length;
     }
+  }
+  if (providers.has(EVENTS_PROVIDER)) {
+    // First-party signup events are already in Nucleas; aggregate them into daily counts.
+    const days = daysFor('internal.events.signups');
+    const counts = await dailyEventCounts(companyId, 'user.signed_up', windowDates('internal.events.signups', days, now));
+    await MetricSnapshot.bulkWrite(
+      counts.map((p) => ({
+        updateOne: { filter: { companyId, metricKey: 'users_new', date: p.date }, update: { $set: { organizationId, value: p.value } }, upsert: true },
+      })),
+      { ordered: false }
+    );
+    result.written += counts.length;
+    result.results.push({ capabilityId: 'internal.events.signups', status: 'succeeded' });
   }
   return result;
 }

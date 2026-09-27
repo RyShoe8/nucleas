@@ -130,7 +130,7 @@ export async function getCompanyMetrics(
 }
 
 /** Headline metrics for every company the viewer can see — the cross-company "Today" view. */
-export const TODAY_METRICS = ['leads_new', 'sessions', 'customers_new', 'revenue_net', 'subscribers_active', 'mrr'] as const;
+export const TODAY_METRICS = ['leads_new', 'users_new', 'sessions', 'customers_new', 'revenue_net', 'subscribers_active', 'mrr'] as const;
 
 export interface TodayRow {
   companyId: string;

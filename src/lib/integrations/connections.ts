@@ -23,6 +23,8 @@ export interface ConnectionView {
   connectable: boolean;
   /** OAuth sign-in flow that connects this integration, when not API-key based. */
   signIn: 'google' | null;
+  /** Integrations set up by generating a signed endpoint rather than entering a key. */
+  webhook: boolean;
   /** Guidance shown next to the credential field. */
   keyGuidance?: string;
 }
@@ -59,6 +61,7 @@ function toView(c: ConnectionLean): ConnectionView {
     lastError: c.lastError,
     connectable: def?.authKind === 'api_key',
     signIn: c.provider === 'ga4' || c.provider === 'gsc' ? 'google' : null,
+    webhook: def?.authKind === 'webhook',
     keyGuidance: def?.credentialHint,
   };
 }

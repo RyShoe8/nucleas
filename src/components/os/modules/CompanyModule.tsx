@@ -8,6 +8,7 @@ import { DOMAIN_LABEL, RELATIONSHIP_LABEL, type OsCompanyDetail, type OsConnecti
 import CompanySnapshot from './CompanySnapshot';
 import CompanyActivity from './CompanyActivity';
 import ResourcePicker from './ResourcePicker';
+import WebhookSetup from './WebhookSetup';
 
 const PINNABLE_PROVIDERS: Record<string, string> = { ga4: 'Choose property', gsc: 'Choose site', ahrefs: 'Choose project' };
 
@@ -293,6 +294,9 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                     >
                         {c.status === 'connected' ? 'Re-sign in' : 'Sign in with Google'}
                     </a>
+                ) : null}
+                {c.webhook && auth.isManagerOrAdmin && !editing ? (
+                    <WebhookSetup connectionId={c.id} connected={c.status === 'connected'} onDone={onChanged} />
                 ) : null}
                 {PINNABLE_PROVIDERS[c.provider] && auth.isManagerOrAdmin && !editing && (c.status === 'connected' || c.signIn === 'google') ? (
                     <button

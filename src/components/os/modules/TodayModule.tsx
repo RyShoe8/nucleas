@@ -15,6 +15,7 @@ interface TodayRow {
 
 const COLUMNS: { key: string; label: string; unit: OsMetric['unit'] }[] = [
     { key: 'leads_new', label: 'Leads', unit: 'count' },
+    { key: 'users_new', label: 'Users', unit: 'count' },
     { key: 'sessions', label: 'Sessions', unit: 'count' },
     { key: 'customers_new', label: 'Customers', unit: 'count' },
     { key: 'revenue_net', label: 'Revenue', unit: 'money' },

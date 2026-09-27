@@ -27,6 +27,7 @@ export interface OsConnection {
     lastError?: string;
     connectable: boolean;
     signIn: 'google' | null;
+    webhook: boolean;
     keyGuidance?: string;
 }
 
@@ -56,6 +57,7 @@ export const DOMAIN_LABEL: Record<string, string> = {
     payments: 'Payments',
     commerce: 'Commerce',
     finance: 'Finance',
+    product: 'Product',
     hosting: 'Hosting',
     code: 'Code',
 };

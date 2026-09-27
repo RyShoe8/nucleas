@@ -78,7 +78,7 @@ export function Sparkline({ series, label }: { series: { value: number }[]; labe
 }
 
 /** Display order; metrics without data are skipped. */
-const ORDER = ['sessions', 'new_visitors', 'search_clicks', 'search_impressions', 'leads_new', 'contacts_total', 'customers_new', 'payments', 'revenue_net', 'subscribers_active', 'mrr'];
+const ORDER = ['sessions', 'new_visitors', 'search_clicks', 'search_impressions', 'leads_new', 'contacts_total', 'users_new', 'customers_new', 'payments', 'revenue_net', 'subscribers_active', 'mrr'];
 
 function MetricCard({ m }: { m: OsMetric }) {
     return (
@@ -147,7 +147,7 @@ export default function CompanySnapshot({
         };
     }, [companyId, reloadKey]);
 
-    if (!['ga4', 'gsc', 'brevo', 'stripe', 'ahrefs', 'mercury'].some(has)) return null;
+    if (!['ga4', 'gsc', 'brevo', 'stripe', 'ahrefs', 'mercury', 'signups'].some(has)) return null;
 
     const syncNow = async () => {
         setSyncing(true);

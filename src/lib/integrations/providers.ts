@@ -3,8 +3,8 @@
  * the UI groups them by domain, never by vendor.
  */
 
-export type IntegrationDomain = 'analytics' | 'search' | 'seo' | 'email' | 'payments' | 'commerce' | 'finance' | 'hosting' | 'code';
-export type IntegrationAuthKind = 'api_key' | 'oauth' | 'github_app';
+export type IntegrationDomain = 'analytics' | 'search' | 'seo' | 'email' | 'payments' | 'commerce' | 'finance' | 'product' | 'hosting' | 'code';
+export type IntegrationAuthKind = 'api_key' | 'oauth' | 'github_app' | 'webhook';
 /** org = one account shared by every company (e.g. our Ahrefs subscription); company = one per company. */
 export type IntegrationScope = 'org' | 'company';
 
@@ -29,6 +29,7 @@ export const INTEGRATION_PROVIDERS: IntegrationProviderDefinition[] = [
   { id: 'stripe', name: 'Stripe', domain: 'payments', authKind: 'api_key', defaultScope: 'company', stackToolIds: ['stripe'], credentialHint: 'Restricted key with read-only access. Never the secret key used for Nucleas billing.' },
   { id: 'shopify', name: 'Shopify', domain: 'commerce', authKind: 'api_key', defaultScope: 'company', stackToolIds: ['shopify'], credentialHint: 'Custom app Admin API access token with read scopes.' },
   { id: 'mercury', name: 'Mercury', domain: 'finance', authKind: 'api_key', defaultScope: 'company', stackToolIds: [], credentialHint: 'Read-only API token (Settings → API tokens). Never a read-write token.' },
+  { id: 'signups', name: 'Signup events', domain: 'product', authKind: 'webhook', defaultScope: 'company', stackToolIds: [], credentialHint: 'Your platform sends a signed event to Nucleas whenever someone signs up (free users).' },
   { id: 'vercel', name: 'Vercel', domain: 'hosting', authKind: 'api_key', defaultScope: 'org', stackToolIds: ['vercel'], credentialHint: 'Vercel access token scoped to the team.' },
   { id: 'github', name: 'GitHub', domain: 'code', authKind: 'github_app', defaultScope: 'org', stackToolIds: [] },
 ];
