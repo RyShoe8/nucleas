@@ -13,6 +13,7 @@ import TodayModule from './TodayModule';
 import IntegrationsModule from './IntegrationsModule';
 import AssistantModule from './AssistantModule';
 import AiSpendModule from './AiSpendModule';
+import AiRoutingModule from './AiRoutingModule';
 
 let registered = false;
 
@@ -80,6 +81,16 @@ export function registerOsModules(): void {
             canPopout: true,
             permissions: 'admin',
             render: () => createElement(AiSpendModule),
+        },
+        {
+            id: 'ai-routing',
+            title: 'AI Routing',
+            icon: '🧭',
+            defaultSize: { width: 820, height: 640 },
+            minSize: { width: 520, height: 360 },
+            canPopout: true,
+            permissions: 'admin',
+            render: () => createElement(AiRoutingModule),
         },
         {
             id: 'integrations',

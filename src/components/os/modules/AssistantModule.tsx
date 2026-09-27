@@ -11,6 +11,47 @@ interface Turn {
     createdAt: string;
     actions?: { id: string; title: string; status: string; summary?: string; error?: string; companyName?: string }[];
     pending?: boolean;
+    mode?: 'orchestrated' | 'direct';
+    stages?: { stage: string; model?: string; free?: boolean; costMicros?: number | null; note?: string }[];
+    costMicros?: number | null;
+}
+
+type AskMode = 'orchestrated' | 'direct';
+const MODE_KEY = 'nucleas.os.assistant.mode';
+
+function readMode(): AskMode {
+    try {
+        return window.localStorage.getItem(MODE_KEY) === 'direct' ? 'direct' : 'orchestrated';
+    } catch {
+        return 'orchestrated';
+    }
+}
+
+function usd(micros: number): string {
+    const d = micros / 1_000_000;
+    return d === 0 ? '$0' : d < 0.01 ? '<$0.01' : `$${d.toFixed(d < 1 ? 3 : 2)}`;
+}
+
+function shortModel(model?: string): string {
+    return (model ?? '').split('/').pop()?.replace(/-(instruct|it|awq|fp8|qat).*$/i, '') ?? '';
+}
+
+/** "plan · sonnet $0.004 → fetch 3 jobs → write · gemma free → numbers ✓ → total $0.004" */
+function StageLine({ turn }: { turn: Turn }) {
+    if (!turn.stages?.length) return turn.costMicros != null ? <p className="mt-1 text-[10px] text-text-secondary">{usd(turn.costMicros)}</p> : null;
+    const label: Record<string, string> = { plan: 'plan', fetch: 'fetch', work: 'write', check: 'numbers', review: 'review' };
+    const parts = turn.stages.map((s) => {
+        if (s.stage === 'fetch') return s.note ?? 'fetch';
+        if (s.stage === 'check') return `numbers ${s.note?.startsWith('all') ? '✓' : '⚠'}`;
+        const cost = s.free ? 'free' : s.costMicros != null ? usd(s.costMicros) : '';
+        return `${label[s.stage] ?? s.stage} · ${shortModel(s.model)} ${cost}`.trim();
+    });
+    return (
+        <p className="mt-1 text-[10px] text-text-secondary" title={turn.stages.map((s) => `${s.stage}: ${s.note ?? s.model ?? ''}`).join('\n')}>
+            {parts.join(' → ')}
+            {turn.costMicros != null ? ` · total ${usd(turn.costMicros)}` : ''}
+        </p>
+    );
 }
 
 interface Profile {
@@ -57,6 +98,7 @@ export default function AssistantModule() {
     const [turns, setTurns] = useState<Turn[] | null>(null);
     const [profiles, setProfiles] = useState<Profile[]>([]);
     const [selection, setSelection] = useState<{ profileId: string; model: string } | null>(null);
+    const [mode, setMode] = useState<AskMode>('orchestrated');
     const [text, setText] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -72,6 +114,7 @@ export default function AssistantModule() {
             const history = (await historyRes.json().catch(() => ({}))) as { turns?: Turn[] };
             const pipeline = (await profilesRes.json().catch(() => ({}))) as { profiles?: Profile[] };
             if (cancelled) return;
+            setMode(readMode());
             setTurns(history.turns ?? []);
             const available = (pipeline.profiles ?? []).filter((p) => p.model);
             setProfiles(available);
@@ -90,7 +133,7 @@ export default function AssistantModule() {
 
     const send = async (message: string) => {
         const trimmed = message.trim();
-        if (!trimmed || busy || !selection) return;
+        if (!trimmed || busy || (mode === 'direct' && !selection)) return;
         setBusy(true);
         setError(null);
         setText('');
@@ -100,7 +143,12 @@ export default function AssistantModule() {
             const res = await fetch('/api/os/assistant', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ text: trimmed, focusCompanyId: focus?.companyId, modelProfileId: selection.profileId, model: selection.model }),
+                body: JSON.stringify({
+                    text: trimmed,
+                    focusCompanyId: focus?.companyId,
+                    mode,
+                    ...(mode === 'direct' && selection ? { modelProfileId: selection.profileId, model: selection.model } : {}),
+                }),
             });
             const body = (await res.json().catch(() => ({}))) as {
                 turn?: Turn;
@@ -131,7 +179,29 @@ export default function AssistantModule() {
     return (
         <div className="h-full flex flex-col text-text-primary">
             <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-                <span className="text-xs text-text-secondary">Model</span>
+                <div role="radiogroup" aria-label="Ask mode" className="inline-flex rounded border border-border overflow-hidden text-xs">
+                    {(['orchestrated', 'direct'] as AskMode[]).map((m) => (
+                        <button
+                            key={m}
+                            type="button"
+                            role="radio"
+                            aria-checked={mode === m}
+                            title={m === 'orchestrated' ? 'Paid model plans, Rogly writes, paid model reviews when it matters' : 'One model you choose answers directly'}
+                            onClick={() => {
+                                setMode(m);
+                                try {
+                                    window.localStorage.setItem(MODE_KEY, m);
+                                } catch {
+                                    // Per-browser convenience only.
+                                }
+                            }}
+                            className={`px-2 h-7 ${mode === m ? 'bg-primary text-white' : 'hover:bg-background-card'}`}
+                        >
+                            {m === 'orchestrated' ? 'Orchestrated' : 'Direct'}
+                        </button>
+                    ))}
+                </div>
+                {mode === 'direct' ? (
                 <select
                     value={selection ? `${selection.profileId}` : ''}
                     onChange={(e) => {
@@ -151,6 +221,7 @@ export default function AssistantModule() {
                         </option>
                     ))}
                 </select>
+                ) : null}
                 <span className="flex-1" />
                 {focus ? (
                     <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-border">
@@ -176,7 +247,7 @@ export default function AssistantModule() {
                                 <button
                                     key={s}
                                     type="button"
-                                    disabled={!selection || busy}
+                                    disabled={!(mode === 'orchestrated' || selection) || busy}
                                     onClick={() => void send(s)}
                                     className="text-xs px-2 py-1 rounded border border-border hover:bg-background-card disabled:opacity-50"
                                 >
@@ -211,6 +282,7 @@ export default function AssistantModule() {
                                     ))}
                                 </ul>
                             ) : null}
+                            {t.role !== 'user' && !t.pending ? <StageLine turn={t} /> : null}
                         </div>
                     </div>
                 ))}
@@ -228,12 +300,12 @@ export default function AssistantModule() {
                             void send(text);
                         }
                     }}
-                    placeholder={selection ? (focus ? `Ask about ${focus.companyName} or anything else…` : 'Ask about any business…') : 'Configure an AI credential in Admin → AI Settings first'}
+                    placeholder={(mode === 'orchestrated' || selection) ? (focus ? `Ask about ${focus.companyName} or anything else…` : 'Ask about any business…') : 'Configure an AI credential in Admin → AI Settings first'}
                     rows={2}
-                    disabled={!selection}
+                    disabled={!(mode === 'orchestrated' || selection)}
                     className="flex-1 min-w-0 px-2 py-1.5 rounded border border-border bg-background-elevated text-sm resize-none"
                 />
-                <button type="submit" disabled={busy || !text.trim() || !selection} className="px-3 rounded bg-primary text-white text-sm disabled:opacity-50">
+                <button type="submit" disabled={busy || !text.trim() || !(mode === 'orchestrated' || selection)} className="px-3 rounded bg-primary text-white text-sm disabled:opacity-50">
                     {busy ? '…' : 'Ask'}
                 </button>
             </form>

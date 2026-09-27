@@ -7,6 +7,7 @@ import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { renderContext, resolvePortfolioContext } from '@/lib/context/resolveCompanyContext';
 import { toInvocationView, type InvocationView } from '@/lib/capabilities/runtime';
 import { buildAssistantTools } from './companyTools';
+import { runAskOrchestrator, type StageRecord } from '@/lib/ai/orchestrator/askOrchestrator';
 
 const HISTORY_TURNS = 12;
 
@@ -33,7 +34,7 @@ export function buildSystemPrompt(contextBlock: string, today: string, focusName
 }
 
 export interface AssistantReply {
-  turn: { id: string; role: 'assistant' | 'status'; text: string; createdAt: string; costMicros?: number | null };
+  turn: { id: string; role: 'assistant' | 'status'; text: string; createdAt: string; costMicros?: number | null; mode: 'orchestrated' | 'direct'; stages?: StageRecord[] };
   actions: (InvocationView & { companyName?: string })[];
   focused: { id: string; name: string }[];
   contextSources: string[];
@@ -43,11 +44,12 @@ export type AssistantResult = { ok: true; reply: AssistantReply } | { ok: false;
 
 export async function askAssistant(
   viewer: CompanyViewer,
-  input: { text: string; focusCompanyId?: string; modelProfileId: string; model: string; signal?: AbortSignal }
+  input: { text: string; focusCompanyId?: string; mode?: 'orchestrated' | 'direct'; modelProfileId?: string; model?: string; signal?: AbortSignal }
 ): Promise<AssistantResult> {
+  const mode = input.mode === 'direct' ? 'direct' : 'orchestrated';
   const text = input.text.trim();
   if (!text || text.length > 8000) return { ok: false, status: 400, error: 'Message must be 1–8000 characters.' };
-  if (!input.modelProfileId || !input.model) return { ok: false, status: 400, error: 'Choose a model first.' };
+  if (mode === 'direct' && (!input.modelProfileId || !input.model)) return { ok: false, status: 400, error: 'Choose a model for Direct mode.' };
 
   const context = await resolvePortfolioContext(viewer, { message: text, focusCompanyId: input.focusCompanyId });
   const focusedCompanies = context.focused.map((id) => context.companies.find((c) => c.id === id)!).filter(Boolean);
@@ -61,6 +63,38 @@ export async function askAssistant(
   const companyIds = focusedCompanies.map((c) => new Types.ObjectId(c.id));
   await CompanyAssistantTurn.create({ organizationId: viewer.organizationId, userId: uid, role: 'user', text, companyIds });
 
+  if (mode === 'orchestrated') {
+    const result = await runAskOrchestrator(viewer, {
+      text,
+      context,
+      projectId: assistantLedgerProjectId(String(viewer.organizationId)),
+      history: prior.slice().reverse(),
+      signal: input.signal,
+    });
+    const saved = await CompanyAssistantTurn.create({
+      organizationId: viewer.organizationId,
+      userId: uid,
+      role: result.role,
+      text: (result.text || '(no answer)').slice(0, 40_000),
+      companyIds,
+      invocationIds: result.invocationIds.map((id) => new Types.ObjectId(id)),
+      runId: result.runId && Types.ObjectId.isValid(result.runId) ? new Types.ObjectId(result.runId) : undefined,
+      costMicros: result.costMicros,
+      contextSources: context.sources,
+      mode,
+      stages: result.stages,
+    });
+    return {
+      ok: true,
+      reply: {
+        turn: { id: String(saved._id), role: result.role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: result.costMicros, mode, stages: result.stages },
+        actions: await actionViews(result.invocationIds, context.companies),
+        focused: focusedCompanies.map((c) => ({ id: c.id, name: c.name })),
+        contextSources: context.sources,
+      },
+    };
+  }
+
   const tools = await buildAssistantTools(viewer, context.companies);
   const turn = await attemptCompanyCredentialChat({
     systemPrompt: buildSystemPrompt(renderContext(context), new Date().toISOString().slice(0, 10), focusedCompanies.map((c) => c.name)),
@@ -69,8 +103,8 @@ export async function askAssistant(
     userId: viewer.userId,
     userText: text,
     priorTurns: prior.reverse(),
-    modelProfileId: input.modelProfileId,
-    model: input.model,
+    modelProfileId: input.modelProfileId!,
+    model: input.model!,
     projectName: 'Nucleas assistant',
     includeRepoTools: false,
     includeImageTool: false,
@@ -89,6 +123,7 @@ export async function askAssistant(
     runId: turn.runId && Types.ObjectId.isValid(turn.runId) ? new Types.ObjectId(turn.runId) : undefined,
     costMicros: turn.costMicros ?? undefined,
     contextSources: context.sources,
+    mode,
   });
 
   const names = new Map(context.companies.map((c) => [c.id, c.name]));
@@ -102,7 +137,7 @@ export async function askAssistant(
   return {
     ok: true,
     reply: {
-      turn: { id: String(saved._id), role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: turn.costMicros },
+      turn: { id: String(saved._id), role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: turn.costMicros, mode },
       actions,
       focused: focusedCompanies.map((c) => ({ id: c.id, name: c.name })),
       contextSources: context.sources,
@@ -110,12 +145,22 @@ export async function askAssistant(
   };
 }
 
+async function actionViews(ids: string[], companies: { id: string; name: string }[]) {
+  if (!ids.length) return [];
+  const names = new Map(companies.map((c) => [c.id, c.name]));
+  const docs = await CapabilityInvocation.find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) } }).select('-input -inputDigest -output').lean();
+  return docs.map((d) => ({
+    ...toInvocationView(d as unknown as Parameters<typeof toInvocationView>[0]),
+    companyName: names.get(String((d as { companyId: Types.ObjectId }).companyId)),
+  }));
+}
+
 export async function listAssistantTurns(viewer: CompanyViewer, limit = 40) {
   const rows = await CompanyAssistantTurn.find({ organizationId: viewer.organizationId, userId: new Types.ObjectId(viewer.userId) })
     .sort({ createdAt: -1 })
     .limit(Math.min(limit, 100))
-    .select('role text createdAt invocationIds costMicros')
-    .lean<{ _id: Types.ObjectId; role: string; text: string; createdAt: Date; invocationIds?: Types.ObjectId[]; costMicros?: number }[]>();
+    .select('role text createdAt invocationIds costMicros mode stages')
+    .lean<{ _id: Types.ObjectId; role: string; text: string; createdAt: Date; invocationIds?: Types.ObjectId[]; costMicros?: number; mode?: string; stages?: StageRecord[] }[]>();
   return rows.reverse().map((r) => ({
     id: String(r._id),
     role: r.role,
@@ -123,5 +168,7 @@ export async function listAssistantTurns(viewer: CompanyViewer, limit = 40) {
     createdAt: r.createdAt.toISOString(),
     actionCount: r.invocationIds?.length ?? 0,
     costMicros: r.costMicros ?? null,
+    mode: r.mode ?? 'direct',
+    stages: r.stages ?? [],
   }));
 }
