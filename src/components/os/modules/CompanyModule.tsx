@@ -5,6 +5,8 @@ import { useWindowManager } from '@/hooks/os/useWindowManager';
 import { useOsAuth } from '@/hooks/os/useOsAuth';
 import type { ModuleRenderContext } from '@/lib/os/types';
 import { DOMAIN_LABEL, RELATIONSHIP_LABEL, type OsCompanyDetail, type OsConnection } from './companyTypes';
+import CompanySnapshot from './CompanySnapshot';
+import CompanyActivity from './CompanyActivity';
 
 const STATUS_STYLE: Record<string, string> = {
     connected: 'text-emerald-400 border-emerald-400/40',
@@ -26,6 +28,7 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
     const companyId = payload?.companyId;
     const [detail, setDetail] = useState<OsCompanyDetail | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [activityKey, setActivityKey] = useState(0);
 
     const load = useCallback(async () => {
         if (!companyId) return;
@@ -71,8 +74,14 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                 </div>
             </header>
 
+            <CompanySnapshot
+                companyId={company.id}
+                connections={connections.filter((c) => c.status === 'connected')}
+                onActivity={() => setActivityKey((k) => k + 1)}
+            />
             <ProjectsSection projects={projects} />
             <ConnectionsSection companyId={company.id} connections={connections} onChanged={load} />
+            <CompanyActivity companyId={company.id} refreshKey={activityKey} />
         </div>
     );
 }
