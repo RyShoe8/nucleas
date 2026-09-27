@@ -129,6 +129,7 @@ describe('number check and facts', () => {
   it('flags numbers that appear in no source', () => {
     expect(untracedNumbers('Sessions were 2,100, up from 1,400.', ['Sessions: 2,100 (previous 1,400)'])).toEqual([]);
     expect(untracedNumbers('Sessions were 9,999.', ['Sessions: 2,100'])).toEqual(['9999']);
+    expect(untracedNumbers('As of September 2026, the offer is 120,000 coins.', ['120,000 Gold Coins'])).toEqual([]);
   });
 });
 
