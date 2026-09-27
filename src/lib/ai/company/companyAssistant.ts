@@ -1,5 +1,4 @@
 import 'server-only';
-import { createHash } from 'crypto';
 import { Types } from 'mongoose';
 import { attemptCompanyCredentialChat } from '@/lib/ai/companyChat';
 import { CompanyAssistantTurn } from '@/lib/models/CompanyAssistantTurn';
@@ -11,10 +10,8 @@ import { buildAssistantTools } from './companyTools';
 
 const HISTORY_TURNS = 12;
 
-/** Synthetic project id that carries assistant runs and spend (same approach as IDE Free Chat). */
-export function assistantLedgerProjectId(organizationId: string): Types.ObjectId {
-  return new Types.ObjectId(createHash('sha256').update(`nucleas-os-assistant:v1:${organizationId}`).digest('hex').slice(0, 24));
-}
+export { assistantLedgerProjectId } from './assistantLedger';
+import { assistantLedgerProjectId } from './assistantLedger';
 
 export function buildSystemPrompt(contextBlock: string, today: string, focusNames: string[]): string {
   return [

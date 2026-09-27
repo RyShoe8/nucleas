@@ -12,6 +12,7 @@ import CompanyModule from './CompanyModule';
 import TodayModule from './TodayModule';
 import IntegrationsModule from './IntegrationsModule';
 import AssistantModule from './AssistantModule';
+import AiSpendModule from './AiSpendModule';
 
 let registered = false;
 
@@ -69,6 +70,16 @@ export function registerOsModules(): void {
             canPopout: true,
             permissions: 'member',
             render: () => createElement(AssistantModule),
+        },
+        {
+            id: 'ai-spend',
+            title: 'AI Spend',
+            icon: '💸',
+            defaultSize: { width: 820, height: 640 },
+            minSize: { width: 480, height: 360 },
+            canPopout: true,
+            permissions: 'admin',
+            render: () => createElement(AiSpendModule),
         },
         {
             id: 'integrations',

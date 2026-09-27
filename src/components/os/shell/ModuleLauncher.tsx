@@ -3,11 +3,16 @@
 import { useModuleRegistry } from '@/hooks/os/useModuleRegistry';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import ActionMenu from '@/components/ui/ActionMenu';
+import { useOsAuth } from '@/hooks/os/useOsAuth';
 
 export default function ModuleLauncher() {
     const modules = useModuleRegistry();
     const wm = useWindowManager();
-    const visible = modules.filter((m) => !m.launcherHidden);
+    const auth = useOsAuth();
+    const isAdmin = auth.isAdmin || auth.role === 'Administrator';
+    const canSee = (permission: string) =>
+        permission === 'admin' ? isAdmin : permission === 'manager' ? isAdmin || auth.isManagerOrAdmin : true;
+    const visible = modules.filter((m) => !m.launcherHidden && canSee(m.permissions));
 
     const items =
         visible.length === 0
