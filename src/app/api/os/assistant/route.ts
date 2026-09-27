@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { askAssistant, listAssistantTurns } from '@/lib/ai/company/companyAssistant';
+import { isCostLevel } from '@/lib/ai/engine/select';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { enforceRateLimit, rateLimitKey } from '@/lib/security/rateLimit';
 
@@ -19,12 +20,13 @@ export async function POST(request: NextRequest) {
   if (limited) return limited;
   const viewer = await requireCompanyViewer(request);
   if (viewer instanceof NextResponse) return viewer;
-  const body = (await request.json().catch(() => ({}))) as { text?: unknown; focusCompanyId?: unknown; mode?: unknown; modelProfileId?: unknown; model?: unknown };
+  const body = (await request.json().catch(() => ({}))) as { text?: unknown; focusCompanyId?: unknown; mode?: unknown; level?: unknown; modelProfileId?: unknown; model?: unknown };
   try {
     const result = await askAssistant(viewer, {
       text: typeof body.text === 'string' ? body.text : '',
       focusCompanyId: typeof body.focusCompanyId === 'string' ? body.focusCompanyId : undefined,
       mode: body.mode === 'direct' ? 'direct' : 'orchestrated',
+      level: isCostLevel(body.level) ? body.level : undefined,
       modelProfileId: typeof body.modelProfileId === 'string' ? body.modelProfileId : '',
       model: typeof body.model === 'string' ? body.model : '',
       signal: request.signal,

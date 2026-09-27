@@ -17,6 +17,17 @@ interface Turn {
 }
 
 type AskMode = 'orchestrated' | 'direct';
+type CostChoice = 'default' | 'low' | 'medium' | 'high';
+const COST_KEY = 'nucleas.os.assistant.cost';
+
+function readCost(): CostChoice {
+    try {
+        const v = window.localStorage.getItem(COST_KEY);
+        return v === 'low' || v === 'medium' || v === 'high' ? v : 'default';
+    } catch {
+        return 'default';
+    }
+}
 const MODE_KEY = 'nucleas.os.assistant.mode';
 
 function readMode(): AskMode {
@@ -99,6 +110,7 @@ export default function AssistantModule() {
     const [profiles, setProfiles] = useState<Profile[]>([]);
     const [selection, setSelection] = useState<{ profileId: string; model: string } | null>(null);
     const [mode, setMode] = useState<AskMode>('orchestrated');
+    const [cost, setCost] = useState<CostChoice>('default');
     const [text, setText] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -115,6 +127,7 @@ export default function AssistantModule() {
             const pipeline = (await profilesRes.json().catch(() => ({}))) as { profiles?: Profile[] };
             if (cancelled) return;
             setMode(readMode());
+            setCost(readCost());
             setTurns(history.turns ?? []);
             const available = (pipeline.profiles ?? []).filter((p) => p.model);
             setProfiles(available);
@@ -147,6 +160,7 @@ export default function AssistantModule() {
                     text: trimmed,
                     focusCompanyId: focus?.companyId,
                     mode,
+                    ...(mode === 'orchestrated' && cost !== 'default' ? { level: cost } : {}),
                     ...(mode === 'direct' && selection ? { modelProfileId: selection.profileId, model: selection.model } : {}),
                 }),
             });
@@ -201,6 +215,28 @@ export default function AssistantModule() {
                         </button>
                     ))}
                 </div>
+                {mode === 'orchestrated' ? (
+                    <select
+                        value={cost}
+                        onChange={(e) => {
+                            const v = e.target.value as CostChoice;
+                            setCost(v);
+                            try {
+                                window.localStorage.setItem(COST_KEY, v);
+                            } catch {
+                                // Per-browser convenience only.
+                            }
+                        }}
+                        title="Low: paid only for small planning/judging calls. Medium: stronger models, paid retries. High: paid models do the work."
+                        className="h-7 px-2 rounded border border-border bg-background-elevated text-xs"
+                        aria-label="Cost level"
+                    >
+                        <option value="default">Cost: default</option>
+                        <option value="low">Cost: low</option>
+                        <option value="medium">Cost: medium</option>
+                        <option value="high">Cost: high</option>
+                    </select>
+                ) : null}
                 {mode === 'direct' ? (
                 <select
                     value={selection ? `${selection.profileId}` : ''}

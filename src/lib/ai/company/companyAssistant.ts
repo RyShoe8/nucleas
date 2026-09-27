@@ -8,6 +8,7 @@ import { renderContext, resolvePortfolioContext } from '@/lib/context/resolveCom
 import { toInvocationView, type InvocationView } from '@/lib/capabilities/runtime';
 import { buildAssistantTools } from './companyTools';
 import { runAskOrchestrator, type StageRecord } from '@/lib/ai/orchestrator/askOrchestrator';
+import { readEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
 
 const HISTORY_TURNS = 12;
 
@@ -44,7 +45,7 @@ export type AssistantResult = { ok: true; reply: AssistantReply } | { ok: false;
 
 export async function askAssistant(
   viewer: CompanyViewer,
-  input: { text: string; focusCompanyId?: string; mode?: 'orchestrated' | 'direct'; modelProfileId?: string; model?: string; signal?: AbortSignal }
+  input: { text: string; focusCompanyId?: string; mode?: 'orchestrated' | 'direct'; level?: CostLevel; modelProfileId?: string; model?: string; signal?: AbortSignal }
 ): Promise<AssistantResult> {
   const mode = input.mode === 'direct' ? 'direct' : 'orchestrated';
   const text = input.text.trim();
@@ -69,6 +70,7 @@ export async function askAssistant(
       context,
       projectId: assistantLedgerProjectId(String(viewer.organizationId)),
       history: prior.slice().reverse(),
+      level: input.level ?? (await readEngineSettings(String(viewer.organizationId))).defaultCostLevel,
       signal: input.signal,
     });
     const saved = await CompanyAssistantTurn.create({

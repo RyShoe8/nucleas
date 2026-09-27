@@ -1,0 +1,207 @@
+import mongoose, { Schema, Types, type InferSchemaType, type Model } from 'mongoose';
+import { listAvailableModels, type AvailableModel } from './catalog';
+import type { ModelStrength } from '@/lib/ai/rolePipeline/providerCatalog';
+import { localModelPowerScore } from '@/lib/ai/rolePipeline/modelMeta';
+
+/**
+ * The one model-selection system. Every AI job asks for a need at a cost level; the engine picks
+ * the best available model automatically. Admins may pin a model per need (applies at every level).
+ *
+ *   low    — paid only for small planning/judging calls; Rogly for everything else; never pays to retry
+ *   medium — stronger planning/review; Rogly does the work but may retry on a paid model when it fails
+ *   high   — paid models for planning, review and the work itself; Rogly only for utilities
+ */
+
+export const COST_LEVELS = ['low', 'medium', 'high'] as const;
+export type CostLevel = (typeof COST_LEVELS)[number];
+
+export const NEEDS = ['plan', 'review', 'write', 'research', 'code', 'vision', 'utility'] as const;
+export type Need = (typeof NEEDS)[number];
+
+export const NEED_LABELS: Record<Need, { label: string; description: string }> = {
+  plan: { label: 'Plan', description: 'Reads the request and a compact summary; decides what to fetch and how to answer. Small call, no tools.' },
+  review: { label: 'Review', description: 'Checks work before the user sees it.' },
+  write: { label: 'Write', description: 'Turns fetched data and research into the answer or draft. Carries the large inputs.' },
+  research: { label: 'Research', description: 'Multi-step web research with tools.' },
+  code: { label: 'Code', description: 'Explores repositories, edits code and runs checks.' },
+  vision: { label: 'Vision', description: 'Understands screenshots and images.' },
+  utility: { label: 'Utilities', description: 'Summaries, estimates, voice/palette intent.' },
+};
+
+export interface ModelChoice {
+  profileId: string;
+  model: string;
+  free: boolean;
+  label: string;
+}
+
+export interface Selection {
+  need: Need;
+  level: CostLevel;
+  primary: ModelChoice | null;
+  /** Used when the primary (free) model fails; only ever set when the level allows paying for a retry. */
+  fallback: ModelChoice | null;
+  source: 'pinned' | 'auto' | 'none';
+}
+
+// ---------- Pure selection rules ----------
+
+function choice(m: AvailableModel | undefined): ModelChoice | null {
+  return m ? { profileId: m.profileId, model: m.model, free: m.free, label: m.profileLabel } : null;
+}
+
+function withStrength(models: AvailableModel[], ...strengths: ModelStrength[]): AvailableModel[] {
+  for (const s of strengths) {
+    const hit = models.filter((m) => m.strengths.includes(s));
+    if (hit.length) return hit;
+  }
+  return [];
+}
+
+const byPrice = (a: AvailableModel, b: AvailableModel) => (a.blendedPricePer1M ?? 0) - (b.blendedPricePer1M ?? 0) || a.model.localeCompare(b.model);
+
+function cheapest(models: AvailableModel[]): AvailableModel | undefined {
+  return [...models].sort(byPrice)[0];
+}
+
+function middle(models: AvailableModel[]): AvailableModel | undefined {
+  const sorted = [...models].sort(byPrice);
+  return sorted[Math.floor((sorted.length - 1) / 2)];
+}
+
+function best(models: AvailableModel[]): AvailableModel | undefined {
+  const flagships = models.filter((m) => m.flagship);
+  const pool = flagships.length ? flagships : models;
+  return [...pool].sort(byPrice).at(-1);
+}
+
+/**
+ * Rogly pick for a need. Free models have no cost, so the rule is purely quality: the most advanced
+ * free model that fits the job (localModelPowerScore: newer generation > size > reasoning). New
+ * Rogly models are picked up automatically when they outrank the current ones.
+ */
+function freeFor(models: AvailableModel[], need: Need): AvailableModel | undefined {
+  const free = models.filter((m) => m.free);
+  const strongest = (pool: AvailableModel[]) =>
+    [...pool].sort((a, b) => localModelPowerScore(b.model) - localModelPowerScore(a.model) || (b.contextTokens ?? 0) - (a.contextTokens ?? 0))[0];
+  if (need === 'code' || need === 'research') return strongest(withStrength(free, 'coding')) ?? strongest(free);
+  if (need === 'vision') return strongest(withStrength(free, 'vision'));
+  // Writing and utilities: any text-capable model; take the strongest.
+  return strongest(withStrength(free, 'chat', 'reasoning')) ?? strongest(free);
+}
+
+function paidFor(models: AvailableModel[], need: Need): AvailableModel[] {
+  const paid = models.filter((m) => !m.free && m.blendedPricePer1M !== null);
+  switch (need) {
+    case 'plan':
+    case 'review':
+    case 'research':
+      return withStrength(paid, 'reasoning', 'coding', 'chat');
+    case 'code':
+      return withStrength(paid, 'coding', 'reasoning');
+    case 'vision':
+      return withStrength(paid, 'vision');
+    default:
+      return withStrength(paid, 'chat', 'reasoning');
+  }
+}
+
+export function selectFrom(models: AvailableModel[], need: Need, level: CostLevel): Omit<Selection, 'source'> {
+  const paid = paidFor(models, need);
+  const free = freeFor(models, need);
+  const pickPaid = (rank: 'cheap' | 'mid' | 'best') => (rank === 'cheap' ? cheapest(paid) : rank === 'mid' ? middle(paid) : best(paid));
+  const base = { need, level };
+
+  switch (need) {
+    case 'plan':
+    case 'review': {
+      const p = pickPaid(level === 'low' ? 'cheap' : level === 'medium' ? 'mid' : 'best');
+      // No paid credential at all: fall back to the free model rather than failing.
+      return { ...base, primary: choice(p ?? free), fallback: null };
+    }
+    case 'utility':
+      return { ...base, primary: choice(free ?? cheapest(paid)), fallback: null };
+    case 'write':
+      if (level === 'high') return { ...base, primary: choice(middle(paid) ?? free), fallback: null };
+      return { ...base, primary: choice(free ?? cheapest(paid)), fallback: level === 'medium' ? choice(middle(paid)) : null };
+    case 'research':
+      if (level === 'high') return { ...base, primary: choice(middle(paid) ?? free), fallback: null };
+      return { ...base, primary: choice(free ?? cheapest(paid)), fallback: level === 'medium' ? choice(cheapest(paid)) : null };
+    case 'code':
+      if (level === 'high') return { ...base, primary: choice(best(paid) ?? free), fallback: null };
+      return { ...base, primary: choice(free ?? cheapest(paid)), fallback: level === 'medium' ? choice(middle(paid)) : null };
+    case 'vision':
+      if (level === 'high') return { ...base, primary: choice(middle(paid) ?? free), fallback: null };
+      return { ...base, primary: choice(free ?? cheapest(paid)), fallback: null };
+  }
+}
+
+// ---------- Settings: org default level and optional pins ----------
+
+const settingsSchema = new Schema(
+  {
+    organizationId: { type: String, required: true, unique: true },
+    defaultCostLevel: { type: String, enum: COST_LEVELS, default: 'low' },
+    /** need -> pinned model (applies at every level). */
+    pins: { type: Schema.Types.Mixed, default: {} },
+    updatedByUserId: { type: Schema.Types.ObjectId },
+  },
+  { timestamps: true }
+);
+type SettingsDoc = InferSchemaType<typeof settingsSchema>;
+export const AiEngineSettings: Model<SettingsDoc> =
+  (mongoose.models.AiEngineSettings as Model<SettingsDoc> | undefined) ?? mongoose.model<SettingsDoc>('AiEngineSettings', settingsSchema);
+
+type Pins = Partial<Record<Need, { profileId: string; model: string }>>;
+
+export async function readEngineSettings(organizationId: string): Promise<{ defaultCostLevel: CostLevel; pins: Pins }> {
+  const doc = await AiEngineSettings.findOne({ organizationId }).lean<{ defaultCostLevel?: CostLevel; pins?: Pins }>();
+  return { defaultCostLevel: doc?.defaultCostLevel ?? 'low', pins: doc?.pins ?? {} };
+}
+
+export function isCostLevel(value: unknown): value is CostLevel {
+  return typeof value === 'string' && (COST_LEVELS as readonly string[]).includes(value);
+}
+
+/** Selects a model for a need. A pin overrides the automatic choice at every level. */
+export async function selectModel(
+  organizationId: string,
+  need: Need,
+  level: CostLevel,
+  options: { models?: AvailableModel[]; settings?: { pins: Pins } } = {}
+): Promise<Selection> {
+  const models = options.models ?? (await listAvailableModels());
+  const settings = options.settings ?? (await readEngineSettings(organizationId));
+  const pin = settings.pins[need];
+  if (pin) {
+    const pinned = models.find((m) => m.profileId === pin.profileId && m.model === pin.model);
+    if (pinned) return { need, level, primary: choice(pinned), fallback: null, source: 'pinned' };
+  }
+  const auto = selectFrom(models, need, level);
+  return { ...auto, source: auto.primary ? 'auto' : 'none' };
+}
+
+export async function saveEngineSettings(
+  organizationId: string,
+  input: { defaultCostLevel?: CostLevel; pin?: { need: Need; profileId: string; model: string } | null; unpin?: Need },
+  userId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const update: Record<string, unknown> = { updatedByUserId: Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : undefined };
+  if (input.defaultCostLevel) {
+    if (!isCostLevel(input.defaultCostLevel)) return { ok: false, error: 'Unknown cost level.' };
+    update.defaultCostLevel = input.defaultCostLevel;
+  }
+  const set: Record<string, unknown> = { ...update };
+  const unset: Record<string, ''> = {};
+  if (input.pin) {
+    if (!(NEEDS as readonly string[]).includes(input.pin.need)) return { ok: false, error: 'Unknown need.' };
+    const available = await listAvailableModels();
+    if (!available.some((m) => m.profileId === input.pin!.profileId && m.model === input.pin!.model)) {
+      return { ok: false, error: 'That model is not available from an enabled credential.' };
+    }
+    set[`pins.${input.pin.need}`] = { profileId: input.pin.profileId, model: input.pin.model };
+  }
+  if (input.unpin) unset[`pins.${input.unpin}`] = '';
+  await AiEngineSettings.updateOne({ organizationId }, { $set: set, ...(Object.keys(unset).length ? { $unset: unset } : {}) }, { upsert: true });
+  return { ok: true };
+}

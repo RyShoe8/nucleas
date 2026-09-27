@@ -84,7 +84,7 @@ export function registerOsModules(): void {
         },
         {
             id: 'ai-routing',
-            title: 'AI Routing',
+            title: 'AI Engine',
             icon: '🧭',
             defaultSize: { width: 820, height: 640 },
             minSize: { width: 520, height: 360 },

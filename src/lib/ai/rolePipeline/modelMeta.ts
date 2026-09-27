@@ -122,6 +122,9 @@ export function localModelPowerScore(modelId: string): number {
   let score = 0;
   // Prefer newer Qwen generations over larger Qwen 2.5 weights (Rogly frontier is Qwen 3, not 2.5 Coder).
   if (/qwen3(?:[.\-_/]|$)/.test(id)) score += 20_000;
+  // Gemma generations: Gemma 4 is current-generation general-purpose, on par with Qwen 3.
+  else if (/gemma[-_]?4(?:[.\-_/]|$)/.test(id)) score += 20_000;
+  else if (/gemma[-_]?3(?:[.\-_/]|$)/.test(id)) score += 8_000;
   else if (/qwen2\.5/.test(id)) score += 8_000;
   else if (/qwen2(?:[.\-_/]|$)/.test(id)) score += 4_000;
   const params = id.match(/(\d+(?:\.\d+)?)[_\s-]*b(?:illion)?\b/);

@@ -7,7 +7,8 @@ import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { renderContext, type PortfolioContext } from '@/lib/context/resolveCompanyContext';
 import { buildAssistantTools, toolNameFor } from '@/lib/ai/company/companyTools';
 import { CAPABILITIES } from '@/lib/capabilities/registry';
-import { resolveRoute, type ModelChoice } from '@/lib/ai/routing/resolveRoute';
+import { readEngineSettings, selectModel, type CostLevel, type ModelChoice, type Need } from '@/lib/ai/engine/select';
+import { listAvailableModels } from '@/lib/ai/engine/catalog';
 import { webSearch } from '@/lib/ai/tools/webSearch';
 import { formatResearchResultContext } from '@/lib/ai/tools/serverBrowseAssist';
 
@@ -204,6 +205,8 @@ export async function runAskOrchestrator(
     context: PortfolioContext;
     projectId: Types.ObjectId;
     history: { role: 'user' | 'assistant' | 'status'; text: string }[];
+    /** Cost level for this request: which models, whether paid retries are allowed, how often review runs. */
+    level: CostLevel;
     signal?: AbortSignal;
     fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
   }
@@ -218,9 +221,11 @@ export async function runAskOrchestrator(
   };
   const status = (text: string): OrchestratedAnswer => ({ role: 'status', text, stages, invocationIds: [], costMicros });
 
-  const [planRoute, workRoute, reviewRoute] = await Promise.all([resolveRoute(org, 'assistant.plan'), resolveRoute(org, 'assistant.work'), resolveRoute(org, 'assistant.review')]);
-  if (!planRoute.primary) return status('Assign a planning model to "Ask · plan" in AI Routing (or a Product planner on AI Team).');
-  if (!workRoute.primary) return status('Assign a model to "Ask · work" in AI Routing. Rogly is the intended default.');
+  const [models, settings] = await Promise.all([listAvailableModels(), readEngineSettings(org)]);
+  const pick = (need: Need) => selectModel(org, need, input.level, { models, settings });
+  const [planRoute, workRoute, reviewRoute] = await Promise.all([pick('plan'), pick('write'), pick('review')]);
+  if (!planRoute.primary) return status('No model is available for planning. Enable an AI credential in Admin → AI models.');
+  if (!workRoute.primary) return status('No model is available for writing. Check that Rogly (or another credential) is enabled.');
 
   // Tool catalog the planner may use, per company (connected, non-sensitive only).
   const tools = await buildAssistantTools(viewer, input.context.companies, { fetchImpl: input.fetchImpl });
@@ -278,7 +283,7 @@ export async function runAskOrchestrator(
 
   // Deep research: Rogly drives its own searches in the tool loop (the one place a model should).
   if (plan.deepResearch) {
-    const researchRoute = await resolveRoute(org, 'research.work');
+    const researchRoute = await pick('research');
     const runResearch = (choice: ModelChoice) =>
       attemptCompanyCredentialChat({
         systemPrompt: researcherPrompt(today),
@@ -298,15 +303,15 @@ export async function runAskOrchestrator(
         signal: input.signal,
       });
     if (!researchRoute.primary) {
-      stages.push({ stage: 'research', note: 'skipped: no model assigned to Deep research' });
+      stages.push({ stage: 'research', note: 'skipped: no model available for research' });
     } else {
       let choice = researchRoute.primary;
       let turn = await runResearch(choice);
       stages.push({ stage: 'research', model: choice.model, free: choice.free, costMicros: addCost(turn), note: (turn.toolsUsed ?? []).length ? `tools: ${[...new Set(turn.toolsUsed)].join(', ')}` : undefined });
-      if ((turn.role !== 'assistant' || !turn.text.trim()) && researchRoute.allowPaidFallback && researchRoute.fallback) {
+      if ((turn.role !== 'assistant' || !turn.text.trim()) && researchRoute.fallback) {
         choice = researchRoute.fallback;
         turn = await runResearch(choice);
-        stages.push({ stage: 'research', model: choice.model, free: choice.free, costMicros: addCost(turn), note: 'paid fallback (allowed)' });
+        stages.push({ stage: 'research', model: choice.model, free: choice.free, costMicros: addCost(turn), note: `paid retry (${input.level} cost)` });
       }
       research.push(
         turn.role === 'assistant' && turn.text.trim()
@@ -333,10 +338,10 @@ export async function runAskOrchestrator(
   let workChoice = workRoute.primary;
   let workTurn = await call(workChoice, { viewer, projectId: input.projectId, system: writerPrompt(today), user: workUser, history: input.history.slice(-4), signal: input.signal, maxTokens: 2000 });
   stages.push({ stage: 'work', model: workChoice.model, free: workChoice.free, costMicros: addCost(workTurn) });
-  if ((workTurn.role !== 'assistant' || !workTurn.text.trim()) && workRoute.allowPaidFallback && workRoute.fallback) {
+  if ((workTurn.role !== 'assistant' || !workTurn.text.trim()) && workRoute.fallback) {
     workChoice = workRoute.fallback;
     workTurn = await call(workChoice, { viewer, projectId: input.projectId, system: writerPrompt(today), user: workUser, history: input.history.slice(-4), signal: input.signal, maxTokens: 2000 });
-    stages.push({ stage: 'work', model: workChoice.model, free: workChoice.free, costMicros: addCost(workTurn), note: 'paid fallback (allowed)' });
+    stages.push({ stage: 'work', model: workChoice.model, free: workChoice.free, costMicros: addCost(workTurn), note: `paid retry (${input.level} cost)` });
   }
   if (workTurn.role !== 'assistant' || !workTurn.text.trim()) {
     return { ...status(`The writer model (${workChoice.model}) could not answer: ${workTurn.text || 'no output'}.`), invocationIds: tools.invocationIds };
@@ -357,7 +362,9 @@ export async function runAskOrchestrator(
   });
 
   // 5. Review (paid) only when it matters.
-  const needsReview = plan.review || untraced.length > 0 || actionsRun > 0;
+  // low: only when triggered; medium: also any answer about the user's companies; high: always.
+  const triggered = plan.review || untraced.length > 0 || actionsRun > 0;
+  const needsReview = input.level === 'high' || triggered || (input.level === 'medium' && plan.scope !== 'general');
   if (needsReview && reviewRoute.primary) {
     const reviewTurn = await call(reviewRoute.primary, {
       viewer,
