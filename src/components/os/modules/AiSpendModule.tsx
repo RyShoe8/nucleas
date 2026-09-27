@@ -57,20 +57,53 @@ function DailyBars({ days, period }: { days: Spend['byDay']; period: string }) {
         return { date, costMicros: byDate.get(date)?.costMicros ?? 0, runs: byDate.get(date)?.runs ?? 0 };
     });
     const max = Math.max(...series.map((s) => s.costMicros), 1);
-    const w = 600;
-    const h = 90;
-    const bw = w / count;
+    const today = new Date().toISOString().slice(0, 10);
+    const monthName = new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
+    // Label a readable subset of days so the axis never crowds.
+    const labelled = new Set([1, 5, 10, 15, 20, 25, count]);
+
     return (
-        <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} role="img" aria-label="AI spend per day" className="text-primary">
-            {series.map((s, i) => {
-                const bh = s.costMicros > 0 ? Math.max(2, (s.costMicros / max) * (h - 4)) : 0;
-                return (
-                    <rect key={s.date} x={i * bw + 1} y={h - bh} width={Math.max(bw - 2, 1)} height={bh} fill="currentColor" opacity={0.85}>
-                        <title>{`${s.date}: ${usd(s.costMicros)} · ${s.runs} runs`}</title>
-                    </rect>
-                );
-            })}
-        </svg>
+        <div role="img" aria-label={`AI spend per day in ${monthName}; highest day ${usd(max)}`}>
+            <div className="flex gap-2">
+                {/* Scale */}
+                <div className="flex flex-col justify-between text-[10px] text-text-secondary tabular-nums text-right w-12 flex-shrink-0 h-28">
+                    <span>{usd(max)}</span>
+                    <span>{usd(max / 2)}</span>
+                    <span>$0</span>
+                </div>
+                {/* Bars */}
+                <div className="relative flex-1 h-28 border-l border-b border-border">
+                    <div className="absolute inset-x-0 top-0 border-t border-dashed border-border/60" aria-hidden />
+                    <div className="absolute inset-x-0 top-1/2 border-t border-dashed border-border/60" aria-hidden />
+                    <div className="absolute inset-0 flex items-end gap-px px-px">
+                        {series.map((s) => (
+                            <div
+                                key={s.date}
+                                className="flex-1 h-full flex items-end group"
+                                title={`${monthName} ${Number(s.date.slice(8))}: ${usd(s.costMicros)} · ${s.runs} run${s.runs === 1 ? '' : 's'}`}
+                            >
+                                <div
+                                    className={`w-full rounded-t-sm ${s.date === today ? 'bg-primary' : 'bg-primary/70'} group-hover:bg-primary`}
+                                    style={{ height: s.costMicros > 0 ? `${Math.max(2, (s.costMicros / max) * 100)}%` : 0 }}
+                                />
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+            {/* Day axis */}
+            <div className="flex gap-2 mt-1">
+                <div className="w-12 flex-shrink-0" />
+                <div className="flex-1 flex gap-px px-px">
+                    {series.map((s, i) => (
+                        <div key={s.date} className={`flex-1 text-center text-[10px] tabular-nums ${s.date === today ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>
+                            {labelled.has(i + 1) ? i + 1 : ''}
+                        </div>
+                    ))}
+                </div>
+            </div>
+            <div className="text-[10px] text-text-secondary text-center mt-0.5">{monthName} (UTC)</div>
+        </div>
     );
 }
 
