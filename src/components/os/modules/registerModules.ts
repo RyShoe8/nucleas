@@ -7,6 +7,8 @@ import AgendaModule from './AgendaModule';
 import ScheduleModule from './ScheduleModule';
 import VoiceModule from './VoiceModule';
 import PlaceholderModule from './PlaceholderModule';
+import CompaniesModule from './CompaniesModule';
+import CompanyModule from './CompanyModule';
 
 let registered = false;
 
@@ -23,6 +25,27 @@ export function registerOsModules(): void {
     const agendaSize = { width: 960, height: 640 };
 
     const definitions: ModuleDefinition[] = [
+        {
+            id: 'companies',
+            title: 'Companies',
+            icon: '🏢',
+            defaultSize: { width: 560, height: 520 },
+            minSize: baseMin,
+            canPopout: true,
+            permissions: 'member',
+            render: () => createElement(CompaniesModule),
+        },
+        {
+            id: 'company',
+            title: 'Company',
+            icon: '🏢',
+            defaultSize: { width: 760, height: 640 },
+            minSize: { width: 480, height: 360 },
+            canPopout: true,
+            permissions: 'member',
+            launcherHidden: true,
+            render: (ctx) => createElement(CompanyModule, ctx),
+        },
         {
             id: 'projects',
             title: 'Projects',

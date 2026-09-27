@@ -6,6 +6,7 @@ import { useOsAuth } from '@/hooks/os/useOsAuth';
 import ModuleLauncher from './ModuleLauncher';
 import OsInstallButton from './OsInstallButton';
 import OsAccountMenu from './OsAccountMenu';
+import CompanySwitcher from './CompanySwitcher';
 import {
     getCommandPaletteShortcutLabel,
     useOsCommandPalette,
@@ -25,9 +26,10 @@ export default function TopBar() {
         <header className="h-12 flex-shrink-0 flex items-center gap-3 px-4 border-b border-border bg-background">
             <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
                 <span className="text-sm sm:text-base font-semibold tracking-tight text-text-primary">Nucleas OS</span>
-                <span className="text-xs text-text-secondary truncate max-w-[120px] sm:max-w-[200px]">
-                    {projectLabel ? projectLabel : 'default workspace'}
-                </span>
+                <CompanySwitcher />
+                {projectLabel ? (
+                    <span className="hidden sm:inline text-xs text-text-secondary truncate max-w-[200px]">{projectLabel}</span>
+                ) : null}
             </div>
 
             <div className="flex-1 min-w-0" />
