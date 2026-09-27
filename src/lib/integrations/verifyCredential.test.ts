@@ -60,6 +60,13 @@ describe('verifyCredential', () => {
     expect(await verifyCredential('mercury', 'bad', fakeFetch(401, {}))).toMatchObject({ ok: false, reason: 'invalid_credential' });
   });
 
+  it('surfaces the provider reason without echoing the credential', async () => {
+    const out = await verifyCredential('mercury', 'secret-token:mercury_production_abc123', fakeFetch(401, { errors: { errorCode: 'noTokenInDB', message: 'No matching token found' } }));
+    expect(out).toMatchObject({ ok: false, message: 'The provider rejected this credential (noTokenInDB: No matching token found).' });
+    const echoed = await verifyCredential('brevo', 'xkeysib-secret', fakeFetch(401, { message: 'bad key xkeysib-secret' }));
+    expect(JSON.stringify(echoed)).not.toContain('xkeysib-secret');
+  });
+
   it('refuses providers that are not API-key based', async () => {
     expect(await verifyCredential('ga4', 'x', fakeFetch(200, {}))).toMatchObject({ ok: false, reason: 'unsupported' });
   });

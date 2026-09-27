@@ -22,8 +22,27 @@ async function getJson(fetchImpl: FetchLike, url: string, headers: Record<string
   return { status: res.status, body: (body ?? {}) as Record<string, unknown> };
 }
 
-function authFailure(status: number): VerifyOutcome | null {
-  if (status === 401 || status === 403) return { ok: false, reason: 'invalid_credential', message: 'The provider rejected this credential.' };
+/** Provider-supplied error text (Mercury, Brevo, Stripe, Vercel shapes), bounded. Never contains the credential. */
+function providerReason(body: Record<string, unknown>, credential: string): string | null {
+  const e = body.errors as Record<string, unknown> | undefined;
+  const err = body.error as Record<string, unknown> | string | undefined;
+  const parts = [
+    typeof e?.errorCode === 'string' ? e.errorCode : null,
+    typeof e?.message === 'string' ? e.message : null,
+    typeof body.code === 'string' ? body.code : null,
+    typeof body.message === 'string' ? body.message : null,
+    typeof err === 'string' ? err : typeof err?.message === 'string' ? err.message : null,
+  ].filter((p): p is string => Boolean(p));
+  if (!parts.length) return null;
+  const text = [...new Set(parts)].join(': ').slice(0, 200);
+  return credential.length >= 8 && text.includes(credential) ? null : text;
+}
+
+function authFailure(status: number, body: Record<string, unknown> = {}, credential = ''): VerifyOutcome | null {
+  if (status === 401 || status === 403) {
+    const reason = providerReason(body, credential);
+    return { ok: false, reason: 'invalid_credential', message: `The provider rejected this credential${reason ? ` (${reason})` : ''}.` };
+  }
   if (status >= 500) return { ok: false, reason: 'unreachable', message: `Provider returned ${status}. Try again shortly.` };
   return null;
 }
@@ -35,7 +54,7 @@ export async function verifyCredential(provider: string, credential: string, fet
     switch (provider) {
       case 'brevo': {
         const { status, body } = await getJson(fetchImpl, 'https://api.brevo.com/v3/account', { 'api-key': key });
-        const fail = authFailure(status);
+        const fail = authFailure(status, body, key);
         if (fail) return fail;
         const plans = Array.isArray(body.plan) ? (body.plan as { type?: string }[]).map((p) => p.type).filter(Boolean) : [];
         return { ok: true, accountLabel: String(body.companyName ?? body.email ?? 'Brevo account'), planLabel: plans.join(', ') || undefined };
@@ -47,7 +66,7 @@ export async function verifyCredential(provider: string, credential: string, fet
         }
         const { status, body } = await getJson(fetchImpl, 'https://api.stripe.com/v1/charges?limit=1', { authorization: `Bearer ${key}` });
         if (status === 403) return { ok: false, reason: 'invalid_credential', message: 'Key is valid but lacks read access to charges.' };
-        const fail = authFailure(status);
+        const fail = authFailure(status, body, key);
         if (fail) return fail;
         if (status !== 200) return { ok: false, reason: 'invalid_credential', message: `Stripe returned ${status}.` };
         const livemode = Array.isArray(body.data) && (body.data[0] as { livemode?: boolean } | undefined)?.livemode;
@@ -64,7 +83,7 @@ export async function verifyCredential(provider: string, credential: string, fet
         if (status === 401 || status === 403) {
           return { ok: false, reason: 'invalid_credential', message: 'Ahrefs rejected this API key. Use a key from Account settings → API keys (not an MCP key).' };
         }
-        const fail = authFailure(status);
+        const fail = authFailure(status, body, key);
         if (fail) return fail;
         const limits = (body.limits_and_usage ?? {}) as Record<string, unknown>;
         const plan = typeof limits.subscription === 'string' ? limits.subscription : undefined;
@@ -75,14 +94,14 @@ export async function verifyCredential(provider: string, credential: string, fet
       }
       case 'posthog': {
         const { status, body } = await getJson(fetchImpl, 'https://us.posthog.com/api/users/@me/', { authorization: `Bearer ${key}` });
-        const fail = authFailure(status);
+        const fail = authFailure(status, body, key);
         if (fail) return fail;
         return { ok: true, accountLabel: String((body.organization as { name?: string } | undefined)?.name ?? 'PostHog') };
       }
       case 'mercury': {
         // Lists accounts only to prove access; balances are never returned from verification.
         const { status, body } = await getJson(fetchImpl, 'https://api.mercury.com/api/v1/accounts', { authorization: `Bearer ${key}` });
-        const fail = authFailure(status);
+        const fail = authFailure(status, body, key);
         if (fail) return fail;
         if (status !== 200) return { ok: false, reason: 'invalid_credential', message: `Mercury returned ${status}.` };
         const count = Array.isArray(body.accounts) ? body.accounts.length : 0;
@@ -90,7 +109,7 @@ export async function verifyCredential(provider: string, credential: string, fet
       }
       case 'vercel': {
         const { status, body } = await getJson(fetchImpl, 'https://api.vercel.com/v2/user', { authorization: `Bearer ${key}` });
-        const fail = authFailure(status);
+        const fail = authFailure(status, body, key);
         if (fail) return fail;
         return { ok: true, accountLabel: String((body.user as { username?: string } | undefined)?.username ?? 'Vercel') };
       }
