@@ -11,7 +11,7 @@ import {
     shouldTriggerTearOffPopout,
     windowToScreenPlacement,
 } from '@/lib/os/tearOffPopout';
-import { getOsViewportBounds, OS_INSET_BOTTOM, OS_INSET_TOP } from '@/lib/os/viewportBounds';
+import { getOsCanvasBounds } from '@/lib/os/viewportBounds';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import { useDraggable } from './useDraggable';
 import { useResizable } from './useResizable';
@@ -33,7 +33,7 @@ export default function FloatingWindow({ window: w, module, children }: Floating
         (x: number, y: number) => {
             const clamped = clampToViewport(
                 { x, y, width: w.width, height: w.height },
-                getOsViewportBounds()
+                getOsCanvasBounds()
             );
             wm.move(w.id, clamped.x, clamped.y);
             if (module.canPopout && !w.poppedOut) {
@@ -60,7 +60,7 @@ export default function FloatingWindow({ window: w, module, children }: Floating
 
             const clamped = clampToViewport(
                 { x, y, width: w.width, height: w.height },
-                getOsViewportBounds()
+                getOsCanvasBounds()
             );
 
             if (
@@ -95,7 +95,7 @@ export default function FloatingWindow({ window: w, module, children }: Floating
         (width: number, height: number) => {
             const clamped = clampToViewport(
                 { x: w.x, y: w.y, width, height },
-                getOsViewportBounds()
+                getOsCanvasBounds()
             );
             wm.move(w.id, clamped.x, clamped.y);
             wm.resize(w.id, clamped.width, clamped.height);
@@ -144,9 +144,9 @@ export default function FloatingWindow({ window: w, module, children }: Floating
     const style: React.CSSProperties = w.maximized
         ? {
               left: 0,
-              top: OS_INSET_TOP,
+              top: 0,
               width: '100%',
-              height: `calc(100vh - ${OS_INSET_TOP}px - ${OS_INSET_BOTTOM}px)`,
+              height: '100%',
               zIndex: w.zIndex,
           }
         : {

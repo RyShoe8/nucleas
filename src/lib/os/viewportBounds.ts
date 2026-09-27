@@ -7,12 +7,29 @@ export const OS_INSET_TOP = 48;
 /** WindowsTray height (h-14). */
 export const OS_INSET_BOTTOM = 56;
 
+/**
+ * Page-relative bounds (pointer clientX/clientY space). Only for detecting a drag that leaves the
+ * canvas; window positions are canvas-relative, so use getOsCanvasBounds for those.
+ */
 export function getOsViewportBounds(): ViewportBounds {
     return {
         width: window.innerWidth,
         height: window.innerHeight,
         insetTop: OS_INSET_TOP,
         insetBottom: OS_INSET_BOTTOM,
+    };
+}
+
+/**
+ * Canvas-relative bounds: window x/y are measured from the top-left of the canvas, which already
+ * sits below the top bar and above the tray, so no further insets apply.
+ */
+export function getOsCanvasBounds(): ViewportBounds {
+    return {
+        width: window.innerWidth,
+        height: Math.max(0, window.innerHeight - OS_INSET_TOP - OS_INSET_BOTTOM),
+        insetTop: 0,
+        insetBottom: 0,
     };
 }
 

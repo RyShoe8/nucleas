@@ -9,7 +9,7 @@ import ModuleRegistry from '@/lib/os/moduleRegistry';
 import type { OpenWindowOptions, PersistedOsState } from '@/lib/os/types';
 import {
     clampLayoutWindows,
-    getOsViewportBounds,
+    getOsCanvasBounds,
     payloadsMatch,
 } from '@/lib/os/viewportBounds';
 import { WindowManagerContext, type PopOutOptions, type WindowManagerContextValue } from './windowManagerContext';
@@ -36,7 +36,7 @@ export default function WindowManagerProvider({ children, userId }: WindowManage
         if (persisted.layout.windows.length > 0 || persisted.layout.nextZIndex > initialLayout.nextZIndex) {
             const clampedWindows = clampLayoutWindows(
                 persisted.layout.windows,
-                getOsViewportBounds()
+                getOsCanvasBounds()
             );
             dispatch({
                 type: 'HYDRATE',
@@ -64,7 +64,7 @@ export default function WindowManagerProvider({ children, userId }: WindowManage
         const onResize = () => {
             const current = layoutRef.current;
             if (current.windows.length === 0) return;
-            const clamped = clampLayoutWindows(current.windows, getOsViewportBounds());
+            const clamped = clampLayoutWindows(current.windows, getOsCanvasBounds());
             const changed = clamped.some((w, i) => {
                 const prev = current.windows[i];
                 return (

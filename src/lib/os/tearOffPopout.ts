@@ -1,4 +1,4 @@
-import { getOsViewportBounds } from './viewportBounds';
+import { getOsCanvasBounds, getOsViewportBounds } from './viewportBounds';
 
 const EDGE_THRESHOLD = 24;
 
@@ -7,22 +7,25 @@ export function isPointerOutsideOsViewport(clientX: number, clientY: number): bo
     const bounds = getOsViewportBounds();
     const insetTop = bounds.insetTop ?? 0;
     const insetBottom = bounds.insetBottom ?? 0;
-  const maxY = bounds.height - insetBottom;
+    const maxY = bounds.height - insetBottom;
 
     return clientX < 0 || clientX > bounds.width || clientY < insetTop || clientY > maxY;
 }
 
-/** True while dragging when the window is near or past a canvas edge (tear-off hint). */
+/**
+ * True while dragging when the window is near or past the left, right or bottom canvas edge
+ * (tear-off hint). The top edge is excluded so windows can be parked flush under the top bar;
+ * tearing off upward requires dragging the pointer out of the canvas (isPointerOutsideOsViewport).
+ */
 export function isNearPopoutEdge(x: number, y: number, width: number, height: number): boolean {
-    const bounds = getOsViewportBounds();
-    const insetTop = bounds.insetTop ?? 0;
+    // Window x/y are canvas-relative.
+    const bounds = getOsCanvasBounds();
     const insetBottom = bounds.insetBottom ?? 0;
     const maxX = bounds.width - width;
     const maxY = bounds.height - insetBottom - height;
 
     return (
         x <= EDGE_THRESHOLD ||
-        y <= insetTop + EDGE_THRESHOLD ||
         x >= maxX - EDGE_THRESHOLD ||
         y >= maxY - EDGE_THRESHOLD
     );
