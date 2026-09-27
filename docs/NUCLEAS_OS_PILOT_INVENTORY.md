@@ -40,3 +40,17 @@ Ryan confirmed that every property uses GA4, Search Console, Brevo and Stripe. T
 ## Dry-run result
 
 `npx tsx --conditions=react-server scripts/convert-owned-companies.ts` planned `create_company_and_attach` for all 12 candidates and wrote nothing. The only side effect was the sparse `clients.hubProjectId_1` index, built by Mongoose autoIndex on the first run. The script now disables autoIndex for dry runs.
+
+## Conversion applied (2026-09-27)
+
+Confirmed by Ryan. 10 companies were created and linked. Result: `created 10, attached 10`. A second run reported `unchanged 10`.
+
+| Company | Relationship | Domain |
+|---|---|---|
+| Frugal Gambler, Playbound.club, Nucleas, Tailnote, Connect Pay, Home End | owned (core businesses) | frugalgambler.club, playbound.club, nucleas.app, tailnote.io, connectpay.club, none |
+| Auto Demo, Content Intelligence, The Ad Shop | owned (standalone for now; planned to become Nucleas capabilities) | autodemo-seven.vercel.app, none, theadshop.co |
+| The Media Shop | internal (operating company) | themediashop.co |
+
+Not converted: Retro Sports League (on hold; may merge into PlayBound or become a game on it) and Project Ideas.
+
+Verification: 15 Clients (5 legacy + 10 new), 15 projects linked with no orphan links, and all 178 tasks still present.
