@@ -1,26 +1,27 @@
 import { CapabilityError, type CapabilityRunContext } from '../types';
 import { providerJson } from './http';
 
-/** Exchanges the stored refresh token for a short-lived access token. */
-export async function googleAccessToken(ctx: CapabilityRunContext): Promise<string> {
+type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
+
+/** Exchanges a Google refresh token for a short-lived access token. */
+export async function refreshGoogleAccessToken(refreshToken: string, fetchImpl: FetchLike): Promise<string> {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   if (!clientId || !clientSecret) throw new CapabilityError('failed', 'Google sign-in is not configured.');
-  const res = await ctx.fetch('https://oauth2.googleapis.com/token', {
+  const res = await fetchImpl('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      refresh_token: ctx.access.credential,
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: 'refresh_token',
-    }),
+    body: new URLSearchParams({ refresh_token: refreshToken, client_id: clientId, client_secret: clientSecret, grant_type: 'refresh_token' }),
     signal: AbortSignal.timeout(15_000),
   });
   const body = (await res.json().catch(() => ({}))) as { access_token?: string; error?: string };
   if (body.error === 'invalid_grant') throw new CapabilityError('needs_reauth', 'Google access was revoked or expired. Sign in with Google again.');
   if (!res.ok || !body.access_token) throw new CapabilityError('failed', 'Could not refresh Google access.');
   return body.access_token;
+}
+
+export function googleAccessToken(ctx: CapabilityRunContext): Promise<string> {
+  return refreshGoogleAccessToken(ctx.access.credential, ctx.fetch);
 }
 
 export interface TrafficDay {

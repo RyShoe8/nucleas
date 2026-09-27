@@ -288,3 +288,65 @@ describe('adding and removing integrations', () => {
     expect(await IntegrationConnection.countDocuments({ companyId: new Types.ObjectId(ownedId), provider: 'stripe' })).toBe(1);
   });
 });
+
+describe('pinning resources', () => {
+  function fakeGoogleListing() {
+    return vi.fn(async (url: string) => {
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (url.includes('oauth2.googleapis.com/token')) return json({ access_token: 'at' });
+      if (url.includes('accountSummaries')) {
+        return json({ accountSummaries: [{ propertySummaries: [{ property: 'properties/111', displayName: 'PlayBound GA4' }, { property: 'properties/222', displayName: 'Home End GA4' }] }] });
+      }
+      if (url.includes('dataStreams')) return json({ dataStreams: [] });
+      return json({});
+    });
+  }
+
+  beforeEach(() => {
+    vi.stubEnv('GOOGLE_CLIENT_ID', 'cid');
+    vi.stubEnv('GOOGLE_CLIENT_SECRET', 'csecret');
+  });
+
+  async function seedGoogleSecret() {
+    const { sealSecret } = await import('@/lib/security/secretBox');
+    return IntegrationSecret.create({ organizationId: orgId, provider: 'google', sealed: sealSecret('integration:google', 'refresh'), hint: 'ryan@example.com' });
+  }
+
+  it('lists what the Google account can see and pins a choice, connecting the company', async () => {
+    await applyDeclaredConnections(orgId);
+    const secret = await seedGoogleSecret();
+    const { listPinOptions, pinResource } = await import('./resourcePicker');
+
+    const options = await listPinOptions(admin, clientId, 'ga4', fakeGoogleListing());
+    expect(options?.accounts[0]).toMatchObject({ accountHint: 'ryan@example.com' });
+    expect(options?.accounts[0].candidates.map((c) => c.externalId)).toEqual(['222', '111']);
+
+    const pinned = await pinResource(admin, clientId, 'ga4', { secretId: String(secret._id), externalId: '222' }, fakeGoogleListing());
+    expect(pinned).toEqual({ ok: true, label: 'Home End GA4' });
+    const conn = await IntegrationConnection.findOne({ companyId: new Types.ObjectId(clientId), provider: 'ga4' }).lean();
+    expect(conn).toMatchObject({ status: 'connected', accountLabel: 'Home End GA4' });
+    expect(await ExternalResource.findOne({ companyId: new Types.ObjectId(clientId), provider: 'ga4' }).lean()).toMatchObject({ externalId: '222' });
+  });
+
+  it('refuses resources the account cannot see and non-managers', async () => {
+    const secret = await seedGoogleSecret();
+    const { pinResource } = await import('./resourcePicker');
+    expect(await pinResource(admin, clientId, 'ga4', { secretId: String(secret._id), externalId: '999' }, fakeGoogleListing())).toMatchObject({ ok: false, status: 400 });
+    expect(await pinResource(member, ownedId, 'ga4', { secretId: String(secret._id), externalId: '111' }, fakeGoogleListing())).toMatchObject({ ok: false, status: 403 });
+  });
+
+  it('requires confirmation to move a pin from another company, and replaces the previous pin', async () => {
+    const secret = await seedGoogleSecret();
+    const { pinResource } = await import('./resourcePicker');
+    await pinResource(admin, ownedId, 'ga4', { secretId: String(secret._id), externalId: '111' }, fakeGoogleListing());
+
+    const blocked = await pinResource(admin, clientId, 'ga4', { secretId: String(secret._id), externalId: '111' }, fakeGoogleListing());
+    expect(blocked).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('PlayBound') });
+
+    await pinResource(admin, clientId, 'ga4', { secretId: String(secret._id), externalId: '111', move: true }, fakeGoogleListing());
+    expect(await ExternalResource.findOne({ externalId: '111' }).lean()).toMatchObject({ companyId: new Types.ObjectId(clientId) });
+
+    await pinResource(admin, clientId, 'ga4', { secretId: String(secret._id), externalId: '222' }, fakeGoogleListing());
+    expect(await ExternalResource.countDocuments({ companyId: new Types.ObjectId(clientId), provider: 'ga4' })).toBe(1);
+  });
+});

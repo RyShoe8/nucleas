@@ -7,6 +7,9 @@ import type { ModuleRenderContext } from '@/lib/os/types';
 import { DOMAIN_LABEL, RELATIONSHIP_LABEL, type OsCompanyDetail, type OsConnection } from './companyTypes';
 import CompanySnapshot from './CompanySnapshot';
 import CompanyActivity from './CompanyActivity';
+import ResourcePicker from './ResourcePicker';
+
+const PINNABLE_PROVIDERS: Record<string, string> = { ga4: 'Choose property', gsc: 'Choose site', ahrefs: 'Choose project' };
 
 const STATUS_STYLE: Record<string, string> = {
     connected: 'text-emerald-400 border-emerald-400/40',
@@ -139,7 +142,7 @@ function ConnectionsSection({
             ) : (
                 <ul className="rounded-md border border-border divide-y divide-border">
                     {connections.map((c) => (
-                        <ConnectionRow key={c.id} connection={c} onChanged={onChanged} />
+                        <ConnectionRow key={c.id} companyId={companyId} connection={c} onChanged={onChanged} />
                     ))}
                 </ul>
             )}
@@ -209,8 +212,9 @@ function AddIntegration({ companyId, onAdded }: { companyId: string; onAdded: ()
     );
 }
 
-function ConnectionRow({ connection: c, onChanged }: { connection: OsConnection; onChanged: () => void }) {
+function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: string; connection: OsConnection; onChanged: () => void }) {
     const auth = useOsAuth();
+    const [picking, setPicking] = useState(false);
     const [editing, setEditing] = useState(false);
     const [credential, setCredential] = useState('');
     const [saving, setSaving] = useState(false);
@@ -290,6 +294,15 @@ function ConnectionRow({ connection: c, onChanged }: { connection: OsConnection;
                         {c.status === 'connected' ? 'Re-sign in' : 'Sign in with Google'}
                     </a>
                 ) : null}
+                {PINNABLE_PROVIDERS[c.provider] && auth.isManagerOrAdmin && !editing && (c.status === 'connected' || c.signIn === 'google') ? (
+                    <button
+                        type="button"
+                        onClick={() => setPicking((v) => !v)}
+                        className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card"
+                    >
+                        {PINNABLE_PROVIDERS[c.provider]}
+                    </button>
+                ) : null}
                 {auth.isManagerOrAdmin && !editing ? (
                     <button
                         type="button"
@@ -335,6 +348,17 @@ function ConnectionRow({ connection: c, onChanged }: { connection: OsConnection;
                         Cancel
                     </button>
                 </form>
+            ) : null}
+            {picking ? (
+                <ResourcePicker
+                    companyId={companyId}
+                    provider={c.provider}
+                    onClose={() => setPicking(false)}
+                    onPinned={() => {
+                        setPicking(false);
+                        onChanged();
+                    }}
+                />
             ) : null}
             {editing && c.keyGuidance ? <p className="mt-1 ml-[5.5rem] text-[11px] text-text-secondary">{c.keyGuidance}</p> : null}
             {message ? <p className="mt-1 ml-[5.5rem] text-[11px] text-red-400">{message}</p> : null}
