@@ -7,6 +7,12 @@ vi.mock('server-only', () => ({}));
 type ChatInput = { systemPrompt: string; userText: string; model: string; modelProfileId: string };
 const chat = vi.fn<(input: ChatInput) => Promise<{ role: string; text: string; costMicros?: number; runId?: string; requestId: string }>>();
 vi.mock('@/lib/ai/companyChat', () => ({ attemptCompanyCredentialChat: (input: ChatInput) => chat(input) }));
+const search = vi.fn();
+vi.mock('@/lib/ai/tools/webSearch', () => ({ webSearch: (q: string) => search(q) }));
+vi.mock('@/lib/ai/tools/serverBrowseAssist', () => ({
+  formatResearchResultContext: (r: { query: string; hits: { title: string; url: string; snippet: string }[] }) =>
+    [`Search: ${r.query}`, ...r.hits.map((h) => `- [${h.title}](${h.url}): ${h.snippet}`)].join('\n'),
+}));
 
 import Client from '@/lib/models/Client';
 import Project from '@/lib/models/Project';
@@ -38,6 +44,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   chat.mockReset();
+  search.mockReset();
   await Promise.all([Client.deleteMany({}), Project.deleteMany({}), AiModelProfile.deleteMany({}), AiRolePipeline.deleteMany({}), AiRouteBinding.deleteMany({}), MetricSnapshot.deleteMany({}), CapabilityInvocation.deleteMany({})]);
   const paid = await AiModelProfile.create({ key: 'anthropic', label: 'Anthropic', provider: 'openrouter', tier: 'commercial', protocol: 'openai-chat', endpoint: 'https://x.test/v1/chat/completions', secretCiphertext: 'x', secretLast4: '1234', enabled: true });
   const rogly = await AiModelProfile.create({ key: 'rogly', label: 'Rogly', provider: 'custom', tier: 'local_remote', protocol: 'openai-chat', endpoint: 'https://rogly.test/v1/chat/completions', secretCiphertext: 'x', secretLast4: '1234', enabled: true });
@@ -177,5 +184,44 @@ describe('orchestrated Ask', () => {
     const clarify = await ask('how is it going?');
     expect(clarify).toMatchObject({ role: 'assistant', text: 'Which business do you mean?' });
     expect(chat).toHaveBeenCalledTimes(1 + 2 + 1);
+  });
+});
+
+describe('general questions', () => {
+  it('answers from general knowledge without company data, number checks or review', async () => {
+    chat.mockImplementation(async (input) => {
+      const stage = stageOf(input);
+      if (stage === 'plan') return reply('{"kind":"answer","scope":"general","outline":["Give a pick"],"review":false}', 1000);
+      if (stage === 'work') {
+        expect(input.userText).not.toContain('Nucleas facts');
+        expect(input.userText).not.toContain('Frugal Gambler');
+        expect(input.systemPrompt).toContain('you may use your own knowledge');
+        return reply('Many rank Patrick Mahomes first; it is a judgement call. He has 3 titles and 1000 things.');
+      }
+      throw new Error('review should not run');
+    });
+    const out = await ask('Who is the best quarterback in the NFL?');
+    expect(out.role).toBe('assistant');
+    expect(out.stages.find((s) => s.stage === 'check')?.note).toBe('not applicable (general knowledge)');
+    expect(out.stages.map((s) => s.stage)).not.toContain('review');
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('runs requested web research in code and gives the writer cited sources', async () => {
+    search.mockResolvedValue({ query: 'best NFL quarterback 2026', hits: [{ title: 'QB rankings', url: 'https://example.com/qb', snippet: 'Josh Allen leads with 4,300 yards' }] });
+    chat.mockImplementation(async (input) => {
+      const stage = stageOf(input);
+      if (stage === 'plan') return reply('{"kind":"answer","scope":"general","research":[{"query":"best NFL quarterback 2026"}],"outline":[],"review":false}');
+      if (stage === 'work') {
+        expect(input.userText).toContain('# Web research');
+        expect(input.userText).toContain('[QB rankings](https://example.com/qb)');
+        return reply('Josh Allen leads with 4,300 yards ([QB rankings](https://example.com/qb)).');
+      }
+      throw new Error('review should not run');
+    });
+    const out = await ask('Who is the best quarterback right now?');
+    expect(search).toHaveBeenCalledWith('best NFL quarterback 2026');
+    expect(out.stages.find((s) => s.stage === 'fetch')?.note).toBe('0 job(s), 1 web search(es), no model');
+    expect(out.stages.find((s) => s.stage === 'check')?.note).toBe('all numbers traced to data');
   });
 });
