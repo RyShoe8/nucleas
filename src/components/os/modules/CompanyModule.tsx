@@ -187,8 +187,13 @@ function ConnectionRow({ connection: c, onChanged }: { connection: OsConnection;
                         {c.status === 'connected' ? 'Replace key' : 'Connect'}
                     </button>
                 ) : null}
-                {!c.connectable && c.status !== 'connected' ? (
-                    <span className="text-[11px] text-text-secondary">Sign-in flow coming</span>
+                {c.signIn === 'google' && auth.isManagerOrAdmin && c.companyId ? (
+                    <a
+                        href={`/api/os/integrations/google/start?companyId=${encodeURIComponent(c.companyId)}`}
+                        className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card"
+                    >
+                        {c.status === 'connected' ? 'Re-sign in' : 'Sign in with Google'}
+                    </a>
                 ) : null}
             </div>
             {detail.length ? <p className="mt-0.5 ml-[5.5rem] text-[11px] text-text-secondary truncate">{detail.join(' · ')}</p> : null}

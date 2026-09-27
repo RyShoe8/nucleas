@@ -3,7 +3,7 @@ import mongoose, { Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 import Client from '@/lib/models/Client';
 import Project from '@/lib/models/Project';
-import { IntegrationConnection, IntegrationSecret } from '@/lib/models/Integration';
+import { ExternalResource, IntegrationConnection, IntegrationSecret } from '@/lib/models/Integration';
 import { getCompanyProfile, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { applyDeclaredConnections, planDeclaredConnections } from './declareConnections';
 import { connectWithApiKey, listCompanyConnections, readConnectionCredential } from './connections';
@@ -33,7 +33,7 @@ let ownedId: string;
 let clientId: string;
 
 beforeEach(async () => {
-  await Promise.all([Client.deleteMany({}), Project.deleteMany({}), IntegrationConnection.deleteMany({}), IntegrationSecret.deleteMany({})]);
+  await Promise.all([Client.deleteMany({}), Project.deleteMany({}), IntegrationConnection.deleteMany({}), IntegrationSecret.deleteMany({}), ExternalResource.deleteMany({})]);
   const hub = await Project.create({
     name: 'PlayBound',
     projectType: 'internal',
@@ -154,5 +154,91 @@ describe('connecting with an API key', () => {
 
   it('hides connections of companies the viewer cannot see', async () => {
     expect(await listCompanyConnections(outsider, ownedId)).toBeNull();
+  });
+});
+
+describe('Google sign-in', () => {
+  function fakeGoogle(opts: { scope?: string; refresh?: boolean } = {}) {
+    return vi.fn(async (url: string) => {
+      const json = (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+      if (url.startsWith('https://oauth2.googleapis.com/token')) {
+        return json({
+          access_token: 'access-token',
+          ...(opts.refresh === false ? {} : { refresh_token: 'google-refresh-token-abcd' }),
+          scope:
+            opts.scope ??
+            'https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/webmasters.readonly email',
+        });
+      }
+      if (url.includes('openidconnect')) return json({ email: 'ryan@example.com' });
+      if (url.includes('accountSummaries')) {
+        return json({ accountSummaries: [{ propertySummaries: [{ property: 'properties/111', displayName: 'PlayBound GA4' }] }] });
+      }
+      if (url.includes('/properties/111/dataStreams')) return json({ dataStreams: [{ webStreamData: { defaultUri: 'https://www.playbound.club' } }] });
+      if (url.includes('webmasters/v3/sites')) return json({ siteEntry: [{ siteUrl: 'sc-domain:playbound.club', permissionLevel: 'siteOwner' }] });
+      return json({}, 404);
+    });
+  }
+
+  beforeEach(() => {
+    vi.stubEnv('GOOGLE_CLIENT_ID', 'cid');
+    vi.stubEnv('GOOGLE_CLIENT_SECRET', 'csecret');
+  });
+
+  it('connects GA4 and Search Console for every company whose domain matches', async () => {
+    await applyDeclaredConnections(orgId);
+    const { completeGoogleConnection } = await import('./google/connectGoogle');
+    const result = await completeGoogleConnection(admin, { code: 'code', redirectUri: 'https://os.nucleas.app/cb' }, fakeGoogle());
+    expect(result).toMatchObject({
+      ok: true,
+      summary: { accountEmail: 'ryan@example.com', analytics: { connected: ['PlayBound'] }, searchConsole: { connected: ['PlayBound'] } },
+    });
+
+    const views = (await listCompanyConnections(admin, ownedId))!;
+    expect(views.find((v) => v.provider === 'ga4')).toMatchObject({ status: 'connected', accountLabel: 'PlayBound GA4', credentialHint: 'ryan@example.com' });
+    expect(views.find((v) => v.provider === 'gsc')).toMatchObject({ status: 'connected', accountLabel: 'sc-domain:playbound.club' });
+
+    const { ExternalResource } = await import('@/lib/models/Integration');
+    expect(await ExternalResource.find({ companyId: new Types.ObjectId(ownedId) }).select('provider externalId -_id').lean()).toEqual(
+      expect.arrayContaining([
+        { provider: 'ga4', externalId: '111' },
+        { provider: 'gsc', externalId: 'sc-domain:playbound.club' },
+      ])
+    );
+
+    // One secret for the Google account, readable for both connections.
+    expect(await IntegrationSecret.countDocuments({ provider: 'google' })).toBe(1);
+    const ga4 = views.find((v) => v.provider === 'ga4')!;
+    expect(await readConnectionCredential(orgId, new Types.ObjectId(ga4.id))).toBe('google-refresh-token-abcd');
+  });
+
+  it('re-signing in with the same account rotates the secret instead of duplicating it', async () => {
+    await applyDeclaredConnections(orgId);
+    const { completeGoogleConnection } = await import('./google/connectGoogle');
+    await completeGoogleConnection(admin, { code: 'a', redirectUri: 'https://os.nucleas.app/cb' }, fakeGoogle());
+    await completeGoogleConnection(admin, { code: 'b', redirectUri: 'https://os.nucleas.app/cb' }, fakeGoogle());
+    expect(await IntegrationSecret.countDocuments({ provider: 'google' })).toBe(1);
+  });
+
+  it('honours partially granted scopes and refuses missing offline access', async () => {
+    await applyDeclaredConnections(orgId);
+    const { completeGoogleConnection } = await import('./google/connectGoogle');
+    const partial = await completeGoogleConnection(
+      admin,
+      { code: 'c', redirectUri: 'https://os.nucleas.app/cb' },
+      fakeGoogle({ scope: 'https://www.googleapis.com/auth/webmasters.readonly' })
+    );
+    expect(partial).toMatchObject({ ok: true, summary: { analytics: { granted: false, connected: [] }, searchConsole: { connected: ['PlayBound'] } } });
+
+    const noRefresh = await completeGoogleConnection(admin, { code: 'd', redirectUri: 'https://os.nucleas.app/cb' }, fakeGoogle({ refresh: false }));
+    expect(noRefresh).toMatchObject({ ok: false });
+  });
+
+  it('is manager-only', async () => {
+    const { completeGoogleConnection } = await import('./google/connectGoogle');
+    const f = fakeGoogle();
+    expect(await completeGoogleConnection(member, { code: 'x', redirectUri: 'https://os.nucleas.app/cb' }, f)).toMatchObject({ ok: false });
+    expect(f).not.toHaveBeenCalled();
   });
 });

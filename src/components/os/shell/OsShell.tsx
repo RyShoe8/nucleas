@@ -4,6 +4,7 @@ import { type ReactNode } from 'react';
 import TopBar from './TopBar';
 import WindowsTray from './WindowsTray';
 import ModuleCanvas from './ModuleCanvas';
+import IntegrationNotice from './IntegrationNotice';
 
 interface OsShellProps {
     children?: ReactNode;
@@ -15,6 +16,7 @@ export default function OsShell({ children }: OsShellProps) {
             <TopBar />
             <div className="relative flex-1 min-h-0">
                 <ModuleCanvas />
+                <IntegrationNotice />
                 {children ? (
                     <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                         <div className="pointer-events-auto">{children}</div>

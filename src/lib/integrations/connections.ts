@@ -21,6 +21,8 @@ export interface ConnectionView {
   lastVerifiedAt?: string;
   lastError?: string;
   connectable: boolean;
+  /** OAuth sign-in flow that connects this integration, when not API-key based. */
+  signIn: 'google' | null;
 }
 
 type ConnectionLean = {
@@ -54,6 +56,7 @@ function toView(c: ConnectionLean): ConnectionView {
     lastVerifiedAt: c.lastVerifiedAt?.toISOString(),
     lastError: c.lastError,
     connectable: def?.authKind === 'api_key',
+    signIn: c.provider === 'ga4' || c.provider === 'gsc' ? 'google' : null,
   };
 }
 
@@ -154,8 +157,9 @@ export async function readConnectionCredential(organizationId: Types.ObjectId, c
     .select('provider secretId')
     .lean<{ provider: string; secretId?: Types.ObjectId }>();
   if (!connection?.secretId) return null;
+  // Purpose comes from the secret: one Google secret serves both the ga4 and gsc connections.
   const secret = await IntegrationSecret.findOne({ _id: connection.secretId, organizationId })
-    .select('+sealed')
-    .lean<{ sealed: string }>();
-  return secret ? openSecret(`integration:${connection.provider}`, secret.sealed) : null;
+    .select('+sealed provider')
+    .lean<{ sealed: string; provider: string }>();
+  return secret ? openSecret(`integration:${secret.provider}`, secret.sealed) : null;
 }

@@ -17,6 +17,7 @@ export interface OsConnection {
     providerName: string;
     domain: string;
     scope: 'org' | 'company';
+    companyId: string | null;
     status: string;
     credentialHint?: string;
     accountLabel?: string;
@@ -25,6 +26,7 @@ export interface OsConnection {
     lastVerifiedAt?: string;
     lastError?: string;
     connectable: boolean;
+    signIn: 'google' | null;
 }
 
 export interface OsCompanyDetail {
