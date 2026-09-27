@@ -15,6 +15,7 @@ export default function CompanySwitcher() {
         companies === null
             ? [{ label: 'Loading…', disabled: true }]
             : [
+                  { label: 'Today (all businesses)', onClick: () => wm.open('today') },
                   { label: 'All companies', onClick: () => wm.open('companies') },
                   ...companies.map((c) => ({
                       label: c.name,
