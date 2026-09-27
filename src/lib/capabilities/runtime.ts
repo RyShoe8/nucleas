@@ -18,6 +18,8 @@ type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export interface InvokeOptions {
   aiRunId?: string;
+  /** Set for scheduled system work, e.g. 'metrics-sync'. */
+  system?: string;
   fetchImpl?: FetchLike;
   registry?: CapabilityDefinition[];
   now?: Date;
@@ -39,7 +41,7 @@ export interface InvocationView {
   verified?: boolean;
   providerUnits: number;
   approvalId?: string;
-  requestedBy: 'user' | 'ai';
+  requestedBy: 'user' | 'ai' | 'system';
   createdAt: string;
   finishedAt?: string;
   cached?: boolean;
@@ -82,6 +84,7 @@ type InvocationLean = {
   providerUnits?: number;
   approvalId?: Types.ObjectId;
   requestedByAiRunId?: Types.ObjectId;
+  requestedBySystem?: string;
   createdAt: Date;
   finishedAt?: Date;
 };
@@ -103,7 +106,7 @@ export function toInvocationView(doc: InvocationLean, registry: CapabilityDefini
     verified: doc.verified,
     providerUnits: doc.providerUnits ?? 0,
     approvalId: doc.approvalId ? String(doc.approvalId) : undefined,
-    requestedBy: doc.requestedByAiRunId ? 'ai' : 'user',
+    requestedBy: doc.requestedBySystem ? 'system' : doc.requestedByAiRunId ? 'ai' : 'user',
     createdAt: doc.createdAt.toISOString(),
     finishedAt: doc.finishedAt?.toISOString(),
     ...(cached ? { cached: true } : {}),
@@ -160,7 +163,8 @@ async function execute(
   def: CapabilityDefinition,
   invocationId: Types.ObjectId,
   input: unknown,
-  fetchImpl: FetchLike
+  fetchImpl: FetchLike,
+  now: Date
 ): Promise<InvocationLean> {
   const resolved = await resolveAccess(viewer, profile, def);
   if (!('access' in resolved)) return (await finish(invocationId, resolved.status, { error: resolved.error }))!;
@@ -172,6 +176,7 @@ async function execute(
     companyId: new Types.ObjectId(profile.id),
     companyDomain: profile.domain,
     access: resolved.access,
+    now,
     fetch: fetchImpl,
     reportUnits: (n: number) => {
       units += n;
@@ -270,6 +275,7 @@ export async function invokeCapability(
     status: def.approval === 'required' ? 'pending_approval' : 'running',
     requestedByUserId: Types.ObjectId.isValid(viewer.userId) ? new Types.ObjectId(viewer.userId) : undefined,
     requestedByAiRunId: options.aiRunId ? new Types.ObjectId(options.aiRunId) : undefined,
+    requestedBySystem: options.system,
     input,
     inputDigest: digest,
   });
@@ -288,7 +294,7 @@ export async function invokeCapability(
     return { ok: true, invocation: toInvocationView(pending!, registry) };
   }
 
-  const done = await execute(viewer, profile, def, invocation._id, input, options.fetchImpl ?? fetch);
+  const done = await execute(viewer, profile, def, invocation._id, input, options.fetchImpl ?? fetch, now);
   return { ok: true, invocation: toInvocationView(done, registry) };
 }
 
@@ -341,7 +347,7 @@ export async function decideApproval(
     return { ok: true, invocation: toInvocationView(stale!, registry) };
   }
 
-  const done = await execute(viewer, profile, def, invocation._id, invocation.input, options.fetchImpl ?? fetch);
+  const done = await execute(viewer, profile, def, invocation._id, invocation.input, options.fetchImpl ?? fetch, new Date());
   return { ok: true, invocation: toInvocationView(done, registry) };
 }
 

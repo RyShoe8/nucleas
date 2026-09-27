@@ -5,6 +5,8 @@ import { ga4Traffic, gscPerformance, type SearchOutput, type TrafficOutput } fro
 import { brevoAudience, mercuryCash, stripeRevenue, type CashOutput, type EmailAudienceOutput, type RevenueOutput } from './adapters/commerce';
 import { ahrefsOverview, ensureAhrefsProject, findProjectForDomain, listAhrefsProjects, type SeoOverviewOutput } from './adapters/ahrefs';
 
+export const SEARCH_LAG_DAYS = 2;
+
 const daysInput = z.object({ days: z.number().int().min(1).max(365).default(28) }).strict();
 type DaysInput = z.infer<typeof daysInput>;
 
@@ -26,7 +28,7 @@ const analyticsTraffic: CapabilityDefinition<DaysInput, TrafficOutput> = {
   input: daysInput,
   cacheSeconds: 600,
   async run(ctx, input) {
-    const output = await ga4Traffic(ctx, defaultRange(input.days));
+    const output = await ga4Traffic(ctx, defaultRange(input.days, ctx.now));
     return { output, summary: `${output.totals.sessions.toLocaleString('en-US')} sessions over ${input.days} days` };
   },
 };
@@ -45,11 +47,7 @@ const searchPerformance: CapabilityDefinition<DaysInput, SearchOutput> = {
   cacheSeconds: 600,
   async run(ctx, input) {
     // Search Console data lags ~2 days; ask for the window ending 2 days ago.
-    const { endDate } = defaultRange(2);
-    const end = new Date(`${endDate}T00:00:00Z`);
-    const start = new Date(end);
-    start.setUTCDate(end.getUTCDate() - (input.days - 1));
-    const output = await gscPerformance(ctx, { startDate: start.toISOString().slice(0, 10), endDate });
+    const output = await gscPerformance(ctx, defaultRange(input.days, ctx.now, SEARCH_LAG_DAYS));
     return { output, summary: `${output.totals.clicks.toLocaleString('en-US')} clicks, ${output.totals.impressions.toLocaleString('en-US')} impressions` };
   },
 };
@@ -66,7 +64,7 @@ const emailAudience: CapabilityDefinition<DaysInput, EmailAudienceOutput> = {
   input: daysInput,
   cacheSeconds: 600,
   async run(ctx, input) {
-    const output = await brevoAudience(ctx, { startDate: defaultRange(input.days).startDate });
+    const output = await brevoAudience(ctx, { startDate: defaultRange(input.days, ctx.now).startDate });
     return { output, summary: `${output.totalContacts.toLocaleString('en-US')} contacts, ${output.newContacts} new in ${input.days} days` };
   },
 };
@@ -83,7 +81,7 @@ const paymentsRevenue: CapabilityDefinition<DaysInput, RevenueOutput> = {
   input: daysInput,
   cacheSeconds: 600,
   async run(ctx, input) {
-    const output = await stripeRevenue(ctx, defaultRange(input.days));
+    const output = await stripeRevenue(ctx, defaultRange(input.days, ctx.now));
     return { output, summary: `${output.payments} payments, ${output.newCustomers} new customers, ${output.activeSubscriptions} active subscriptions` };
   },
 };
@@ -118,7 +116,7 @@ const seoOverview: CapabilityDefinition<Record<string, never>, SeoOverviewOutput
   input: z.object({}).strict(),
   cacheSeconds: 3600,
   async run(ctx) {
-    const output = await ahrefsOverview(ctx, requireDomain(ctx.companyDomain));
+    const output = await ahrefsOverview(ctx, requireDomain(ctx.companyDomain), ctx.now);
     return { output, summary: `DR ${output.domainRating ?? '-'}, ${output.organicKeywords ?? '-'} organic keywords` };
   },
 };

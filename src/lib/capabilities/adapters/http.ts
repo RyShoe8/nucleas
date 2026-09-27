@@ -42,9 +42,13 @@ export function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Inclusive date range defaulting to the last N full days (UTC). */
-export function defaultRange(days: number, now = new Date()): { startDate: string; endDate: string } {
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1));
+/**
+ * Inclusive range of N days ending `lagDays` before today (UTC). Most sources are complete through
+ * yesterday (lag 1); Search Console lags ~2 days. The metric sync uses the same function so the
+ * days it writes are exactly the days that were fetched.
+ */
+export function defaultRange(days: number, now = new Date(), lagDays = 1): { startDate: string; endDate: string } {
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - lagDays));
   const start = new Date(end);
   start.setUTCDate(end.getUTCDate() - (days - 1));
   return { startDate: isoDate(start), endDate: isoDate(end) };

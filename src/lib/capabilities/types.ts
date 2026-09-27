@@ -55,6 +55,8 @@ export interface CapabilityRunContext {
   companyId: Types.ObjectId;
   companyDomain?: string;
   access: ProviderAccess;
+  /** Clock for date windows, shared with callers (e.g. the metric sync) so both agree on 'yesterday'. */
+  now: Date;
   fetch: (url: string, init?: RequestInit) => Promise<Response>;
   /** Units consumed at the provider (e.g. Ahrefs API units), reported by the adapter. */
   reportUnits: (units: number) => void;

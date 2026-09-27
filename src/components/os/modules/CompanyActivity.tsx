@@ -89,7 +89,7 @@ export default function CompanyActivity({ companyId, refreshKey }: { companyId: 
                                     {i.title}
                                     <span className="ml-2 text-[11px] text-text-secondary">
                                         {i.providerName}
-                                        {i.requestedBy === 'ai' ? ' · by AI' : ''}
+                                        {i.requestedBy === 'ai' ? ' · by AI' : i.requestedBy === 'system' ? ' · scheduled' : ''}
                                     </span>
                                 </span>
                                 <span className={`text-[11px] ${STATUS_STYLE[i.status] ?? 'text-text-secondary'}`}>{STATUS_LABEL[i.status] ?? i.status}</span>

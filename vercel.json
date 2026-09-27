@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/data-retention",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/metrics-sync",
+      "schedule": "*/10 * * * *"
     }
   ]
 }

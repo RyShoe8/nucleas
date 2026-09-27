@@ -18,6 +18,8 @@ const invocationSchema = new Schema(
     },
     requestedByUserId: { type: Schema.Types.ObjectId, ref: 'User' },
     requestedByAiRunId: { type: Schema.Types.ObjectId, ref: 'AiRun' },
+    /** Scheduled system work (e.g. 'metrics-sync') rather than a person or AI run. */
+    requestedBySystem: { type: String },
     /** Input as submitted (capability inputs never contain credentials). */
     input: { type: Schema.Types.Mixed, default: {} },
     inputDigest: { type: String, required: true },
