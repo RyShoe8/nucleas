@@ -7,6 +7,7 @@ import ModuleLauncher from './ModuleLauncher';
 import OsInstallButton from './OsInstallButton';
 import OsAccountMenu from './OsAccountMenu';
 import CompanySwitcher from './CompanySwitcher';
+import { setAssistantFocus } from '@/lib/os/assistantFocus';
 import {
     getCommandPaletteShortcutLabel,
     useOsCommandPalette,
@@ -35,6 +36,16 @@ export default function TopBar() {
             <div className="flex-1 min-w-0" />
 
             <div className="flex items-center gap-2">
+                <button
+                    type="button"
+                    onClick={() => {
+                        setAssistantFocus(null);
+                        wm.open('assistant');
+                    }}
+                    className="px-3 h-8 rounded-md bg-primary text-white text-sm hover:opacity-90"
+                >
+                    ✨ Ask
+                </button>
                 <OsInstallButton />
                 <ModuleLauncher />
                 {auth.isAdmin ? (

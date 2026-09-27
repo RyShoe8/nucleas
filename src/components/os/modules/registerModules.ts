@@ -68,9 +68,7 @@ export function registerOsModules(): void {
             minSize: { width: 400, height: 360 },
             canPopout: true,
             permissions: 'member',
-            launcherHidden: true,
-            windowTitle: (payload) => (payload?.companyName ? 'Ask Nucleas · ' + payload.companyName : undefined),
-            render: (ctx) => createElement(AssistantModule, ctx),
+            render: () => createElement(AssistantModule),
         },
         {
             id: 'integrations',

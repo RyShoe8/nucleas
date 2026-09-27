@@ -1,13 +1,14 @@
 import mongoose, { Schema, type InferSchemaType, type Model } from 'mongoose';
 
-/** One message in a user's private assistant thread for a company. */
+/** One message in a user's private Nucleas assistant thread (portfolio-wide). */
 const turnSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, required: true },
-    companyId: { type: Schema.Types.ObjectId, ref: 'Client', required: true },
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     role: { type: String, enum: ['user', 'assistant', 'status'], required: true },
     text: { type: String, required: true, maxlength: 40_000 },
+    /** Companies this message focused on (explicit focus or detected in the question). */
+    companyIds: { type: [Schema.Types.ObjectId], ref: 'Client', default: [] },
     /** Capability receipts produced while answering. */
     invocationIds: { type: [Schema.Types.ObjectId], default: [] },
     runId: { type: Schema.Types.ObjectId, ref: 'AiRun' },
@@ -16,7 +17,7 @@ const turnSchema = new Schema(
   },
   { timestamps: true }
 );
-turnSchema.index({ companyId: 1, userId: 1, createdAt: -1 });
+turnSchema.index({ organizationId: 1, userId: 1, createdAt: -1 });
 
 export type CompanyAssistantTurnDoc = InferSchemaType<typeof turnSchema>;
 export const CompanyAssistantTurn: Model<CompanyAssistantTurnDoc> =

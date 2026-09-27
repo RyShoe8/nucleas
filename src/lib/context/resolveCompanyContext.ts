@@ -2,9 +2,9 @@ import { Types } from 'mongoose';
 import Project from '@/lib/models/Project';
 import ContentItem from '@/lib/models/ContentItem';
 import { CapabilityApproval } from '@/lib/models/Capability';
-import { getCompanyProfile, type CompanyViewer } from '@/lib/companies/companyProfile';
+import { getCompanyProfile, listCompanyProfiles, type CompanyProfile, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { listCompanyConnections } from '@/lib/integrations/connections';
-import { getCompanyMetrics } from '@/lib/metrics/query';
+import { getCompanyMetrics, getTodayOverview } from '@/lib/metrics/query';
 import { listInvocations } from '@/lib/capabilities/runtime';
 
 /**
@@ -174,6 +174,86 @@ export async function resolveCompanyContext(
   };
 }
 
-export function renderContext(ctx: CompanyContext): string {
+export function renderContext(ctx: { sections: ContextSection[] }): string {
   return ctx.sections.map((s) => `## ${s.title}\n${s.body}`).join('\n\n');
+}
+
+// ---------- Portfolio (all companies the viewer can access) ----------
+
+/** Words too common to identify a company on their own. */
+const GENERIC_WORDS = new Set([
+  'the', 'shop', 'club', 'media', 'connect', 'content', 'home', 'end', 'demo', 'auto', 'intelligence', 'pay', 'app', 'store', 'agency', 'group', 'company',
+]);
+
+/** Companies a message refers to: full name, domain label, or a distinctive name word (5+ letters). */
+export function detectCompanies(message: string, companies: CompanyProfile[]): CompanyProfile[] {
+  const text = message.toLowerCase();
+  const words = new Set(text.split(/[^a-z0-9]+/).filter(Boolean));
+  return companies.filter((c) => {
+    const name = c.name.toLowerCase();
+    if (text.includes(name)) return true;
+    const label = c.domain?.split('.')[0];
+    if (label && label.length >= 4 && words.has(label)) return true;
+    return name
+      .split(/[^a-z0-9]+/)
+      .some((w) => w.length >= 5 && !GENERIC_WORDS.has(w) && words.has(w));
+  });
+}
+
+export interface PortfolioContext {
+  sections: ContextSection[];
+  sources: string[];
+  omitted: string[];
+  companies: CompanyProfile[];
+  focused: string[];
+}
+
+export async function resolvePortfolioContext(
+  viewer: CompanyViewer,
+  options: { message: string; focusCompanyId?: string; budgetChars?: number; now?: Date }
+): Promise<PortfolioContext> {
+  const now = options.now ?? new Date();
+  const budget = options.budgetChars ?? 12_000;
+  const companies = await listCompanyProfiles(viewer);
+  const overview = await getTodayOverview(viewer, { now });
+  const byId = new Map(overview.rows.map((r) => [r.companyId, r]));
+
+  const lines = companies.map((c) => {
+    const row = byId.get(c.id);
+    const rel = c.relationship === 'client' ? 'client' : c.relationship === 'internal' ? 'operating company' : 'own business';
+    if (!row || Object.keys(row.metrics).length === 0) return `- ${c.name} (${rel}${c.domain ? `, ${c.domain}` : ''}): no metrics yet`;
+    const parts = Object.entries(row.metrics).map(([key, m]) => {
+      const label = key.replace(/_/g, ' ');
+      const change = m.change === null ? '' : ` ${m.change >= 0 ? '+' : ''}${Math.round(m.change * 100)}%`;
+      return `${label} ${fmt(m.unit, m.current)}${change}`;
+    });
+    return `- ${c.name} (${rel}${c.domain ? `, ${c.domain}` : ''}): ${parts.join('; ')}${row.changes[0] ? `. Note: ${row.changes[0]}` : ''}`;
+  });
+  const sections: ContextSection[] = [
+    {
+      key: 'portfolio',
+      title: 'All companies (last 7 complete days; % = change vs the 7 before; subscribers/MRR are current)',
+      body: lines.join('\n') || 'No companies yet.',
+    },
+  ];
+  const sources = ['portfolio overview'];
+
+  const focusIds = [
+    ...(options.focusCompanyId && companies.some((c) => c.id === options.focusCompanyId) ? [options.focusCompanyId] : []),
+    ...detectCompanies(options.message, companies).map((c) => c.id),
+  ].filter((id, i, all) => all.indexOf(id) === i);
+  const focused = focusIds.slice(0, 2);
+  const omitted: string[] = focusIds.slice(2).map((id) => `${companies.find((c) => c.id === id)?.name} detail (ask about it directly)`);
+
+  let used = sections[0].body.length + sections[0].title.length;
+  const perCompany = Math.max(1500, Math.floor((budget - used) / Math.max(focused.length, 1)));
+  for (const id of focused) {
+    const detail = await resolveCompanyContext(viewer, id, { budgetChars: perCompany, now });
+    if (!detail) continue;
+    for (const s of detail.sections) sections.push({ ...s, key: `${id}:${s.key}`, title: `${detail.companyName}: ${s.title}` });
+    sources.push(...detail.sources.map((s) => `${detail.companyName} ${s}`));
+    omitted.push(...detail.omitted.map((o) => `${detail.companyName} ${o}`));
+    used += perCompany;
+  }
+  return { sections, sources, omitted, companies, focused };
 }

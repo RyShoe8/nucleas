@@ -1,15 +1,15 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import IdeChatMarkdown from '@/components/ide/IdeChatMarkdown';
-import type { ModuleRenderContext } from '@/lib/os/types';
+import { getAssistantFocus, setAssistantFocus, subscribeAssistantFocus } from '@/lib/os/assistantFocus';
 
 interface Turn {
     id: string;
     role: 'user' | 'assistant' | 'status';
     text: string;
     createdAt: string;
-    actions?: { id: string; title: string; status: string; summary?: string; error?: string }[];
+    actions?: { id: string; title: string; status: string; summary?: string; error?: string; companyName?: string }[];
     pending?: boolean;
 }
 
@@ -48,10 +48,12 @@ const ACTION_TONE: Record<string, string> = {
     failed: 'text-red-400',
 };
 
-/** Company-scoped AI conversation. Answers use stored metrics, live capabilities and receipts. */
-export default function AssistantModule({ payload }: ModuleRenderContext) {
-    const companyId = payload?.companyId ?? '';
-    const companyName = payload?.companyName ?? 'this company';
+/**
+ * Portfolio-wide AI conversation. Works out which company a question is about; an optional focus
+ * (set from a company window) is a starting point, not a limit.
+ */
+export default function AssistantModule() {
+    const focus = useSyncExternalStore(subscribeAssistantFocus, getAssistantFocus, () => null);
     const [turns, setTurns] = useState<Turn[] | null>(null);
     const [profiles, setProfiles] = useState<Profile[]>([]);
     const [selection, setSelection] = useState<{ profileId: string; model: string } | null>(null);
@@ -61,11 +63,10 @@ export default function AssistantModule({ payload }: ModuleRenderContext) {
     const endRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
-        if (!companyId) return;
         let cancelled = false;
         void (async () => {
             const [historyRes, profilesRes] = await Promise.all([
-                fetch(`/api/os/companies/${companyId}/assistant`),
+                fetch('/api/os/assistant'),
                 fetch('/api/ai/ide/free-chat/pipeline', { cache: 'no-store' }),
             ]);
             const history = (await historyRes.json().catch(() => ({}))) as { turns?: Turn[] };
@@ -81,7 +82,7 @@ export default function AssistantModule({ payload }: ModuleRenderContext) {
         return () => {
             cancelled = true;
         };
-    }, [companyId]);
+    }, []);
 
     useEffect(() => {
         endRef.current?.scrollIntoView({ block: 'end' });
@@ -96,10 +97,10 @@ export default function AssistantModule({ payload }: ModuleRenderContext) {
         const optimistic: Turn = { id: `local-${Date.now()}`, role: 'user', text: trimmed, createdAt: new Date().toISOString() };
         setTurns((t) => [...(t ?? []), optimistic, { id: 'pending', role: 'assistant', text: 'Looking into it…', createdAt: '', pending: true }]);
         try {
-            const res = await fetch(`/api/os/companies/${companyId}/assistant`, {
+            const res = await fetch('/api/os/assistant', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ text: trimmed, modelProfileId: selection.profileId, model: selection.model }),
+                body: JSON.stringify({ text: trimmed, focusCompanyId: focus?.companyId, modelProfileId: selection.profileId, model: selection.model }),
             });
             const body = (await res.json().catch(() => ({}))) as {
                 turn?: Turn;
@@ -123,13 +124,9 @@ export default function AssistantModule({ payload }: ModuleRenderContext) {
         void send(text);
     };
 
-    if (!companyId) return <div className="p-4 text-sm text-text-secondary">Open the assistant from a company.</div>;
-
-    const suggestions = [
-        `How is ${companyName} doing this week?`,
-        'What changed recently, and what might explain it?',
-        'What should we focus on next to grow?',
-    ];
+    const suggestions = focus
+        ? [`How is ${focus.companyName} doing this week?`, 'What changed recently, and what might explain it?', 'What should we focus on next to grow?']
+        : ['Which business had the best week, and why?', 'Where are we losing momentum?', 'What should I focus on today?'];
 
     return (
         <div className="h-full flex flex-col text-text-primary">
@@ -144,7 +141,7 @@ export default function AssistantModule({ payload }: ModuleRenderContext) {
                         setSelection(next);
                         writeSelection(next);
                     }}
-                    className="h-7 px-2 rounded border border-border bg-background-elevated text-xs max-w-[260px]"
+                    className="h-7 px-2 rounded border border-border bg-background-elevated text-xs max-w-[220px]"
                     aria-label="AI model"
                 >
                     {profiles.length === 0 ? <option value="">No AI credentials configured</option> : null}
@@ -154,6 +151,17 @@ export default function AssistantModule({ payload }: ModuleRenderContext) {
                         </option>
                     ))}
                 </select>
+                <span className="flex-1" />
+                {focus ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-border">
+                        Focus: {focus.companyName}
+                        <button type="button" onClick={() => setAssistantFocus(null)} aria-label="Clear focus" className="text-text-secondary hover:text-text-primary">
+                            ×
+                        </button>
+                    </span>
+                ) : (
+                    <span className="text-[11px] text-text-secondary">All companies</span>
+                )}
             </div>
 
             <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
@@ -161,7 +169,7 @@ export default function AssistantModule({ payload }: ModuleRenderContext) {
                 {turns?.length === 0 ? (
                     <div className="space-y-2">
                         <p className="text-sm text-text-secondary">
-                            Ask about {companyName}. Answers use its stored metrics, connected systems, projects and recent actions.
+                            Ask about any of your businesses or clients. Nucleas works out which company you mean and answers from its stored metrics, connected systems, projects and recent actions.
                         </p>
                         <div className="flex flex-wrap gap-2">
                             {suggestions.map((s) => (
@@ -194,7 +202,10 @@ export default function AssistantModule({ payload }: ModuleRenderContext) {
                                 <ul className="mt-2 pt-2 border-t border-border space-y-0.5">
                                     {t.actions.map((a) => (
                                         <li key={a.id} className="text-[11px] flex gap-2">
-                                            <span className="text-text-secondary">{a.title}</span>
+                                            <span className="text-text-secondary">
+                                                {a.companyName ? `${a.companyName}: ` : ''}
+                                                {a.title}
+                                            </span>
                                             <span className={ACTION_TONE[a.status] ?? 'text-text-secondary'}>{a.status.replace('_', ' ')}</span>
                                         </li>
                                     ))}
@@ -217,7 +228,7 @@ export default function AssistantModule({ payload }: ModuleRenderContext) {
                             void send(text);
                         }
                     }}
-                    placeholder={selection ? `Ask about ${companyName}…` : 'Configure an AI credential in Admin → AI Settings first'}
+                    placeholder={selection ? (focus ? `Ask about ${focus.companyName} or anything else…` : 'Ask about any business…') : 'Configure an AI credential in Admin → AI Settings first'}
                     rows={2}
                     disabled={!selection}
                     className="flex-1 min-w-0 px-2 py-1.5 rounded border border-border bg-background-elevated text-sm resize-none"

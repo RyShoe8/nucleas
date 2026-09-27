@@ -5,6 +5,7 @@ import { useWindowManager } from '@/hooks/os/useWindowManager';
 import type { ModuleRenderContext } from '@/lib/os/types';
 import { RELATIONSHIP_LABEL, type OsCompanyDetail, type OsConnection } from './companyTypes';
 import CompanySnapshot from './CompanySnapshot';
+import { setAssistantFocus } from '@/lib/os/assistantFocus';
 import CompanyActivity from './CompanyActivity';
 
 export default function CompanyModule({ payload }: ModuleRenderContext) {
@@ -77,7 +78,8 @@ function AskButton({ companyId, companyName }: { companyId: string; companyName:
             type="button"
             onClick={(e) => {
                 e.stopPropagation();
-                wm.open('assistant', { payload: { companyId, companyName } });
+                setAssistantFocus({ companyId, companyName });
+                wm.open('assistant');
             }}
             className="flex-shrink-0 text-xs px-3 py-1.5 rounded-md bg-primary text-white hover:opacity-90"
         >
