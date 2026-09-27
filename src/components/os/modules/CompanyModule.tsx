@@ -72,7 +72,7 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
             </header>
 
             <ProjectsSection projects={projects} />
-            <ConnectionsSection connections={connections} onChanged={load} />
+            <ConnectionsSection companyId={company.id} connections={connections} onChanged={load} />
         </div>
     );
 }
@@ -112,7 +112,16 @@ function ProjectsSection({ projects }: { projects: OsCompanyDetail['projects'] }
     );
 }
 
-function ConnectionsSection({ connections, onChanged }: { connections: OsConnection[]; onChanged: () => void }) {
+function ConnectionsSection({
+    companyId,
+    connections,
+    onChanged,
+}: {
+    companyId: string;
+    connections: OsConnection[];
+    onChanged: () => void;
+}) {
+    const auth = useOsAuth();
     return (
         <section>
             <h3 className="text-[11px] uppercase tracking-wider text-text-secondary mb-2">Integrations</h3>
@@ -125,7 +134,69 @@ function ConnectionsSection({ connections, onChanged }: { connections: OsConnect
                     ))}
                 </ul>
             )}
+            {auth.isManagerOrAdmin ? <AddIntegration companyId={companyId} onAdded={onChanged} /> : null}
         </section>
+    );
+}
+
+function AddIntegration({ companyId, onAdded }: { companyId: string; onAdded: () => void }) {
+    const [providers, setProviders] = useState<{ id: string; name: string }[] | null>(null);
+    const [error, setError] = useState<string | null>(null);
+
+    const open = async () => {
+        setError(null);
+        const res = await fetch(`/api/os/companies/${companyId}/connections`);
+        const data = (await res.json().catch(() => ({}))) as { providers?: { id: string; name: string }[]; error?: string };
+        if (!res.ok) setError(data.error ?? `Failed (${res.status})`);
+        else setProviders(data.providers ?? []);
+    };
+
+    const add = async (provider: string) => {
+        const res = await fetch(`/api/os/companies/${companyId}/connections`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ provider }),
+        });
+        if (!res.ok) {
+            const data = (await res.json().catch(() => ({}))) as { error?: string };
+            setError(data.error ?? `Failed (${res.status})`);
+            return;
+        }
+        setProviders(null);
+        onAdded();
+    };
+
+    if (providers === null) {
+        return (
+            <div className="mt-2">
+                <button type="button" onClick={open} className="text-[11px] px-2 py-1 rounded border border-border hover:bg-background-card">
+                    + Add integration
+                </button>
+                {error ? <span className="ml-2 text-[11px] text-red-400">{error}</span> : null}
+            </div>
+        );
+    }
+    return (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {providers.length === 0 ? (
+                <span className="text-[11px] text-text-secondary">Every available integration is already added.</span>
+            ) : (
+                providers.map((p) => (
+                    <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => add(p.id)}
+                        className="text-[11px] px-2 py-1 rounded border border-border hover:bg-background-card"
+                    >
+                        + {p.name}
+                    </button>
+                ))
+            )}
+            <button type="button" onClick={() => setProviders(null)} className="text-[11px] px-2 py-1 text-text-secondary">
+                Cancel
+            </button>
+            {error ? <span className="text-[11px] text-red-400">{error}</span> : null}
+        </div>
     );
 }
 
@@ -160,6 +231,21 @@ function ConnectionRow({ connection: c, onChanged }: { connection: OsConnection;
     };
 
     const canConnect = c.connectable && auth.isManagerOrAdmin;
+
+    const remove = async () => {
+        const warning =
+            c.scope === 'org'
+                ? `Remove ${c.providerName}? It is a shared account, so this removes it for every company.`
+                : `Remove ${c.providerName} from this company? Its saved credential is deleted if nothing else uses it.`;
+        if (!window.confirm(warning)) return;
+        const res = await fetch(`/api/os/connections/${c.id}`, { method: 'DELETE' });
+        if (!res.ok) {
+            const data = (await res.json().catch(() => ({}))) as { error?: string };
+            setMessage(data.error ?? `Failed (${res.status})`);
+            return;
+        }
+        onChanged();
+    };
     const detail = [
         c.scope === 'org' ? 'Shared account' : null,
         c.accountLabel,
@@ -194,6 +280,17 @@ function ConnectionRow({ connection: c, onChanged }: { connection: OsConnection;
                     >
                         {c.status === 'connected' ? 'Re-sign in' : 'Sign in with Google'}
                     </a>
+                ) : null}
+                {auth.isManagerOrAdmin && !editing ? (
+                    <button
+                        type="button"
+                        onClick={remove}
+                        title={`Remove ${c.providerName}`}
+                        aria-label={`Remove ${c.providerName}`}
+                        className="text-[11px] px-1.5 py-0.5 rounded text-text-secondary hover:text-red-400"
+                    >
+                        Remove
+                    </button>
                 ) : null}
             </div>
             {detail.length ? <p className="mt-0.5 ml-[5.5rem] text-[11px] text-text-secondary truncate">{detail.join(' · ')}</p> : null}

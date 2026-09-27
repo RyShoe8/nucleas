@@ -242,3 +242,49 @@ describe('Google sign-in', () => {
     expect(f).not.toHaveBeenCalled();
   });
 });
+
+describe('adding and removing integrations', () => {
+  it('removing hides the integration, clears its credential and survives the backfill', async () => {
+    await applyDeclaredConnections(orgId);
+    const stripe = await IntegrationConnection.findOne({ companyId: new Types.ObjectId(ownedId), provider: 'stripe' }).lean();
+    await connectWithApiKey(admin, String(stripe!._id), 'rk_live_remove_me_1234', async () => ({ ok: true }));
+    expect(await IntegrationSecret.countDocuments()).toBe(1);
+
+    const { removeConnection, listAddableProviders } = await import('./connections');
+    expect(await removeConnection(member, String(stripe!._id))).toMatchObject({ ok: false, status: 403 });
+    expect(await removeConnection(admin, String(stripe!._id))).toEqual({ ok: true });
+
+    expect((await listCompanyConnections(admin, ownedId))!.map((c) => c.provider)).not.toContain('stripe');
+    expect(await IntegrationSecret.countDocuments()).toBe(0);
+    expect((await listAddableProviders(admin, ownedId))!.map((p) => p.id)).toContain('stripe');
+
+    await applyDeclaredConnections(orgId);
+    expect((await IntegrationConnection.findById(stripe!._id).lean())?.status).toBe('disabled');
+  });
+
+  it('keeps a shared Google credential when other connections still use it', async () => {
+    await applyDeclaredConnections(orgId);
+    const secret = await IntegrationSecret.create({ organizationId: orgId, provider: 'google', sealed: 'v1.x', hint: 'a@b.c' });
+    await IntegrationConnection.updateMany({ companyId: new Types.ObjectId(ownedId), provider: { $in: ['ga4', 'gsc'] } }, { $set: { status: 'connected', secretId: secret._id } });
+    const ga4 = await IntegrationConnection.findOne({ companyId: new Types.ObjectId(ownedId), provider: 'ga4' }).lean();
+
+    const { removeConnection } = await import('./connections');
+    await removeConnection(admin, String(ga4!._id));
+    expect(await IntegrationSecret.countDocuments()).toBe(1);
+  });
+
+  it('adds new providers and re-enables removed ones', async () => {
+    await applyDeclaredConnections(orgId);
+    const { addConnection, removeConnection } = await import('./connections');
+    expect(await addConnection(admin, ownedId, 'shopify')).toEqual({ ok: true });
+    expect(await addConnection(admin, ownedId, 'nope')).toMatchObject({ ok: false, status: 400 });
+    expect(await addConnection(member, ownedId, 'shopify')).toMatchObject({ ok: false, status: 403 });
+
+    const stripe = await IntegrationConnection.findOne({ companyId: new Types.ObjectId(ownedId), provider: 'stripe' }).lean();
+    await removeConnection(admin, String(stripe!._id));
+    await addConnection(admin, ownedId, 'stripe');
+    const providers = (await listCompanyConnections(admin, ownedId))!.map((c) => c.provider);
+    expect(providers).toEqual(expect.arrayContaining(['shopify', 'stripe']));
+    expect(await IntegrationConnection.countDocuments({ companyId: new Types.ObjectId(ownedId), provider: 'stripe' })).toBe(1);
+  });
+});

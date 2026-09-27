@@ -128,6 +128,8 @@ invoke(capabilityId, input, ctx)
 
 Provider adapters live in **`src/lib/integrations/<provider>/`** and implement domain interfaces (`SeoProvider`, `AnalyticsProvider`, `SearchConsoleProvider`, `EmailProvider`, `CodeHostProvider`, `HostingProvider`). Adapters are plain typed code with fixture-based tests. Nothing in them calls a model.
 
+**Credential ≠ data source.** One credential can see many resources: a single Google login sees every GA4 property and Search Console site we manage, and a Vercel token sees every project. A capability for company X must resolve X's pinned `ExternalResource` (e.g. GA4 property `469087296` for Frugal Gambler) and query only that. If no resource is pinned, the capability returns `needs_setup`. It **never** falls back to "first property", "all properties" or a guess. The Company window gets a picker to pin or change the resource when auto-matching by domain can't decide.
+
 **`CapabilityInvocation`** (receipt, new collection): requester (user or AI run + service identity), company, capability+version, input digest, redacted input, executor used and why, provider resource IDs, status (`pending_approval|running|succeeded|verified|failed|ambiguous|cancelled`), verification result, cost (AI micros + provider units), timestamps, `aiRunId?`, `approvalId?`. Ambiguous timeouts on non-idempotent writes are **reconciled, never blindly retried** (existing plan rule).
 
 **`CapabilityApproval`** generalizes the plan-approval mechanics already in `lib/ai/control/plans.ts`: bound to capability + input digest + company, expiry, approver authority rechecked at execution, single consumption, and the agent can't approve itself. It surfaces in the existing attention view and digests (`lib/ai/control/attention.ts`, `notifications.ts`).
