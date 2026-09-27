@@ -3,6 +3,7 @@ import { CapabilityError, type CapabilityDefinition } from './types';
 import { defaultRange } from './adapters/http';
 import { ga4Traffic, gscPerformance, type SearchOutput, type TrafficOutput } from './adapters/google';
 import { brevoAudience, mercuryCash, stripeRevenue, type CashOutput, type EmailAudienceOutput, type RevenueOutput } from './adapters/commerce';
+import { adsenseRevenue, type AdRevenueOutput } from './adapters/adsense';
 import { ahrefsOverview, ensureAhrefsProject, findProjectForDomain, listAhrefsProjects, type SeoOverviewOutput } from './adapters/ahrefs';
 
 export const SEARCH_LAG_DAYS = 2;
@@ -86,6 +87,24 @@ const paymentsRevenue: CapabilityDefinition<DaysInput, RevenueOutput> = {
   },
 };
 
+const adRevenue: CapabilityDefinition<DaysInput, AdRevenueOutput> = {
+  id: 'ads.revenue.read',
+  version: 1,
+  title: 'Ad revenue',
+  domain: 'ads',
+  kind: 'read',
+  risk: 'read',
+  approval: 'auto',
+  provider: 'adsense',
+  requiresResource: 'site',
+  input: daysInput,
+  cacheSeconds: 600,
+  async run(ctx, input) {
+    const output = await adsenseRevenue(ctx, defaultRange(input.days, ctx.now));
+    return { output, summary: 'Ad earnings for ' + output.domain + ' over ' + input.days + ' days' };
+  },
+};
+
 const financeCash: CapabilityDefinition<Record<string, never>, CashOutput> = {
   id: 'finance.cash.read',
   version: 1,
@@ -156,6 +175,7 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   searchPerformance,
   emailAudience,
   paymentsRevenue,
+  adRevenue,
   financeCash,
   seoOverview,
   seoProjectCreate,

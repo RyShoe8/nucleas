@@ -9,7 +9,7 @@ import { useOsCompanies } from './CompaniesModule';
 import ResourcePicker from './ResourcePicker';
 import WebhookSetup from './WebhookSetup';
 
-const PINNABLE_PROVIDERS: Record<string, string> = { ga4: 'Choose property', gsc: 'Choose site', ahrefs: 'Choose project' };
+const PINNABLE_PROVIDERS: Record<string, string> = { ga4: 'Choose property', gsc: 'Choose site', ahrefs: 'Choose project', adsense: 'Choose site' };
 
 const STATUS_STYLE: Record<string, string> = {
     connected: 'text-emerald-400 border-emerald-400/40',

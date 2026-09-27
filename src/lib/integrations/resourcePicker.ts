@@ -5,6 +5,7 @@ import { getCompanyProfile, isCompanyManager, listCompanyProfiles, type CompanyV
 import { listGa4Properties, listGscSites } from '@/lib/integrations/google/connectGoogle';
 import { refreshGoogleAccessToken } from '@/lib/capabilities/adapters/google';
 import { listAhrefsProjects } from '@/lib/capabilities/adapters/ahrefs';
+import { listAdSenseSites } from '@/lib/capabilities/adapters/adsense';
 import { CapabilityError, type CapabilityRunContext } from '@/lib/capabilities/types';
 
 /**
@@ -19,6 +20,7 @@ export const PINNABLE: Record<string, { resourceType: string; secretProvider: st
   ga4: { resourceType: 'property', secretProvider: 'google', noun: 'Analytics property' },
   gsc: { resourceType: 'site', secretProvider: 'google', noun: 'Search Console site' },
   ahrefs: { resourceType: 'project', secretProvider: 'ahrefs', noun: 'Ahrefs project' },
+  adsense: { resourceType: 'site', secretProvider: 'google', noun: 'AdSense site' },
 };
 
 export interface PinCandidate {
@@ -44,6 +46,10 @@ export interface PinOptions {
 }
 
 async function candidatesFor(provider: string, credential: string, fetchImpl: FetchLike): Promise<Omit<PinCandidate, 'pinnedTo'>[]> {
+  if (provider === 'adsense') {
+    const token = await refreshGoogleAccessToken(credential, fetchImpl);
+    return (await listAdSenseSites(fetchImpl, token)).map((s) => ({ externalId: s.name, label: s.domain, detail: s.account.replace('accounts/', '') }));
+  }
   if (provider === 'ga4' || provider === 'gsc') {
     const token = await refreshGoogleAccessToken(credential, fetchImpl);
     if (provider === 'ga4') {
@@ -139,6 +145,7 @@ export async function pinResource(
 
   // Company-scoped connections adopt the chosen account; shared (org) accounts stay as they are.
   if (spec.secretProvider === 'google') {
+    // Google-backed integrations (GA4, Search Console, AdSense) adopt the chosen Google account.
     await IntegrationConnection.updateOne(
       { organizationId: viewer.organizationId, companyId: companyObjectId, provider },
       {

@@ -71,6 +71,30 @@ function buildView(metric: MetricDefinition, rows: { date: string; value: number
   };
 }
 
+/** Revenue from every source (payments + ads), added when at least one part exists. */
+export function withTotalRevenue(views: MetricView[]): MetricView[] {
+  const parts = views.filter((v) => v.key === 'revenue_net' || v.key === 'ad_revenue');
+  if (parts.length === 0) return views;
+  const byDate = new Map<string, number>();
+  for (const p of parts) for (const pt of p.series) byDate.set(pt.date, (byDate.get(pt.date) ?? 0) + pt.value);
+  const series = [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, value }));
+  const current = parts.reduce((s, p) => s + p.current, 0);
+  const hasPrevious = parts.every((p) => p.previous !== null);
+  const previous = hasPrevious ? parts.reduce((s, p) => s + (p.previous ?? 0), 0) : null;
+  const total: MetricView = {
+    key: 'revenue_total',
+    label: parts.length > 1 ? 'Revenue (all sources)' : 'Revenue',
+    unit: 'money',
+    kind: 'daily',
+    series,
+    current,
+    previous,
+    change: previous !== null && previous > 0 ? (current - previous) / previous : null,
+    lastDay: series.at(-1) ?? null,
+  };
+  return [total, ...views];
+}
+
 function formatValue(unit: MetricUnit, value: number): string {
   if (unit === 'money') return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value / 100);
   return new Intl.NumberFormat('en-US').format(Math.round(value));
@@ -79,7 +103,10 @@ function formatValue(unit: MetricUnit, value: number): string {
 /** Deterministic "what changed" lines: large relative moves on non-trivial baselines. */
 export function whatChanged(views: MetricView[]): string[] {
   const lines: { weight: number; text: string }[] = [];
+  // With a single revenue source the total equals that source; report it once.
+  const revenueParts = views.filter((v) => v.key === 'revenue_net' || v.key === 'ad_revenue').length;
   for (const v of views) {
+    if (v.key === 'revenue_total' && revenueParts < 2) continue;
     if (v.change === null || v.previous === null || v.previous < MIN_BASELINE[v.unit]) continue;
     if (Math.abs(v.change) < NOTABLE_CHANGE) continue;
     const pct = Math.round(Math.abs(v.change) * 100);
@@ -122,15 +149,15 @@ export async function getCompanyMetrics(
   const cid = new Types.ObjectId(companyId);
 
   const rows = await loadRows([cid], defs.map((m) => m.key), sinceDate(days, now));
-  const views = defs
-    .map((m) => buildView(m, rows.filter((r) => r.metricKey === m.key), now, days))
-    .filter((v): v is MetricView => v !== null);
+  const views = withTotalRevenue(
+    defs.map((m) => buildView(m, rows.filter((r) => r.metricKey === m.key), now, days)).filter((v): v is MetricView => v !== null)
+  );
   const state = await MetricSyncState.findOne({ companyId: cid }).select('lastSuccessAt lastRunAt').lean<{ lastSuccessAt?: Date; lastRunAt?: Date }>();
   return { lastSyncedAt: (state?.lastSuccessAt ?? state?.lastRunAt)?.toISOString() ?? null, metrics: views, changes: whatChanged(views) };
 }
 
 /** Headline metrics for every company the viewer can see — the cross-company "Today" view. */
-export const TODAY_METRICS = ['leads_new', 'users_new', 'sessions', 'customers_new', 'revenue_net', 'subscribers_active', 'mrr'] as const;
+export const TODAY_METRICS = ['leads_new', 'users_new', 'sessions', 'customers_new', 'revenue_total', 'subscribers_active', 'mrr'] as const;
 
 export interface TodayRow {
   companyId: string;
@@ -156,7 +183,7 @@ export async function getTodayOverview(viewer: CompanyViewer, options: { now?: D
   for (const company of companies) {
     const mine = rows.filter((r) => String(r.companyId) === company.id);
     if (mine.length === 0) continue;
-    const views = defs.map((m) => buildView(m, mine.filter((r) => r.metricKey === m.key), now, 28)).filter((v): v is MetricView => v !== null);
+    const views = withTotalRevenue(defs.map((m) => buildView(m, mine.filter((r) => r.metricKey === m.key), now, 28)).filter((v): v is MetricView => v !== null));
     const metrics: TodayRow['metrics'] = {};
     for (const v of views) {
       if (!(TODAY_METRICS as readonly string[]).includes(v.key)) continue;

@@ -350,3 +350,46 @@ describe('pinning resources', () => {
     expect(await ExternalResource.countDocuments({ companyId: new Types.ObjectId(clientId), provider: 'ga4' })).toBe(1);
   });
 });
+
+describe('AdSense at Google sign-in', () => {
+  function fakeGoogleWithAdsense() {
+    return vi.fn(async (url: string) => {
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (url.startsWith('https://oauth2.googleapis.com/token')) {
+        return json({
+          access_token: 'at',
+          refresh_token: 'rt',
+          scope: 'https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/adsense.readonly email',
+        });
+      }
+      if (url.includes('openidconnect')) return json({ email: 'ryan@example.com' });
+      if (url.includes('accountSummaries')) return json({ accountSummaries: [] });
+      if (url.endsWith('/v2/accounts')) return json({ accounts: [{ name: 'accounts/pub-9' }] });
+      if (url.includes('/v2/accounts/pub-9/sites')) return json({ sites: [{ name: 'accounts/pub-9/sites/pb', domain: 'playbound.club' }, { name: 'accounts/pub-9/sites/zz', domain: 'other.com' }] });
+      return json({});
+    });
+  }
+
+  beforeEach(() => {
+    vi.stubEnv('GOOGLE_CLIENT_ID', 'cid');
+    vi.stubEnv('GOOGLE_CLIENT_SECRET', 'csecret');
+  });
+
+  it('connects and pins AdSense only for companies with a matching site', async () => {
+    await applyDeclaredConnections(orgId);
+    const { completeGoogleConnection } = await import('./google/connectGoogle');
+    const res = await completeGoogleConnection(admin, { code: 'c', redirectUri: 'https://os.nucleas.app/cb' }, fakeGoogleWithAdsense());
+    expect(res).toMatchObject({ ok: true, summary: { adsense: { granted: true, connected: ['PlayBound'] } } });
+    expect(await IntegrationConnection.findOne({ companyId: new Types.ObjectId(ownedId), provider: 'adsense' }).lean()).toMatchObject({ status: 'connected' });
+    expect(await ExternalResource.findOne({ provider: 'adsense' }).lean()).toMatchObject({ externalId: 'accounts/pub-9/sites/pb', label: 'playbound.club' });
+    expect(await IntegrationConnection.countDocuments({ provider: 'adsense' })).toBe(1);
+  });
+
+  it('respects an AdSense integration that was removed on purpose', async () => {
+    await IntegrationConnection.create({ organizationId: orgId, companyId: new Types.ObjectId(ownedId), provider: 'adsense', scope: 'company', status: 'disabled', source: 'manual' });
+    const { completeGoogleConnection } = await import('./google/connectGoogle');
+    await completeGoogleConnection(admin, { code: 'c', redirectUri: 'https://os.nucleas.app/cb' }, fakeGoogleWithAdsense());
+    expect((await IntegrationConnection.findOne({ provider: 'adsense' }).lean())?.status).toBe('disabled');
+    expect(await ExternalResource.countDocuments({ provider: 'adsense' })).toBe(0);
+  });
+});

@@ -18,7 +18,7 @@ const COLUMNS: { key: string; label: string; unit: OsMetric['unit'] }[] = [
     { key: 'users_new', label: 'Users', unit: 'count' },
     { key: 'sessions', label: 'Sessions', unit: 'count' },
     { key: 'customers_new', label: 'Customers', unit: 'count' },
-    { key: 'revenue_net', label: 'Revenue', unit: 'money' },
+    { key: 'revenue_total', label: 'Revenue', unit: 'money' },
     { key: 'subscribers_active', label: 'Subscribers', unit: 'count' },
     { key: 'mrr', label: 'MRR', unit: 'money' },
 ];

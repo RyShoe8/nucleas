@@ -60,7 +60,7 @@ function toView(c: ConnectionLean): ConnectionView {
     lastVerifiedAt: c.lastVerifiedAt?.toISOString(),
     lastError: c.lastError,
     connectable: def?.authKind === 'api_key',
-    signIn: c.provider === 'ga4' || c.provider === 'gsc' ? 'google' : null,
+    signIn: ['ga4', 'gsc', 'adsense'].includes(c.provider) ? 'google' : null,
     webhook: def?.authKind === 'webhook',
     keyGuidance: def?.credentialHint,
   };

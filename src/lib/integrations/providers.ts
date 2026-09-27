@@ -3,7 +3,7 @@
  * the UI groups them by domain, never by vendor.
  */
 
-export type IntegrationDomain = 'analytics' | 'search' | 'seo' | 'email' | 'payments' | 'commerce' | 'finance' | 'product' | 'hosting' | 'code';
+export type IntegrationDomain = 'analytics' | 'search' | 'seo' | 'email' | 'payments' | 'commerce' | 'ads' | 'finance' | 'product' | 'hosting' | 'code';
 export type IntegrationAuthKind = 'api_key' | 'oauth' | 'github_app' | 'webhook';
 /** org = one account shared by every company (e.g. our Ahrefs subscription); company = one per company. */
 export type IntegrationScope = 'org' | 'company';
@@ -23,6 +23,7 @@ export interface IntegrationProviderDefinition {
 export const INTEGRATION_PROVIDERS: IntegrationProviderDefinition[] = [
   { id: 'ga4', name: 'Google Analytics', domain: 'analytics', authKind: 'oauth', defaultScope: 'company', stackToolIds: ['googleanalytics'] },
   { id: 'gsc', name: 'Google Search Console', domain: 'search', authKind: 'oauth', defaultScope: 'company', stackToolIds: [] },
+  { id: 'adsense', name: 'Google AdSense', domain: 'ads', authKind: 'oauth', defaultScope: 'company', stackToolIds: [] },
   { id: 'posthog', name: 'PostHog', domain: 'analytics', authKind: 'api_key', defaultScope: 'company', stackToolIds: ['posthog'], credentialHint: 'Personal API key with read access to the project.' },
   { id: 'ahrefs', name: 'Ahrefs', domain: 'seo', authKind: 'api_key', defaultScope: 'org', stackToolIds: [], credentialHint: 'Ahrefs API v3 key (Account settings → API keys). Free plans return limited data.' },
   { id: 'brevo', name: 'Brevo', domain: 'email', authKind: 'api_key', defaultScope: 'company', stackToolIds: ['brevo'], credentialHint: 'Brevo API v3 key (SMTP & API → API keys).' },

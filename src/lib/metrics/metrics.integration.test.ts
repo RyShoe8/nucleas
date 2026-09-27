@@ -144,8 +144,8 @@ describe('metric queries', () => {
     await runCompanySync({ _id: companyId, organizationId: orgId }, { now: NOW, fetchImpl: fakeProviders() });
     const today = await getTodayOverview(admin, { now: NOW });
     expect(today.rows).toHaveLength(1);
-    expect(today.rows[0]).toMatchObject({ name: 'Frugal Gambler', metrics: { revenue_net: { current: 5000, unit: 'money' } } });
-    expect(today.totals.revenue_net).toBe(5000);
+    expect(today.rows[0]).toMatchObject({ name: 'Frugal Gambler', metrics: { revenue_total: { current: 5000, unit: 'money' } } });
+    expect(today.totals.revenue_total).toBe(5000);
   });
 });
 
@@ -176,5 +176,20 @@ describe('fetch window = write window', () => {
     expect(ranges[0]).toEqual({ startDate: expected[0], endDate: expected[2] });
     const clicks = await MetricSnapshot.find({ companyId, metricKey: 'search_clicks' }).sort({ date: 1 }).lean();
     expect(clicks.map((c) => [c.date, c.value])).toEqual(expected.map((d) => [d, 7]));
+  });
+});
+
+describe('total revenue', () => {
+  it('sums payment and ad revenue and reports each change once', async () => {
+    const { withTotalRevenue } = await import('./query');
+    const mk = (key: string, current: number, previous: number): MetricView => ({
+      key, label: key, unit: 'money', kind: 'daily', series: [{ date: '2026-09-27', value: current }], current, previous, change: (current - previous) / previous, lastDay: null,
+    });
+    const both = withTotalRevenue([mk('revenue_net', 20_000, 10_000), mk('ad_revenue', 10_000, 10_000)]);
+    expect(both[0]).toMatchObject({ key: 'revenue_total', label: 'Revenue (all sources)', current: 30_000, previous: 20_000, change: 0.5 });
+
+    const single = withTotalRevenue([mk('ad_revenue', 20_000, 10_000)]);
+    expect(single[0]).toMatchObject({ key: 'revenue_total', label: 'Revenue', current: 20_000 });
+    expect(whatChanged(single)).toHaveLength(1);
   });
 });

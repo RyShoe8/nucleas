@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { ExternalResource, IntegrationConnection, IntegrationSecret } from '@/lib/models/Integration';
 import { sealSecret } from '@/lib/security/secretBox';
 import { domainFromProject } from '@/lib/companies/ownedCompanies';
+import { listAdSenseSites } from '@/lib/capabilities/adapters/adsense';
 import { isCompanyManager, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -73,6 +74,7 @@ export interface GoogleConnectSummary {
   accountEmail: string;
   analytics: { granted: boolean; connected: string[]; unmatched: string[] };
   searchConsole: { granted: boolean; connected: string[]; unmatched: string[] };
+  adsense: { granted: boolean; connected: string[]; error?: string };
 }
 
 export type GoogleConnectResult = { ok: true; summary: GoogleConnectSummary } | { ok: false; error: string };
@@ -112,6 +114,7 @@ export async function completeGoogleConnection(
   const granted = new Set((tokens.scope ?? '').split(' '));
   const analyticsGranted = granted.has('https://www.googleapis.com/auth/analytics.readonly');
   const searchGranted = granted.has('https://www.googleapis.com/auth/webmasters.readonly');
+  const adsenseGranted = granted.has('https://www.googleapis.com/auth/adsense.readonly');
   if (!analyticsGranted && !searchGranted) {
     return { ok: false, error: 'Neither Analytics nor Search Console access was granted.' };
   }
@@ -147,6 +150,7 @@ export async function completeGoogleConnection(
     accountEmail,
     analytics: { granted: analyticsGranted, connected: [], unmatched: [] },
     searchConsole: { granted: searchGranted, connected: [], unmatched: [] },
+    adsense: { granted: adsenseGranted, connected: [] },
   };
 
   for (const company of companies) {
@@ -221,6 +225,41 @@ export async function completeGoogleConnection(
         { upsert: true }
       );
       target.bucket.connected.push(company.name);
+    }
+  }
+
+  // AdSense: only companies that actually monetise with AdSense (a site matching their domain) get it.
+  if (adsenseGranted) {
+    try {
+      const adsenseSites = await listAdSenseSites(fetchImpl, tokens.access_token);
+      for (const company of companies) {
+        if (!company.domain) continue;
+        const site = adsenseSites.find((x) => x.domain === company.domain);
+        if (!site) continue;
+        const companyObjectId = new Types.ObjectId(company.id);
+        const existing = await IntegrationConnection.findOne({ organizationId: viewer.organizationId, companyId: companyObjectId, provider: 'adsense' })
+          .select('status')
+          .lean<{ status: string }>();
+        if (existing?.status === 'disabled') continue; // removed on purpose
+        await IntegrationConnection.updateOne(
+          { organizationId: viewer.organizationId, companyId: companyObjectId, provider: 'adsense' },
+          {
+            $set: { status: 'connected', secretId: secret._id, credentialHint: accountEmail, accountLabel: site.domain, connectedByUserId: new Types.ObjectId(viewer.userId), lastVerifiedAt: new Date() },
+            $setOnInsert: { scope: 'company', source: 'onboarding', grantedScopes: [], planLimited: false },
+            $unset: { lastError: '' },
+            $inc: { revision: 1 },
+          },
+          { upsert: true }
+        );
+        await ExternalResource.updateOne(
+          { organizationId: viewer.organizationId, provider: 'adsense', resourceType: 'site', externalId: site.name },
+          { $set: { companyId: companyObjectId, label: site.domain, canonicalType: 'Company', canonicalId: companyObjectId, lastSyncedAt: new Date() } },
+          { upsert: true }
+        );
+        summary.adsense.connected.push(company.name);
+      }
+    } catch (err) {
+      summary.adsense.error = err instanceof Error ? err.message : 'AdSense listing failed';
     }
   }
 
