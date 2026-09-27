@@ -51,6 +51,14 @@ export const ROUTES: RouteDefinition[] = [
     paidFallbackAllowedByDefault: false,
   },
   {
+    key: 'research.work',
+    label: 'Deep research',
+    description: 'Multi-step web research: searches, reads, then searches again based on what it found. Runs the web tools itself, so it needs a model that is reliable at tool calls.',
+    preferredTier: 'free',
+    defaultFreeModel: ROGLY_MODELS.code,
+    paidFallbackAllowedByDefault: false,
+  },
+  {
     key: 'ide.plan',
     label: 'IDE · plan',
     description: 'Plans code changes from a compact brief.',

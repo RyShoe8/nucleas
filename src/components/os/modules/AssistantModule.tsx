@@ -39,7 +39,7 @@ function shortModel(model?: string): string {
 /** "plan · sonnet $0.004 → fetch 3 jobs → write · gemma free → numbers ✓ → total $0.004" */
 function StageLine({ turn }: { turn: Turn }) {
     if (!turn.stages?.length) return turn.costMicros != null ? <p className="mt-1 text-[10px] text-text-secondary">{usd(turn.costMicros)}</p> : null;
-    const label: Record<string, string> = { plan: 'plan', fetch: 'fetch', work: 'write', check: 'numbers', review: 'review' };
+    const label: Record<string, string> = { plan: 'plan', fetch: 'fetch', research: 'research', work: 'write', check: 'numbers', review: 'review' };
     const parts = turn.stages.map((s) => {
         if (s.stage === 'fetch') return s.note ?? 'fetch';
         if (s.stage === 'check') return `numbers ${s.note?.startsWith('all') ? '✓' : '⚠'}`;

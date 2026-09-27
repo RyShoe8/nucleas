@@ -4,7 +4,7 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 
 vi.mock('server-only', () => ({}));
 
-type ChatInput = { systemPrompt: string; userText: string; model: string; modelProfileId: string };
+type ChatInput = { systemPrompt: string; userText: string; model: string; modelProfileId: string; toolProfile?: string; forceToolLoop?: boolean };
 const chat = vi.fn<(input: ChatInput) => Promise<{ role: string; text: string; costMicros?: number; runId?: string; requestId: string }>>();
 vi.mock('@/lib/ai/companyChat', () => ({ attemptCompanyCredentialChat: (input: ChatInput) => chat(input) }));
 const search = vi.fn();
@@ -71,8 +71,9 @@ function reply(text: string, costMicros = 0) {
   return { role: 'assistant', text, costMicros, runId: String(new Types.ObjectId()), requestId: 'r' };
 }
 
-function stageOf(input: ChatInput): 'plan' | 'work' | 'review' {
+function stageOf(input: ChatInput): 'plan' | 'research' | 'work' | 'review' {
   if (input.systemPrompt.startsWith('You plan answers')) return 'plan';
+  if (input.systemPrompt.startsWith('You are a research agent')) return 'research';
   if (input.systemPrompt.startsWith('You review')) return 'review';
   return 'work';
 }
@@ -223,5 +224,44 @@ describe('general questions', () => {
     expect(search).toHaveBeenCalledWith('best NFL quarterback 2026');
     expect(out.stages.find((s) => s.stage === 'fetch')?.note).toBe('0 job(s), 1 web search(es), no model');
     expect(out.stages.find((s) => s.stage === 'check')?.note).toBe('all numbers traced to data');
+  });
+});
+
+describe('deep research', () => {
+  const plan = '{"kind":"answer","scope":"general","deepResearch":{"question":"What bonus offers are top casino affiliates promoting this month?"},"outline":[],"review":false}';
+
+  it('hands multi-step research to Rogly in the tool loop and gives its findings to the writer', async () => {
+    chat.mockImplementation(async (input) => {
+      const stage = stageOf(input);
+      if (stage === 'plan') return reply(plan, 1500);
+      if (stage === 'research') {
+        expect(input.model).toBe(ROGLY_MODELS.code);
+        expect(input.toolProfile).toBe('full');
+        expect(input.forceToolLoop).toBe(true);
+        return { ...reply('Findings\n- Site A offers 250 free spins ([A](https://a.example))'), toolsUsed: ['web_search', 'web_fetch', 'web_search'] };
+      }
+      if (stage === 'work') {
+        expect(input.userText).toContain('Site A offers 250 free spins');
+        return reply('Site A leads with 250 free spins ([A](https://a.example)).');
+      }
+      throw new Error('review should not run');
+    });
+    const out = await ask('What are casino affiliates promoting this month?');
+    expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'research', 'work', 'check']);
+    expect(out.stages.find((s) => s.stage === 'research')).toMatchObject({ free: true, note: 'tools: web_search, web_fetch' });
+    expect(out.stages.find((s) => s.stage === 'check')?.note).toBe('all numbers traced to data');
+  });
+
+  it('continues honestly when research fails, without paying unless allowed', async () => {
+    chat.mockImplementation(async (input) => {
+      const stage = stageOf(input);
+      if (stage === 'plan') return reply(plan);
+      if (stage === 'research') return { role: 'status', text: 'Rogly timed out', requestId: 'r' };
+      expect(input.userText).toContain('could not be completed (Rogly timed out)');
+      return reply('I could not complete the research this time.');
+    });
+    const out = await ask('What are casino affiliates promoting this month?');
+    expect(out.role).toBe('assistant');
+    expect(chat.mock.calls.filter((c) => stageOf(c[0]) === 'research')).toHaveLength(1);
   });
 });
