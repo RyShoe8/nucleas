@@ -27,10 +27,15 @@ describe('secretBox', () => {
     expect(() => openSecret('integration:brevo', tampered)).toThrow();
   });
 
-  it('requires an explicit key in production', () => {
+  it('falls back to the existing app secret, and fails closed with none', () => {
     vi.stubEnv('NUCLEAS_SECRETS_KEY', '');
+    vi.stubEnv('AI_MODEL_SECRETS_KEY', '');
+    vi.stubEnv('NEXTAUTH_SECRET', 'app-session-secret');
     vi.stubEnv('NODE_ENV', 'production');
-    expect(() => sealSecret('integration:brevo', 'x')).toThrow(/NUCLEAS_SECRETS_KEY/);
+    const sealed = sealSecret('integration:brevo', 'x');
+    expect(openSecret('integration:brevo', sealed)).toBe('x');
+    vi.stubEnv('NEXTAUTH_SECRET', '');
+    expect(() => sealSecret('integration:brevo', 'x')).toThrow(/master secret/);
   });
 
   it('hints show at most four characters', () => {

@@ -12,15 +12,17 @@ import crypto from 'crypto';
 const ALGO = 'aes-256-gcm';
 const VERSION = 'v1';
 
+/**
+ * Master secret: an optional dedicated key, else the app secret already present in every
+ * environment (same precedent as modelSecrets). HKDF with a Nucleas-specific salt/info keeps the
+ * derived keys independent of session signing. Rotating the master secret requires reconnecting
+ * integrations (their stored credentials become unreadable and report needs_reauth).
+ */
 function masterSecret(): string {
-  const explicit = process.env.NUCLEAS_SECRETS_KEY?.trim();
-  if (explicit) return explicit;
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('NUCLEAS_SECRETS_KEY is required to store integration credentials.');
-  }
-  const fallback = process.env.NEXTAUTH_SECRET?.trim();
-  if (!fallback) throw new Error('NUCLEAS_SECRETS_KEY (or NEXTAUTH_SECRET in development) is required.');
-  return fallback;
+  const secret =
+    process.env.NUCLEAS_SECRETS_KEY?.trim() || process.env.AI_MODEL_SECRETS_KEY?.trim() || process.env.NEXTAUTH_SECRET?.trim();
+  if (!secret) throw new Error('No master secret available to store integration credentials.');
+  return secret;
 }
 
 function keyFor(purpose: string): Buffer {
