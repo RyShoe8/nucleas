@@ -160,10 +160,11 @@ export default function FloatingWindow({ window: w, module, children }: Floating
         <div
             role="dialog"
             aria-label={windowTitle}
-            className={`absolute ${w.maximized ? '' : 'top-0 left-0'} bg-background-card border rounded-lg shadow-2xl flex flex-col overflow-hidden select-none ${
+            className={`absolute ${w.maximized ? '' : 'top-0 left-0'} bg-background-card border rounded-lg shadow-2xl flex flex-col overflow-hidden ${
                 isActive ? 'border-primary/40' : 'border-border'
             } ${nearEdge && dragging ? 'ring-2 ring-primary/50 ring-offset-1 ring-offset-transparent' : ''} ${
-                dragging || resizing ? '' : 'transition-shadow'
+                // Content stays selectable/copyable; selection is only suppressed mid-drag or mid-resize.
+                dragging || resizing ? 'select-none' : 'transition-shadow'
             }`}
             style={style}
             onPointerDown={focusOnInteraction}
@@ -172,7 +173,7 @@ export default function FloatingWindow({ window: w, module, children }: Floating
                 onPointerDown={onHeaderPointerDown}
                 onDoubleClick={() => wm.maximize(w.id)}
                 title={module.canPopout ? 'Drag outside window to pop out' : undefined}
-                className={`flex items-center gap-2 px-3 h-9 border-b border-border ${
+                className={`flex items-center gap-2 px-3 h-9 border-b border-border select-none ${
                     w.maximized ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
                 } ${isActive ? 'bg-background-elevated' : 'bg-background-card'}`}
             >
