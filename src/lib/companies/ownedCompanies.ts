@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import Client from '@/lib/models/Client';
 import Project from '@/lib/models/Project';
 import User from '@/lib/models/User';
+import type { CompanyRelationship } from '@/lib/models/Client';
 
 /**
  * Converts top-level property projects into `owned` Companies (Client documents).
@@ -19,11 +20,19 @@ export type OwnedCompanyAction =
   | 'skip_no_organization'
   | 'skip_not_found';
 
+export interface ConversionOverrides {
+  /** Per project id; defaults to 'owned'. */
+  relationships?: Record<string, Exclude<CompanyRelationship, 'client'>>;
+  /** Per project id; used when the project has no URL recorded. */
+  domains?: Record<string, string>;
+}
+
 export interface OwnedCompanyPlanItem {
   projectId: string;
   projectName: string;
   projectType?: string;
   action: OwnedCompanyAction;
+  relationship: Exclude<CompanyRelationship, 'client'>;
   organizationId?: string;
   companyId?: string;
   domain?: string;
@@ -78,23 +87,29 @@ type LeanProject = Record<string, unknown> & {
   clientId?: Types.ObjectId | string | null;
 };
 
-export async function planOwnedCompanyConversion(projectIds: string[]): Promise<OwnedCompanyPlanItem[]> {
+export async function planOwnedCompanyConversion(
+  projectIds: string[],
+  overrides: ConversionOverrides = {}
+): Promise<OwnedCompanyPlanItem[]> {
   const plan: OwnedCompanyPlanItem[] = [];
   for (const id of projectIds) {
     if (!Types.ObjectId.isValid(id)) {
-      plan.push({ projectId: id, projectName: '', action: 'skip_not_found', copiedFields: [], notes: ['Invalid id'] });
+      plan.push({ projectId: id, projectName: '', action: 'skip_not_found', relationship: 'owned', copiedFields: [], notes: ['Invalid id'] });
       continue;
     }
     const project = (await Project.findById(id).select('-tasks -stages').lean()) as LeanProject | null;
     if (!project) {
-      plan.push({ projectId: id, projectName: '', action: 'skip_not_found', copiedFields: [], notes: [] });
+      plan.push({ projectId: id, projectName: '', action: 'skip_not_found', relationship: 'owned', copiedFields: [], notes: [] });
       continue;
     }
     const base = {
       projectId: String(project._id),
       projectName: project.name,
       projectType: project.projectType,
-      domain: domainFromProject(project as { liveUrl?: string; url?: string; urls?: string[] }),
+      relationship: overrides.relationships?.[id] ?? ('owned' as const),
+      domain:
+        domainFromProject(project as { liveUrl?: string; url?: string; urls?: string[] }) ??
+        (overrides.domains?.[id] ? domainFromProject({ url: overrides.domains[id] }) : undefined),
       copiedFields: COPIED_FIELDS.filter((f) => hasValue(project[f])),
       notes: [] as string[],
     };
@@ -139,8 +154,11 @@ export interface OwnedCompanyApplyResult {
 }
 
 /** Applies a plan produced by planOwnedCompanyConversion. Re-plans each item first so a stale plan cannot double-create. */
-export async function applyOwnedCompanyConversion(projectIds: string[]): Promise<OwnedCompanyApplyResult> {
-  const plan = await planOwnedCompanyConversion(projectIds);
+export async function applyOwnedCompanyConversion(
+  projectIds: string[],
+  overrides: ConversionOverrides = {}
+): Promise<OwnedCompanyApplyResult> {
+  const plan = await planOwnedCompanyConversion(projectIds, overrides);
   const result: OwnedCompanyApplyResult = { created: 0, attached: 0, unchanged: 0, skipped: 0, items: plan };
 
   for (const item of plan) {
@@ -172,7 +190,7 @@ export async function applyOwnedCompanyConversion(projectIds: string[]): Promise
           name: project.name,
           domain: item.domain,
           status: 'active',
-          relationship: 'owned',
+          relationship: item.relationship,
           hubProjectId: project._id,
         });
         companyId = String(company._id);

@@ -100,6 +100,14 @@ describe('owned company conversion', () => {
     expect(String((await Project.findById(project._id).lean())?.clientId)).toBe(String(otherClient));
   });
 
+  it('applies relationship and domain overrides', async () => {
+    const { project } = await seedProperty({ name: 'Playbound.club', liveUrl: undefined });
+    const id = String(project._id);
+    await applyOwnedCompanyConversion([id], { relationships: { [id]: 'internal' }, domains: { [id]: 'https://playbound.club' } });
+    const company = await Client.findOne({ hubProjectId: project._id }).lean();
+    expect(company).toMatchObject({ relationship: 'internal', domain: 'playbound.club' });
+  });
+
   it('flags non-internal project types without changing them', async () => {
     const { project } = await seedProperty({ name: 'Playbound.club', projectType: 'client', liveUrl: undefined });
     const plan = await planOwnedCompanyConversion([String(project._id)]);

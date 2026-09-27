@@ -64,6 +64,7 @@ Person (User/Employee)
 - Conversion (Phase 1, script with dry-run): for each top-level internal property project, create an `owned` Client that copies its domain, stacks, social links, palette, logo and team, then set `project.clientId`. The project stays `projectType: 'internal'`, keeps its `_id`, and all of its tasks, content, assets, comments, AI runs and repository bindings stay put. The existing project acts as the Company's hub, the same role `client-admin` projects play for clients.
 - Legacy UI impact (accepted, no code change): the legacy UI's code isn't touched, but it reads the same data. So after conversion, owned properties will also appear in its Clients calendar view, and client notifications log a harmless "no hub project" warning for them.
 - Projects without `clientId` still work as they do now.
+- **Tenant ID convention:** `organizationId` everywhere (User, Employee, Client) holds the organization admin's **user ID**, not `Organization._id` (see `models/User.ts`, "For MVP"). New collections follow the same convention, and any future migration to real Organization IDs happens across all collections at once.
 - Every new collection carries `organizationId` + `companyId` (the Client `_id`) and resolves access through existing client/project assignment rules (`lib/clients/*`, `POLICY.md`).
 
 ## 5. Integrations: connections and external resources
