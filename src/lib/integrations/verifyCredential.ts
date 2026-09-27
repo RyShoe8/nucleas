@@ -79,6 +79,15 @@ export async function verifyCredential(provider: string, credential: string, fet
         if (fail) return fail;
         return { ok: true, accountLabel: String((body.organization as { name?: string } | undefined)?.name ?? 'PostHog') };
       }
+      case 'mercury': {
+        // Lists accounts only to prove access; balances are never returned from verification.
+        const { status, body } = await getJson(fetchImpl, 'https://api.mercury.com/api/v1/accounts', { authorization: `Bearer ${key}` });
+        const fail = authFailure(status);
+        if (fail) return fail;
+        if (status !== 200) return { ok: false, reason: 'invalid_credential', message: `Mercury returned ${status}.` };
+        const count = Array.isArray(body.accounts) ? body.accounts.length : 0;
+        return { ok: true, accountLabel: `Mercury · ${count} account${count === 1 ? '' : 's'}` };
+      }
       case 'vercel': {
         const { status, body } = await getJson(fetchImpl, 'https://api.vercel.com/v2/user', { authorization: `Bearer ${key}` });
         const fail = authFailure(status);

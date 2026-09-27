@@ -327,6 +327,7 @@ function ConnectionRow({ connection: c, onChanged }: { connection: OsConnection;
                     </button>
                 </form>
             ) : null}
+            {editing && c.keyGuidance ? <p className="mt-1 ml-[5.5rem] text-[11px] text-text-secondary">{c.keyGuidance}</p> : null}
             {message ? <p className="mt-1 ml-[5.5rem] text-[11px] text-red-400">{message}</p> : null}
         </li>
     );

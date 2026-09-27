@@ -53,6 +53,13 @@ describe('verifyCredential', () => {
     expect(await verifyCredential('posthog', 'x', throwing)).toMatchObject({ ok: false, reason: 'unreachable' });
   });
 
+  it('verifies Mercury by listing accounts without exposing balances', async () => {
+    const out = await verifyCredential('mercury', 'secret-token:x', fakeFetch(200, { accounts: [{ id: 'a', availableBalance: 123456 }, { id: 'b' }] }));
+    expect(out).toEqual({ ok: true, accountLabel: 'Mercury · 2 accounts' });
+    expect(JSON.stringify(out)).not.toContain('123456');
+    expect(await verifyCredential('mercury', 'bad', fakeFetch(401, {}))).toMatchObject({ ok: false, reason: 'invalid_credential' });
+  });
+
   it('refuses providers that are not API-key based', async () => {
     expect(await verifyCredential('ga4', 'x', fakeFetch(200, {}))).toMatchObject({ ok: false, reason: 'unsupported' });
   });
