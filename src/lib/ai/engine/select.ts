@@ -7,9 +7,11 @@ import { localModelPowerScore } from '@/lib/ai/rolePipeline/modelMeta';
  * The one model-selection system. Every AI job asks for a need at a cost level; the engine picks
  * the best available model automatically. Admins may pin a model per need (applies at every level).
  *
- *   low    — paid only for small planning/judging calls; Rogly for everything else; never pays to retry
- *   medium — stronger planning/review; Rogly does the work but may retry on a paid model when it fails
- *   high   — paid models for planning, review and the work itself; Rogly only for utilities
+ * Paid models are ranked by power for each task: high uses #1, medium #2, low #3.
+ *   low    — #3 paid model plans and reviews; Rogly does the work; never pays to retry
+ *   medium — #2 paid model plans and reviews; Rogly does the work and may retry on the #2 model
+ *   high   — #1 paid model plans, reviews and does the work; Rogly only for utilities
+ * Rogly always uses its strongest model for the job.
  */
 
 export const COST_LEVELS = ['low', 'medium', 'high'] as const;
@@ -58,21 +60,22 @@ function withStrength(models: AvailableModel[], ...strengths: ModelStrength[]): 
   return [];
 }
 
-const byPrice = (a: AvailableModel, b: AvailableModel) => (a.blendedPricePer1M ?? 0) - (b.blendedPricePer1M ?? 0) || a.model.localeCompare(b.model);
-
-function cheapest(models: AvailableModel[]): AvailableModel | undefined {
-  return [...models].sort(byPrice)[0];
+/**
+ * Paid models ranked by power for the task: price is the most reliable cross-provider signal of
+ * capability; the provider's flagship flag breaks ties (it is per-provider, so it never outranks price).
+ */
+function rankByPower(models: AvailableModel[]): AvailableModel[] {
+  return [...models].sort(
+    (a, b) => (b.blendedPricePer1M ?? 0) - (a.blendedPricePer1M ?? 0) || Number(b.flagship) - Number(a.flagship) || a.model.localeCompare(b.model)
+  );
 }
 
-function middle(models: AvailableModel[]): AvailableModel | undefined {
-  const sorted = [...models].sort(byPrice);
-  return sorted[Math.floor((sorted.length - 1) / 2)];
-}
+/** Power rank per level: high = #1, medium = #2, low = #3 (nearest available when fewer exist). */
+export const LEVEL_RANK: Record<CostLevel, number> = { high: 1, medium: 2, low: 3 };
 
-function best(models: AvailableModel[]): AvailableModel | undefined {
-  const flagships = models.filter((m) => m.flagship);
-  const pool = flagships.length ? flagships : models;
-  return [...pool].sort(byPrice).at(-1);
+function ranked(models: AvailableModel[], rank: number): AvailableModel | undefined {
+  const sorted = rankByPower(models);
+  return sorted[Math.min(rank, sorted.length) - 1];
 }
 
 /**
@@ -109,30 +112,26 @@ function paidFor(models: AvailableModel[], need: Need): AvailableModel[] {
 export function selectFrom(models: AvailableModel[], need: Need, level: CostLevel): Omit<Selection, 'source'> {
   const paid = paidFor(models, need);
   const free = freeFor(models, need);
-  const pickPaid = (rank: 'cheap' | 'mid' | 'best') => (rank === 'cheap' ? cheapest(paid) : rank === 'mid' ? middle(paid) : best(paid));
   const base = { need, level };
+  // The paid model for this task at this level: #1 (high), #2 (medium) or #3 (low) by power.
+  const paidPick = ranked(paid, LEVEL_RANK[level]);
 
   switch (need) {
     case 'plan':
-    case 'review': {
-      const p = pickPaid(level === 'low' ? 'cheap' : level === 'medium' ? 'mid' : 'best');
+    case 'review':
       // No paid credential at all: fall back to the free model rather than failing.
-      return { ...base, primary: choice(p ?? free), fallback: null };
-    }
+      return { ...base, primary: choice(paidPick ?? free), fallback: null };
     case 'utility':
-      return { ...base, primary: choice(free ?? cheapest(paid)), fallback: null };
+      // Utilities never need paid models; Rogly's strongest text model handles them at every level.
+      return { ...base, primary: choice(free ?? paidPick), fallback: null };
     case 'write':
-      if (level === 'high') return { ...base, primary: choice(middle(paid) ?? free), fallback: null };
-      return { ...base, primary: choice(free ?? cheapest(paid)), fallback: level === 'medium' ? choice(middle(paid)) : null };
     case 'research':
-      if (level === 'high') return { ...base, primary: choice(middle(paid) ?? free), fallback: null };
-      return { ...base, primary: choice(free ?? cheapest(paid)), fallback: level === 'medium' ? choice(cheapest(paid)) : null };
     case 'code':
-      if (level === 'high') return { ...base, primary: choice(best(paid) ?? free), fallback: null };
-      return { ...base, primary: choice(free ?? cheapest(paid)), fallback: level === 'medium' ? choice(middle(paid)) : null };
     case 'vision':
-      if (level === 'high') return { ...base, primary: choice(middle(paid) ?? free), fallback: null };
-      return { ...base, primary: choice(free ?? cheapest(paid)), fallback: null };
+      // High: the #1 paid model does the work. Low/medium: Rogly does the work; medium may retry
+      // on its #2 paid model when Rogly fails, low never pays to retry.
+      if (level === 'high') return { ...base, primary: choice(paidPick ?? free), fallback: null };
+      return { ...base, primary: choice(free ?? paidPick), fallback: level === 'medium' && free ? choice(paidPick) : null };
   }
 }
 

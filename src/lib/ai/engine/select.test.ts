@@ -38,26 +38,32 @@ describe('automatic model selection', () => {
     expect(pick('vision', 'low').primary).toBe('Qwen/Qwen3-VL-8B-Thinking-FP8');
   });
 
-  it('low: cheapest paid reasoning for plan/review, Rogly for the work, never a paid retry', () => {
-    expect(pick('plan', 'low')).toEqual({ primary: 'o4-mini', fallback: null });
-    expect(pick('review', 'low')).toEqual({ primary: 'o4-mini', fallback: null });
-    expect(pick('write', 'low').fallback).toBeNull();
-    expect(pick('code', 'low').fallback).toBeNull();
-  });
-
-  it('medium: mid-priced planning, Rogly work with a paid retry', () => {
-    expect(pick('plan', 'medium').primary).toBe('anthropic/claude-sonnet-5');
-    expect(pick('write', 'medium')).toEqual({ primary: 'google/gemma-4-12B-it-qat-w4a16-ct', fallback: 'anthropic/claude-sonnet-5' });
-    expect(pick('code', 'medium').fallback).not.toBeNull();
-  });
-
-  it('high: flagship planning/review, paid work, Rogly only for utilities', () => {
+  it('paid picks by power rank for the task: high #1, medium #2, low #3', () => {
     expect(pick('plan', 'high').primary).toBe('gpt-6-astra');
-    expect(pick('review', 'high').primary).toBe('gpt-6-astra');
-    expect(pick('write', 'high').primary).not.toMatch(/gemma|Qwen/);
+    expect(pick('plan', 'medium').primary).toBe('gpt-5.6-sol');
+    expect(pick('plan', 'low').primary).toBe('anthropic/claude-sonnet-5');
+    expect(pick('review', 'low').primary).toBe('anthropic/claude-sonnet-5');
+  });
+
+  it('low and medium keep the work on Rogly; medium retries on its #2 paid model, low never pays to retry', () => {
+    expect(pick('write', 'low')).toEqual({ primary: 'google/gemma-4-12B-it-qat-w4a16-ct', fallback: null });
+    expect(pick('code', 'low').fallback).toBeNull();
+    expect(pick('write', 'medium')).toEqual({ primary: 'google/gemma-4-12B-it-qat-w4a16-ct', fallback: 'gpt-4o' });
+    expect(pick('code', 'medium')).toEqual({ primary: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', fallback: 'gpt-5.6-sol' });
+  });
+
+  it('high: the #1 paid model for the task does the work; utilities stay on Rogly', () => {
+    expect(pick('write', 'high').primary).toBe('gpt-5.6-sol');
     expect(pick('code', 'high').primary).toBe('gpt-6-astra');
     expect(pick('vision', 'high').primary).toBe('gpt-4o');
     expect(pick('utility', 'high').primary).toBe('google/gemma-4-12B-it-qat-w4a16-ct');
+  });
+
+  it('uses the nearest available rank when a task has fewer than three capable models', () => {
+    const two = [...ROGLY, model('o4-mini', false, 1.9), model('gpt-5.6-sol', false, 8)];
+    expect(pick('plan', 'low', two).primary).toBe('o4-mini');
+    expect(pick('plan', 'medium', two).primary).toBe('o4-mini');
+    expect(pick('plan', 'high', two).primary).toBe('gpt-5.6-sol');
   });
 
   it('never auto-selects paid models with unknown prices', () => {
@@ -70,7 +76,7 @@ describe('automatic model selection', () => {
 
   it('falls back to Rogly when no paid credential exists, and to paid when Rogly is missing', () => {
     expect(pick('plan', 'high', ROGLY).primary).not.toBeNull();
-    expect(pick('write', 'low', PAID).primary).toBe('anthropic/claude-haiku-4.5');
+    expect(pick('write', 'low', PAID).primary).toBe('anthropic/claude-sonnet-5');
     expect(pick('vision', 'low', PAID).primary).toBe('gpt-4o');
   });
 });

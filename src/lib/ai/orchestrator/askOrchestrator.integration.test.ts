@@ -87,7 +87,7 @@ async function ask(text: string, level: CostLevel = 'low') {
 }
 
 describe('engine selection in Ask', () => {
-  it('low: cheapest paid planner, Rogly writer; high: flagship planner, paid writer, always reviewed', async () => {
+  it('low: #3 paid planner, Rogly writer; high: #1 paid planner and writer, always reviewed', async () => {
     const seen: Record<string, string[]> = {};
     chat.mockImplementation(async (input) => {
       const stage = stageOf(input);
