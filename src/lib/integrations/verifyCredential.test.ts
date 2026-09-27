@@ -30,6 +30,11 @@ describe('verifyCredential', () => {
     expect(out).toMatchObject({ ok: true, planLimited: true });
   });
 
+  it('treats insufficient plan as plan-limited whatever the status, and real rejections as invalid', async () => {
+    expect(await verifyCredential('ahrefs', 'k', fakeFetch(401, { error: 'Insufficient plan' }))).toMatchObject({ ok: true, planLimited: true });
+    expect(await verifyCredential('ahrefs', 'k', fakeFetch(401, ['Error', 'Unauthorized']))).toMatchObject({ ok: false, reason: 'invalid_credential' });
+  });
+
   it('reports Ahrefs plan and unit usage', async () => {
     const out = await verifyCredential(
       'ahrefs',

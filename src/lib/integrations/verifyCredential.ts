@@ -55,11 +55,14 @@ export async function verifyCredential(provider: string, credential: string, fet
       }
       case 'ahrefs': {
         const { status, body } = await getJson(fetchImpl, 'https://api.ahrefs.com/v3/subscription-info/limits-and-usage', { authorization: `Bearer ${key}` });
-        if (status === 401) return { ok: false, reason: 'invalid_credential', message: 'Ahrefs rejected this API key.' };
-        // A free/insufficient plan answers {"error":"Insufficient plan"}. The key is kept and the
-        // connection marked plan-limited so capabilities light up after an upgrade + re-verify.
-        if (status === 403 && /insufficient plan/i.test(String(body.error ?? ''))) {
+        // A valid key on a plan without API access answers "Insufficient plan" (status not relied on).
+        // The key is kept and marked plan-limited so capabilities light up after an upgrade + re-verify.
+        // An invalid key answers 401 ["Error","Unauthorized"].
+        if (status >= 400 && /insufficient plan/i.test(JSON.stringify(body))) {
           return { ok: true, accountLabel: 'Ahrefs', planLabel: 'No API access on current plan', planLimited: true };
+        }
+        if (status === 401 || status === 403) {
+          return { ok: false, reason: 'invalid_credential', message: 'Ahrefs rejected this API key. Use a key from Account settings → API keys (not an MCP key).' };
         }
         const fail = authFailure(status);
         if (fail) return fail;
