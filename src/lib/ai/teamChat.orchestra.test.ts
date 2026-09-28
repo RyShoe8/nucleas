@@ -233,6 +233,21 @@ describe('attemptOrchestratedIdeReply full orchestra', () => {
     expect(reviewerCall[0].repoContextBlock).toBeUndefined();
   });
 
+  it('preserves accepted repository work when the free planner misses only the plan envelope', async () => {
+    mocks.companyChat.mockImplementation(async ({ systemPrompt }: { systemPrompt: string }) => ({
+      requestId: 'stage', role: 'assistant', costMicros: 0,
+      text: systemPrompt.includes('Pipeline stage: planner')
+        ? 'Inspect the game-server recipes and remove the nested OpenHV registration.'
+        : systemPrompt.includes('Pipeline stage: worker')
+          ? 'Verified platform/src/lib/gameHost/recipes.js registers OpenHV both standalone and beneath OpenRA.'
+          : 'The findings support this focused change.\n```nucleas-gate\n{"status":"accept"}\n```',
+    }));
+    const request = 'On playbound.club/admin/connect/game-servers, remove the OpenHV listing under OpenRA.';
+    const turn = await attemptOrchestratedIdeReply({ projectName: 'PlayBound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: request, priorTurns: [], interactionMode: 'plan' });
+    expect(turn.plan).toMatchObject({ status: 'ready_for_review', summary: request });
+    expect(turn.plan?.markdown).toContain('platform/src/lib/gameHost/recipes.js');
+  });
+
   it('retries a malformed Reviewer gate without repeating repository work', async () => {
     const stages: string[] = [];
     mocks.companyChat.mockImplementation(async (args: { systemPrompt: string; userText: string }) => {

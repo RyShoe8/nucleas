@@ -3,8 +3,8 @@ import { Types } from 'mongoose';
 import { z } from 'zod';
 import { attemptCompanyCredentialChat } from '@/lib/ai/companyChat';
 import type { TeamChatTurn } from '@/lib/ai/teamChat';
-import type { CompanyViewer } from '@/lib/companies/companyProfile';
-import { renderContext, type PortfolioContext } from '@/lib/context/resolveCompanyContext';
+import type { CompanyProfile, CompanyViewer } from '@/lib/companies/companyProfile';
+import { detectCompanies, renderContext, type PortfolioContext } from '@/lib/context/resolveCompanyContext';
 import { buildAssistantTools, toolNameFor } from '@/lib/ai/company/companyTools';
 import { CAPABILITIES } from '@/lib/capabilities/registry';
 import { readEngineSettings, selectModel, type CostLevel, type ModelChoice, type Need } from '@/lib/ai/engine/select';
@@ -53,6 +53,54 @@ const planSchema = z.object({
   job: z.object({ company: z.string().max(200), request: z.string().min(5).max(4000) }).optional(),
 });
 export type AskPlan = z.infer<typeof planSchema>;
+
+function parseAskPlanReply(text: string) {
+  const raw = extractJson(text);
+  const parsed = planSchema.safeParse(raw);
+  if (parsed.success || !raw || typeof raw !== 'object' || Array.isArray(raw)) return { raw, parsed };
+
+  // Small/local models commonly identify a code change correctly but use code_change as the kind,
+  // put its fields at the top level, or omit the routing boilerplate. Recover only that narrow,
+  // unambiguous shape; every other malformed plan still follows the normal correction path.
+  const row = raw as Record<string, unknown>;
+  const nested = row.codeChange ?? row.code_change;
+  const candidate = nested && typeof nested === 'object' && !Array.isArray(nested)
+    ? nested as Record<string, unknown>
+    : /^(?:code[_ -]?change|code)$/i.test(String(row.kind ?? row.type ?? ''))
+      ? row
+      : null;
+  if (candidate && typeof candidate.company === 'string' && typeof candidate.request === 'string') {
+    return {
+      raw,
+      parsed: planSchema.safeParse({
+        kind: 'answer', scope: 'company', fetch: [], actions: [], research: [], outline: [], review: false,
+        codeChange: { company: candidate.company, request: candidate.request },
+      }),
+    };
+  }
+  return { raw, parsed };
+}
+
+/**
+ * Last-resort routing for an obvious code mutation. It cannot execute anything: it only enters the
+ * existing repository-grounded planning and human-approval flow, and only when one named company
+ * with a connected repository can be identified.
+ */
+export function recoverObviousCodeChange(
+  text: string,
+  companies: CompanyProfile[],
+  repositoryCompanyIds: ReadonlySet<string>
+): AskPlan | null {
+  const mutation = /\b(add|build|change|correct|delete|duplicate|fix|hide|implement|list(?:ed|ing)?|move|remove|replace|show|update)\b/i.test(text);
+  const codeSurface = /(?:https?:\/\/|www\.|\b[a-z0-9-]+\.(?:com|net|org|io|app|club|dev)\b|\/(?:admin|api|app|src|pages?)\b|\b(?:app|button|code|form|menu|page|screen|site|ui|website)\b)/i.test(text);
+  if (!mutation || !codeSurface) return null;
+  const candidates = detectCompanies(text, companies).filter((company) => repositoryCompanyIds.has(company.id));
+  if (candidates.length !== 1) return null;
+  return planSchema.parse({
+    kind: 'answer', scope: 'company', fetch: [], actions: [], research: [], outline: [], review: false,
+    codeChange: { company: candidates[0].name, request: text.slice(0, 4000) },
+  });
+}
 
 export interface StageRecord {
   stage: 'plan' | 'fetch' | 'research' | 'work' | 'check' | 'review' | 'code' | 'job';
@@ -284,7 +332,8 @@ export async function runAskOrchestrator(
       signal: input.signal,
       maxTokens: PLAN_MAX_TOKENS,
     });
-    const parsedPlan = turn.role === 'assistant' ? planSchema.safeParse(extractJson(turn.text)) : null;
+    const decoded = turn.role === 'assistant' ? parseAskPlanReply(turn.text) : null;
+    const parsedPlan = decoded?.parsed ?? null;
     stages.push({
       stage: 'plan',
       model: choice.model,
@@ -294,7 +343,7 @@ export async function runAskOrchestrator(
         ? undefined
         : turn.role !== 'assistant'
           ? `failed: ${turn.text.slice(0, 120)}`
-          : extractJson(turn.text) === null
+          : decoded?.raw === null
             ? 'unusable plan (no JSON)'
             : `unusable plan (${parsedPlan?.error.issues[0] ? `${parsedPlan.error.issues[0].path.join('.') || 'plan'}: ${parsedPlan.error.issues[0].message}` : 'invalid'})`.slice(0, 160),
     });
@@ -323,11 +372,17 @@ export async function runAskOrchestrator(
     if (!planRoute.primary) planRoute = { ...planRoute, primary: failed };
   }
   const planTurn = attempt.turn;
-  if (!attempt.parsedPlan?.success) {
-    return status(planTurn.role !== 'assistant' ? planTurn.text || 'Planning failed.' : 'The planner did not return a usable plan after retrying. Try again, or use Direct mode.');
+  let plan: AskPlan;
+  if (attempt.parsedPlan?.success) {
+    plan = attempt.parsedPlan.data;
+  } else {
+    const recovered = recoverObviousCodeChange(input.text, input.context.companies, new Set(repos.keys()));
+    if (!recovered) {
+      return status(planTurn.role !== 'assistant' ? planTurn.text || 'Planning failed.' : 'The planner did not return a usable plan after retrying. Try again, or use Direct mode.');
+    }
+    plan = recovered;
+    stages.push({ stage: 'plan', free: true, costMicros: 0, note: 'recovered obvious code change from the request and connected repository' });
   }
-  const parsed = attempt.parsedPlan;
-  const plan = parsed.data;
   if (plan.kind === 'clarify' && plan.clarifyQuestion) {
     return { role: 'assistant', text: plan.clarifyQuestion, stages, invocationIds: [], costMicros, runId: planTurn.runId };
   }

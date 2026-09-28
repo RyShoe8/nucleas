@@ -256,6 +256,36 @@ export function distillPlannerBriefing(
   return plannerText.replace(/```nucleas-plan\s*[\s\S]*?```/gi, '').trim().slice(0, 8000);
 }
 
+/** Preserve accepted repository work when a small planner misses only the plan-envelope format. */
+export function planFromVerifiedFallback(userText: string, plannerText: string, workerText: string): IdePlanDocument {
+  const request = userText.trim().replace(/\s+/g, ' ').slice(0, 1800);
+  const paths = [...new Set(workerText.match(/(?:[A-Za-z0-9_.@-]+\/)+[A-Za-z0-9_.@-]+\.(?:[cm]?[jt]sx?|json|ya?ml|py|rb|go|rs|java|md)/g) ?? [])].slice(0, 8);
+  const titleBase = request.split(/[.!?](?:\s|$)/)[0]?.trim() || 'Implement the requested repository change';
+  const steps = [
+    paths.length
+      ? `Update the verified implementation locations: ${paths.join(', ')}.`
+      : 'Update the repository implementation identified by the verified Worker investigation.',
+    `Apply the requested behavior exactly: ${request.slice(0, 500)}`,
+    'Run the focused project checks for the affected code and confirm the old behavior no longer appears.',
+  ];
+  const title = titleBase.slice(0, 200);
+  const summary = request.slice(0, 2000) || title;
+  return {
+    title,
+    summary,
+    steps,
+    markdown: [
+      `# ${title}`,
+      summary,
+      steps.map((step, index) => `${index + 1}. ${step}`).join('\n'),
+      '## Repository-grounded findings',
+      workerText.trim().slice(0, 12_000),
+      plannerText.trim() ? `## Planner notes\n\n${plannerText.trim().slice(0, 6000)}` : '',
+    ].filter(Boolean).join('\n\n').slice(0, 24_000),
+    status: 'ready_for_review',
+  };
+}
+
 /** Keep only unmistakably low-risk conversational turns out of the premium orchestration loop. */
 export function isTrivialTeamChatRequest(text: string, mode: IdeInteractionMode): boolean {
   if (mode !== 'chat') return false;
@@ -634,6 +664,9 @@ export async function attemptOrchestratedIdeReply(input: {
 
       const gate = parseReviewerGate(reviewerTurn.text);
       if (gate.status === 'accept') {
+        if (interactionMode === 'plan' && !plan) {
+          plan = planFromVerifiedFallback(input.userText, plannerTurn.text, workerTurn.text);
+        }
         finalChatAnswer = gate.answer.trim() || reviewerTurn.text.trim();
         break;
       }

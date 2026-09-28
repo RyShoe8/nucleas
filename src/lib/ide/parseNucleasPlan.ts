@@ -1,6 +1,7 @@
 import type { IdePlanDocument } from '@/lib/ide/idePlan';
 
 const FENCE_RE = /```nucleas-plan\s*([\s\S]*?)```/i;
+const JSON_FENCE_RE = /```(?:json)?\s*([\s\S]*?)```/i;
 
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -19,11 +20,15 @@ export function parseNucleasPlan(raw: string): {
   plan: IdePlanDocument;
   displayText: string;
 } | null {
-  const match = raw.match(FENCE_RE);
-  if (!match?.[1]) return null;
+  const tagged = raw.match(FENCE_RE);
+  const generic = tagged ? null : raw.match(JSON_FENCE_RE);
+  const trimmed = raw.trim();
+  const bare = !tagged && !generic && trimmed.startsWith('{') && trimmed.endsWith('}') ? trimmed : null;
+  const payload = tagged?.[1] ?? generic?.[1] ?? bare;
+  if (!payload) return null;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(match[1].trim());
+    parsed = JSON.parse(payload.trim());
   } catch {
     return null;
   }
@@ -34,7 +39,11 @@ export function parseNucleasPlan(raw: string): {
   const steps = asStringArray(record.steps);
   if (!title || (!summary && steps.length === 0)) return null;
 
-  const withoutFence = raw.replace(FENCE_RE, '').trim();
+  const withoutFence = tagged
+    ? raw.replace(tagged[0], '').trim()
+    : generic
+      ? raw.replace(generic[0], '').trim()
+      : '';
   const displayText =
     withoutFence ||
     'Plan ready to review in the center pane. Approve it when you want me to build.';

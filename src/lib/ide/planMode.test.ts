@@ -80,6 +80,11 @@ describe('ide plan mode helpers', () => {
     expect(parseNucleasPlan('Just a chat reply.')).toBeNull();
   });
 
+  it('accepts valid plan JSON when a small model uses a generic JSON fence', () => {
+    const parsed = parseNucleasPlan('```json\n{"title":"Remove duplicate","summary":"Remove OpenHV under OpenRA","steps":["Edit recipes"]}\n```');
+    expect(parsed?.plan).toMatchObject({ title: 'Remove duplicate', steps: ['Edit recipes'] });
+  });
+
   it('preserves visual wireframes and architecture prose in plan markdown (F16)', () => {
     const raw = [
       '## Architecture Wireframe',

@@ -58,7 +58,9 @@ afterAll(async () => {
 beforeEach(async () => {
   chat.mockReset();
   search.mockReset();
-  await Promise.all([Client.deleteMany({}), Project.deleteMany({}), AiModelProfile.deleteMany({}), AiEngineSettings.deleteMany({}), AiModelCatalogSnapshot.deleteMany({}), MetricSnapshot.deleteMany({}), CapabilityInvocation.deleteMany({}), AiModelHealth.deleteMany({})]);
+  propose.mockReset();
+  createJob.mockReset();
+  await Promise.all([Client.deleteMany({}), Project.deleteMany({}), AiProjectRepository.deleteMany({}), AiModelProfile.deleteMany({}), AiEngineSettings.deleteMany({}), AiModelCatalogSnapshot.deleteMany({}), MetricSnapshot.deleteMany({}), CapabilityInvocation.deleteMany({}), AiModelHealth.deleteMany({})]);
   const paid = await AiModelProfile.create({ key: 'anthropic', label: 'Anthropic', provider: 'openrouter', tier: 'commercial', protocol: 'openai-chat', endpoint: 'https://x.test/v1/chat/completions', secretCiphertext: 'x', secretLast4: '1234', enabled: true });
   const rogly = await AiModelProfile.create({ key: 'rogly', label: 'Rogly', provider: 'custom', tier: 'local_remote', protocol: 'openai-chat', endpoint: 'https://rogly.test/v1/chat/completions', secretCiphertext: 'x', secretLast4: '1234', enabled: true });
   roglyProfile = String(rogly._id);
@@ -360,6 +362,28 @@ describe('code changes', () => {
     const answer = await ask('Plan a FAQ page for Frugal Gambler');
     expect(propose).not.toHaveBeenCalled();
     expect(answer.text).toMatch(/no GitHub repository connected/);
+  });
+
+  it('recovers an obvious PlayBound code change when the free planner returns prose twice', async () => {
+    const project = await Project.create({ name: 'PlayBound', projectType: 'internal', category: 'website', status: 'launched', color: '#222', userId: new Types.ObjectId() });
+    const company = await Client.create({ organizationId: org, name: 'PlayBound', color: '#222', relationship: 'owned', domain: 'playbound.club', hubProjectId: project._id });
+    await Project.updateOne({ _id: project._id }, { $set: { clientId: company._id } });
+    await AiProjectRepository.create({ organizationId: String(org), projectId: project._id, owner: 'RyShoe8', repo: 'playbound', installationId: '42' });
+    chat.mockImplementation(async () => reply('I would inspect the game-server recipes and remove the duplicate OpenHV entry.'));
+    propose.mockResolvedValue({ ok: true, costMicros: 0, build: { id: 'pb1', title: 'Remove duplicate OpenHV listing', summary: 'Repository-grounded plan.', status: 'proposed', repository: { fullName: 'RyShoe8/playbound' } } });
+
+    const request = 'On playbound.club/admin/connect/game-servers, OpenHV is listed on its own and also under OpenRA. Remove the listing under OpenRA.';
+    const answer = await ask(request, 'free');
+
+    expect(propose).toHaveBeenCalledWith(admin, expect.objectContaining({
+      companyId: String(company._id), request, level: 'free',
+    }));
+    expect(answer).toMatchObject({ role: 'assistant', build: { id: 'pb1', status: 'proposed' } });
+    expect(answer.stages.filter((stage) => stage.stage === 'plan').map((stage) => stage.note)).toEqual([
+      'unusable plan (no JSON)',
+      'unusable plan (no JSON)',
+      'recovered obvious code change from the request and connected repository',
+    ]);
   });
 });
 
