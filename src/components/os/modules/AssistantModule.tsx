@@ -65,10 +65,20 @@ function StageLine({ turn }: { turn: Turn }) {
     );
 }
 
-interface Profile {
+interface ProviderModel {
     id: string;
     label: string;
-    model?: string | null;
+    free: boolean;
+    price: number | null;
+    score: number | null;
+    /** On the short list shown by default. */
+    recommended: boolean;
+}
+
+interface Provider {
+    profileId: string;
+    label: string;
+    models: ProviderModel[];
 }
 
 const SELECTION_KEY = 'nucleas.os.assistant.model';
@@ -90,81 +100,65 @@ function writeSelection(value: { profileId: string; model: string }) {
     }
 }
 
-interface DiscoveredModel {
-    id: string;
-    label?: string;
-    pricing?: { free?: boolean; label?: string };
+function modelOptionLabel(m: ProviderModel): string {
+    const bits = [m.free ? 'free' : m.price !== null ? `$${m.price}/1M` : null, m.score !== null ? `score ${m.score.toFixed(0)}` : null].filter(Boolean);
+    return bits.length ? `${m.id} · ${bits.join(' · ')}` : m.id;
 }
 
-/** Direct mode: choose a provider (credential), then any model that provider offers. */
+const SHOW_ALL = '__show_all__';
+
+/** Direct mode: choose a provider, then one of its strongest models (or any model it lists, on request). */
 function DirectModelPicker({
-    profiles,
+    providers,
     value,
     onChange,
 }: {
-    profiles: Profile[];
+    providers: Provider[];
     value: { profileId: string; model: string } | null;
     onChange: (v: { profileId: string; model: string }) => void;
 }) {
-    const profileId = value?.profileId ?? '';
-    const [models, setModels] = useState<DiscoveredModel[] | null>(null);
-    const [loadError, setLoadError] = useState<string | null>(null);
-
-    useEffect(() => {
-        if (!profileId) return;
-        let cancelled = false;
-        void (async () => {
-            const res = await fetch(`/api/ai/ide/free-chat/models?profileId=${encodeURIComponent(profileId)}`, { cache: 'no-store' });
-            const body = (await res.json().catch(() => ({}))) as { models?: DiscoveredModel[]; error?: string };
-            if (cancelled) return;
-            setModels(body.models ?? []);
-            setLoadError(!res.ok || (body.error && !(body.models ?? []).length) ? body.error ?? `Could not load models (${res.status})` : null);
-        })();
-        return () => {
-            cancelled = true;
-        };
-    }, [profileId]);
-
-    // Keep the saved model visible even before (or if) discovery lists it.
-    const options = models ?? [];
-    const listed = options.some((m) => m.id === value?.model);
-
+    const provider = providers.find((p) => p.profileId === value?.profileId) ?? null;
+    const [showAll, setShowAll] = useState(false);
+    const all = provider?.models ?? [];
+    // The short list, plus the current choice so it never disappears from the menu.
+    const shown = showAll ? all : all.filter((m) => m.recommended || m.id === value?.model);
+    const hidden = all.length - shown.length;
     return (
         <span className="inline-flex items-center gap-1">
             <select
-                value={profileId}
+                value={provider?.profileId ?? ''}
                 onChange={(e) => {
-                    const p = profiles.find((x) => x.id === e.target.value);
-                    if (!p) return;
-                    setModels(null);
-                    onChange({ profileId: p.id, model: p.model ?? '' });
+                    const next = providers.find((x) => x.profileId === e.target.value);
+                    if (!next) return;
+                    setShowAll(false);
+                    onChange({ profileId: next.profileId, model: (next.models.find((m) => m.recommended) ?? next.models[0])?.id ?? '' });
                 }}
                 className="h-7 px-1 rounded border border-border bg-background-elevated text-xs max-w-[130px]"
                 aria-label="Provider"
             >
-                {profiles.length === 0 ? <option value="">No AI credentials configured</option> : null}
-                {profiles.map((p) => (
-                    <option key={p.id} value={p.id}>
+                {providers.length === 0 ? <option value="">No models available</option> : null}
+                {providers.map((p) => (
+                    <option key={p.profileId} value={p.profileId}>
                         {p.label}
                     </option>
                 ))}
             </select>
             <select
                 value={value?.model ?? ''}
-                onChange={(e) => onChange({ profileId, model: e.target.value })}
-                disabled={!profileId}
-                className="h-7 px-1 rounded border border-border bg-background-elevated text-xs max-w-[220px]"
+                onChange={(e) => {
+                    if (e.target.value === SHOW_ALL) return setShowAll(true);
+                    if (provider) onChange({ profileId: provider.profileId, model: e.target.value });
+                }}
+                disabled={!provider}
+                className="h-7 px-1 rounded border border-border bg-background-elevated text-xs max-w-[240px]"
                 aria-label="Model"
-                title={loadError ?? undefined}
             >
-                {value?.model && !listed ? <option value={value.model}>{value.model}</option> : null}
-                {models === null ? <option value="" disabled>Loading models…</option> : null}
-                {options.map((m) => (
+                {shown.map((m) => (
                     <option key={m.id} value={m.id}>
-                        {m.label ?? m.id}
-                        {m.pricing?.free ? ' · free' : m.pricing?.label ? ` · ${m.pricing.label}` : ''}
+                        {modelOptionLabel(m)}
                     </option>
                 ))}
+                {hidden > 0 ? <option value={SHOW_ALL}>Show all {all.length} models…</option> : null}
             </select>
         </span>
     );
@@ -187,7 +181,7 @@ const ACTION_TONE: Record<string, string> = {
 export default function AssistantModule() {
     const focus = useSyncExternalStore(subscribeAssistantFocus, getAssistantFocus, () => null);
     const [turns, setTurns] = useState<Turn[] | null>(null);
-    const [profiles, setProfiles] = useState<Profile[]>([]);
+    const [providers, setProviders] = useState<Provider[]>([]);
     const [selection, setSelection] = useState<{ profileId: string; model: string } | null>(null);
     const [mode, setMode] = useState<AskMode>('orchestrated');
     const [cost, setCost] = useState<CostChoice>('default');
@@ -201,19 +195,24 @@ export default function AssistantModule() {
         void (async () => {
             const [historyRes, profilesRes] = await Promise.all([
                 fetch('/api/os/assistant'),
-                fetch('/api/ai/ide/free-chat/pipeline', { cache: 'no-store' }),
+                fetch('/api/os/ai-models', { cache: 'no-store' }),
             ]);
             const history = (await historyRes.json().catch(() => ({}))) as { turns?: Turn[] };
-            const pipeline = (await profilesRes.json().catch(() => ({}))) as { profiles?: Profile[] };
+            const catalog = (await profilesRes.json().catch(() => ({}))) as { providers?: Provider[] };
             if (cancelled) return;
             setMode(readMode());
             setCost(readCost());
             setTurns(history.turns ?? []);
-            const available = (pipeline.profiles ?? []).filter((p) => p.model);
-            setProfiles(available);
+            const available = catalog.providers ?? [];
+            setProviders(available);
+            // Restore the saved choice only if that provider still lists the model.
             const stored = readSelection();
-            const chosen = available.find((p) => p.id === stored?.profileId) ?? available[0];
-            if (chosen) setSelection({ profileId: chosen.id, model: stored?.profileId === chosen.id ? stored.model : (chosen.model ?? '') });
+            const storedProvider = available.find((p) => p.profileId === stored?.profileId);
+            const chosen = storedProvider ?? available[0];
+            if (chosen) {
+                const keep = storedProvider && storedProvider.models.some((m) => m.id === stored?.model);
+                setSelection({ profileId: chosen.profileId, model: keep ? stored!.model : (chosen.models[0]?.id ?? '') });
+            }
         })();
         return () => {
             cancelled = true;
@@ -319,7 +318,7 @@ export default function AssistantModule() {
                 ) : null}
                 {mode === 'direct' ? (
                     <DirectModelPicker
-                        profiles={profiles}
+                        providers={providers}
                         value={selection}
                         onChange={(next) => {
                             setSelection(next);

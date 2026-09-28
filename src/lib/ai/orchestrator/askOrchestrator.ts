@@ -266,10 +266,12 @@ export async function runAskOrchestrator(
 
   const CORRECTION = 'Your previous reply was not a valid plan. Reply with ONLY the JSON object described above, no prose.';
   let attempt = await planOnce(planRoute.primary);
-  if (!attempt.parsedPlan?.success) attempt = await planOnce(planRoute.primary, CORRECTION);
-  if (!attempt.parsedPlan?.success && input.level !== 'high') {
-    const upOne = await selectModel(org, 'plan', input.level === 'low' ? 'medium' : 'high', { models, settings });
-    if (upOne.primary && upOne.primary.model !== planRoute.primary.model) attempt = await planOnce(upOne.primary, CORRECTION);
+  // Correct the same model only when it answered badly; a failed call (unavailable, error) moves on.
+  if (!attempt.parsedPlan?.success && attempt.turn.role === 'assistant') attempt = await planOnce(planRoute.primary, CORRECTION);
+  if (!attempt.parsedPlan?.success) {
+    // Another model: one rank up (low → #2, medium → #1); high has no rank above, so its #2.
+    const other = await selectModel(org, 'plan', input.level === 'low' ? 'medium' : input.level === 'medium' ? 'high' : 'medium', { models, settings });
+    if (other.primary && other.primary.model !== planRoute.primary.model) attempt = await planOnce(other.primary, CORRECTION);
   }
   const planTurn = attempt.turn;
   if (!attempt.parsedPlan?.success) {

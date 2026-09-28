@@ -40,6 +40,8 @@ export const AiPricingRegistryCache: Model<RegistryDoc> =
 export interface AvailableModel {
   profileId: string;
   profileLabel: string;
+  /** Credential provider (openai, openrouter, custom…). */
+  provider: string;
   /** Exact id to send to the provider. */
   model: string;
   label: string;
@@ -72,6 +74,11 @@ export function isTextChatModel(id: string): boolean {
 /** Older families that are priced high but outclassed; never auto-selected. */
 function isLegacy(id: string): boolean {
   return /^(gpt-3\.5|gpt-4(-|$)|gpt-4-turbo|o1(-|$)|chatgpt-4o|text-)/i.test(id);
+}
+
+/** Provider routing variants (OpenRouter's ":batch", ":free", ":online"…) behave differently from the base model; never auto-selected. */
+function isRoutingVariant(id: string): boolean {
+  return id.includes(':') || /^openrouter\//i.test(id);
 }
 
 /** Moving aliases ("chat-latest", "gemini-pro-latest") change underneath us; never auto-selected. */
@@ -140,11 +147,11 @@ async function modelIdsFor(profile: ProfileRow, force: boolean): Promise<string[
   }
   // Keep the last good list if discovery fails; fall back to the credential's default model.
   if (ids.length === 0) ids = cached?.modelIds?.length ? cached.modelIds : profile.model ? [profile.model] : [];
-  await AiModelCatalogSnapshot.updateOne({ profileId: profile._id }, { $set: { modelIds: ids, error, fetchedAt: new Date() } }, { upsert: true });
+  await AiModelCatalogSnapshot.updateOne({ profileId: profile._id }, error ? { $set: { modelIds: ids, error, fetchedAt: new Date() } } : { $set: { modelIds: ids, fetchedAt: new Date() }, $unset: { error: '' } }, { upsert: true });
   return ids;
 }
 
-export function describeModel(id: string, provider: string | undefined, free: boolean, rows: PricingRow[]): Omit<AvailableModel, 'profileId' | 'profileLabel' | 'model' | 'benchmark'> {
+export function describeModel(id: string, provider: string | undefined, free: boolean, rows: PricingRow[]): Omit<AvailableModel, 'profileId' | 'profileLabel' | 'provider' | 'model' | 'benchmark'> {
   const normalized = normalizeModelId(id);
   const curated = findCatalogModel(normalized) ?? findCatalogModel(id);
   const meta = buildModelMetaView({ id: normalized, free });
@@ -168,7 +175,7 @@ export function describeModel(id: string, provider: string | undefined, free: bo
 
   const textCapable = isTextChatModel(normalized) && !strengths.includes('image_gen') && !strengths.includes('embeddings');
   const currentCapable = Boolean(curated) || Boolean(ref && (ref.supportsReasoning || ref.supportsVision || ref.supportsTools));
-  const autoEligible = textCapable && (free || (price !== null && price <= AUTO_PRICE_CAP && !isLegacy(normalized) && !isMovingAlias(normalized) && currentCapable));
+  const autoEligible = textCapable && (free || (price !== null && price <= AUTO_PRICE_CAP && !isLegacy(normalized) && !isMovingAlias(normalized) && !isRoutingVariant(normalized) && currentCapable));
 
   return {
     label: curated?.label ?? meta.label,
@@ -179,6 +186,13 @@ export function describeModel(id: string, provider: string | undefined, free: bo
     blendedPricePer1M: price,
     autoEligible,
   };
+}
+
+/** True when the provider's latest model list for this credential includes the model. */
+export async function isModelListedForProfile(profileId: string, model: string): Promise<boolean> {
+  if (!Types.ObjectId.isValid(profileId)) return false;
+  const hit = await AiModelCatalogSnapshot.exists({ profileId: new Types.ObjectId(profileId), modelIds: model });
+  return Boolean(hit);
 }
 
 export async function listAvailableModels(options: { force?: boolean } = {}): Promise<AvailableModel[]> {
@@ -194,10 +208,32 @@ export async function listAvailableModels(options: { force?: boolean } = {}): Pr
     for (const id of await modelIdsFor(profile, Boolean(options.force))) {
       const described = describeModel(id, profile.provider, free, rows);
       if (!isTextChatModel(normalizeModelId(id))) continue;
-      out.push({ profileId: String(profile._id), profileLabel: profile.label, model: id, ...described, benchmark: free ? null : matchBenchmark(id, scores) });
+      out.push({ profileId: String(profile._id), profileLabel: profile.label, provider: profile.provider ?? 'custom', model: id, ...described, benchmark: free ? null : matchBenchmark(id, scores) });
     }
   }
-  return dedupeDatedVariants(out);
+  return dedupeAcrossCredentials(dedupeDatedVariants(out));
+}
+
+/** Aggregators resell other providers' models; a direct credential for the same model wins. */
+const AGGREGATORS = new Set(['openrouter']);
+
+/**
+ * The same model reachable through two credentials (gpt-6-astra direct and openai/gpt-6-astra via
+ * OpenRouter) takes one rank: the direct credential when there is one, otherwise the cheapest.
+ */
+export function dedupeAcrossCredentials(models: AvailableModel[]): AvailableModel[] {
+  const identity = (m: AvailableModel) => normalizeModelId(m.model).replace(/^.*\//, '').toLowerCase();
+  const best = new Map<string, AvailableModel>();
+  for (const m of models) {
+    if (!m.autoEligible || m.free) continue;
+    const current = best.get(identity(m));
+    const better =
+      !current ||
+      (AGGREGATORS.has(current.provider) && !AGGREGATORS.has(m.provider)) ||
+      (AGGREGATORS.has(current.provider) === AGGREGATORS.has(m.provider) && (m.blendedPricePer1M ?? Infinity) < (current.blendedPricePer1M ?? Infinity));
+    if (better) best.set(identity(m), m);
+  }
+  return models.map((m) => (m.autoEligible && !m.free && best.get(identity(m)) !== m ? { ...m, autoEligible: false } : m));
 }
 
 /**
@@ -217,4 +253,33 @@ export function dedupeDatedVariants(models: AvailableModel[]): AvailableModel[] 
     keep.add(undated ?? [...group].sort((a, b) => b.model.localeCompare(a.model))[0]);
   }
   return models.map((m) => (keep.has(m) ? m : { ...m, autoEligible: false }));
+}
+
+/**
+ * The short list people choose from (Direct mode, pins): every free model, plus each paid
+ * credential's strongest current models — its top 6 by the intelligence score and top 3 by the
+ * coding score. Credentials with no scored models show their 6 priciest current models instead.
+ */
+export function shortlistModels(models: AvailableModel[]): AvailableModel[] {
+  const picked = new Set<AvailableModel>(models.filter((m) => m.free && m.autoEligible));
+  const byCredential = new Map<string, AvailableModel[]>();
+  for (const m of models) {
+    if (m.free || !m.autoEligible) continue;
+    byCredential.set(m.profileId, [...(byCredential.get(m.profileId) ?? []), m]);
+  }
+  const top = (pool: AvailableModel[], score: (m: AvailableModel) => number | null, n: number) =>
+    pool
+      .filter((m) => score(m) !== null)
+      .sort((a, b) => score(b)! - score(a)!)
+      .slice(0, n);
+  for (const pool of byCredential.values()) {
+    const scored = pool.filter((m) => m.benchmark);
+    if (scored.length === 0) {
+      top(pool, (m) => m.blendedPricePer1M, 6).forEach((m) => picked.add(m));
+      continue;
+    }
+    top(scored, (m) => m.benchmark!.intelligence, 6).forEach((m) => picked.add(m));
+    top(scored, (m) => m.benchmark!.coding, 3).forEach((m) => picked.add(m));
+  }
+  return models.filter((m) => picked.has(m));
 }

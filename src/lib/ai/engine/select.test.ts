@@ -5,7 +5,7 @@ import { buildModelMetaView } from '@/lib/ai/rolePipeline/modelMeta';
 
 function model(id: string, free: boolean, price: number | null, profile = free ? 'rogly' : 'paid'): AvailableModel {
   const meta = buildModelMetaView({ id, free });
-  return { profileId: profile, profileLabel: profile, model: id, label: meta.label, free, strengths: meta.strengths, flagship: Boolean(meta.flagship), contextTokens: meta.contextTokens, blendedPricePer1M: free ? 0 : price, autoEligible: true, benchmark: null };
+  return { profileId: profile, profileLabel: profile, provider: free ? 'custom' : 'openai', model: id, label: meta.label, free, strengths: meta.strengths, flagship: Boolean(meta.flagship), contextTokens: meta.contextTokens, blendedPricePer1M: free ? 0 : price, autoEligible: true, benchmark: null };
 }
 
 const ROGLY = [
@@ -117,6 +117,19 @@ describe('catalog normalisation', () => {
   });
 });
 
+describe('one rank per model across credentials', () => {
+  it('prefers the direct credential over an aggregator for the same model, and drops router pseudo-models', async () => {
+    const { dedupeAcrossCredentials, describeModel } = await import('./catalog');
+    const direct = model('gpt-6-astra', false, 20, 'openai-key');
+    const viaRouter = { ...model('openai/gpt-6-astra', false, 18, 'openrouter-key'), provider: 'openrouter' };
+    const claude = { ...model('anthropic/claude-opus-5.5', false, 8, 'openrouter-key'), provider: 'openrouter' };
+    const out = dedupeAcrossCredentials([viaRouter, direct, claude]);
+    expect(out.filter((m) => m.autoEligible).map((m) => m.model)).toEqual(['gpt-6-astra', 'anthropic/claude-opus-5.5']);
+    const rows = [{ id: 'openrouter/auto', provider: 'openrouter', mode: 'chat', input: 1, output: 1, cacheRead: null, variable: false, supportsTools: true }];
+    expect(describeModel('openrouter/auto', 'openrouter', false, rows).autoEligible).toBe(false);
+  });
+});
+
 describe('benchmark ranking', () => {
   it('matches provider ids to leaderboard entries regardless of word order, prefixes, dates and run settings', async () => {
     const { modelKey, matchBenchmark, parseBenchmarkResponse } = await import('./benchmarks');
@@ -156,5 +169,19 @@ describe('benchmark ranking', () => {
     expect(pick('code', 'high', models).primary).toBe('gpt-6-astra');
     expect(pick('code', 'medium', models).fallback).toBe('gemini-3.1-pro-preview');
     expect(pick('write', 'high', models).primary).toBe('anthropic/claude-sonnet-5');
+  });
+});
+
+describe('short list', () => {
+  it('keeps free models and each credential’s strongest scored models, dropping the long tail', async () => {
+    const { shortlistModels } = await import('./catalog');
+    const scored = (id: string, intelligence: number, coding: number) => ({ ...model(id, false, 1, 'router'), benchmark: { intelligence, coding, math: null, source: id } });
+    const many = Array.from({ length: 12 }, (_, i) => scored(`m-${i}`, 50 - i, i === 11 ? 99 : 40 - i));
+    const out = shortlistModels([...ROGLY, ...many, model('unscored-x', false, 1, 'router')]).map((m) => m.model);
+    expect(out).toEqual(expect.arrayContaining(ROGLY.map((m) => m.model)));
+    expect(out).toEqual(expect.arrayContaining(['m-0', 'm-5', 'm-11']));
+    expect(out).not.toContain('m-8');
+    expect(out).not.toContain('unscored-x');
+    expect(out).toHaveLength(3 + 6 + 1);
   });
 });

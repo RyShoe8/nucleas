@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import User from '@/lib/models/User';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
-import { listAvailableModels } from '@/lib/ai/engine/catalog';
+import { listAvailableModels, shortlistModels } from '@/lib/ai/engine/catalog';
 import { BENCHMARK_SOURCE, benchmarkStatus, saveBenchmarkKey } from '@/lib/ai/engine/benchmarks';
 import { COST_LEVELS, NEED_LABELS, NEEDS, isCostLevel, rankPaid, readEngineSettings, saveEngineSettings, selectModel, type Need } from '@/lib/ai/engine/select';
 
@@ -40,9 +40,9 @@ export async function GET(request: NextRequest) {
       benchmarks: { ...(await benchmarkStatus()), source: BENCHMARK_SOURCE },
       needs,
       rankings: Object.fromEntries(
-        (['plan', 'code'] as const).map((need) => [need, rankPaid(models, need).slice(0, 12).map((m) => ({ profileLabel: m.profileLabel, model: m.model, price: m.blendedPricePer1M, benchmark: m.benchmark }))])
+        (['plan', 'code'] as const).map((need) => [need, rankPaid(models, need).filter((m) => m.autoEligible).slice(0, 12).map((m) => ({ profileLabel: m.profileLabel, model: m.model, price: m.blendedPricePer1M, benchmark: m.benchmark }))])
       ),
-      models: models.map((m) => ({ profileId: m.profileId, profileLabel: m.profileLabel, model: m.model, free: m.free, strengths: m.strengths, price: m.blendedPricePer1M, benchmark: m.benchmark })),
+      models: shortlistModels(models).map((m) => ({ profileId: m.profileId, profileLabel: m.profileLabel, model: m.model, free: m.free, strengths: m.strengths, price: m.blendedPricePer1M, benchmark: m.benchmark })),
     },
     { headers: { 'Cache-Control': 'no-store' } }
   );

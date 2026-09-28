@@ -9,6 +9,7 @@ import {
   isModelAllowedForProvider,
 } from '@/lib/ai/rolePipeline/providerCatalog';
 import { AiModelProfile } from '@/lib/models/AiRolePipeline';
+import { isModelListedForProfile } from '@/lib/ai/engine/catalog';
 import { Types } from 'mongoose';
 
 export function mapModelProfilePublic(row: {
@@ -81,7 +82,10 @@ export async function gatewayFromModelProfile(
   const model = (modelOverride?.trim() || row.model || '').trim();
   if (!model) throw new GatewayError('configuration');
   const provider = row.provider ?? 'custom';
-  if (!isModelAllowedForProvider(provider, model)) throw new GatewayError('configuration');
+  // A model is callable when it is in the curated catalog or the provider currently lists it.
+  if (!isModelAllowedForProvider(provider, model) && !(await isModelListedForProfile(String(row._id), model))) {
+    throw new GatewayError('configuration');
+  }
 
   let bearerToken: string;
   try {
