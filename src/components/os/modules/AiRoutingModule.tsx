@@ -36,7 +36,7 @@ interface ModelRow {
 const LEVELS: { key: Level; label: string; hint: string }[] = [
     { key: 'low', label: 'Low', hint: '3rd most powerful paid model for planning and review; Rogly does the work; never pays to retry.' },
     { key: 'medium', label: 'Medium', hint: '2nd most powerful paid model; Rogly does the work and may retry on that model if it fails.' },
-    { key: 'high', label: 'High', hint: 'The most powerful paid model plans, reviews and does the work; Rogly only for utilities.' },
+    { key: 'high', label: 'High', hint: 'The most powerful paid model plans and reviews; the #3 paid model best suited to each task does the work; Rogly only for utilities.' },
 ];
 
 function short(model?: string): string {

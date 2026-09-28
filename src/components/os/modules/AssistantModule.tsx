@@ -227,7 +227,7 @@ export default function AssistantModule() {
                                 // Per-browser convenience only.
                             }
                         }}
-                        title="Low: 3rd most powerful paid model plans and reviews, Rogly works. Medium: 2nd most powerful, paid retries. High: the most powerful paid model does everything."
+                        title="Low: 3rd most powerful paid model plans and reviews, Rogly works. Medium: 2nd most powerful, paid retries. High: the most powerful paid model plans and reviews, the #3 paid model for the task does the work."
                         className="h-7 px-2 rounded border border-border bg-background-elevated text-xs"
                         aria-label="Cost level"
                     >

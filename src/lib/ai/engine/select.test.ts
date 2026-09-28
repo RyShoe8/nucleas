@@ -52,9 +52,11 @@ describe('automatic model selection', () => {
     expect(pick('code', 'medium')).toEqual({ primary: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', fallback: 'gpt-5.6-sol' });
   });
 
-  it('high: the #1 paid model for the task does the work; utilities stay on Rogly', () => {
-    expect(pick('write', 'high').primary).toBe('gpt-5.6-sol');
-    expect(pick('code', 'high').primary).toBe('gpt-6-astra');
+  it('high: the #3 paid model for the specific task does the work; utilities stay on Rogly', () => {
+    expect(pick('write', 'high').primary).toBe('anthropic/claude-sonnet-5');
+    expect(pick('code', 'high').primary).toBe('gpt-4o');
+    expect(pick('research', 'high').primary).toBe('anthropic/claude-sonnet-5');
+    expect(pick('plan', 'high').primary).toBe('gpt-6-astra');
     expect(pick('vision', 'high').primary).toBe('gpt-4o');
     expect(pick('utility', 'high').primary).toBe('google/gemma-4-12B-it-qat-w4a16-ct');
   });

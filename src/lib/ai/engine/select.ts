@@ -10,7 +10,7 @@ import { localModelPowerScore } from '@/lib/ai/rolePipeline/modelMeta';
  * Paid models are ranked by power for each task: high uses #1, medium #2, low #3.
  *   low    — #3 paid model plans and reviews; Rogly does the work; never pays to retry
  *   medium — #2 paid model plans and reviews; Rogly does the work and may retry on the #2 model
- *   high   — #1 paid model plans, reviews and does the work; Rogly only for utilities
+ *   high   — #1 paid model plans and reviews; the #3 paid model for the task does the work; Rogly only for utilities
  * Rogly always uses its strongest model for the job.
  */
 
@@ -72,6 +72,8 @@ function rankByPower(models: AvailableModel[]): AvailableModel[] {
 
 /** Power rank per level: high = #1, medium = #2, low = #3 (nearest available when fewer exist). */
 export const LEVEL_RANK: Record<CostLevel, number> = { high: 1, medium: 2, low: 3 };
+/** At high cost, the work itself (write/research/code/vision) uses this paid rank for the task. */
+export const HIGH_WORK_RANK = 3;
 
 function ranked(models: AvailableModel[], rank: number): AvailableModel | undefined {
   const sorted = rankByPower(models);
@@ -128,9 +130,10 @@ export function selectFrom(models: AvailableModel[], need: Need, level: CostLeve
     case 'research':
     case 'code':
     case 'vision':
-      // High: the #1 paid model does the work. Low/medium: Rogly does the work; medium may retry
-      // on its #2 paid model when Rogly fails, low never pays to retry.
-      if (level === 'high') return { ...base, primary: choice(paidPick ?? free), fallback: null };
+      // High: the #3 paid model best suited to this task does the work (the #1 model plans and
+      // reviews). Low/medium: Rogly does the work; medium may retry on its #2 paid model when Rogly
+      // fails, low never pays to retry.
+      if (level === 'high') return { ...base, primary: choice(ranked(paid, HIGH_WORK_RANK) ?? free), fallback: null };
       return { ...base, primary: choice(free ?? paidPick), fallback: level === 'medium' && free ? choice(paidPick) : null };
   }
 }
