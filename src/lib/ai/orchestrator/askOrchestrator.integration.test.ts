@@ -210,7 +210,8 @@ describe('orchestrated Ask', () => {
     const clarify = await ask('how is it going?');
     expect(clarify).toMatchObject({ role: 'assistant', text: 'Which business do you mean?' });
     // 2 calls (plan + write), 3 plan attempts (retry, then one step up), 1 clarify.
-    expect(chat).toHaveBeenCalledTimes(2 + 3 + 1);
+    // 2 answers; unusable plans get 2 tries on the first model and 2 on the fallback; 1 clarify.
+    expect(chat).toHaveBeenCalledTimes(2 + 4 + 1);
   });
 });
 
@@ -306,7 +307,7 @@ describe('planner robustness', () => {
     const out = await ask('summarize', 'low');
     expect(out.role).toBe('assistant');
     expect(planners).toEqual(['o4-mini', 'o4-mini', 'anthropic/claude-sonnet-5']);
-    expect(out.stages.filter((s) => s.stage === 'plan').map((s) => s.note ?? 'ok')).toEqual(['unusable plan (not valid JSON)', 'unusable plan (not valid JSON)', 'ok']);
+    expect(out.stages.filter((s) => s.stage === 'plan').map((s) => s.note ?? 'ok')).toEqual(['unusable plan (no JSON)', 'unusable plan (no JSON)', 'ok']);
   });
 
   it('a corrective retry on the same model is enough when it works', async () => {
@@ -403,5 +404,26 @@ describe('attached files', () => {
     expect(prompts.work).toContain('# Files the user attached');
     expect(prompts.work).toContain('Q3,48213');
     expect(answer.stages.map((s) => s.stage)).not.toContain('review');
+  });
+});
+
+describe('live progress', () => {
+  it('narrates each step while it works', async () => {
+    chat.mockImplementation(async (input) => {
+      const stage = stageOf(input);
+      if (stage === 'plan') return reply('{"kind":"answer","scope":"company","fetch":[{"company":"Frugal Gambler","tool":"company_metrics"}],"outline":[],"review":true}');
+      if (stage === 'review') return reply('{"verdict":"accept","notes":"ok"}');
+      return reply('Sessions rose to 2,100.');
+    });
+    const steps: string[] = [];
+    const context = await resolvePortfolioContext(admin, { message: 'How is Frugal Gambler doing?' });
+    await runAskOrchestrator(admin, { text: 'How is Frugal Gambler doing?', context, projectId: new Types.ObjectId(), history: [], level: 'low', onProgress: (t) => steps.push(t) });
+    expect(steps).toEqual([
+      'Planning how to answer with o4-mini',
+      "Reading Frugal Gambler's metrics",
+      `Writing the answer with ${ROGLY_MODELS.general.split('/').pop()}`,
+      'Checking every number against the data',
+      'Reviewing the answer with o4-mini',
+    ]);
   });
 });

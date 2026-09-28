@@ -52,6 +52,8 @@ export async function runIdeToolLoop(input: {
   maxRounds?: number;
   /** Prompt characters this model can take (its context window, minus room for the answer). */
   contextChars?: number;
+  /** Called before each tool runs (for live progress). */
+  onToolCall?: (name: string, argumentsJson: string) => void;
   organizationId: string;
   projectId: Types.ObjectId;
   userId: string;
@@ -144,6 +146,7 @@ export async function runIdeToolLoop(input: {
 
       for (const call of result.toolCalls) {
         toolCallsMade.push(call.function.name);
+        input.onToolCall?.(call.function.name, call.function.arguments);
         sequence += 1;
 
         // F07: Verify server-side tool profile authorization before dispatch

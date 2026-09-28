@@ -35,6 +35,9 @@ interface Turn {
     build?: BuildView | null;
     /** Files attached to a user message. */
     attachments?: { name: string; kind?: string; size: number; error?: string | null }[];
+    /** While answering: what Nucleas has done so far, newest last. */
+    progress?: string[];
+    startedAt?: number;
 }
 
 const MODE_KEY = 'nucleas.os.assistant.mode';
@@ -54,6 +57,75 @@ function usd(micros: number): string {
 
 function shortModel(model?: string): string {
     return (model ?? '').split('/').pop()?.replace(/-(instruct|it|awq|fp8|qat).*$/i, '') ?? '';
+}
+
+type AnswerBody = { turn?: Turn; actions?: Turn['actions']; error?: string };
+
+/** Reads the NDJSON answer stream (progress lines, then the reply); falls back to plain JSON. */
+async function readAnswerStream(res: Response, onProgress: (text: string) => void): Promise<AnswerBody> {
+    if (!(res.headers.get('content-type') ?? '').includes('ndjson') || !res.body) {
+        return (await res.json().catch(() => ({}))) as AnswerBody;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result: AnswerBody = { error: 'The answer stream ended early. Try again.' };
+    const handle = (line: string) => {
+        if (!line.trim()) return;
+        try {
+            const event = JSON.parse(line) as { type: string; text?: string; error?: string } & AnswerBody;
+            if (event.type === 'progress' && event.text) onProgress(event.text);
+            else if (event.type === 'reply') result = { turn: event.turn, actions: event.actions };
+            else if (event.type === 'error') result = { error: event.error };
+        } catch {
+            // Ignore a malformed line.
+        }
+    };
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline = buffer.indexOf('\n');
+        while (newline >= 0) {
+            handle(buffer.slice(0, newline));
+            buffer = buffer.slice(newline + 1);
+            newline = buffer.indexOf('\n');
+        }
+    }
+    handle(buffer);
+    return result;
+}
+
+/** What Nucleas is doing right now, the steps before it, and how long it has been working. */
+function PendingProgress({ turn }: { turn: Turn }) {
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        const timer = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, []);
+    const steps = turn.progress ?? [];
+    const done = steps.slice(0, -1).slice(-5);
+    const seconds = turn.startedAt ? Math.max(0, Math.round((now - turn.startedAt) / 1000)) : 0;
+    return (
+        <div className="space-y-1">
+            {done.length ? (
+                <ul className="space-y-0.5 text-[11px] text-text-secondary">
+                    {done.map((s, i) => (
+                        <li key={`${i}-${s}`} className="truncate" title={s}>
+                            ✓ {s}
+                        </li>
+                    ))}
+                </ul>
+            ) : null}
+            <p className="flex items-center gap-2 text-sm text-text-primary">
+                <span className="inline-block h-2 w-2 rounded-full bg-primary animate-pulse flex-shrink-0" aria-hidden />
+                <span className="min-w-0">{turn.text}</span>
+                <span className="ml-auto text-[10px] text-text-secondary tabular-nums flex-shrink-0">
+                    {seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`}
+                </span>
+            </p>
+        </div>
+    );
 }
 
 /** "plan · sonnet $0.004 → fetch 3 jobs → write · gemma free → numbers ✓ → total $0.004" */
@@ -137,11 +209,11 @@ export default function AssistantModule() {
             createdAt: new Date().toISOString(),
             attachments: attachments.map((a) => ({ name: a.name, size: a.size })),
         };
-        setTurns((t) => [...(t ?? []), optimistic, { id: 'pending', role: 'assistant', text: 'Looking into it…', createdAt: '', pending: true }]);
+        setTurns((t) => [...(t ?? []), optimistic, { id: 'pending', role: 'assistant', text: 'Starting…', createdAt: '', pending: true, progress: [], startedAt: Date.now() }]);
         try {
             const res = await fetch('/api/os/assistant', {
                 method: 'POST',
-                headers: { 'content-type': 'application/json' },
+                headers: { 'content-type': 'application/json', accept: 'application/x-ndjson' },
                 body: JSON.stringify({
                     text: trimmed,
                     focusCompanyId: focus?.companyId,
@@ -151,11 +223,12 @@ export default function AssistantModule() {
                     ...(attachments.length ? { attachments } : {}),
                 }),
             });
-            const body = (await res.json().catch(() => ({}))) as {
-                turn?: Turn;
-                actions?: Turn['actions'];
-                error?: string;
-            };
+            // Progress arrives line by line while Nucleas works, then the reply.
+            const body = await readAnswerStream(res, (text) =>
+                setTurns((t) =>
+                    (t ?? []).map((x) => (x.id === 'pending' ? { ...x, text, progress: [...(x.progress ?? []), text].slice(-12) } : x))
+                )
+            );
             if (!res.ok || !body.turn) {
                 setError(body.error ?? `Failed (${res.status})`);
                 setTurns((t) => (t ?? []).filter((x) => x.id !== 'pending'));
@@ -246,9 +319,15 @@ export default function AssistantModule() {
                                     : t.role === 'status'
                                       ? 'border border-amber-400/40 text-amber-300'
                                       : 'border border-border'
-                            } ${t.pending ? 'text-text-secondary animate-pulse' : ''}`}
+                            } ${t.pending ? 'min-w-[260px]' : ''}`}
                         >
-                            {t.role === 'assistant' && !t.pending ? <IdeChatMarkdown text={t.text} /> : <p className="whitespace-pre-wrap">{t.text}</p>}
+                            {t.pending ? (
+                                <PendingProgress turn={t} />
+                            ) : t.role === 'assistant' ? (
+                                <IdeChatMarkdown text={t.text} />
+                            ) : (
+                                <p className="whitespace-pre-wrap">{t.text}</p>
+                            )}
                             {t.attachments?.length ? (
                                 <ul className="mt-1.5 flex flex-wrap gap-1">
                                     {t.attachments.map((a, i) => (

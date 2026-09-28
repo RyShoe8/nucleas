@@ -24,6 +24,7 @@ import { executeInRemoteSandbox } from '@/lib/ai/executionWorkerClient';
 import { gatewayFromModelProfile } from '@/lib/ai/rolePipeline/profiles';
 import { getRepoSnapshot } from '@/lib/ai/repo/snapshot';
 import { projectGuide } from '@/lib/ai/repo/projectGuide';
+import { shortModel, type ProgressFn } from '@/lib/ai/progress';
 import {
   type TeamContextSummary,
   type TeamMessageRole,
@@ -56,6 +57,11 @@ export type TeamChatTurn = {
 };
 
 type StageBinding = { profileId: string; model: string };
+
+/** The provider turned the request away because of the account, not the request (401/402/403). */
+function providerRefused(turn: TeamChatTurn): boolean {
+  return turn.failureCategory === 'credentials' || /httpStatus=(401|402|403)\b/.test(turn.debugHint ?? '');
+}
 
 /** What kind of work the request is: building, planning or repo questions are code; the rest is research. */
 function workNeedFor(interactionMode: IdeInteractionMode, userText: string): Need {
@@ -269,6 +275,8 @@ export async function attemptOrchestratedIdeReply(input: {
   level?: CostLevel;
   /** Extra context from the caller, e.g. the company's recent changes. */
   contextBlock?: string;
+  /** Live progress lines for the person waiting. */
+  onProgress?: ProgressFn;
   /** When aborted (e.g. client Stop), cancels the gateway fetch and releases the dispatch lock. */
   signal?: AbortSignal;
   onStage?: IdeChatStageCallback;
@@ -361,6 +369,7 @@ export async function attemptOrchestratedIdeReply(input: {
 
   // Code work follows the project's own conventions: its instruction files, scripts and layout.
   const codeWork = interactionMode !== 'chat' || looksLikeProjectInternalQuery(input.userText);
+  if (codeWork) input.onProgress?.('Loading the repository');
   const snapshot = codeWork ? await getRepoSnapshot(input.organizationId, input.projectId).catch(() => null) : null;
   const guide = snapshot?.ok ? projectGuide(snapshot.snapshot) : '';
 
@@ -403,16 +412,28 @@ export async function attemptOrchestratedIdeReply(input: {
       .filter(Boolean)
       .join(' ');
 
-    return withStage(input.onStage, args.stage, () =>
+    const announce = (binding: StageBinding) => {
+      const model = shortModel(binding.model);
+      input.onProgress?.(
+        args.stage === 'planner'
+          ? interactionMode === 'plan' ? `Planning the change with ${model}` : `Investigating with ${model}`
+          : args.stage === 'worker'
+            ? interactionMode === 'plan' ? `Checking the plan against the code with ${model}` : `Working on it with ${model}`
+            : `Reviewing with ${model}`
+      );
+    };
+    const exec = (binding: StageBinding) =>
+      withStage(input.onStage, args.stage, () =>
       attemptCompanyCredentialChat({
+        onProgress: input.onProgress,
         systemPrompt,
         organizationId: input.organizationId,
         projectId: input.projectId,
         userId: input.userId,
         userText: args.userText,
         priorTurns: args.priorTurns,
-        modelProfileId: args.binding.profileId,
-        model: args.binding.model,
+        modelProfileId: binding.profileId,
+        model: binding.model,
         includeImageTool: toolProfile === 'full',
         includeRepoTools: toolProfile !== 'none',
         toolProfile,
@@ -433,6 +454,22 @@ export async function attemptOrchestratedIdeReply(input: {
         signal: input.signal,
       })
     );
+
+    announce(args.binding);
+    const turn = await exec(args.binding);
+    // The provider refused (bad key, no credit, model not allowed): it is now benched, so pick this
+    // stage's model again from the providers still working and try once more.
+    if (turn.role === 'status' && providerRefused(turn)) {
+      const need: Need = args.stage === 'planner' ? 'plan' : args.stage === 'reviewer' ? 'review' : workNeedFor(interactionMode, input.userText);
+      const fresh = await listAvailableModels().catch(() => null);
+      const next = fresh ? binding((await selectModel(input.organizationId, need, level, { models: fresh, settings })).primary) : null;
+      if (next && (next.profileId !== args.binding.profileId || next.model !== args.binding.model)) {
+        input.onProgress?.(`${shortModel(args.binding.model)} was refused by its provider; switching to ${shortModel(next.model)}`);
+        announce(next);
+        return exec(next);
+      }
+    }
+    return turn;
   }
 
   if (input.signal?.aborted) {

@@ -100,11 +100,13 @@ export async function processAttachments(input: {
   userId: string;
   level: CostLevel;
   signal?: AbortSignal;
+  onProgress?: (text: string) => void;
 }): Promise<ProcessedAttachments> {
   const items: ProcessedAttachment[] = [];
   let costMicros = 0;
   for (const ref of input.refs) {
     const kind = attachmentKind(ref.name, ref.mime);
+    input.onProgress?.(kind === 'image' ? `Looking at ${ref.name}` : `Reading ${ref.name}`);
     try {
       const bytes = await readBlob(ref, kind === 'text' ? TEXT_READ_LIMIT : null);
       if (!bytes) {

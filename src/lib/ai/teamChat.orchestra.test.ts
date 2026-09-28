@@ -417,3 +417,31 @@ describe('isTrivialTeamChatRequest', () => {
 
 });
 
+
+describe('provider refusals during code planning', () => {
+  it('re-picks the stage model when a provider refuses the account, and says so', async () => {
+    let planPicks = 0;
+    mocks.selectModel.mockImplementation(async (_org: string, need: string) => {
+      if (need === 'plan') {
+        planPicks += 1;
+        return { primary: planPicks === 1 ? { profileId: 'a'.repeat(24), model: 'meta/muse-spark-1.3', free: false, label: 'OpenRouter' } : { profileId: 'd'.repeat(24), model: 'gpt-6-sol', free: false, label: 'OpenAI' }, fallback: null };
+      }
+      return { primary: { profileId: 'b'.repeat(24), model: need === 'review' ? 'sol-review' : 'qwen', free: need !== 'review', label: 'x' }, fallback: null };
+    });
+    const planners: string[] = [];
+    mocks.companyChat.mockImplementation(async (input: { model: string; systemPrompt: string }) => {
+      if (/Pipeline stage: planner/.test(input.systemPrompt)) {
+        planners.push(input.model);
+        if (input.model === 'meta/muse-spark-1.3') {
+          return { requestId: 'r', role: 'status', text: 'The remote model endpoint was unreachable or returned an error. OpenRouter returned HTTP 402: requires more credits.', failureCategory: 'unavailable', debugHint: 'code=unavailable kind=http httpStatus=402' };
+        }
+        return { requestId: 'p', role: 'assistant', text: 'Investigation done.', costMicros: 10 };
+      }
+      return { requestId: 'w', role: 'assistant', text: 'ok', costMicros: 0 };
+    });
+    const progress: string[] = [];
+    await attemptOrchestratedIdeReply({ projectName: 'PlayBound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'hello there, what does the build do?', priorTurns: [], interactionMode: 'chat', onProgress: (t) => progress.push(t) });
+    expect(planners).toEqual(['meta/muse-spark-1.3', 'gpt-6-sol']);
+    expect(progress).toContain('muse-spark-1.3 was refused by its provider; switching to gpt-6-sol');
+  });
+});

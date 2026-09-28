@@ -24,17 +24,56 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => ({}))) as { text?: unknown; focusCompanyId?: unknown; mode?: unknown; level?: unknown; modelProfileId?: unknown; model?: unknown; attachments?: unknown };
   const attachments = parseAttachmentRefs(body.attachments, viewer.userId);
   if (!Array.isArray(attachments)) return NextResponse.json({ error: attachments.error }, { status: 400 });
-  try {
-    const result = await askAssistant(viewer, {
-      text: typeof body.text === 'string' ? body.text : '',
-      focusCompanyId: typeof body.focusCompanyId === 'string' ? body.focusCompanyId : undefined,
-      mode: body.mode === 'direct' ? 'direct' : 'orchestrated',
-      level: isCostLevel(body.level) ? body.level : undefined,
-      modelProfileId: typeof body.modelProfileId === 'string' ? body.modelProfileId : '',
-      model: typeof body.model === 'string' ? body.model : '',
-      attachments,
-      signal: request.signal,
+  const input = {
+    text: typeof body.text === 'string' ? body.text : '',
+    focusCompanyId: typeof body.focusCompanyId === 'string' ? body.focusCompanyId : undefined,
+    mode: (body.mode === 'direct' ? 'direct' : 'orchestrated') as 'direct' | 'orchestrated',
+    level: isCostLevel(body.level) ? body.level : undefined,
+    modelProfileId: typeof body.modelProfileId === 'string' ? body.modelProfileId : '',
+    model: typeof body.model === 'string' ? body.model : '',
+    attachments,
+    signal: request.signal,
+  };
+
+  // Streaming: progress lines while it works, then the reply (NDJSON, one event per line).
+  if ((request.headers.get('accept') ?? '').includes('application/x-ndjson')) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: Record<string, unknown>) => {
+          try {
+            controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+          } catch {
+            // The browser went away; keep working so the answer is still saved.
+          }
+        };
+        let last = '';
+        try {
+          const result = await askAssistant(viewer, {
+            ...input,
+            onProgress: (text) => {
+              if (text && text !== last) send({ type: 'progress', text: (last = text).slice(0, 300), at: new Date().toISOString() });
+            },
+          });
+          if (!result.ok) send({ type: 'error', status: result.status, error: result.error });
+          else send({ type: 'reply', ...result.reply });
+        } catch (error) {
+          console.error('[os/assistant] failed', error instanceof Error ? error.message : 'unknown');
+          send({ type: 'error', status: 500, error: 'The assistant could not answer. Try again.' });
+        } finally {
+          try {
+            controller.close();
+          } catch {
+            // Already closed.
+          }
+        }
+      },
     });
+    return new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' } });
+  }
+
+  try {
+    const result = await askAssistant(viewer, input);
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
     return NextResponse.json(result.reply);
   } catch (error) {

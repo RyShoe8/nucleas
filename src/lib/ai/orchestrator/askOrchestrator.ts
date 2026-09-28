@@ -13,6 +13,7 @@ import { webSearch } from '@/lib/ai/tools/webSearch';
 import { formatResearchResultContext } from '@/lib/ai/tools/serverBrowseAssist';
 import { companiesWithRepositories } from '@/lib/building/companyCode';
 import { proposeCodeChange, type BuildView } from '@/lib/building/builds';
+import { describeToolCall, shortModel, type ProgressFn } from '@/lib/ai/progress';
 
 /**
  * Cost-aware Ask pipeline:
@@ -150,7 +151,7 @@ function plannerPrompt(context: PortfolioContext, toolCatalog: string, today: st
     '- deepResearch: only when the answer needs several rounds of searching where later searches depend on earlier findings (e.g. comparing competitors, investigating a market). Give one clear research question. Use research instead for single lookups.',
     `- fetch: at most ${MAX_FETCH_JOBS} jobs, only for company data. Prefer company_metrics. Only request tools listed for that company.`,
     `- actions: only when the user explicitly asks for a change; at most ${MAX_ACTIONS}.`,
-    '- codeChange: when the user asks to change, fix, add to or plan an edit of a company website or app (its code), and that company has a code repository listed below. Restate the full request so it stands alone. It is planned against the repository and waits for approval; nothing is changed yet. Leave fetch, research and actions empty when you set it.',
+    '- codeChange: when the user asks to change, fix, add to or plan an edit of a company website or app (its code), OR reports something wrong on it that code would fix ("X shows up where it should not", "remove the listing under Y", a page URL plus a problem), and that company has a code repository listed below. Restate the full request so it stands alone, including any URL, what is wrong and what they want instead. It is planned against the repository and waits for approval; nothing is changed yet. Leave fetch, research and actions empty when you set it. Never answer such a report from guesses about the code.',
     '- review: true only when the answer recommends business decisions for these companies or compares them; false for lookups and general questions.',
     '- Prefer a reasonable assumption over a question: infer missing details (market, time frame, company) from the portfolio and conversation, and put the assumption in the outline so the answer states it. Use kind "clarify" only when no sensible answer is possible without it.',
     '- Outline exactly what the user asked for. Do not add requirements, verification checklists or extra sections they did not ask for.',
@@ -236,8 +237,11 @@ export async function runAskOrchestrator(
     attachments?: string;
     signal?: AbortSignal;
     fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
+    /** Live progress lines for the person waiting. */
+    onProgress?: ProgressFn;
   }
 ): Promise<OrchestratedAnswer> {
+  const say = (text: string) => input.onProgress?.(text);
   const org = String(viewer.organizationId);
   const today = new Date().toISOString().slice(0, 10);
   const stages: StageRecord[] = [];
@@ -270,6 +274,7 @@ export async function runAskOrchestrator(
   // 1. Plan (paid, small). Reasoning models spend output tokens thinking, so give them room.
   // One corrective retry on the same model, then one step up the ranking, before giving up.
   const planOnce = async (choice: ModelChoice, correction?: string) => {
+    say(correction ? `Re-planning with ${shortModel(choice.model)}` : `Planning how to answer with ${shortModel(choice.model)}`);
     const turn = await call(choice, {
       viewer,
       projectId: input.projectId,
@@ -289,7 +294,13 @@ export async function runAskOrchestrator(
       model: choice.model,
       free: choice.free,
       costMicros: addCost(turn),
-      note: parsedPlan?.success ? undefined : turn.role !== 'assistant' ? `failed: ${turn.text.slice(0, 120)}` : 'unusable plan (not valid JSON)',
+      note: parsedPlan?.success
+        ? undefined
+        : turn.role !== 'assistant'
+          ? `failed: ${turn.text.slice(0, 120)}`
+          : extractJson(turn.text) === null
+            ? 'unusable plan (no JSON)'
+            : `unusable plan (${parsedPlan?.error.issues[0] ? `${parsedPlan.error.issues[0].path.join('.') || 'plan'}: ${parsedPlan.error.issues[0].message}` : 'invalid'})`.slice(0, 160),
     });
     return { turn, parsedPlan };
   };
@@ -306,7 +317,11 @@ export async function runAskOrchestrator(
     [planRoute, workRoute, reviewRoute] = await routes();
     let other = planRoute.primary && planRoute.primary.model !== failed.model ? planRoute : null;
     if (!other) other = await selectModel(org, 'plan', input.level === 'low' ? 'medium' : input.level === 'medium' ? 'high' : 'medium', { models, settings });
-    if (other.primary && other.primary.model !== failed.model) attempt = await planOnce(other.primary, CORRECTION);
+    if (other.primary && other.primary.model !== failed.model) {
+      attempt = await planOnce(other.primary, CORRECTION);
+      // The replacement answered but not in the required shape: one correction, as for the first model.
+      if (!attempt.parsedPlan?.success && attempt.turn.role === 'assistant') attempt = await planOnce(other.primary, CORRECTION);
+    }
     if (!planRoute.primary) planRoute = { ...planRoute, primary: failed };
   }
   const planTurn = attempt.turn;
@@ -335,7 +350,8 @@ export async function runAskOrchestrator(
     const request = input.attachments
       ? `${plan.codeChange.request}\n\nAttached by the user:\n${input.attachments}`.slice(0, 6000)
       : plan.codeChange.request;
-    const proposal = await proposeCodeChange(viewer, { companyId: company.id, request, level: input.level, signal: input.signal });
+    say(`Planning the code change for ${company.name} (${repos.get(company.id)})`);
+    const proposal = await proposeCodeChange(viewer, { companyId: company.id, request, level: input.level, signal: input.signal, onProgress: input.onProgress });
     costMicros += proposal.costMicros;
     stages.push({ stage: 'code', costMicros: proposal.costMicros, note: proposal.ok ? `planned against ${proposal.build.repository.fullName}` : proposal.message.slice(0, 120) });
     if (!proposal.ok) {
@@ -365,6 +381,7 @@ export async function runAskOrchestrator(
   const allowed = new Set(toolDefs.map((d) => d.function.name));
   for (const job of plan.fetch) {
     if (!allowed.has(job.tool) || writeTools.has(job.tool)) continue;
+    say(describeToolCall(job.tool, JSON.stringify({ company: job.company })));
     const raw = await tools.toolSet.execute(job.tool, JSON.stringify({ company: job.company, ...(job.days ? { days: job.days } : {}) }), { runId });
     fetched.push({ company: job.company, tool: job.tool, result: JSON.parse(raw) as Record<string, unknown> });
   }
@@ -372,11 +389,13 @@ export async function runAskOrchestrator(
   for (const action of plan.actions) {
     if (!writeTools.has(action.tool) || !allowed.has(action.tool)) continue;
     actionsRun += 1;
+    say(describeToolCall(action.tool, JSON.stringify({ company: action.company })));
     const raw = await tools.toolSet.execute(action.tool, JSON.stringify({ company: action.company }), { runId });
     fetched.push({ company: action.company, tool: action.tool, result: JSON.parse(raw) as Record<string, unknown> });
   }
   const research: string[] = [];
   for (const r of plan.research) {
+    say(describeToolCall('web_search', JSON.stringify({ query: r.query })));
     try {
       research.push(formatResearchResultContext(await webSearch(r.query, { signal: input.signal, depth: 'standard', organizationId: org })).slice(0, 6000));
     } catch {
@@ -408,11 +427,13 @@ export async function runAskOrchestrator(
         stopOnUpstreamFailure: true,
         maxOutputTokensOverride: 2000,
         signal: input.signal,
+        onProgress: input.onProgress,
       });
     if (!researchRoute.primary) {
       stages.push({ stage: 'research', note: 'skipped: no model available for research' });
     } else {
       let choice = researchRoute.primary;
+      say(`Researching with ${shortModel(choice.model)}: ${plan.deepResearch.question.slice(0, 120)}`);
       let turn = await runResearch(choice);
       stages.push({ stage: 'research', model: choice.model, free: choice.free, costMicros: addCost(turn), note: (turn.toolsUsed ?? []).length ? `tools: ${[...new Set(turn.toolsUsed)].join(', ')}` : undefined });
       if ((turn.role !== 'assistant' || !turn.text.trim()) && researchRoute.fallback) {
@@ -445,10 +466,12 @@ export async function runAskOrchestrator(
   // 3. Work (Rogly), with explicit-consent paid fallback only.
   let workChoice = workRoute.primary;
   if (!workChoice) return status('No model is available for writing. Check that Rogly (or another credential) is enabled.');
+  say(`Writing the answer with ${shortModel(workChoice.model)}`);
   let workTurn = await call(workChoice, { viewer, projectId: input.projectId, system: writerPrompt(today), user: workUser, history: input.history.slice(-4), signal: input.signal, maxTokens: 2000 });
   stages.push({ stage: 'work', model: workChoice.model, free: workChoice.free, costMicros: addCost(workTurn) });
   if ((workTurn.role !== 'assistant' || !workTurn.text.trim()) && workRoute.fallback) {
     workChoice = workRoute.fallback;
+    say(`Retrying the answer with ${shortModel(workChoice.model)}`);
     workTurn = await call(workChoice, { viewer, projectId: input.projectId, system: writerPrompt(today), user: workUser, history: input.history.slice(-4), signal: input.signal, maxTokens: 2000 });
     stages.push({ stage: 'work', model: workChoice.model, free: workChoice.free, costMicros: addCost(workTurn), note: `paid retry (${input.level} cost)` });
   }
@@ -460,6 +483,7 @@ export async function runAskOrchestrator(
   // 4. Deterministic number check.
   // Only check numbers where there is data to check against: company facts or web research.
   const checkable = plan.scope !== 'general' || research.length > 0;
+  if (checkable) say('Checking every number against the data');
   const untraced = checkable ? untracedNumbers(answer, [facts, ...research, renderContext(input.context), input.text, input.attachments ?? '']) : [];
   stages.push({
     stage: 'check',
@@ -475,6 +499,7 @@ export async function runAskOrchestrator(
   const triggered = plan.review || untraced.length > 0 || actionsRun > 0;
   const needsReview = input.level === 'high' || triggered || (input.level === 'medium' && plan.scope !== 'general');
   if (needsReview && reviewRoute.primary) {
+    say(`Reviewing the answer with ${shortModel(reviewRoute.primary.model)}`);
     const reviewTurn = await call(reviewRoute.primary, {
       viewer,
       projectId: input.projectId,

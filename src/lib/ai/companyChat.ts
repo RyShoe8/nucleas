@@ -171,6 +171,7 @@ function gatewayDebugParts(error: unknown): Record<string, string | number | boo
 
 import { companyChatAdmissionMessage } from '@/lib/ai/companyChatAdmission';
 import { recordModelFailure, recordModelSuccess } from '@/lib/ai/engine/health';
+import { describeToolCall, type ProgressFn } from '@/lib/ai/progress';
 import { contextBudgetChars, contextWindowFor } from '@/lib/ai/engine/catalog';
 
 /**
@@ -206,6 +207,8 @@ export async function attemptCompanyCredentialChat(input: {
   maxOutputTokensOverride?: number;
   stopOnUpstreamFailure?: boolean;
   signal?: AbortSignal;
+  /** Live progress: each tool call, described for a person. */
+  onProgress?: ProgressFn;
   /** Caller-scoped tools (company capabilities). Presence always selects the tool loop. */
   extraTools?: ExtraToolSet;
 }): Promise<TeamChatTurn> {
@@ -661,6 +664,7 @@ export async function attemptCompanyCredentialChat(input: {
         runId,
         signal: input.signal,
         extraTools: input.extraTools,
+        onToolCall: input.onProgress ? (name, argsJson) => input.onProgress!(describeToolCall(name, argsJson)) : undefined,
       });
     }
 

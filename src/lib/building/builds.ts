@@ -176,7 +176,7 @@ export type ProposeResult =
  */
 export async function proposeCodeChange(
   viewer: CompanyViewer,
-  input: { companyId: string; request: string; level: CostLevel; signal?: AbortSignal }
+  input: { companyId: string; request: string; level: CostLevel; signal?: AbortSignal; onProgress?: (text: string) => void }
 ): Promise<ProposeResult> {
   const target = await resolveCompanyRepository(viewer, input.companyId);
   if (!target) {
@@ -188,6 +188,7 @@ export async function proposeCodeChange(
   const turn = await attemptOrchestratedIdeReply({
     projectName: target.projectName,
     ...(recent?.length ? { contextBlock: renderTimeline(recent) } : {}),
+    onProgress: input.onProgress,
     organizationId: String(viewer.organizationId),
     projectId: target.projectId,
     userId: viewer.userId,

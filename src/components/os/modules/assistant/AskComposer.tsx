@@ -162,11 +162,16 @@ export default function AskComposer({
     const submit = async (e?: FormEvent) => {
         e?.preventDefault();
         if (!canSend) return;
-        const sent = await onSend(text, ready);
-        if (sent) {
-            setText('');
-            setFiles([]);
-            setNotice(null);
+        // Clear straight away (the answer can take minutes); put it back only if sending failed.
+        const sentText = text;
+        const sentFiles = files;
+        setText('');
+        setFiles([]);
+        setNotice(null);
+        const sent = await onSend(sentText, ready);
+        if (!sent) {
+            setText((current) => current || sentText);
+            setFiles((current) => (current.length ? current : sentFiles));
         }
     };
 

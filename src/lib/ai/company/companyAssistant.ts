@@ -48,7 +48,7 @@ export type AssistantResult = { ok: true; reply: AssistantReply } | { ok: false;
 
 export async function askAssistant(
   viewer: CompanyViewer,
-  input: { text: string; focusCompanyId?: string; mode?: 'orchestrated' | 'direct'; level?: CostLevel; modelProfileId?: string; model?: string; attachments?: AttachmentRef[]; signal?: AbortSignal }
+  input: { text: string; focusCompanyId?: string; mode?: 'orchestrated' | 'direct'; level?: CostLevel; modelProfileId?: string; model?: string; attachments?: AttachmentRef[]; signal?: AbortSignal; onProgress?: (text: string) => void }
 ): Promise<AssistantResult> {
   const mode = input.mode === 'direct' ? 'direct' : 'orchestrated';
   const refs = input.attachments ?? [];
@@ -79,6 +79,7 @@ export async function askAssistant(
         userId: viewer.userId,
         level,
         signal: input.signal,
+        onProgress: input.onProgress,
       })
     : null;
 
@@ -101,6 +102,7 @@ export async function askAssistant(
       level,
       attachments: files?.block,
       signal: input.signal,
+      onProgress: input.onProgress,
     });
     if (files) result.costMicros += files.costMicros;
     const saved = await CompanyAssistantTurn.create({
@@ -130,7 +132,9 @@ export async function askAssistant(
   }
 
   const tools = await buildAssistantTools(viewer, context.companies);
+  input.onProgress?.(`Asking ${(input.model ?? '').split('/').pop()}`);
   const turn = await attemptCompanyCredentialChat({
+    onProgress: input.onProgress,
     systemPrompt: buildSystemPrompt(renderContext(context), new Date().toISOString().slice(0, 10), focusedCompanies.map((c) => c.name)),
     organizationId: String(viewer.organizationId),
     projectId: assistantLedgerProjectId(String(viewer.organizationId)),
