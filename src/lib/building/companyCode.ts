@@ -105,6 +105,8 @@ export async function setProjectRepository(
     },
     { upsert: true, setDefaultsOnInsert: true }
   );
+  const { recordActivity } = await import('@/lib/companies/activityLog');
+  await recordActivity({ organizationId: viewer.organizationId, companyId, kind: 'code', title: `Repository connected: ${repo.fullName}`, actorUserId: viewer.userId });
   return { ok: true };
 }
 
@@ -113,6 +115,8 @@ export async function clearProjectRepository(viewer: CompanyViewer, companyId: s
   const project = await ownedProject(viewer, companyId, projectId);
   if (!project) return { ok: false, status: 404, error: 'Project not found for this company.' };
   await AiProjectRepository.deleteOne({ organizationId: String(viewer.organizationId), projectId: project._id });
+  const { recordActivity } = await import('@/lib/companies/activityLog');
+  await recordActivity({ organizationId: viewer.organizationId, companyId, kind: 'code', title: 'Repository disconnected', actorUserId: viewer.userId });
   return { ok: true };
 }
 

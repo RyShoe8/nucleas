@@ -4,7 +4,9 @@ import { BuildRequest, type BuildStatus } from '@/lib/models/BuildRequest';
 import { AiIdeExecutionArtifact } from '@/lib/models/AiIdeExecutionArtifact';
 import { AiProjectRepository } from '@/lib/models/AiProjectRepository';
 import { getCompanyProfile, isCompanyManager, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
-import { attemptOrchestratedIdeReply } from '@/lib/ai/teamChat';
+import { attemptOrchestratedIdeReply, BUILD_METHOD } from '@/lib/ai/teamChat';
+import { getRepoSnapshot } from '@/lib/ai/repo/snapshot';
+import { projectGuide } from '@/lib/ai/repo/projectGuide';
 import { executeInRemoteSandbox } from '@/lib/ai/executionWorkerClient';
 import { createInstallationOctokit } from '@/lib/ai/githubAppClient';
 import { readEngineSettings, selectModel, type CostLevel, type ModelChoice } from '@/lib/ai/engine/select';
@@ -180,8 +182,12 @@ export async function proposeCodeChange(
   if (!target) {
     return { ok: false, reason: 'no_repository', costMicros: 0, message: 'This company has no GitHub repository connected. Connect one in its Integrations window (Code repository), then ask again.' };
   }
+  // The planner also sees what changed recently for the company (commits, builds, actions).
+  const { companyTimeline, renderTimeline } = await import('@/lib/companies/activityLog');
+  const recent = await companyTimeline(viewer, input.companyId, { limit: 15 }).catch(() => null);
   const turn = await attemptOrchestratedIdeReply({
     projectName: target.projectName,
+    ...(recent?.length ? { contextBlock: renderTimeline(recent) } : {}),
     organizationId: String(viewer.organizationId),
     projectId: target.projectId,
     userId: viewer.userId,
@@ -285,10 +291,14 @@ export function discardBuild(viewer: CompanyViewer, id: string): Promise<ActionR
 
 // ---------- Running ----------
 
-export function buildTask(doc: Pick<BuildDoc, 'title' | 'planMarkdown'>): string {
-  const header = `Approved plan: "${doc.title}"\nBuild this plan in the isolated disposable repository, run focused verification, and return the proposed patch and evidence. Never commit, push, or deploy; publishing requires separate review and approval.`;
-  const plan = doc.planMarkdown.length > 11_000 ? `${doc.planMarkdown.slice(0, 11_000)}\n\n[...plan continues...]` : doc.planMarkdown;
-  return `${header}\n\n${plan}`;
+export function buildTask(doc: Pick<BuildDoc, 'title' | 'planMarkdown'>, guide = ''): string {
+  const header = `Approved plan: "${doc.title}"\nBuild this plan in the isolated disposable repository, run focused verification, and return the proposed patch and evidence. Never commit, push, or deploy; publishing requires separate review and approval.\n\n${BUILD_METHOD}`;
+  // The build service takes up to 12,000 characters: the plan comes first, the guide fills what is left.
+  const planRoom = 11_800 - header.length;
+  const plan = doc.planMarkdown.length > planRoom ? `${doc.planMarkdown.slice(0, planRoom - 40)}\n\n[...plan continues...]` : doc.planMarkdown;
+  const guideRoom = 11_800 - header.length - plan.length - 40;
+  const guideText = guide && guideRoom > 500 ? `\n\nProject guide (excerpt):\n${guide.slice(0, guideRoom)}` : '';
+  return `${header}\n\n${plan}${guideText}`;
 }
 
 /**
@@ -340,11 +350,12 @@ export async function runBuild(id: string): Promise<void> {
     );
   try {
     const model = await buildModel(doc).catch(() => null);
+    const snap = await getRepoSnapshot(String(doc.organizationId), doc.projectId).catch(() => null);
     const result = await executeInRemoteSandbox({
       organizationId: String(doc.organizationId),
       projectId: doc.projectId,
       userId: String(doc.approvedByUserId ?? doc.createdByUserId),
-      task: buildTask(doc),
+      task: buildTask(doc, snap?.ok ? projectGuide(snap.snapshot, 4000) : ''),
       ...(model ? { inference: model.inference } : {}),
     });
     if (!result) {

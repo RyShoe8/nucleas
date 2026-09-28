@@ -112,6 +112,13 @@ export function factSheet(results: { company: string; tool: string; result: Reco
       lines.push(`- ${company} / ${tool}: unavailable (${String(result.error ?? result.status ?? 'unknown')})`);
       continue;
     }
+    if (tool === 'company_activity' && Array.isArray(result.changes)) {
+      lines.push(`${company} recent changes (newest first):`);
+      for (const c of result.changes as { at: string; kind: string; title: string; detail?: string; by?: string }[]) {
+        lines.push(`  - ${c.at.slice(0, 16).replace('T', ' ')} [${c.kind}] ${c.title}${c.by ? ` — ${c.by}` : ''}${c.detail ? ` (${c.detail.slice(0, 200)})` : ''}`);
+      }
+      continue;
+    }
     if (tool === 'company_metrics' && Array.isArray(result.metrics)) {
       lines.push(`${company} metrics (last 7 complete days vs the 7 before; current values for snapshots):`);
       for (const m of result.metrics as { label: string; unit: string; kind: string; last7OrCurrent: number; previous: number | null; changePct: number | null }[]) {

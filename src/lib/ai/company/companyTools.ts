@@ -1,3 +1,4 @@
+import { companyTimeline } from '@/lib/companies/activityLog';
 import { Types } from 'mongoose';
 import type { ToolDefinition } from '@nucleas/ai-contracts';
 import { IntegrationConnection } from '@/lib/models/Integration';
@@ -99,6 +100,19 @@ export async function buildAssistantTools(
         },
       },
     },
+    {
+      type: 'function',
+      function: {
+        name: 'company_activity',
+        description:
+          'What changed recently for one company, newest first: code commits, builds and pull requests, actions Nucleas took in connected systems, and integration changes. Use it to explain recent movements or check what was just changed.',
+        parameters: {
+          type: 'object',
+          properties: { company: companyParam, limit: { type: 'integer', description: 'How many changes (default 30, max 100)' } },
+          required: ['company'],
+        },
+      },
+    },
     ...offered.map((d) => ({
       type: 'function' as const,
       function: {
@@ -140,6 +154,13 @@ export async function buildAssistantTools(
     const company = matchCompany(companies, args.company);
     if (!company) {
       return JSON.stringify({ ok: false, error: 'Unknown or inaccessible company. Call list_companies for valid names.' });
+    }
+
+    if (name === 'company_activity') {
+      const limit = typeof args.limit === 'number' ? Math.min(Math.max(Math.round(args.limit), 1), 100) : 30;
+      const items = await companyTimeline(viewer, company.id, { limit });
+      if (!items) return JSON.stringify({ ok: false, error: 'Company not found.' });
+      return JSON.stringify({ ok: true, company: company.name, changes: items }).slice(0, MAX_TOOL_OUTPUT);
     }
 
     if (name === 'company_metrics') {

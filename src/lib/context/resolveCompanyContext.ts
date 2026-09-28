@@ -5,7 +5,7 @@ import { CapabilityApproval } from '@/lib/models/Capability';
 import { getCompanyProfile, listCompanyProfiles, type CompanyProfile, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { listCompanyConnections } from '@/lib/integrations/connections';
 import { getCompanyMetrics, getTodayOverview } from '@/lib/metrics/query';
-import { listInvocations } from '@/lib/capabilities/runtime';
+import { companyTimeline, renderTimeline } from '@/lib/companies/activityLog';
 
 /**
  * Assembles what Nucleas knows about one company for the AI, within a character budget.
@@ -130,15 +130,11 @@ export async function resolveCompanyContext(
     }
   }
 
-  // Recent actions and approvals
-  const activity = (await listInvocations(viewer, companyId, { limit: 10 })) ?? [];
-  if (activity.length) {
-    sections.push({
-      key: 'activity',
-      title: 'Recent actions',
-      body: activity.map((a) => `- ${a.createdAt.slice(0, 10)} ${a.title}: ${a.status}${a.summary ? ` — ${a.summary}` : a.error ? ` — ${a.error}` : ''}`).join('\n'),
-    });
-    sources.push('action receipts');
+  // What changed recently: code commits, builds, actions taken, integration changes.
+  const timeline = (await companyTimeline(viewer, companyId, { limit: 15 }).catch(() => null)) ?? [];
+  if (timeline.length) {
+    sections.push({ key: 'activity', title: 'Recent changes (newest first)', body: renderTimeline(timeline) });
+    sources.push('recent changes');
   }
   const pending = await CapabilityApproval.countDocuments({ organizationId: viewer.organizationId, companyId: cid, status: 'pending' });
   if (pending) {

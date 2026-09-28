@@ -22,10 +22,20 @@ import { listAvailableModels } from '@/lib/ai/engine/catalog';
 import { readEngineSettings, selectModel, type CostLevel, type Need } from '@/lib/ai/engine/select';
 import { executeInRemoteSandbox } from '@/lib/ai/executionWorkerClient';
 import { gatewayFromModelProfile } from '@/lib/ai/rolePipeline/profiles';
+import { getRepoSnapshot } from '@/lib/ai/repo/snapshot';
+import { projectGuide } from '@/lib/ai/repo/projectGuide';
 import {
   type TeamContextSummary,
   type TeamMessageRole,
 } from '@/lib/ai/teamWorkspace';
+
+/** How the builder should work in its disposable repository (it can run git, node and npm). */
+export const BUILD_METHOD = [
+  'How to work: first read the project instructions (CLAUDE.md, AGENTS.md, README) if present.',
+  'Find code with run_command ["git","grep","-n","<text>"] instead of guessing paths; read the files you will change and their callers before editing.',
+  'Follow the existing patterns, naming and style; keep the change minimal and focused on the plan.',
+  'Verify with the project\'s own scripts from package.json (typecheck, lint, tests) and fix what you broke; report anything you could not verify.',
+].join(' ');
 
 export type TeamChatTurn = {
   requestId: string;
@@ -257,6 +267,8 @@ export async function attemptOrchestratedIdeReply(input: {
   interactionMode?: IdeInteractionMode;
   /** Cost level for model selection; defaults to the organization's default level. */
   level?: CostLevel;
+  /** Extra context from the caller, e.g. the company's recent changes. */
+  contextBlock?: string;
   /** When aborted (e.g. client Stop), cancels the gateway fetch and releases the dispatch lock. */
   signal?: AbortSignal;
   onStage?: IdeChatStageCallback;
@@ -347,12 +359,19 @@ export async function attemptOrchestratedIdeReply(input: {
         )
       : null;
 
+  // Code work follows the project's own conventions: its instruction files, scripts and layout.
+  const codeWork = interactionMode !== 'chat' || looksLikeProjectInternalQuery(input.userText);
+  const snapshot = codeWork ? await getRepoSnapshot(input.organizationId, input.projectId).catch(() => null) : null;
+  const guide = snapshot?.ok ? projectGuide(snapshot.snapshot) : '';
+
   const sharedContext = [
     `You are the Nucleas assistant for the project "${input.projectName}": you plan, research, write and code for the team.`,
     `This project has about ${context.recentObjectiveCount} recent objectives and ${context.recentRunCount} recent AI runs recorded in Nucleas.`,
     'Do not claim to have changed project data or completed tasks outside this chat.',
     'If you lack information or tools, say what is missing instead of inventing project or web facts.',
     ...(ruleBlock ? [ruleBlock] : []),
+    ...(guide ? [`\n\n# Project guide (follow these conventions; use the listed scripts to verify)\n${guide}`] : []),
+    ...(input.contextBlock ? [`\n\n# Recent changes for this company (newest first)\n${input.contextBlock}`] : []),
   ]
     .filter(Boolean)
     .join(' ');
@@ -462,6 +481,7 @@ export async function attemptOrchestratedIdeReply(input: {
 
   const workerBrief = [
     'User request:', input.userText.slice(0, 2000), '', 'Planner briefing / jobs:', distilledPlanner, '',
+    ...(interactionMode === 'build' ? [BUILD_METHOD, ...(guide ? ['', 'Project guide (excerpt):', guide.slice(0, 3000)] : []), ''] : []),
     'Return one concise completion report covering all jobs. Include concrete evidence, checks performed, limitations, and anything still unverified. Do not narrate routine progress.',
   ].join('\n');
 

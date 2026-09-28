@@ -225,6 +225,11 @@ export async function completeGoogleConnection(
         { upsert: true }
       );
       target.bucket.connected.push(company.name);
+      // Only a real change goes on the timeline, not every re-authorisation.
+      if (connection.status !== 'connected') {
+        const { recordActivity } = await import('@/lib/companies/activityLog');
+        await recordActivity({ organizationId: viewer.organizationId, companyId: companyObjectId, kind: 'integration', title: `${target.provider === 'ga4' ? 'Google Analytics' : 'Search Console'} connected`, detail: match.label, actorUserId: viewer.userId });
+      }
     }
   }
 
@@ -257,6 +262,10 @@ export async function completeGoogleConnection(
           { upsert: true }
         );
         summary.adsense.connected.push(company.name);
+        if (existing?.status !== 'connected') {
+          const { recordActivity } = await import('@/lib/companies/activityLog');
+          await recordActivity({ organizationId: viewer.organizationId, companyId: companyObjectId, kind: 'integration', title: 'Google AdSense connected', detail: site.domain, actorUserId: viewer.userId });
+        }
       }
     } catch (err) {
       summary.adsense.error = err instanceof Error ? err.message : 'AdSense listing failed';

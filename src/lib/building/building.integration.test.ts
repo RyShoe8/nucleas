@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   execute: vi.fn(),
   octokit: vi.fn(),
 }));
-vi.mock('@/lib/ai/teamChat', () => ({ attemptOrchestratedIdeReply: (...args: unknown[]) => mocks.plan(...args) }));
+vi.mock('@/lib/ai/teamChat', () => ({ attemptOrchestratedIdeReply: (...args: unknown[]) => mocks.plan(...args), BUILD_METHOD: 'How to work.' }));
 vi.mock('@/lib/ai/executionWorkerClient', () => ({ executeInRemoteSandbox: (...args: unknown[]) => mocks.execute(...args) }));
 vi.mock('@/lib/ai/githubAppClient', () => ({
   createInstallationOctokit: () => mocks.octokit(),

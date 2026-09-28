@@ -90,6 +90,12 @@ export type ConnectResult =
  * Verifies and stores an API credential for a declared connection. Managers only.
  * The credential is verified before anything is written; failures store nothing.
  */
+async function logConnectionChange(viewer: CompanyViewer, companyId: Types.ObjectId | string | null | undefined, provider: string, title: string, detail?: string) {
+  if (!companyId) return;
+  const { recordActivity } = await import('@/lib/companies/activityLog');
+  await recordActivity({ organizationId: viewer.organizationId, companyId, kind: 'integration', title: `${getIntegrationProvider(provider)?.name ?? provider} ${title}`, detail, actorUserId: viewer.userId });
+}
+
 export async function connectWithApiKey(
   viewer: CompanyViewer,
   connectionId: string,
@@ -155,6 +161,7 @@ export async function connectWithApiKey(
     .select(VIEW_FIELDS)
     .lean<ConnectionLean>();
   if (!updated) return { ok: false, status: 422, error: 'Connection changed while saving. Try again.' };
+  await logConnectionChange(viewer, connection.companyId, connection.provider, connection.secretId ? 'credential replaced' : 'connected', outcome.accountLabel ?? undefined);
   return { ok: true, connection: toView(updated) };
 }
 
@@ -199,6 +206,7 @@ export async function addConnection(viewer: CompanyViewer, companyId: string, pr
       { upsert: true }
     );
   }
+  await logConnectionChange(viewer, companyId, def.id, 'added (not connected yet)');
   return { ok: true };
 }
 
@@ -233,5 +241,6 @@ export async function removeConnection(viewer: CompanyViewer, connectionId: stri
   if (connection.secretId && !(await IntegrationConnection.exists({ secretId: connection.secretId }))) {
     await IntegrationSecret.deleteOne({ _id: connection.secretId, organizationId: viewer.organizationId });
   }
+  await logConnectionChange(viewer, connection.companyId, connection.provider, 'removed');
   return { ok: true };
 }
