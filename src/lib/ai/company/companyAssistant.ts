@@ -13,6 +13,8 @@ import { getJob, type JobView } from '@/lib/jobs/jobs';
 import { processAttachments, type AttachmentRef, type ProcessedAttachment } from '@/lib/ai/attachments/uploads';
 import { renderAttachments } from '@/lib/ai/attachments/extract';
 import { withActionTools } from './actionTools';
+import { routeDirectRequest, type RouteDecision } from './directRouter';
+import type { ExtraToolSet } from '@/lib/ai/tools/runToolLoop';
 import { readEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
 
 const HISTORY_TURNS = 12;
@@ -138,21 +140,41 @@ export async function askAssistant(
   const tools = await buildAssistantTools(viewer, context.companies);
   // Direct models can plan code changes and design jobs too, through the same approved processes.
   const actionTools = await withActionTools(tools.toolSet, { viewer, companies: context.companies, level, signal: input.signal, onProgress: input.onProgress });
-  input.onProgress?.(`Asking ${(input.model ?? '').split('/').pop()}`);
-  const turn = await attemptCompanyCredentialChat({
+  const history = prior.slice().reverse();
+  const modelName = (input.model ?? '').split('/').pop();
+
+  // Free models sort the request first; Nucleas then runs the matching process itself.
+  input.onProgress?.(`Sorting the request with ${modelName}`);
+  const decision = await routeDirectRequest({
+    modelProfileId: input.modelProfileId!,
+    model: input.model!,
+    text: files ? `${text}\n\n(Files attached: ${files.items.map((f) => f.name).join(', ')})` : text,
+    prior: history,
+    companies: context.companies.map((c) => c.name),
+    codeCompanies: actionTools.codeCompanies,
+    signal: input.signal,
+  });
+  // Attached files only reach the chat loop, so requests with files keep the model in charge of actions.
+  const routedAction = decision && !files && decision.route !== 'answer' && decision.company ? await runRoutedAction(actionTools.toolSet, decision, input.onProgress) : null;
+
+  if (!routedAction) input.onProgress?.(`Asking ${modelName}`);
+  const turn = routedAction
+    ? { role: 'assistant' as const, text: routedAction, costMicros: 0, runId: undefined }
+    : await attemptCompanyCredentialChat({
     onProgress: input.onProgress,
     systemPrompt: buildSystemPrompt(renderContext(context), new Date().toISOString().slice(0, 10), focusedCompanies.map((c) => c.name)),
     organizationId: String(viewer.organizationId),
     projectId: assistantLedgerProjectId(String(viewer.organizationId)),
     userId: viewer.userId,
     userText: files ? `${text}\n\n# Attached files\n${files.block}` : text,
-    priorTurns: prior.reverse(),
+    priorTurns: history,
     modelProfileId: input.modelProfileId!,
     model: input.model!,
     projectName: 'Nucleas assistant',
     includeRepoTools: false,
     includeImageTool: false,
-    extraTools: actionTools.toolSet,
+    // Sorted as a question: company tools only, fewer choices for a small model.
+    extraTools: decision?.route === 'answer' ? tools.toolSet : actionTools.toolSet,
     signal: input.signal,
   });
 
@@ -231,4 +253,31 @@ export async function listAssistantTurns(viewer: CompanyViewer, limit = 40) {
     job: r.jobId ? jobs.get(String(r.jobId)) ?? null : null,
     attachments: (r.attachments ?? []).map((a) => ({ name: a.name, kind: a.kind, size: a.size, error: a.error ?? null })),
   }));
+}
+
+/**
+ * Runs the process a Direct request was sorted into (plan a code change or design a job) and
+ * words the reply; the card itself comes from the action results. Null when it could not run,
+ * so the model answers instead.
+ */
+async function runRoutedAction(toolSet: ExtraToolSet, decision: RouteDecision, onProgress?: (text: string) => void): Promise<string | null> {
+  const tool = decision.route === 'code_change' ? 'plan_code_change' : 'design_job';
+  onProgress?.(decision.route === 'code_change' ? `Sorted as a code change for ${decision.company}` : `Sorted as a job for ${decision.company}`);
+  let out: { ok?: boolean; error?: string; planned?: string; summary?: string; status?: string; title?: string; questions?: string[] };
+  try {
+    out = JSON.parse(await toolSet.execute(tool, JSON.stringify({ company: decision.company, request: decision.request }), { runId: new Types.ObjectId() }));
+  } catch {
+    return null;
+  }
+  if (!out.ok) {
+    // A company without code connected, for example: say so plainly rather than guess.
+    return out.error ? `I couldn't ${decision.route === 'code_change' ? 'plan that code change' : 'set up that job'}: ${out.error}` : null;
+  }
+  if (decision.route === 'code_change') {
+    return `I planned this change for ${decision.company}: **${out.planned}**\n\n${out.summary ?? ''}\n\nReview the plan below to approve, edit or reject it.`.replace(/\n{3,}/g, '\n\n');
+  }
+  const questions = out.questions ?? [];
+  return questions.length
+    ? `I started designing this job for ${decision.company}: **${out.title ?? 'New job'}**. Nucleas needs a few answers first:\n${questions.map((q) => `- ${q}`).join('\n')}\n\nAnswer them on the card below.`
+    : `I designed this job for ${decision.company}: **${out.title ?? 'New job'}**. Review it below to approve it.`;
 }

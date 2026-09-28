@@ -23,7 +23,7 @@ export interface ActionResults {
 export async function withActionTools(
   base: ExtraToolSet,
   options: { viewer: CompanyViewer; companies: CompanyProfile[]; level: CostLevel; signal?: AbortSignal; onProgress?: ProgressFn }
-): Promise<{ toolSet: ExtraToolSet; results: ActionResults }> {
+): Promise<{ toolSet: ExtraToolSet; results: ActionResults; codeCompanies: string[] }> {
   const results: ActionResults = {};
   const repos = await companiesWithRepositories(options.viewer, options.companies.map((c) => c.id));
   const withCode = options.companies.filter((c) => repos.has(c.id));
@@ -105,5 +105,5 @@ export async function withActionTools(
     });
   };
 
-  return { toolSet: { definitions: [...base.definitions, ...definitions], execute }, results };
+  return { toolSet: { definitions: [...base.definitions, ...definitions], execute }, results, codeCompanies: withCode.map((c) => c.name) };
 }
