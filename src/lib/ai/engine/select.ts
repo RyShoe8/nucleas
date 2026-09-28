@@ -86,7 +86,7 @@ function ranked(models: AvailableModel[], rank: number): AvailableModel | undefi
  * Rogly models are picked up automatically when they outrank the current ones.
  */
 function freeFor(models: AvailableModel[], need: Need): AvailableModel | undefined {
-  const free = models.filter((m) => m.free);
+  const free = models.filter((m) => m.free && m.autoEligible);
   const strongest = (pool: AvailableModel[]) =>
     [...pool].sort((a, b) => localModelPowerScore(b.model) - localModelPowerScore(a.model) || (b.contextTokens ?? 0) - (a.contextTokens ?? 0))[0];
   if (need === 'code' || need === 'research') return strongest(withStrength(free, 'coding')) ?? strongest(free);
@@ -96,7 +96,7 @@ function freeFor(models: AvailableModel[], need: Need): AvailableModel | undefin
 }
 
 function paidFor(models: AvailableModel[], need: Need): AvailableModel[] {
-  const paid = models.filter((m) => !m.free && m.blendedPricePer1M !== null);
+  const paid = models.filter((m) => !m.free && m.autoEligible && m.blendedPricePer1M !== null);
   switch (need) {
     case 'plan':
     case 'review':

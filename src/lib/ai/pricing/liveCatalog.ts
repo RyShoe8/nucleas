@@ -5,6 +5,10 @@ export type PricingRow = {
   id: string; provider: string; mode: string;
   input: number | null; output: number | null; cacheRead: number | null;
   variable: boolean;
+  /** Capability flags from the registry (used for automatic model selection). */
+  supportsReasoning?: boolean;
+  supportsVision?: boolean;
+  supportsTools?: boolean;
 };
 export type PricingSnapshot = { fetchedAt: string; rows: PricingRow[] };
 const perMillion = (value: unknown): number | null =>
@@ -25,6 +29,9 @@ export function parsePricingCatalog(body: unknown): PricingRow[] {
       output: perMillion(item.output_cost_per_token),
       cacheRead: perMillion(item.cache_read_input_token_cost),
       variable: Object.keys(item).some(key => /cost.*(above|below|audio|image|video|pixel|second|reasoning|batch|tier|priority)/.test(key)),
+      supportsReasoning: item.supports_reasoning === true,
+      supportsVision: item.supports_vision === true,
+      supportsTools: item.supports_function_calling === true,
     });
   }
   if (!rows.length) throw new Error('No token pricing entries returned');

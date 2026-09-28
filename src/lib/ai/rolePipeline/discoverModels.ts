@@ -125,7 +125,8 @@ export async function discoverOpenAiCompatibleModels(input: {
         const { done, value } = await reader.read();
         if (done) break;
         size += value.byteLength;
-        if (size > 512000) {
+        // Aggregators such as OpenRouter list hundreds of models with long descriptions.
+        if (size > 8_000_000) {
           await reader.cancel();
           return { models: [], error: 'Models response was too large.' };
         }

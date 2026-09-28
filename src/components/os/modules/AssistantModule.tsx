@@ -90,6 +90,86 @@ function writeSelection(value: { profileId: string; model: string }) {
     }
 }
 
+interface DiscoveredModel {
+    id: string;
+    label?: string;
+    pricing?: { free?: boolean; label?: string };
+}
+
+/** Direct mode: choose a provider (credential), then any model that provider offers. */
+function DirectModelPicker({
+    profiles,
+    value,
+    onChange,
+}: {
+    profiles: Profile[];
+    value: { profileId: string; model: string } | null;
+    onChange: (v: { profileId: string; model: string }) => void;
+}) {
+    const profileId = value?.profileId ?? '';
+    const [models, setModels] = useState<DiscoveredModel[] | null>(null);
+    const [loadError, setLoadError] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!profileId) return;
+        let cancelled = false;
+        void (async () => {
+            const res = await fetch(`/api/ai/ide/free-chat/models?profileId=${encodeURIComponent(profileId)}`, { cache: 'no-store' });
+            const body = (await res.json().catch(() => ({}))) as { models?: DiscoveredModel[]; error?: string };
+            if (cancelled) return;
+            setModels(body.models ?? []);
+            setLoadError(!res.ok || (body.error && !(body.models ?? []).length) ? body.error ?? `Could not load models (${res.status})` : null);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [profileId]);
+
+    // Keep the saved model visible even before (or if) discovery lists it.
+    const options = models ?? [];
+    const listed = options.some((m) => m.id === value?.model);
+
+    return (
+        <span className="inline-flex items-center gap-1">
+            <select
+                value={profileId}
+                onChange={(e) => {
+                    const p = profiles.find((x) => x.id === e.target.value);
+                    if (!p) return;
+                    setModels(null);
+                    onChange({ profileId: p.id, model: p.model ?? '' });
+                }}
+                className="h-7 px-1 rounded border border-border bg-background-elevated text-xs max-w-[130px]"
+                aria-label="Provider"
+            >
+                {profiles.length === 0 ? <option value="">No AI credentials configured</option> : null}
+                {profiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                        {p.label}
+                    </option>
+                ))}
+            </select>
+            <select
+                value={value?.model ?? ''}
+                onChange={(e) => onChange({ profileId, model: e.target.value })}
+                disabled={!profileId}
+                className="h-7 px-1 rounded border border-border bg-background-elevated text-xs max-w-[220px]"
+                aria-label="Model"
+                title={loadError ?? undefined}
+            >
+                {value?.model && !listed ? <option value={value.model}>{value.model}</option> : null}
+                {models === null ? <option value="" disabled>Loading models…</option> : null}
+                {options.map((m) => (
+                    <option key={m.id} value={m.id}>
+                        {m.label ?? m.id}
+                        {m.pricing?.free ? ' · free' : m.pricing?.label ? ` · ${m.pricing.label}` : ''}
+                    </option>
+                ))}
+            </select>
+        </span>
+    );
+}
+
 const ACTION_TONE: Record<string, string> = {
     succeeded: 'text-emerald-400',
     verified: 'text-emerald-400',
@@ -238,25 +318,14 @@ export default function AssistantModule() {
                     </select>
                 ) : null}
                 {mode === 'direct' ? (
-                <select
-                    value={selection ? `${selection.profileId}` : ''}
-                    onChange={(e) => {
-                        const p = profiles.find((x) => x.id === e.target.value);
-                        if (!p) return;
-                        const next = { profileId: p.id, model: p.model ?? '' };
-                        setSelection(next);
-                        writeSelection(next);
-                    }}
-                    className="h-7 px-2 rounded border border-border bg-background-elevated text-xs max-w-[220px]"
-                    aria-label="AI model"
-                >
-                    {profiles.length === 0 ? <option value="">No AI credentials configured</option> : null}
-                    {profiles.map((p) => (
-                        <option key={p.id} value={p.id}>
-                            {p.label} · {p.model}
-                        </option>
-                    ))}
-                </select>
+                    <DirectModelPicker
+                        profiles={profiles}
+                        value={selection}
+                        onChange={(next) => {
+                            setSelection(next);
+                            writeSelection(next);
+                        }}
+                    />
                 ) : null}
                 <span className="flex-1" />
                 {focus ? (

@@ -5,7 +5,7 @@ import { buildModelMetaView } from '@/lib/ai/rolePipeline/modelMeta';
 
 function model(id: string, free: boolean, price: number | null, profile = free ? 'rogly' : 'paid'): AvailableModel {
   const meta = buildModelMetaView({ id, free });
-  return { profileId: profile, profileLabel: profile, model: id, label: meta.label, free, strengths: meta.strengths, flagship: Boolean(meta.flagship), contextTokens: meta.contextTokens, blendedPricePer1M: free ? 0 : price };
+  return { profileId: profile, profileLabel: profile, model: id, label: meta.label, free, strengths: meta.strengths, flagship: Boolean(meta.flagship), contextTokens: meta.contextTokens, blendedPricePer1M: free ? 0 : price, autoEligible: true };
 }
 
 const ROGLY = [
@@ -80,5 +80,39 @@ describe('automatic model selection', () => {
     expect(pick('plan', 'high', ROGLY).primary).not.toBeNull();
     expect(pick('write', 'low', PAID).primary).toBe('anthropic/claude-sonnet-5');
     expect(pick('vision', 'low', PAID).primary).toBe('gpt-4o');
+  });
+});
+
+describe('catalog normalisation', () => {
+  it('normalises provider quirks and filters non-chat and legacy models from automatic selection', async () => {
+    const { normalizeModelId, isTextChatModel, describeModel } = await import('./catalog');
+    expect(normalizeModelId('models/gemini-3.1-pro-preview')).toBe('gemini-3.1-pro-preview');
+    expect(normalizeModelId('gpt-5-2025-08-07')).toBe('gpt-5');
+    expect(isTextChatModel('models/gemini-2.5-flash-preview-tts')).toBe(false);
+    expect(isTextChatModel('gpt-4o-mini-transcribe')).toBe(false);
+    expect(isTextChatModel('models/veo-3.1-generate-preview')).toBe(false);
+    expect(isTextChatModel('gpt-5.2')).toBe(true);
+
+    const rows = [
+      { id: 'gemini/gemini-3.1-pro-preview', provider: 'gemini', mode: 'chat', input: 2, output: 12, cacheRead: null, variable: false, supportsReasoning: true },
+      { id: 'gpt-4', provider: 'openai', mode: 'chat', input: 30, output: 60, cacheRead: null, variable: false, supportsTools: true },
+      { id: 'gpt-5.2', provider: 'openai', mode: 'chat', input: 1.25, output: 10, cacheRead: null, variable: false, supportsReasoning: true, supportsTools: true },
+      { id: 'gpt-5-pro', provider: 'openai', mode: 'chat', input: 15, output: 120, cacheRead: null, variable: false, supportsReasoning: true },
+    ];
+    const gemini = describeModel('models/gemini-3.1-pro-preview', 'google', false, rows);
+    expect(gemini).toMatchObject({ blendedPricePer1M: 4.5, autoEligible: true });
+    expect(gemini.strengths).toContain('reasoning');
+    expect(describeModel('gpt-5.2', 'openai', false, rows)).toMatchObject({ autoEligible: true, strengths: expect.arrayContaining(['reasoning']) });
+    expect(describeModel('gpt-4', 'openai', false, rows).autoEligible).toBe(false);
+    expect(describeModel('gpt-5-pro', 'openai', false, rows).autoEligible).toBe(false);
+    expect(describeModel('mystery-model', 'openai', false, rows).autoEligible).toBe(false);
+    const latestRows = [{ id: 'chat-latest', provider: 'openai', mode: 'chat', input: 5, output: 15, cacheRead: null, variable: false, supportsTools: true }];
+    expect(describeModel('chat-latest', 'openai', false, latestRows).autoEligible).toBe(false);
+  });
+
+  it('dated snapshots of one model take a single rank', async () => {
+    const { dedupeDatedVariants } = await import('./catalog');
+    const out = dedupeDatedVariants([model('gpt-5.5', false, 11), model('gpt-5.5-2026-04-23', false, 11), model('gpt-5-2025-08-07', false, 3), model('gpt-5-2025-10-01', false, 3)]);
+    expect(out.filter((m) => m.autoEligible).map((m) => m.model)).toEqual(['gpt-5.5', 'gpt-5-2025-10-01']);
   });
 });
