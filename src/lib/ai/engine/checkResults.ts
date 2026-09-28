@@ -39,6 +39,8 @@ const checkSchema = new Schema(
     avgLatencyMs: { type: Number, default: null },
     /** Short notes on what went wrong, for the admin view. */
     notes: { type: [String], default: [] },
+    /** How chats give this model tools: native tools parameter, or described in the prompt. */
+    toolMode: { type: String, enum: ['native', 'prompted'], default: null },
     error: { type: String, maxlength: 300 },
   },
   { timestamps: false }
@@ -65,6 +67,7 @@ export interface ModelCheckSummary {
   overall: number | null;
   avgLatencyMs: number | null;
   notes: string[];
+  toolMode: 'native' | 'prompted' | null;
   error: string | null;
 }
 
@@ -83,6 +86,7 @@ type LeanCheck = {
   overall?: number | null;
   avgLatencyMs?: number | null;
   notes?: string[];
+  toolMode?: 'native' | 'prompted' | null;
   error?: string | null;
 };
 
@@ -97,6 +101,7 @@ export function toCheckRow(doc: LeanCheck): ModelCheckRow {
     overall: doc.overall ?? null,
     avgLatencyMs: doc.avgLatencyMs ?? null,
     notes: doc.notes ?? [],
+    toolMode: doc.toolMode ?? null,
     error: doc.error ?? null,
   };
 }

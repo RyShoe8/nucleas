@@ -191,7 +191,7 @@ describe('short list', () => {
 
 const measured = (m: AvailableModel, scores: { json: number; routing: number; tools: number; grounded: number }, tools = true): AvailableModel => ({
   ...m,
-  checks: { status: 'done', checkedAt: '2026-09-28T00:00:00.000Z', supports: { jsonSchema: true, jsonObject: true, tools }, scores, overall: (scores.json + scores.routing + scores.tools + scores.grounded) / 4, avgLatencyMs: 900, notes: [], error: null },
+  checks: { status: 'done', checkedAt: '2026-09-28T00:00:00.000Z', supports: { jsonSchema: true, jsonObject: true, tools }, scores, overall: (scores.json + scores.routing + scores.tools + scores.grounded) / 4, avgLatencyMs: 900, notes: [], error: null, toolMode: 'native' },
 });
 
 describe('free models ranked by Nucleas checks', () => {

@@ -32,7 +32,7 @@ beforeEach(async () => {
 const refused = () => new GatewayError('unavailable', { kind: 'http', httpStatus: 400 });
 
 /** A model that gets everything right; options make its host refuse features. */
-function fakeModel(options: { schema?: boolean; tools?: boolean; routeAll?: string } = {}): CheckCaller & { formats: string[] } {
+function fakeModel(options: { schema?: boolean; tools?: boolean; routeAll?: string; nativeTools?: 'ignored' } = {}): CheckCaller & { formats: string[] } {
   const formats: string[] = [];
   return {
     formats,
@@ -50,8 +50,9 @@ function fakeModel(options: { schema?: boolean; tools?: boolean; routeAll?: stri
       if (/when did/i.test(user)) return { text: 'It shipped on 14 August 2026.', latencyMs: 100 };
       return { text: 'The notes do not say who designed the logo.', latencyMs: 100 };
     },
-    async tools(messages) {
+    async tools(messages, _tools, mode) {
       if (options.tools === false) throw refused();
+      if (options.nativeTools === 'ignored' && mode === 'native') return { text: 'Playbound.club had many visitors.', toolCalls: [], latencyMs: 200 };
       const user = messages[messages.length - 1].content;
       return /visitors/.test(user)
         ? { text: '', toolCalls: [{ name: 'company_metrics', arguments: '{"company":"Playbound.club","metric":"visitors","days":7}' }], latencyMs: 300 }
@@ -75,7 +76,7 @@ describe('free model checks', () => {
     expect(outcome.supports).toEqual({ jsonSchema: false, jsonObject: true, tools: false });
     expect(outcome.scores).toMatchObject({ json: 1, routing: 0.33, tools: 0, grounded: 1 });
     expect(outcome.notes).toContain('Host refused response_format json_schema.');
-    expect(outcome.notes).toContain('Host refused tool calls.');
+    expect(outcome.notes).toContain('native: host refused tool calls.');
     expect(outcome.notes.some((n) => n.includes('expected code_change'))).toBe(true);
   });
 
@@ -107,5 +108,14 @@ describe('free model checks', () => {
     // Re-queuing keeps the earlier scores in use until new ones land.
     await queueModelChecks();
     expect((await modelCheckRows()).find((r) => r.model.startsWith('google'))).toMatchObject({ status: 'queued', overall: 1 });
+  });
+});
+
+describe('tool modes', () => {
+  it('uses tools described in the prompt when the host ignores native tools, and says what the model replied', async () => {
+    const outcome = await checkModel(fakeModel({ nativeTools: 'ignored' }));
+    expect(outcome).toMatchObject({ toolMode: 'prompted', supports: { tools: true }, scores: { tools: 1 } });
+    expect(outcome.notes).toContain('native: no tool call for "How many visitors did Playbound.club hav…"; replied: Playbound.club had many visitors.');
+    expect((await checkModel(fakeModel())).toolMode).toBe('native');
   });
 });

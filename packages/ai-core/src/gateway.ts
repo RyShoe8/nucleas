@@ -48,7 +48,65 @@ export type GatewayConfiguration = {
   model: string;
   protocol: 'openai-chat';
   timeoutMs?: number;
+  /**
+   * How this model takes tools. native: the provider's tools parameter. prompted: Nucleas describes
+   * the tools in the prompt and reads <tool_call> blocks back, for hosts whose chat template drops
+   * tools (measured by the free model checks).
+   */
+  toolMode?: 'native' | 'prompted';
 };
+
+type ToolMessage = ModelToolRequest['messages'][number];
+
+/**
+ * Messages for prompted tool mode: the tool list goes into the system prompt, earlier tool calls
+ * become <tool_call> text and tool results become user turns, and consecutive same-role turns are
+ * merged (some chat templates require user/assistant to alternate).
+ */
+export function promptedToolMessages(messages: ToolMessage[], tools: ModelToolRequest['tools']): { role: 'system' | 'user' | 'assistant'; content: string }[] {
+  const guide = [
+    'You can call tools. To call one, reply with only this block (one block per call):',
+    '<tool_call>',
+    '{"name": "tool_name", "arguments": {"argument": "value"}}',
+    '</tool_call>',
+    'Tool results come back in <tool_response> blocks. Use them, call more tools if needed, and when you have what you need answer normally with no <tool_call> block. Never invent tool results.',
+    '',
+    'Tools:',
+    ...tools.map((t) => `- ${t.function.name}: ${t.function.description}\n  arguments (JSON Schema): ${JSON.stringify(t.function.parameters)}`),
+  ].join('\n');
+  const names = new Map<string, string>();
+  const converted: { role: 'system' | 'user' | 'assistant'; content: string }[] = [];
+  for (const m of messages) {
+    if (m.role === 'assistant') {
+      for (const call of m.tool_calls ?? []) names.set(call.id, call.function.name);
+      const calls = (m.tool_calls ?? []).map((c) => `<tool_call>\n${JSON.stringify({ name: c.function.name, arguments: safeJson(c.function.arguments) })}\n</tool_call>`);
+      converted.push({ role: 'assistant', content: [m.content ?? '', ...calls].filter(Boolean).join('\n') });
+    } else if (m.role === 'tool') {
+      const name = (m.tool_call_id && names.get(m.tool_call_id)) || 'tool';
+      converted.push({ role: 'user', content: `<tool_response name="${name}">\n${m.content ?? ''}\n</tool_response>` });
+    } else {
+      converted.push({ role: m.role, content: m.content ?? '' });
+    }
+  }
+  const systemIndex = converted.findIndex((m) => m.role === 'system');
+  if (systemIndex >= 0) converted[systemIndex] = { role: 'system', content: `${converted[systemIndex].content}\n\n${guide}` };
+  else converted.unshift({ role: 'system', content: guide });
+  const merged: typeof converted = [];
+  for (const m of converted) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === m.role && m.role !== 'system') last.content = `${last.content}\n\n${m.content}`;
+    else merged.push({ ...m });
+  }
+  return merged;
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text || '{}');
+  } catch {
+    return text;
+  }
+}
 
 const responseSchema = z.object({
   model: z.string().optional(),
@@ -371,14 +429,23 @@ export async function invokeModelWithTools(
       cache: 'no-store',
       signal: controller.signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.bearerToken}` },
-      body: JSON.stringify({
-        model: config.model,
-        messages: input.messages,
-        ...completionLimitBody(config.model, input.maxOutputTokens),
-        ...toolCallReasoningBody(config.model),
-        tools: input.tools,
-        stream: false,
-      }),
+      body: JSON.stringify(
+        config.toolMode === 'prompted'
+          ? {
+              model: config.model,
+              messages: promptedToolMessages(input.messages, input.tools),
+              ...completionLimitBody(config.model, input.maxOutputTokens),
+              stream: false,
+            }
+          : {
+              model: config.model,
+              messages: input.messages,
+              ...completionLimitBody(config.model, input.maxOutputTokens),
+              ...toolCallReasoningBody(config.model),
+              tools: input.tools,
+              stream: false,
+            }
+      ),
     });
     if (!response.ok) {
       throw await httpGatewayError(response, config.bearerToken);

@@ -23,12 +23,16 @@ export type JsonMode = 'json_schema' | 'json_object' | 'prompt';
 /** How the checks reach a model; the real one goes through the gateway, tests pass a fake. */
 export interface CheckCaller {
   plain(messages: Message[], format?: ResponseFormat): Promise<{ text: string; latencyMs: number }>;
-  tools(messages: Message[], tools: ToolDefinition[]): Promise<{ text: string; toolCalls: { name: string; arguments: string }[]; latencyMs: number }>;
+  tools(messages: Message[], tools: ToolDefinition[], mode: ToolMode): Promise<{ text: string; toolCalls: { name: string; arguments: string }[]; latencyMs: number }>;
 }
+
+export type ToolMode = 'native' | 'prompted';
 
 export interface CheckOutcome {
   supports: { jsonSchema: boolean; jsonObject: boolean; tools: boolean };
   jsonMode: JsonMode;
+  /** How chats should give this model tools: whichever mode scored better (native on a tie). */
+  toolMode: ToolMode;
   scores: CheckScores;
   overall: number;
   avgLatencyMs: number | null;
@@ -188,35 +192,61 @@ export async function checkModel(caller: CheckCaller, onProgress?: (text: string
     if (!correct) notes.push(`Routed "${item.request.slice(0, 50)}…" as ${parsed?.route ?? 'nothing'} (expected ${item.route}).`);
   }
 
-  // 3. Tool calls.
+  // 3. Tool calls: the provider's tools parameter first; when that misses, tools described in the
+  // prompt (hosts whose chat template drops tools). Chats use whichever mode scored better.
   onProgress?.('Checking tool calls');
-  const toolResults: number[] = [];
-  for (const item of TOOL_CASES) {
-    try {
-      const reply = await caller.tools(
-        [
-          { role: 'system', content: 'You help run a group of companies. Use a tool when it can answer the request.' },
-          { role: 'user', content: item.request },
-        ],
-        CHECK_TOOLS
-      );
-      latencies.push(reply.latencyMs);
-      supports.tools = true;
-      const call = reply.toolCalls[0];
-      let args: Record<string, unknown> = {};
+  const runToolCases = async (mode: ToolMode) => {
+    const results: number[] = [];
+    const modeNotes: string[] = [];
+    let accepted = false;
+    for (const item of TOOL_CASES) {
       try {
-        args = call ? (JSON.parse(call.arguments || '{}') as Record<string, unknown>) : {};
-      } catch {
-        notes.push('Tool arguments were not valid JSON.');
+        const reply = await caller.tools(
+          [
+            { role: 'system', content: 'You help run a group of companies. Use a tool when it can answer the request.' },
+            { role: 'user', content: item.request },
+          ],
+          CHECK_TOOLS,
+          mode
+        );
+        latencies.push(reply.latencyMs);
+        accepted = true;
+        const call = reply.toolCalls[0];
+        let args: Record<string, unknown> = {};
+        try {
+          args = call ? (JSON.parse(call.arguments || '{}') as Record<string, unknown>) : {};
+        } catch {
+          modeNotes.push(`${mode}: tool arguments were not valid JSON.`);
+        }
+        const ok = Boolean(call && item.expect(call.name, args));
+        results.push(ok ? 1 : 0);
+        if (!ok) {
+          const said = reply.text.replace(/\s+/g, ' ').trim().slice(0, 120);
+          modeNotes.push(
+            call ? `${mode}: called ${call.name} ${call.arguments.slice(0, 80)} for "${item.request.slice(0, 40)}…".` : `${mode}: no tool call for "${item.request.slice(0, 40)}…"; replied: ${said || '(nothing)'}`
+          );
+        }
+      } catch (error) {
+        if (!refusedShape(error)) throw error;
+        modeNotes.push(`${mode}: host refused tool calls.`);
+        results.push(0);
+        break;
       }
-      const ok = Boolean(call && item.expect(call.name, args));
-      toolResults.push(ok ? 1 : 0);
-      if (!ok) notes.push(call ? `Called ${call.name} wrongly for "${item.request.slice(0, 40)}…".` : `No tool call for "${item.request.slice(0, 40)}…".`);
-    } catch (error) {
-      if (!refusedShape(error)) throw error;
-      notes.push('Host refused tool calls.');
-      toolResults.push(0);
-      break;
+    }
+    return { score: mean(results), notes: modeNotes, accepted };
+  };
+  const native = await runToolCases('native');
+  supports.tools = native.accepted;
+  let toolMode: ToolMode = 'native';
+  let toolScore = native.score;
+  notes.push(...native.notes);
+  if (native.score < 1) {
+    onProgress?.('Checking tools described in the prompt');
+    const prompted = await runToolCases('prompted');
+    notes.push(...prompted.notes);
+    if (prompted.score > native.score) {
+      toolMode = 'prompted';
+      toolScore = prompted.score;
     }
   }
 
@@ -237,12 +267,13 @@ export async function checkModel(caller: CheckCaller, onProgress?: (text: string
   const scores: CheckScores = {
     json: round(mean(jsonResults)),
     routing: round(mean(routed)),
-    tools: round(mean(toolResults)),
+    tools: round(toolScore),
     grounded: round(mean(grounded)),
   };
   return {
     supports,
     jsonMode,
+    toolMode,
     scores,
     overall: round(mean([scores.json!, scores.routing!, scores.tools!, scores.grounded!])),
     avgLatencyMs: latencies.length ? Math.round(mean(latencies)) : null,
@@ -258,8 +289,8 @@ async function gatewayCaller(profileId: string, model: string): Promise<CheckCal
       const r = await invokeModel(gateway, { role: 'worker', messages, maxOutputTokens: 4096, ...(format ? { responseFormat: format } : {}) });
       return { text: r.content, latencyMs: r.latencyMs };
     },
-    async tools(messages, tools) {
-      const r = await invokeModelWithTools(gateway, { role: 'worker', messages, maxOutputTokens: 4096, tools });
+    async tools(messages, tools, mode) {
+      const r = await invokeModelWithTools({ ...gateway, toolMode: mode }, { role: 'worker', messages, maxOutputTokens: 4096, tools });
       return { text: r.content, toolCalls: r.toolCalls.map((c) => ({ name: c.function.name, arguments: c.function.arguments })), latencyMs: r.latencyMs };
     },
   };
@@ -321,6 +352,7 @@ export async function runQueuedModelChecks(options: { budgetMs?: number; caller?
             overall: outcome.overall,
             avgLatencyMs: outcome.avgLatencyMs,
             notes: outcome.notes,
+            toolMode: outcome.toolMode,
           },
           $unset: { error: '' },
         }

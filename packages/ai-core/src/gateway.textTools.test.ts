@@ -57,3 +57,36 @@ describe('tool calls written as text', () => {
     });
   });
 });
+
+describe('prompted tool mode', () => {
+  it('describes the tools in the system prompt, turns tool history into text, and keeps turns alternating', async () => {
+    const { promptedToolMessages } = await import('./gateway');
+    const tools = [{ type: 'function' as const, function: { name: 'repo_search', description: 'Search code', parameters: { type: 'object', properties: { query: { type: 'string' } } } } }];
+    const out = promptedToolMessages(
+      [
+        { role: 'system', content: 'Be exact.' },
+        { role: 'user', content: 'Find OpenHV' },
+        { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'repo_search', arguments: '{"query":"OpenHV"}' } }] },
+        { role: 'tool', tool_call_id: 'c1', content: 'games.ts:12' },
+        { role: 'user', content: 'Now remove it' },
+      ],
+      tools
+    );
+    expect(out.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
+    expect(out[0].content).toContain('Be exact.');
+    expect(out[0].content).toContain('- repo_search: Search code');
+    expect(out[2].content).toBe('<tool_call>\n{"name":"repo_search","arguments":{"query":"OpenHV"}}\n</tool_call>');
+    expect(out[3].content).toBe('<tool_response name="repo_search">\ngames.ts:12\n</tool_response>\n\nNow remove it');
+  });
+
+  it('sends no tools parameter in prompted mode and reads the call back', async () => {
+    const config: GatewayConfiguration = { endpoint: 'https://llm.rogly.net/v1/chat/completions', bearerToken: 't', model: 'gemma', protocol: 'openai-chat', toolMode: 'prompted' };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: '<tool_call>{"name":"repo_search","arguments":{"query":"x"}}</tool_call>' }, finish_reason: 'stop' }] }));
+    const tools = [{ type: 'function' as const, function: { name: 'repo_search', description: 'Search', parameters: { type: 'object' } } }];
+    const result = await invokeModelWithTools(config, { role: 'worker', messages: [{ role: 'user', content: 'find x' }], maxOutputTokens: 50, tools }, { fetcher });
+    const body = JSON.parse(String(fetcher.mock.calls[0][1]!.body));
+    expect(body.tools).toBeUndefined();
+    expect(body.messages[0].role).toBe('system');
+    expect(result.toolCalls[0].function.name).toBe('repo_search');
+  });
+});

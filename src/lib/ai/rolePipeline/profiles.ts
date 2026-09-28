@@ -10,7 +10,8 @@ import {
 } from '@/lib/ai/rolePipeline/providerCatalog';
 import { AiModelProfile } from '@/lib/models/AiModelProfile';
 import { isModelListedForProfile } from '@/lib/ai/engine/catalog';
-import { Types } from 'mongoose';
+import mongoose, { Types } from 'mongoose';
+import { AiModelCheck } from '@/lib/ai/engine/checkResults';
 
 export function mapModelProfilePublic(row: {
   _id: { toString(): string };
@@ -104,6 +105,11 @@ export async function gatewayFromModelProfile(
     timeoutMs: free ? 120000 : 60000,
   };
   validateGatewayConfiguration(gateway);
+  // Free models take tools the way the model checks found works best (native or described in the prompt).
+  if (free && mongoose.connection.readyState === 1) {
+    const check = await AiModelCheck.findOne({ profileId: row._id, model }).select('toolMode').lean<{ toolMode?: 'native' | 'prompted' | null }>();
+    if (check?.toolMode === 'prompted') gateway.toolMode = 'prompted';
+  }
   return {
     gateway,
     profile: {

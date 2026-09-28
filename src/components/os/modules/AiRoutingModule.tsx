@@ -77,6 +77,7 @@ interface CheckRow {
     overall: number | null;
     avgLatencyMs: number | null;
     notes: string[];
+    toolMode: 'native' | 'prompted' | null;
     error: string | null;
 }
 
@@ -273,7 +274,7 @@ function FreeModelChecks({ rows, onRun }: { rows: CheckRow[]; onRun: () => Promi
                                     <td className="py-1 px-1">{pct(r.scores.tools)}</td>
                                     <td className="py-1 px-1">{pct(r.scores.grounded)}</td>
                                     <td className="py-1 px-1 text-[10px] text-text-secondary whitespace-nowrap">
-                                        schema {yesNo(r.supports.jsonSchema)} · tools {yesNo(r.supports.tools)}
+                                        schema {yesNo(r.supports.jsonSchema)} · tools {r.toolMode === 'prompted' ? 'via prompt' : yesNo(r.supports.tools)}
                                     </td>
                                     <td className="py-1 pl-1 text-right text-text-secondary whitespace-nowrap">{r.avgLatencyMs !== null ? `${(r.avgLatencyMs / 1000).toFixed(1)}s` : ''}</td>
                                 </tr>
