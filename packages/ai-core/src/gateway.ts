@@ -9,6 +9,9 @@ import {
   type ToolCall,
 } from '@nucleas/ai-contracts';
 import { z } from 'zod';
+import { toolCallsFromText } from '@nucleas/ai-contracts';
+
+export { toolCallsFromText };
 
 export type GatewayErrorDetails = {
   kind: string;
@@ -198,15 +201,23 @@ async function readBoundedJson(response: Response, maxBytes: number): Promise<un
   }
 }
 
+/** Provider tool_calls; extra fields (index, etc.) are dropped and object arguments are re-serialized. */
 function parseToolCalls(raw: unknown[] | undefined): ToolCall[] {
   if (!raw?.length) return [];
   const calls: ToolCall[] = [];
-  for (const item of raw.slice(0, 8)) {
-    const parsed = toolCallSchema.safeParse(item);
+  raw.slice(0, 8).forEach((item, i) => {
+    const call = item as { id?: unknown; function?: { name?: unknown; arguments?: unknown } } | null;
+    const args = call?.function?.arguments;
+    const parsed = toolCallSchema.safeParse({
+      id: typeof call?.id === 'string' && call.id ? call.id : `call_${i}`,
+      type: 'function',
+      function: { name: call?.function?.name, arguments: typeof args === 'string' ? args : JSON.stringify(args ?? {}) },
+    });
     if (parsed.success) calls.push(parsed.data);
-  }
+  });
   return calls;
 }
+
 
 function parseOrInvalidResponse<T>(parse: () => T): T {
   try {
@@ -374,8 +385,16 @@ export async function invokeModelWithTools(
     }
     const parsed = responseSchema.parse(await readBoundedJson(response, 512000));
     const choice = parsed.choices[0]!;
-    const toolCalls = parseToolCalls(choice.message.tool_calls);
-    const visible = visibleAssistantText(choice.message);
+    let toolCalls = parseToolCalls(choice.message.tool_calls);
+    let visible = visibleAssistantText(choice.message);
+    // Hosts without a tool-call parser return the model's call as text; read it back for offered tools only.
+    if (!toolCalls.length && visible.text) {
+      const fromText = toolCallsFromText(visible.text, input.tools.map((t) => t.function.name));
+      if (fromText.calls.length) {
+        toolCalls = fromText.calls;
+        visible = { ...visible, text: fromText.rest };
+      }
+    }
     if (!toolCalls.length && !visible.text) {
       throw new GatewayError('invalid_response', {
         kind: 'empty_content',

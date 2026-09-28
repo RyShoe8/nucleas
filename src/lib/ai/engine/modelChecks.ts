@@ -255,11 +255,11 @@ async function gatewayCaller(profileId: string, model: string): Promise<CheckCal
   const { gateway } = await gatewayFromModelProfile(profileId, model);
   return {
     async plain(messages, format) {
-      const r = await invokeModel(gateway, { role: 'worker', messages, maxOutputTokens: 1024, ...(format ? { responseFormat: format } : {}) });
+      const r = await invokeModel(gateway, { role: 'worker', messages, maxOutputTokens: 4096, ...(format ? { responseFormat: format } : {}) });
       return { text: r.content, latencyMs: r.latencyMs };
     },
     async tools(messages, tools) {
-      const r = await invokeModelWithTools(gateway, { role: 'worker', messages, maxOutputTokens: 1024, tools });
+      const r = await invokeModelWithTools(gateway, { role: 'worker', messages, maxOutputTokens: 4096, tools });
       return { text: r.content, toolCalls: r.toolCalls.map((c) => ({ name: c.function.name, arguments: c.function.arguments })), latencyMs: r.latencyMs };
     },
   };

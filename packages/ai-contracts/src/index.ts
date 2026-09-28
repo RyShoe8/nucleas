@@ -152,3 +152,5 @@ export const remoteJobSchema = z.object({
   kind: z.literal('inference'),
   request: modelRequestSchema,
 }).strict();
+
+export { toolCallsFromText, type TextToolCall } from './textToolCalls';

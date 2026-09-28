@@ -4,6 +4,7 @@ import { mkdtemp, readdir, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { EXECUTION_WORKER_FEATURES, executionWorkerRequestSchema, executionWorkerResponseSchema, type ExecutionWorkerRequest } from '../../packages/ai-contracts/src/execution';
+import { toolCallsFromText } from '../../packages/ai-contracts/src/textToolCalls';
 import { assertWorkspacePath, deleteWorkspaceFile, readWorkspaceFile, runCommand, setWorkspaceOwner, writeWorkspaceFile, type CommandEvidence } from './runtime';
 
 type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
@@ -93,7 +94,13 @@ export async function modelReply(messages: ChatMessage[], inference: Inference, 
       }
       const reportedModel = typeof payload.model === 'string' && payload.model.trim() && payload.model.trim().length <= 200
         ? payload.model.trim() : null;
-      return { content: message.content ?? '', toolCalls: message.tool_calls ?? [], reportedModel };
+      const toolCalls = message.tool_calls ?? [];
+      // Hosts without a tool-call parser (local models) return the call as text; read it back for our tools only.
+      if (!toolCalls.length && message.content) {
+        const fromText = toolCallsFromText(message.content, tools.map((t) => t.function.name));
+        if (fromText.calls.length) return { content: fromText.rest, toolCalls: fromText.calls, reportedModel };
+      }
+      return { content: message.content ?? '', toolCalls, reportedModel };
     } finally { clearTimeout(timer); }
   }
   throw new Error('Inference failed with HTTP 400.');
