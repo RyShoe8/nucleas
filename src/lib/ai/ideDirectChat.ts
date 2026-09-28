@@ -47,7 +47,7 @@ export async function attemptDirectModelChat(input: {
     'Reply helpfully and briefly. Do not claim to have changed project data or completed tasks outside this chat.',
     'You may call provided tools. Never claim browse, repo, or image results without tool output. If a tool fails, say so from the error—do not invent results.',
     includeRepo
-      ? 'Prefer repo_tree/repo_read for this codebase; web_search only for external/public facts.'
+      ? 'Prefer repo_search/repo_read for this codebase; web_search only for external/public facts.'
       : 'Prefer web_search/web_fetch for external research.',
     'If you lack information or tools, say what is missing instead of inventing facts.',
     ...(ruleBlock ? [ruleBlock] : []),

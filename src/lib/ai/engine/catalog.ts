@@ -95,6 +95,8 @@ let registryMemo: { rows: PricingRow[]; at: number } | null = null;
 
 async function registryRows(): Promise<PricingRow[]> {
   if (registryMemo && Date.now() - registryMemo.at < REGISTRY_TTL_MS) return registryMemo.rows;
+  // No database connection (e.g. isolated tests): nothing cached to read and nowhere to cache.
+  if (mongoose.connection.readyState !== 1) return [];
   const cached = await AiPricingRegistryCache.findOne({ key: 'litellm' }).lean<{ rows: PricingRow[]; fetchedAt: Date }>();
   if (cached && Date.now() - cached.fetchedAt.getTime() < REGISTRY_TTL_MS) {
     registryMemo = { rows: cached.rows, at: cached.fetchedAt.getTime() };
@@ -185,7 +187,7 @@ export function describeModel(id: string, provider: string | undefined, free: bo
     free,
     strengths,
     flagship: Boolean(curated?.flagship),
-    contextTokens: curated?.contextTokens ?? meta.contextTokens,
+    contextTokens: curated?.contextTokens ?? ref?.maxInputTokens ?? meta.contextTokens,
     blendedPricePer1M: price,
     autoEligible,
   };
@@ -306,4 +308,29 @@ export function shortlistModels(models: AvailableModel[]): AvailableModel[] {
     top(scored, (m) => m.benchmark!.coding, 3).forEach((m) => picked.add(m));
   }
   return models.filter((m) => picked.has(m));
+}
+
+/** Unknown windows: paid models are nearly all 128k+ now, so 64k is safe; free local servers are often configured smaller. */
+const DEFAULT_CONTEXT_TOKENS = { paid: 64_000, free: 16_000 };
+
+/** A model's context window in tokens: curated list, then the price registry, then a safe default. */
+export async function contextWindowFor(model: string, provider: string | undefined, free: boolean): Promise<number> {
+  const normalized = normalizeModelId(model);
+  const curated = findCatalogModel(normalized) ?? findCatalogModel(model);
+  if (curated?.contextTokens) return curated.contextTokens;
+  if (!free) {
+    const row = findRegistryRow(model, provider, await registryRows().catch(() => []));
+    if (row?.maxInputTokens) return row.maxInputTokens;
+  }
+  const meta = buildModelMetaView({ id: normalized, free });
+  return meta.contextTokens ?? (free ? DEFAULT_CONTEXT_TOKENS.free : DEFAULT_CONTEXT_TOKENS.paid);
+}
+
+/**
+ * Characters of prompt a model can take, leaving room for its answer. ~3 characters per token is
+ * conservative for code. Capped so one request stays reasonable in cost.
+ */
+export function contextBudgetChars(contextTokens: number, maxOutputTokens: number): number {
+  const chars = (contextTokens - maxOutputTokens) * 3;
+  return Math.max(24_000, Math.min(chars, 1_200_000));
 }

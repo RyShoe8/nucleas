@@ -9,6 +9,8 @@ export type PricingRow = {
   supportsReasoning?: boolean;
   supportsVision?: boolean;
   supportsTools?: boolean;
+  /** Context window in tokens (max_input_tokens), when listed. */
+  maxInputTokens?: number | null;
 };
 export type PricingSnapshot = { fetchedAt: string; rows: PricingRow[] };
 const perMillion = (value: unknown): number | null =>
@@ -32,6 +34,7 @@ export function parsePricingCatalog(body: unknown): PricingRow[] {
       supportsReasoning: item.supports_reasoning === true,
       supportsVision: item.supports_vision === true,
       supportsTools: item.supports_function_calling === true,
+      maxInputTokens: typeof item.max_input_tokens === 'number' && item.max_input_tokens > 0 ? item.max_input_tokens : null,
     });
   }
   if (!rows.length) throw new Error('No token pricing entries returned');

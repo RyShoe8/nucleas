@@ -55,16 +55,21 @@ export const runStateSchema = z.enum([
   'cancellation_requested', 'cancelled',
 ]);
 export type RunState = z.infer<typeof runStateSchema>;
+/** Outer bounds only; each call is sized to its model's context window (see contextBudgetChars). */
+export const MAX_MESSAGE_CHARS = 1_200_000;
+export const MAX_REQUEST_CHARS = 1_500_000;
+
 export const modelRequestSchema = z.object({
   role: z.enum(['architect', 'worker', 'reviewer']),
   messages: z.array(z.object({
     role: z.enum(['system', 'user', 'assistant']),
-    content: z.string().max(32000),
-  }).strict()).min(1).max(30),
-  maxOutputTokens: z.number().int().min(1).max(8192),
+    content: z.string().max(MAX_MESSAGE_CHARS),
+  }).strict()).min(1).max(400),
+  maxOutputTokens: z.number().int().min(1).max(32768),
 }).strict().superRefine((value, ctx) => {
-  if (value.messages.reduce((size, message) => size + message.content.length, 0) > 48000) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Context exceeds the pilot limit.' });
+  // Callers size prompts to each model's context window; this is only an outer safety bound.
+  if (value.messages.reduce((size, message) => size + message.content.length, 0) > MAX_REQUEST_CHARS) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Context exceeds the request limit.' });
   }
 });
 export type ModelRequest = z.infer<typeof modelRequestSchema>;
@@ -107,7 +112,7 @@ export const toolDefinitionSchema = z
 export const toolCapableMessageSchema = z
   .object({
     role: z.enum(['system', 'user', 'assistant', 'tool']),
-    content: z.string().max(32000).nullable().optional(),
+    content: z.string().max(MAX_MESSAGE_CHARS).nullable().optional(),
     tool_calls: z.array(toolCallSchema).max(8).optional(),
     tool_call_id: z.string().min(1).max(128).optional(),
   })
@@ -116,9 +121,9 @@ export const toolCapableMessageSchema = z
 export const modelToolRequestSchema = z
   .object({
     role: z.enum(['architect', 'worker', 'reviewer']),
-    messages: z.array(toolCapableMessageSchema).min(1).max(40),
-    maxOutputTokens: z.number().int().min(1).max(8192),
-    tools: z.array(toolDefinitionSchema).min(1).max(16),
+    messages: z.array(toolCapableMessageSchema).min(1).max(400),
+    maxOutputTokens: z.number().int().min(1).max(32768),
+    tools: z.array(toolDefinitionSchema).min(1).max(32),
   })
   .strict();
 

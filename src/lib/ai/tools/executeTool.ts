@@ -8,6 +8,8 @@ import { webFetch } from '@/lib/ai/tools/webFetch';
 import { imageHitsToArtifacts } from '@/lib/ai/tools/imageSearchArtifacts';
 import { imageSearch, webSearch } from '@/lib/ai/tools/webSearch';
 import { listIdeTree, readIdeFile } from '@/lib/ai/ideCommitPush';
+import { getRepoSnapshot, listSnapshotDir, searchSnapshot } from '@/lib/ai/repo/snapshot';
+import { commitWithDiff, recentCommits } from '@/lib/ai/repo/history';
 
 export type ToolArtifact = {
   kind: 'image';
@@ -55,8 +57,43 @@ export async function executeIdeTool(input: {
   const args = parseArgs(input.argumentsJson);
   const artifacts: ToolArtifact[] = [];
 
+  if (input.name === 'repo_history') {
+    const result = await recentCommits(input.organizationId, input.projectId, {
+      count: typeof args.count === 'number' ? args.count : undefined,
+      path: typeof args.path === 'string' && args.path.trim() ? args.path.trim() : undefined,
+    });
+    return { content: JSON.stringify(result.ok ? { ok: true, branch: result.branch, commits: result.commits } : { ok: false, error: result.reason }), artifacts };
+  }
+
+  if (input.name === 'repo_commit') {
+    const result = await commitWithDiff(input.organizationId, input.projectId, typeof args.sha === 'string' ? args.sha.trim() : '');
+    return { content: JSON.stringify(result.ok ? { ok: true, commit: result.commit } : { ok: false, error: result.reason }), artifacts };
+  }
+
+  if (input.name === 'repo_search') {
+    const snap = await getRepoSnapshot(input.organizationId, input.projectId);
+    if (!snap.ok) return { content: JSON.stringify({ ok: false, error: snap.reason }), artifacts };
+    const found = searchSnapshot(snap.snapshot, {
+      query: typeof args.query === 'string' ? args.query : '',
+      regex: args.regex === true,
+      caseSensitive: args.caseSensitive === true,
+      path: typeof args.path === 'string' ? args.path : undefined,
+      glob: typeof args.glob === 'string' ? args.glob : undefined,
+      maxResults: typeof args.maxResults === 'number' ? args.maxResults : undefined,
+      contextLines: typeof args.contextLines === 'number' ? args.contextLines : undefined,
+    });
+    if ('error' in found) return { content: JSON.stringify({ ok: false, error: found.error }), artifacts };
+    return { content: JSON.stringify({ ok: true, commit: snap.snapshot.commit.slice(0, 12), ...found }), artifacts };
+  }
+
   if (input.name === 'repo_tree') {
     const path = typeof args.path === 'string' ? args.path : '';
+    // The local copy first (the whole repository at the current commit); GitHub if it is unavailable.
+    const snap = await getRepoSnapshot(input.organizationId, input.projectId);
+    if (snap.ok) {
+      const entries = listSnapshotDir(snap.snapshot, path);
+      return { content: JSON.stringify({ ok: true, path, entries: entries.slice(0, 500), truncated: entries.length > 500 }), artifacts };
+    }
     const result = await listIdeTree(input.organizationId, input.projectId, path);
     if (!result.ok) {
       return { content: JSON.stringify({ ok: false, error: result.reason }), artifacts };
@@ -79,7 +116,18 @@ export async function executeIdeTool(input: {
   if (input.name === 'repo_read') {
     const path = typeof args.path === 'string' ? args.path : '';
     if (!path.trim()) throw new Error('repo_read requires a path.');
-    const result = await readIdeFile(input.organizationId, input.projectId, path);
+    const normalizedPath = path.trim().replace(/^\/+/, '');
+    const snap = await getRepoSnapshot(input.organizationId, input.projectId);
+    const local = snap.ok ? snap.snapshot.files.get(normalizedPath) : undefined;
+    if (snap.ok && local === undefined && snap.snapshot.skipped.includes(normalizedPath)) {
+      return { content: JSON.stringify({ ok: false, error: 'That file is binary or larger than 1 MB, so it is not readable as text.' }), artifacts };
+    }
+    const result =
+      local !== undefined && snap.ok
+        ? { ok: true as const, path: normalizedPath, branch: snap.snapshot.branch, sha: snap.snapshot.commit.slice(0, 12), content: local }
+        : snap.ok
+          ? { ok: false as const, reason: `No file at "${normalizedPath}". Use repo_search or repo_tree to find the right path.` }
+          : await readIdeFile(input.organizationId, input.projectId, path);
     if (!result.ok) {
       return { content: JSON.stringify({ ok: false, error: result.reason }), artifacts };
     }
@@ -88,7 +136,7 @@ export async function executeIdeTool(input: {
     const totalLines = lines.length;
     const totalChars = fullContent.length;
 
-    const maxChars = Math.min(Math.max(Number(args.maxChars) || 8000, 500), 10000);
+    const maxChars = Math.min(Math.max(Number(args.maxChars) || 20000, 500), 60000);
     const startLineArg =
       typeof args.startLine === 'number' && args.startLine > 0
         ? Math.floor(args.startLine)

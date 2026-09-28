@@ -8,6 +8,10 @@ import { executeIdeTool, type ToolArtifact } from '@/lib/ai/tools/executeTool';
 import { ideChatToolDefinitions, type IdeToolProfile } from '@/lib/ai/tools/definitions';
 
 const DEFAULT_MAX_ROUNDS = 6;
+/** Without a model-specific budget, the historical prompt size. */
+const DEFAULT_CONTEXT_CHARS = 48_000;
+/** One tool result (e.g. a whole file) kept up to this size. */
+const MAX_TOOL_RESULT_CHARS = 60_000;
 /** Circuit breaker only — deep digs continue until the model stops calling tools or this fires. */
 const DEEP_REPO_MAX_ROUNDS = 32;
 
@@ -46,6 +50,8 @@ export async function runIdeToolLoop(input: {
   toolProfile?: IdeToolProfile;
   /** Cap concurrent tool-loop iterations (batching), not total analysis ambition. */
   maxRounds?: number;
+  /** Prompt characters this model can take (its context window, minus room for the answer). */
+  contextChars?: number;
   organizationId: string;
   projectId: Types.ObjectId;
   userId: string;
@@ -96,52 +102,9 @@ export async function runIdeToolLoop(input: {
         messages.push({ role: 'user', content: 'Only 3 tool rounds remain. Finish gathering evidence and write your final answer.' });
       }
 
-      // Message compaction to prevent exceeding gateway 40-message limit (F14)
-      // Must preserve assistant-tool turn pairing and anchor on the actual user task message
-      if (messages.length > 24) {
-        const targetTailStart = Math.max(2, messages.length - 12);
-        let splitIdx = targetTailStart;
-        while (splitIdx < messages.length && messages[splitIdx].role !== 'assistant') {
-          splitIdx++;
-        }
-        if (splitIdx >= messages.length - 2) {
-          splitIdx = targetTailStart;
-          while (splitIdx > 2 && messages[splitIdx].role !== 'assistant') {
-            splitIdx--;
-          }
-        }
-
-        if (splitIdx > 2 && splitIdx < messages.length && messages[splitIdx].role === 'assistant') {
-          const middle = messages.slice(2, splitIdx);
-          const tail = messages.slice(splitIdx);
-          const toolSummaries: string[] = [];
-          for (const msg of middle) {
-            if (msg.role === 'tool' && msg.content) {
-              try {
-                const parsed = JSON.parse(msg.content) as Record<string, unknown>;
-                if (parsed.path) {
-                  toolSummaries.push(`Inspected ${parsed.path}`);
-                } else if (parsed.query) {
-                  toolSummaries.push(`Searched for "${parsed.query}"`);
-                }
-              } catch {
-                toolSummaries.push(String(msg.content).slice(0, 80));
-              }
-            }
-          }
-          const compactedSummary =
-            toolSummaries.length > 0
-              ? `[Prior investigation evidence: ${toolSummaries.slice(-8).join('; ')}]`
-              : '[Earlier tool exchanges compacted for budget]';
-          messages.length = 0;
-          messages.push(
-            initialSystemMessage,
-            initialTaskMessage,
-            { role: 'user', content: compactedSummary },
-            ...tail
-          );
-        }
-      }
+      // Keep everything the model has seen until its context window is nearly full; then clear
+      // the oldest tool results first (they can be fetched again from the local repository copy).
+      fitToContext(messages, input.contextChars ?? DEFAULT_CONTEXT_CHARS);
 
       const result = await invokeModelWithTools(
         input.gateway,
@@ -230,7 +193,7 @@ export async function runIdeToolLoop(input: {
           } catch (error) {
             toolContent = JSON.stringify({ error: error instanceof Error ? error.message.slice(0, 500) : 'Tool failed.' });
           }
-          messages.push({ role: 'tool', tool_call_id: call.id, content: toolContent.slice(0, 12000) });
+          messages.push({ role: 'tool', tool_call_id: call.id, content: toolContent.slice(0, MAX_TOOL_RESULT_CHARS) });
           continue;
         }
         try {
@@ -273,7 +236,7 @@ export async function runIdeToolLoop(input: {
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
-          content: toolContent.slice(0, 12000),
+          content: toolContent.slice(0, MAX_TOOL_RESULT_CHARS),
         });
       }
     }
@@ -282,7 +245,7 @@ export async function runIdeToolLoop(input: {
     // instead of discarding the whole investigation.
     const final = await invokeModel(
       input.gateway,
-      { role: 'architect', messages: finalAnswerMessages(initialSystemMessage.content ?? '', initialTaskMessage?.content ?? '', messages), maxOutputTokens: input.maxOutputTokens },
+      { role: 'architect', messages: finalAnswerMessages(initialSystemMessage.content ?? '', initialTaskMessage?.content ?? '', messages, input.contextChars ?? DEFAULT_CONTEXT_CHARS), maxOutputTokens: input.maxOutputTokens },
       { signal: input.signal }
     );
     latencyMs += final.latencyMs;
@@ -303,15 +266,16 @@ export async function runIdeToolLoop(input: {
 
 /**
  * The tool-free closing request: the original instructions and task plus the most recent tool
- * results, within the plain-chat limits (48k characters, 32k per message).
+ * results, sized to the model's context budget.
  */
-export function finalAnswerMessages(system: string, task: string, transcript: LoopMessage[]): { role: 'system' | 'user'; content: string }[] {
+export function finalAnswerMessages(system: string, task: string, transcript: LoopMessage[], budgetChars = DEFAULT_CONTEXT_CHARS): { role: 'system' | 'user'; content: string }[] {
   const evidence: string[] = [];
   let used = 0;
+  const evidenceBudget = Math.max(12_000, Math.floor(budgetChars * 0.8) - Math.min(system.length, 10_000) - Math.min(task.length, 8000));
   for (const m of [...transcript].reverse()) {
     if (m.role !== 'tool' || !m.content) continue;
-    const piece = m.content.slice(0, 4000);
-    if (used + piece.length > 24_000) break;
+    const piece = m.content.slice(0, MAX_TOOL_RESULT_CHARS);
+    if (used + piece.length > evidenceBudget) break;
     evidence.unshift(piece);
     used += piece.length;
   }
@@ -329,4 +293,40 @@ export function finalAnswerMessages(system: string, task: string, transcript: Lo
       ].join('\n'),
     },
   ];
+}
+
+function contentChars(messages: LoopMessage[]): number {
+  return messages.reduce((n, m) => n + (m.content?.length ?? 0) + (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0), 0);
+}
+
+/**
+ * Brings the conversation under the model's budget without losing its structure: the oldest tool
+ * results are replaced by a note naming the call (so the model can repeat it), keeping the task,
+ * the model's own reasoning and the most recent results intact. Mutates messages in place.
+ */
+export function fitToContext(messages: LoopMessage[], budgetChars: number): void {
+  const target = Math.floor(budgetChars * 0.85);
+  if (contentChars(messages) <= target) return;
+  const callNames = new Map<string, string>();
+  for (const m of messages) for (const c of m.tool_calls ?? []) callNames.set(c.id, `${c.function.name}(${c.function.arguments.slice(0, 200)})`);
+  // Never clear the last few messages: the model is working with them right now.
+  const protectedFrom = Math.max(0, messages.length - 6);
+  for (let i = 0; i < protectedFrom && contentChars(messages) > target; i += 1) {
+    const m = messages[i];
+    if (m.role !== 'tool' || !m.content || m.content.length < 400) continue;
+    const call = m.tool_call_id ? callNames.get(m.tool_call_id) : undefined;
+    messages[i] = {
+      ...m,
+      content: `[Result of ${call ?? 'an earlier tool call'} cleared to fit the context window. Call it again if you still need it; repository reads come from the local copy instantly.]`,
+    };
+  }
+  // Still over (very long reasoning or a small window): trim the longest remaining non-task messages.
+  for (let guard = 0; contentChars(messages) > target && guard < 50; guard += 1) {
+    let longest = -1;
+    for (let i = 2; i < protectedFrom; i += 1) if (longest === -1 || (messages[i].content?.length ?? 0) > (messages[longest].content?.length ?? 0)) longest = i;
+    if (longest === -1 || (messages[longest].content?.length ?? 0) < 1000) break;
+    const m = messages[longest];
+    messages[longest] = { ...m, content: `${m.content!.slice(0, Math.floor(m.content!.length / 2))}
+[…shortened to fit the context window]` };
+  }
 }

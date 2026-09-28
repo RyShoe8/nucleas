@@ -28,134 +28,63 @@ vi.mock('@/lib/ai/tools/executeTool', () => ({
 
 import { runIdeToolLoop } from '@/lib/ai/tools/runToolLoop';
 
-describe('runIdeToolLoop message compaction', () => {
-  it('compacts messages when count > 24 while maintaining assistant-tool pairing without orphan tool messages', async () => {
+describe('runIdeToolLoop keeps full context', () => {
+  function reading(file: (n: number) => string, rounds: number) {
     let round = 0;
+    const seen: { role: string; content: string | null; tool_call_id?: string }[][] = [];
     mockInvokeModelWithTools.mockImplementation(async (_gateway, req) => {
-      // Validate that in every outbound request, no tool message appears without a preceding assistant with tool_calls
-      const msgs = req.messages;
-      for (let i = 0; i < msgs.length; i++) {
-        if (msgs[i].role === 'tool') {
-          // Look backwards for the parent assistant message
-          let foundParent = false;
-          for (let j = i - 1; j >= 0; j--) {
-            if (msgs[j].role === 'assistant') {
-              if (msgs[j].tool_calls?.some((tc: { id: string }) => tc.id === msgs[i].tool_call_id)) {
-                foundParent = true;
-              }
-              break;
-            }
-          }
-          expect(foundParent).toBe(true);
-        }
-      }
-
-      round++;
-      if (round <= 6) {
-        // Return 4 parallel tool calls per round to quickly grow message count past 24
-        return {
-          content: `Round ${round}`,
-          toolCalls: [
-            { id: `c_${round}_1`, type: 'function', function: { name: 'repo_read', arguments: '{}' } },
-            { id: `c_${round}_2`, type: 'function', function: { name: 'repo_read', arguments: '{}' } },
-            { id: `c_${round}_3`, type: 'function', function: { name: 'repo_read', arguments: '{}' } },
-            { id: `c_${round}_4`, type: 'function', function: { name: 'repo_read', arguments: '{}' } },
-          ],
-          latencyMs: 10,
-        };
-      }
-
-      return {
-        content: 'Final answer after compaction',
-        toolCalls: [],
-        latencyMs: 10,
-      };
+      seen.push(req.messages);
+      round += 1;
+      if (round > rounds) return { content: 'Done.', toolCalls: [], inputTokens: 1, outputTokens: 1, latencyMs: 1 };
+      return { content: '', toolCalls: [{ id: `c${round}`, type: 'function', function: { name: 'repo_read', arguments: JSON.stringify({ path: file(round) }) } }], inputTokens: 1, outputTokens: 1, latencyMs: 1 };
     });
+    return seen;
+  }
 
-    const result = await runIdeToolLoop({
-      gateway: {
-        endpoint: 'https://llm.example.com/v1/chat/completions',
-        bearerToken: 'secret',
-        model: 'gpt-5.6-sol',
-        protocol: 'openai-chat',
-      },
-      messages: [
-        { role: 'system', content: 'System prompt' },
-        { role: 'user', content: 'User prompt' },
-      ],
-      maxOutputTokens: 1000,
-      includeImageTool: false,
-      includeRepoTools: true,
-      maxRounds: 10,
-      organizationId: 'test-org',
-      projectId: new Types.ObjectId(),
-      userId: 'test-user',
-      runId: new Types.ObjectId(),
-    });
+  const base = {
+    gateway: { endpoint: 'https://x.test', model: 'm' } as never,
+    messages: [{ role: 'system' as const, content: 'System prompt' }, { role: 'user' as const, content: 'Active user request' }],
+    maxOutputTokens: 100,
+    includeImageTool: false,
+    maxRounds: 32,
+    organizationId: 'org',
+    projectId: new Types.ObjectId(),
+    userId: 'u',
+    runId: new Types.ObjectId(),
+  };
 
-    expect(result.content).toBe('Final answer after compaction');
-    expect(round).toBe(7);
+  it('with room in the context window, nothing the model read is ever dropped', async () => {
+    mockInvokeModelWithTools.mockReset();
+    const seen = reading((n) => `src/file${n}.ts`, 30);
+    const result = await runIdeToolLoop({ ...base, contextChars: 1_000_000 });
+    expect(result.content).toBe('Done.');
+    const last = seen[seen.length - 1];
+    // Task + system + 30 × (assistant call + tool result), all intact.
+    expect(last).toHaveLength(2 + 30 * 2 + 1);
+    expect(last.filter((m) => m.role === 'tool').every((m) => !String(m.content).includes('cleared'))).toBe(true);
   });
 
-  it('preserves the active user prompt and system prompt when compacting messages with prior history', async () => {
-    let round = 0;
-    mockInvokeModelWithTools.mockImplementation(async (_gateway, req) => {
-      round++;
-      if (round > 5) {
-        // After compaction, messages[0] must be the system prompt, and messages[1] must be the active user task
-        expect(req.messages[0]).toMatchObject({ role: 'system', content: expect.stringMatching(/^System prompt\n\nYou can use tools for at most \d+ rounds/) });
-        expect(req.messages[1]).toMatchObject({ role: 'user', content: 'Active user blog request' });
-        // The old history request must NOT be at index 1
-        expect(req.messages[1].content).not.toBe('Old history request about notifications');
-      }
-
-      if (round <= 6) {
-        return {
-          content: `Round ${round}`,
-          toolCalls: [
-            { id: `c_${round}_1`, type: 'function', function: { name: 'repo_read', arguments: '{}' } },
-            { id: `c_${round}_2`, type: 'function', function: { name: 'repo_read', arguments: '{}' } },
-            { id: `c_${round}_3`, type: 'function', function: { name: 'repo_read', arguments: '{}' } },
-            { id: `c_${round}_4`, type: 'function', function: { name: 'repo_read', arguments: '{}' } },
-          ],
-          latencyMs: 10,
-        };
-      }
-
-      return {
-        content: 'Finished plan for blog',
-        toolCalls: [],
-        latencyMs: 10,
-      };
-    });
-
-    const result = await runIdeToolLoop({
-      gateway: {
-        endpoint: 'https://llm.example.com/v1/chat/completions',
-        bearerToken: 'secret',
-        model: 'gpt-5.6-sol',
-        protocol: 'openai-chat',
-      },
-      messages: [
-        { role: 'system', content: 'System prompt' },
-        { role: 'user', content: 'Old history request about notifications' },
-        { role: 'assistant', content: 'Old notification answer' },
-        { role: 'user', content: 'Active user blog request' },
-      ],
-      maxOutputTokens: 1000,
-      includeImageTool: false,
-      includeRepoTools: true,
-      maxRounds: 10,
-      organizationId: 'test-org',
-      projectId: new Types.ObjectId(),
-      userId: 'test-user',
-      runId: new Types.ObjectId(),
-    });
-
-    expect(result.content).toBe('Finished plan for blog');
+  it('when the window fills, clears only the oldest results (naming the call) and keeps the task and newest results', async () => {
+    const { fitToContext } = await import('@/lib/ai/tools/runToolLoop');
+    const big = 'x'.repeat(5000);
+    const messages: Parameters<typeof fitToContext>[0] = [
+      { role: 'system', content: 'System prompt' },
+      { role: 'user', content: 'Active user request' },
+    ];
+    for (let i = 1; i <= 10; i += 1) {
+      messages.push({ role: 'assistant', content: null, tool_calls: [{ id: `c${i}`, type: 'function', function: { name: 'repo_read', arguments: `{"path":"f${i}.ts"}` } }] });
+      messages.push({ role: 'tool', tool_call_id: `c${i}`, content: big });
+    }
+    fitToContext(messages, 30_000);
+    const total = messages.reduce((n, m) => n + (m.content?.length ?? 0), 0);
+    expect(total).toBeLessThanOrEqual(30_000 * 0.85 + 2000);
+    expect(messages[1]).toMatchObject({ role: 'user', content: 'Active user request' });
+    expect(messages[3].content).toContain('Result of repo_read({"path":"f1.ts"}) cleared');
+    expect(messages[messages.length - 1].content).toBe(big);
+    // Structure is untouched: every tool result still follows its call.
+    expect(messages).toHaveLength(22);
   });
 });
-
 
 describe('runIdeToolLoop extra tools', () => {
   it('offers caller tools, routes their calls to the caller with the run id, and keeps IDE tools separate', async () => {

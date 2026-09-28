@@ -171,6 +171,7 @@ function gatewayDebugParts(error: unknown): Record<string, string | number | boo
 
 import { companyChatAdmissionMessage } from '@/lib/ai/companyChatAdmission';
 import { recordModelFailure, recordModelSuccess } from '@/lib/ai/engine/health';
+import { contextBudgetChars, contextWindowFor } from '@/lib/ai/engine/catalog';
 
 /**
  * Governed IDE chat via a company credential (Direct or AI Team Worker binding).
@@ -393,6 +394,11 @@ export async function attemptCompanyCredentialChat(input: {
   let maxOutputTokens = freeCredential
     ? requestedCap
     : Math.min(OUTPUT_HARD_CAP, Math.max(requestedCap, policy.maxOutputTokens));
+  // Prompts are sized to this model's real context window, not a fixed pilot cap.
+  const contextChars = contextBudgetChars(
+    await contextWindowFor(gateway.model, profile.provider, freeCredential).catch(() => (freeCredential ? 16_000 : 64_000)),
+    maxOutputTokens
+  );
 
   try {
     let loop: Awaited<ReturnType<typeof runIdeToolLoop>> | undefined;
@@ -441,7 +447,7 @@ export async function attemptCompanyCredentialChat(input: {
         ...history,
         { role: 'user' as const, content: args.userContent },
       ];
-      const budgeted = budgetContextMessages(rawMessages);
+      const budgeted = budgetContextMessages(rawMessages, contextChars, contextChars);
       return invokeModel(
         gateway,
         {
@@ -639,10 +645,11 @@ export async function attemptCompanyCredentialChat(input: {
         ...history,
         { role: 'user' as const, content: userTextForModel },
       ];
-      const budgeted = budgetContextMessages(rawMessages);
+      const budgeted = budgetContextMessages(rawMessages, contextChars, contextChars);
       return runIdeToolLoop({
         gateway,
         messages: budgeted,
+        contextChars,
         maxOutputTokens,
         includeImageTool: input.includeImageTool !== false,
         includeRepoTools: input.includeRepoTools !== false,

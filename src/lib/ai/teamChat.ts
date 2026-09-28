@@ -376,9 +376,9 @@ export async function attemptOrchestratedIdeReply(input: {
         ? 'You may call provided tools. Never claim browse, repo, or image results without tool output. If a tool fails, say so from the error—do not invent results.'
         : 'Do not call tools in this turn.',
       allowTools && toolProfile === 'full'
-        ? 'Prefer repo_tree/repo_read for this codebase; web_search/web_fetch only for external facts; browser_navigate only when fetch is thin.'
+        ? 'Prefer repo_search/repo_read for this codebase; web_search/web_fetch only for external facts; browser_navigate only when fetch is thin.'
         : allowTools
-          ? 'Use repo_tree/repo_read to inspect the bound repository.'
+          ? 'Use repo_search/repo_read to inspect the bound repository.'
           : '',
     ]
       .filter(Boolean)
@@ -599,7 +599,7 @@ export async function attemptOrchestratedIdeReply(input: {
           'Planner briefing / jobs:',
           distilledPlanner,
           '',
-          'Reviewer needs_more — execute these jobs completely with repo_tree/repo_read and quoted evidence:',
+          'Reviewer needs_more — execute these jobs completely with repo_search/repo_read and quoted evidence:',
           ...gate.jobs.map((job, index) => `${index + 1}. ${job}`),
           gate.reason ? `Reason: ${gate.reason}` : '',
           '',

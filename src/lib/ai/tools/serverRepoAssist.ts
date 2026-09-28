@@ -234,7 +234,7 @@ export async function gatherRepoAssistContext(input: {
     okReads > 0
       ? [
           fileBlocks.join('\n\n').slice(0, FILES_CHARS),
-          'This dig is a seed. If anything is still missing, keep using repo_tree/repo_read until the question is fully answered with quoted evidence.',
+          'This dig is a seed. If anything is still missing, keep using repo_search/repo_read until the question is fully answered with quoted evidence.',
         ].join('\n\n')
       : emptyReadGuidance;
 
