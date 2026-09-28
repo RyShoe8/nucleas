@@ -192,3 +192,23 @@ describe('invokeModelWithTools', () => {
   });
 });
 
+describe('repository search evidence', () => {
+  it('attaches bounded, line-numbered source around high-confidence matches', async () => {
+    const { buildRepoSearchEvidence } = await import('@/lib/ai/tools/executeTool');
+    const content = Array.from({ length: 140 }, (_, index) => index === 79
+      ? "  { id: 'openhv', parent: 'openra' },"
+      : `line ${index + 1}`).join('\n');
+    const evidence = buildRepoSearchEvidence({
+      owner: 'owner', repo: 'repo', commit: 'a'.repeat(40), branch: 'main',
+      files: new Map([['platform/src/lib/gameHost/recipes.js', content]]), skipped: [],
+    }, {
+      matches: [{ path: 'platform/src/lib/gameHost/recipes.js', line: 80, text: "{ id: 'openhv' }", before: [], after: [] }],
+      totalMatches: 1, filesMatched: ['platform/src/lib/gameHost/recipes.js'], truncated: false,
+    });
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toMatchObject({ path: 'platform/src/lib/gameHost/recipes.js', startLine: 45, endLine: 135 });
+    expect(evidence[0].excerpt).toContain("80:   { id: 'openhv', parent: 'openra' },");
+  });
+});
+

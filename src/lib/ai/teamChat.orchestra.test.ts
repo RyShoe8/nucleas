@@ -229,8 +229,33 @@ describe('attemptOrchestratedIdeReply full orchestra', () => {
     expect(plannerCall[0]).toMatchObject({
       repoContextBlock: expect.stringContaining('loadTaskRules'),
     });
-    expect(workerCall[0].repoContextBlock).toBeUndefined();
+    expect(workerCall[0].repoContextBlock).toContain('loadTaskRules');
     expect(reviewerCall[0].repoContextBlock).toBeUndefined();
+  });
+
+  it('retries a malformed Reviewer gate without repeating repository work', async () => {
+    const stages: string[] = [];
+    mocks.companyChat.mockImplementation(async (args: { systemPrompt: string; userText: string }) => {
+      if (args.systemPrompt.includes('Pipeline stage: planner')) {
+        stages.push('planner');
+        return { requestId: 'p', role: 'assistant', text: 'Inspect the duplicate listing.', costMicros: 1 };
+      }
+      if (args.systemPrompt.includes('Pipeline stage: worker')) {
+        stages.push('worker');
+        return { requestId: 'w', role: 'assistant', text: 'Read recipes.js and page.tsx; OpenHV is duplicated.', toolsUsed: ['repo_read'], costMicros: 0 };
+      }
+      stages.push('reviewer');
+      if (stages.filter(stage => stage === 'reviewer').length === 1) {
+        return { requestId: 'r1', role: 'assistant', text: 'The evidence supports removing only the nested listing.', costMicros: 1 };
+      }
+      expect(args.userText).toContain('failed the response contract (missing_gate_fence)');
+      return { requestId: 'r2', role: 'assistant', text: 'Remove only the nested listing.\n```nucleas-gate\n{"status":"accept"}\n```', costMicros: 1 };
+    });
+
+    const turn = await attemptOrchestratedIdeReply({ projectName: 'Playbound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'u'.repeat(24), userText: 'remove the duplicate OpenHV listing', priorTurns: [], interactionMode: 'chat' });
+
+    expect(stages).toEqual(['planner', 'worker', 'reviewer', 'reviewer']);
+    expect(turn.text).toBe('Remove only the nested listing.');
   });
 
   it('on needs_more runs another Worker pass then accepts', async () => {

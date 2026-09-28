@@ -4,20 +4,51 @@ import { Types } from 'mongoose';
 const mocks = vi.hoisted(() => ({
   listTree: vi.fn(),
   readFile: vi.fn(),
+  snapshot: vi.fn(),
 }));
 
 vi.mock('@/lib/ai/ideCommitPush', () => ({
   listIdeTree: mocks.listTree,
   readIdeFile: mocks.readFile,
 }));
+vi.mock('@/lib/ai/repo/snapshot', () => ({
+  getRepoSnapshot: (...args: unknown[]) => mocks.snapshot(...args),
+}));
 
 import { gatherRepoAssistContext } from '@/lib/ai/tools/serverRepoAssist';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.snapshot.mockResolvedValue({ ok: false, reason: 'No local snapshot.' });
 });
 
 describe('gatherRepoAssistContext', () => {
+  it('finds and reads relevant files in an arbitrary nested repository layout', async () => {
+    mocks.snapshot.mockResolvedValue({
+      ok: true,
+      snapshot: {
+        owner: 'playbound', repo: 'platform', branch: 'main', commit: 'a'.repeat(40), skipped: [],
+        files: new Map([
+          ['platform/src/app/admin/connect/game-servers/page.tsx', 'const groups = recipes.map(renderGame); // OpenHV display'],
+          ['platform/src/lib/gameHost/recipes.js', "export const OpenRA = { editions: ['OpenHV'] };\nexport const OpenHV = {};"],
+          ['docs/notes.md', 'unrelated documentation'],
+        ]),
+      },
+    });
+
+    const result = await gatherRepoAssistContext({
+      organizationId: 'org', projectId: new Types.ObjectId(),
+      userText: 'On /admin/connect/game-servers OpenHV is also under OpenRA. Remove that nested listing.',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.okReads).toBe(2);
+    expect(result.toolsUsed).toEqual(['repo_search', 'repo_read']);
+    expect(result.evidenceBlock).toContain('platform/src/app/admin/connect/game-servers/page.tsx');
+    expect(result.evidenceBlock).toContain('platform/src/lib/gameHost/recipes.js');
+    expect(mocks.listTree).not.toHaveBeenCalled();
+  });
+
   it('returns unbound note when root tree fails', async () => {
     mocks.listTree.mockResolvedValue({ ok: false, reason: 'Bind a GitHub repository.' });
     const result = await gatherRepoAssistContext({

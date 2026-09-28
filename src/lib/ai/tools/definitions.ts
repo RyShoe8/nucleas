@@ -60,7 +60,7 @@ export function ideChatToolDefinitions(options: {
         function: {
           name: 'repo_search',
           description:
-            'Search the whole project repository for text or a regular expression, like grep. Returns matching files with line numbers and surrounding lines. Use it first to find where something is defined or used, then repo_read the files that matter.',
+            'Search the whole project repository for text or a regular expression, like grep. Returns matches plus bounded source excerpts from the first matching files. Use repo_read when you need another range or the complete file.',
           parameters: {
             type: 'object',
             properties: {

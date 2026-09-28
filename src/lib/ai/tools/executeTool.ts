@@ -9,6 +9,7 @@ import { imageHitsToArtifacts } from '@/lib/ai/tools/imageSearchArtifacts';
 import { imageSearch, webSearch } from '@/lib/ai/tools/webSearch';
 import { listIdeTree, readIdeFile } from '@/lib/ai/ideCommitPush';
 import { getRepoSnapshot, listSnapshotDir, searchSnapshot } from '@/lib/ai/repo/snapshot';
+import type { LoadedSnapshot, SearchResult } from '@/lib/ai/repo/snapshot';
 import { commitWithDiff, recentCommits } from '@/lib/ai/repo/history';
 
 export type ToolArtifact = {
@@ -32,6 +33,31 @@ function parseArgs(raw: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+/**
+ * Attach bounded source excerpts to search hits. Small/local models often identify the right path
+ * but fail to make the follow-up repo_read call; search evidence keeps planning grounded without
+ * trusting a second model decision. The model can still call repo_read for another range.
+ */
+export function buildRepoSearchEvidence(snapshot: LoadedSnapshot, found: SearchResult) {
+  const firstMatchByPath = new Map<string, SearchResult['matches'][number]>();
+  for (const match of found.matches) {
+    if (!firstMatchByPath.has(match.path)) firstMatchByPath.set(match.path, match);
+    if (firstMatchByPath.size >= 4) break;
+  }
+  return [...firstMatchByPath.values()].flatMap((match) => {
+    const content = snapshot.files.get(match.path);
+    if (content === undefined) return [];
+    const lines = content.split('\n');
+    const startLine = Math.max(1, match.line - 35);
+    const endLine = Math.min(lines.length, match.line + 55);
+    const excerpt = lines.slice(startLine - 1, endLine)
+      .map((line, index) => `${startLine + index}: ${line}`)
+      .join('\n')
+      .slice(0, 8000);
+    return [{ path: match.path, startLine, endLine, excerpt }];
+  });
 }
 
 export async function executeIdeTool(input: {
@@ -83,7 +109,12 @@ export async function executeIdeTool(input: {
       contextLines: typeof args.contextLines === 'number' ? args.contextLines : undefined,
     });
     if ('error' in found) return { content: JSON.stringify({ ok: false, error: found.error }), artifacts };
-    return { content: JSON.stringify({ ok: true, commit: snap.snapshot.commit.slice(0, 12), ...found }), artifacts };
+    return { content: JSON.stringify({
+      ok: true,
+      commit: snap.snapshot.commit.slice(0, 12),
+      ...found,
+      fileEvidence: buildRepoSearchEvidence(snap.snapshot, found),
+    }), artifacts };
   }
 
   if (input.name === 'repo_tree') {

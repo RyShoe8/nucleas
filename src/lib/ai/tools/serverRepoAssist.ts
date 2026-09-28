@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 import { listIdeTree, readIdeFile } from '@/lib/ai/ideCommitPush';
 import { extractChatHeuristicText } from '@/lib/ai/tools/serverBrowseAssist';
+import { getRepoSnapshot, type LoadedSnapshot } from '@/lib/ai/repo/snapshot';
 
 const PATH_HINT =
   /\b(rule|rules|task.?rule|taskRule|AiProjectTaskRule|IdeTaskRules|planMode|ideChat|prompt|\.cursor|nucleas|architecture|companyChat|teamChat)\b/i;
@@ -65,6 +66,11 @@ const TREE_CHARS_WITH_READS = 2000;
 const TREE_CHARS_TREE_ONLY = 8000;
 const FILES_CHARS = 40_000;
 const CONTEXT_CHARS = 48_000;
+const QUERY_STOP_WORDS = new Set([
+  'about', 'after', 'also', 'been', 'before', 'could', 'does', 'from', 'have', 'into', 'listed',
+  'listing', 'make', 'need', 'only', 'page', 'remove', 'should', 'that', 'their', 'there', 'these',
+  'thing', 'this', 'under', 'want', 'what', 'when', 'where', 'which', 'with', 'would',
+]);
 
 export type RepoAssistResult = {
   ok: boolean;
@@ -120,6 +126,42 @@ function fileCharBudget(path: string): number {
   return PRIORITY_PATH_SET.has(path) ? PRIORITY_FILE_CHARS : PER_FILE_CHARS;
 }
 
+function queryTokens(query: string): string[] {
+  return [...new Set((query.match(/[A-Za-z0-9_-]{4,}/g) ?? []).map(token => token.toLowerCase()))]
+    .filter(token => !QUERY_STOP_WORDS.has(token))
+    .slice(0, 16);
+}
+
+/** Whole-repository candidate selection that makes no assumptions about src/platform/app layout. */
+export function snapshotCandidates(snapshot: LoadedSnapshot, query: string, limit = BATCH_SIZE): string[] {
+  const tokens = queryTokens(query);
+  if (!tokens.length) return [];
+  const scored: { path: string; score: number }[] = [];
+  for (const [path, content] of snapshot.files) {
+    const pathLower = path.toLowerCase();
+    const contentLower = content.toLowerCase();
+    let score = /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|json|ya?ml)$/i.test(path) ? 2 : 0;
+    let hits = 0;
+    for (const token of tokens) {
+      if (pathLower.includes(token)) { score += 12; hits += 1; }
+      if (contentLower.includes(token)) { score += 4; hits += 1; }
+    }
+    if (hits) scored.push({ path, score: score + hits * hits });
+  }
+  return scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path)).slice(0, limit).map(row => row.path);
+}
+
+function snapshotExcerpt(snapshot: LoadedSnapshot, path: string, query: string): string | null {
+  const content = snapshot.files.get(path);
+  if (content === undefined) return null;
+  const lower = content.toLowerCase();
+  const positions = queryTokens(query).map(token => lower.indexOf(token)).filter(index => index >= 0);
+  const center = positions.length ? Math.min(...positions) : 0;
+  const start = Math.max(0, center - 1800);
+  const excerpt = content.slice(start, start + fileCharBudget(path));
+  return `File ${path} (branch ${snapshot.branch}, commit ${snapshot.commit.slice(0, 12)}; query excerpt):\n${start > 0 ? '[…]\n' : ''}${excerpt}${start + excerpt.length < content.length ? '\n[…]' : ''}`;
+}
+
 async function readPathsBatch(
   organizationId: string,
   projectId: Types.ObjectId,
@@ -165,6 +207,32 @@ export async function gatherRepoAssistContext(input: {
   const toolsUsed: string[] = [];
   const candidateFiles: { path: string; score: number }[] = [];
   const treeLines: string[] = [];
+
+  // Prefer the current local snapshot: it covers every nested folder and supplies actual source
+  // excerpts before any model runs. Fall back to the GitHub tree path for older/unbuilt projects.
+  const local = await getRepoSnapshot(input.organizationId, input.projectId).catch(() => null);
+  if (local?.ok) {
+    toolsUsed.push('repo_search');
+    const paths = snapshotCandidates(local.snapshot, query);
+    const fileBlocks = paths.map(path => snapshotExcerpt(local.snapshot, path, query)).filter((block): block is string => Boolean(block));
+    if (fileBlocks.length) {
+      toolsUsed.push('repo_read');
+      const evidenceBlock = fileBlocks.join('\n\n').slice(0, 24_000);
+      return {
+        ok: true,
+        note: `Read ${fileBlocks.length} whole-repository match(es) from commit ${local.snapshot.commit.slice(0, 12)}.`,
+        okReads: fileBlocks.length,
+        toolsUsed,
+        evidenceBlock,
+        contextBlock: [
+          'Repository dig results (deterministic whole-repository search; use these excerpts before calling more tools):',
+          `Query focus: ${query}`,
+          fileBlocks.join('\n\n').slice(0, FILES_CHARS),
+          'If anything is still missing, use repo_search/repo_read for another range. Do not stop at path lists.',
+        ].join('\n\n').slice(0, CONTEXT_CHARS),
+      };
+    }
+  }
 
   const rootTree = await listIdeTree(input.organizationId, input.projectId, '');
   toolsUsed.push('repo_tree');

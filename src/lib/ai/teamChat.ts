@@ -440,7 +440,10 @@ export async function attemptOrchestratedIdeReply(input: {
         forcePlain: toolProfile === 'none' || shouldForcePlainChat(interactionMode),
         forceToolLoop: toolProfile !== 'none',
         stopOnUpstreamFailure: true,
-        repoContextBlock: args.stage === 'planner' ? repoContextBlock : undefined,
+        // Give the deterministic server-side excerpts to both investigation stages. Previously the
+        // Planner saw them but the Worker only received the Planner's prose, which could collapse
+        // real code evidence back into speculative path lists.
+        repoContextBlock: args.stage !== 'reviewer' ? repoContextBlock : undefined,
         maxOutputTokensOverride:
           args.stage === 'planner'
             ? interactionMode === 'plan' || interactionMode === 'build'
@@ -580,6 +583,7 @@ export async function attemptOrchestratedIdeReply(input: {
   const assistantStages: TeamChatTurn[] = [plannerTurn, workerTurn];
   let reviewerTurn: TeamChatTurn | null = null;
   let finalChatAnswer: string | null = null;
+  let reviewerFormatCorrection = '';
 
   if (reviewerBinding) {
     for (let pass = 0; pass < maxCompletionPasses; pass += 1) {
@@ -605,6 +609,7 @@ export async function attemptOrchestratedIdeReply(input: {
           workerTurn.text.slice(0, 6000),
           '',
           'Review all acceptance criteria in one batch. Decide accept vs needs_more. End with a nucleas-gate fence (all interaction modes).',
+          reviewerFormatCorrection,
         ].join('\n'),
         priorTurns: [],
       });
@@ -635,6 +640,18 @@ export async function attemptOrchestratedIdeReply(input: {
             .join('\n')
             .slice(0, 24_000);
         break;
+      }
+
+      // A malformed/missing gate is a Reviewer protocol failure, not missing repository work.
+      // Retry the Reviewer against the same evidence instead of making the Worker repeat reads.
+      if (['missing_gate_fence', 'malformed_gate_json', 'invalid_gate_object', 'empty_accepted_answer']
+        .includes(gate.reason ?? '')) {
+        reviewerFormatCorrection = [
+          '',
+          `Your prior review failed the response contract (${gate.reason}).`,
+          'Re-evaluate the same evidence and return complete user-facing prose followed by exactly one valid nucleas-gate JSON fence.',
+        ].join('\n');
+        continue;
       }
 
       if (input.signal?.aborted) {
