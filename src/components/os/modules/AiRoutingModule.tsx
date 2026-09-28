@@ -25,18 +25,44 @@ interface NeedRow {
     picks: Record<Level, Pick>;
 }
 
+interface Benchmark {
+    intelligence: number | null;
+    coding: number | null;
+    math: number | null;
+    source: string;
+}
+
 interface ModelRow {
     profileId: string;
     profileLabel: string;
     model: string;
     free: boolean;
     price: number | null;
+    benchmark: Benchmark | null;
 }
 
+interface RankRow {
+    profileLabel: string;
+    model: string;
+    price: number | null;
+    benchmark: Benchmark | null;
+}
+
+interface BenchmarkStatus {
+    configured: boolean;
+    keyLast4: string | null;
+    models: number;
+    fetchedAt: string | null;
+    error: string | null;
+    source: { name: string; url: string };
+}
+
+type EngineData = { defaultCostLevel: Level; needs: NeedRow[]; models: ModelRow[]; benchmarks: BenchmarkStatus; rankings: Record<'plan' | 'code', RankRow[]> };
+
 const LEVELS: { key: Level; label: string; hint: string }[] = [
-    { key: 'low', label: 'Low', hint: '3rd most powerful paid model for planning and review; Rogly does the work; never pays to retry.' },
-    { key: 'medium', label: 'Medium', hint: '2nd most powerful paid model; Rogly does the work and may retry on that model if it fails.' },
-    { key: 'high', label: 'High', hint: 'The most powerful paid model plans and reviews; the #3 paid model best suited to each task does the work; Rogly only for utilities.' },
+    { key: 'low', label: 'Low', hint: '3rd ranked paid model for planning and review; Rogly does the work; never pays to retry.' },
+    { key: 'medium', label: 'Medium', hint: '2nd ranked paid model; Rogly does the work and may retry on that model if it fails.' },
+    { key: 'high', label: 'High', hint: 'The #1 ranked paid model plans and reviews; the #3 ranked paid model to each task does the work; Rogly only for utilities.' },
 ];
 
 function short(model?: string): string {
@@ -56,9 +82,74 @@ function PickCell({ pick }: { pick: Pick }) {
     );
 }
 
+function score(b: Benchmark | null, kind: 'intelligence' | 'coding'): string {
+    const v = b ? (kind === 'coding' ? (b.coding ?? b.intelligence) : b.intelligence) : null;
+    return v === null ? 'no score' : v.toFixed(1);
+}
+
+function Ranking({ title, kind, rows }: { title: string; kind: 'intelligence' | 'coding'; rows: RankRow[] }) {
+    return (
+        <div className="min-w-0">
+            <h3 className="text-xs font-medium mb-1">{title}</h3>
+            <ol className="space-y-0.5">
+                {rows.map((r, i) => (
+                    <li key={`${r.profileLabel}:${r.model}`} className="flex items-baseline gap-2 text-[11px]">
+                        <span className="w-4 text-right text-text-secondary">{i + 1}</span>
+                        <span className="truncate flex-1" title={r.benchmark ? `Artificial Analysis: ${r.benchmark.source}` : 'Not on the leaderboard; ranked by price after scored models'}>
+                            {short(r.model)} <span className="text-text-secondary">· {r.profileLabel}</span>
+                        </span>
+                        <span className={r.benchmark ? '' : 'text-text-secondary'}>{score(r.benchmark, kind)}</span>
+                        <span className="w-14 text-right text-text-secondary">{r.price !== null ? `${r.price}` : ''}</span>
+                    </li>
+                ))}
+            </ol>
+        </div>
+    );
+}
+
+function BenchmarkKey({ status, onSave }: { status: BenchmarkStatus; onSave: (key: string | null) => Promise<void> }) {
+    const [value, setValue] = useState('');
+    const [busy, setBusy] = useState(false);
+    const submit = async (key: string | null) => {
+        setBusy(true);
+        await onSave(key);
+        setBusy(false);
+        setValue('');
+    };
+    return (
+        <div className="space-y-1">
+            <p className="text-[11px] text-text-secondary">
+                {status.configured
+                    ? `Key ending ${status.keyLast4} · ${status.models} models scored${status.fetchedAt ? ` · updated ${new Date(status.fetchedAt).toLocaleString()}` : ''}`
+                    : 'No key yet, so paid models are ranked by price. Create a free key at Artificial Analysis and paste it here.'}
+            </p>
+            {status.error ? <p className="text-[11px] text-amber-400">Last refresh: {status.error}</p> : null}
+            <div className="flex gap-2">
+                <input
+                    type="password"
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    placeholder={status.configured ? 'Replace key' : 'Artificial Analysis API key'}
+                    autoComplete="off"
+                    className="h-7 flex-1 min-w-0 px-2 rounded border border-border bg-background-elevated text-xs"
+                    aria-label="Artificial Analysis API key"
+                />
+                <button type="button" disabled={busy || !value.trim()} onClick={() => void submit(value)} className="text-[11px] px-2 rounded border border-border hover:bg-background-card disabled:opacity-50">
+                    {busy ? 'Checking…' : 'Save'}
+                </button>
+                {status.configured ? (
+                    <button type="button" disabled={busy} onClick={() => void submit(null)} className="text-[11px] px-2 rounded border border-border hover:bg-background-card">
+                        Remove
+                    </button>
+                ) : null}
+            </div>
+        </div>
+    );
+}
+
 /** The AI engine: default cost level, what it picks per need and level, and optional pins (administrators). */
 export default function AiRoutingModule() {
-    const [data, setData] = useState<{ defaultCostLevel: Level; needs: NeedRow[]; models: ModelRow[] } | null>(null);
+    const [data, setData] = useState<EngineData | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [pinning, setPinning] = useState<string | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
@@ -72,7 +163,7 @@ export default function AiRoutingModule() {
         let cancelled = false;
         void (async () => {
             const res = await fetch(`/api/os/ai-engine${refresh ? '?refresh=1' : ''}`, { cache: 'no-store' });
-            const body = (await res.json().catch(() => ({}))) as { defaultCostLevel: Level; needs: NeedRow[]; models: ModelRow[]; error?: string };
+            const body = (await res.json().catch(() => ({}))) as EngineData & { error?: string };
             if (cancelled) return;
             if (!res.ok) setError(body.error ?? `Failed (${res.status})`);
             else setData(body);
@@ -123,6 +214,22 @@ export default function AiRoutingModule() {
 
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
 
+            <section className="space-y-2">
+                <h2 className="text-sm font-semibold">Benchmark ranking</h2>
+                <BenchmarkKey status={data.benchmarks} onSave={(key) => save({ benchmarkApiKey: key })} />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Ranking title="Plan, review, write, research (intelligence index)" kind="intelligence" rows={data.rankings.plan} />
+                    <Ranking title="Code (coding index)" kind="coding" rows={data.rankings.code} />
+                </div>
+                <p className="text-[11px] text-text-secondary">
+                    Benchmark data:{' '}
+                    <a href={data.benchmarks.source.url} target="_blank" rel="noreferrer" className="underline">
+                        {data.benchmarks.source.name}
+                    </a>
+                    . Models not on the leaderboard rank after scored ones, by price.
+                </p>
+            </section>
+
             <section>
                 <h2 className="text-sm font-semibold mb-1">What the engine picks</h2>
                 <p className="text-[11px] text-text-secondary mb-2">
@@ -161,7 +268,7 @@ export default function AiRoutingModule() {
                                             <option value="">Choose a model…</option>
                                             {data.models.map((m) => (
                                                 <option key={`${m.profileId}::${m.model}`} value={`${m.profileId}::${m.model}`}>
-                                                    {m.model} · {m.profileLabel} · {m.free ? 'free' : m.price !== null ? `~$${m.price}/1M` : 'price unknown'}
+                                                    {m.model} · {m.profileLabel} · {m.free ? 'free' : m.price !== null ? `~${m.price}/1M` : 'price unknown'}{m.benchmark?.intelligence != null ? ` · score ${m.benchmark.intelligence.toFixed(1)}` : ''}
                                                 </option>
                                             ))}
                                         </select>

@@ -7,7 +7,7 @@ import { localModelPowerScore } from '@/lib/ai/rolePipeline/modelMeta';
  * The one model-selection system. Every AI job asks for a need at a cost level; the engine picks
  * the best available model automatically. Admins may pin a model per need (applies at every level).
  *
- * Paid models are ranked by power for each task: high uses #1, medium #2, low #3.
+ * Paid models are ranked by power for each task (benchmark scores, price when unscored): high uses #1, medium #2, low #3.
  *   low    — #3 paid model plans and reviews; Rogly does the work; never pays to retry
  *   medium — #2 paid model plans and reviews; Rogly does the work and may retry on the #2 model
  *   high   — #1 paid model plans and reviews; the #3 paid model for the task does the work; Rogly only for utilities
@@ -60,14 +60,28 @@ function withStrength(models: AvailableModel[], ...strengths: ModelStrength[]): 
   return [];
 }
 
+/** The benchmark score that matters for a need: the coding index for code, the intelligence index otherwise. */
+export function benchmarkScore(m: AvailableModel, need: Need): number | null {
+  if (!m.benchmark) return null;
+  return need === 'code' ? (m.benchmark.coding ?? m.benchmark.intelligence) : m.benchmark.intelligence;
+}
+
 /**
- * Paid models ranked by power for the task: price is the most reliable cross-provider signal of
- * capability; the provider's flagship flag breaks ties (it is per-provider, so it never outranks price).
+ * Paid models ranked by power for the task. Benchmark scores (Artificial Analysis) decide across
+ * providers; models without a score rank after scored ones, ordered by price (the fallback power
+ * signal, and the whole ranking when no benchmark key is configured). Flagship breaks ties.
  */
-function rankByPower(models: AvailableModel[]): AvailableModel[] {
-  return [...models].sort(
-    (a, b) => (b.blendedPricePer1M ?? 0) - (a.blendedPricePer1M ?? 0) || Number(b.flagship) - Number(a.flagship) || a.model.localeCompare(b.model)
-  );
+function rankByPower(models: AvailableModel[], need: Need): AvailableModel[] {
+  return [...models].sort((a, b) => {
+    const sa = benchmarkScore(a, need);
+    const sb = benchmarkScore(b, need);
+    if (sa !== null || sb !== null) {
+      if (sa === null) return 1;
+      if (sb === null) return -1;
+      if (sb !== sa) return sb - sa;
+    }
+    return (b.blendedPricePer1M ?? 0) - (a.blendedPricePer1M ?? 0) || Number(b.flagship) - Number(a.flagship) || a.model.localeCompare(b.model);
+  });
 }
 
 /** Power rank per level: high = #1, medium = #2, low = #3 (nearest available when fewer exist). */
@@ -75,8 +89,8 @@ export const LEVEL_RANK: Record<CostLevel, number> = { high: 1, medium: 2, low: 
 /** At high cost, the work itself (write/research/code/vision) uses this paid rank for the task. */
 export const HIGH_WORK_RANK = 3;
 
-function ranked(models: AvailableModel[], rank: number): AvailableModel | undefined {
-  const sorted = rankByPower(models);
+function ranked(models: AvailableModel[], need: Need, rank: number): AvailableModel | undefined {
+  const sorted = rankByPower(models, need);
   return sorted[Math.min(rank, sorted.length) - 1];
 }
 
@@ -97,17 +111,19 @@ function freeFor(models: AvailableModel[], need: Need): AvailableModel | undefin
 
 function paidFor(models: AvailableModel[], need: Need): AvailableModel[] {
   const paid = models.filter((m) => !m.free && m.autoEligible && m.blendedPricePer1M !== null);
+  // A model with a benchmark score for the task competes on that score, whatever its strength tags.
+  const withScored = (pool: AvailableModel[]) => [...new Set([...pool, ...paid.filter((m) => benchmarkScore(m, need) !== null)])];
   switch (need) {
     case 'plan':
     case 'review':
     case 'research':
-      return withStrength(paid, 'reasoning', 'coding', 'chat');
+      return withScored(withStrength(paid, 'reasoning', 'coding', 'chat'));
     case 'code':
-      return withStrength(paid, 'coding', 'reasoning');
+      return withScored(withStrength(paid, 'coding', 'reasoning'));
     case 'vision':
       return withStrength(paid, 'vision');
     default:
-      return withStrength(paid, 'chat', 'reasoning');
+      return withScored(withStrength(paid, 'chat', 'reasoning'));
   }
 }
 
@@ -116,7 +132,7 @@ export function selectFrom(models: AvailableModel[], need: Need, level: CostLeve
   const free = freeFor(models, need);
   const base = { need, level };
   // The paid model for this task at this level: #1 (high), #2 (medium) or #3 (low) by power.
-  const paidPick = ranked(paid, LEVEL_RANK[level]);
+  const paidPick = ranked(paid, need, LEVEL_RANK[level]);
 
   switch (need) {
     case 'plan':
@@ -133,7 +149,7 @@ export function selectFrom(models: AvailableModel[], need: Need, level: CostLeve
       // High: the #3 paid model best suited to this task does the work (the #1 model plans and
       // reviews). Low/medium: Rogly does the work; medium may retry on its #2 paid model when Rogly
       // fails, low never pays to retry.
-      if (level === 'high') return { ...base, primary: choice(ranked(paid, HIGH_WORK_RANK) ?? free), fallback: null };
+      if (level === 'high') return { ...base, primary: choice(ranked(paid, need, HIGH_WORK_RANK) ?? free), fallback: null };
       return { ...base, primary: choice(free ?? paidPick), fallback: level === 'medium' && free ? choice(paidPick) : null };
   }
 }
@@ -206,4 +222,9 @@ export async function saveEngineSettings(
   if (input.unpin) unset[`pins.${input.unpin}`] = '';
   await AiEngineSettings.updateOne({ organizationId }, { $set: set, ...(Object.keys(unset).length ? { $unset: unset } : {}) }, { upsert: true });
   return { ok: true };
+}
+
+/** The paid ranking the engine uses for a need (for display in the AI Engine window). */
+export function rankPaid(models: AvailableModel[], need: Need): AvailableModel[] {
+  return rankByPower(paidFor(models, need), need);
 }

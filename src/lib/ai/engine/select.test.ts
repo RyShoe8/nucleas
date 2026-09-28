@@ -5,7 +5,7 @@ import { buildModelMetaView } from '@/lib/ai/rolePipeline/modelMeta';
 
 function model(id: string, free: boolean, price: number | null, profile = free ? 'rogly' : 'paid'): AvailableModel {
   const meta = buildModelMetaView({ id, free });
-  return { profileId: profile, profileLabel: profile, model: id, label: meta.label, free, strengths: meta.strengths, flagship: Boolean(meta.flagship), contextTokens: meta.contextTokens, blendedPricePer1M: free ? 0 : price, autoEligible: true };
+  return { profileId: profile, profileLabel: profile, model: id, label: meta.label, free, strengths: meta.strengths, flagship: Boolean(meta.flagship), contextTokens: meta.contextTokens, blendedPricePer1M: free ? 0 : price, autoEligible: true, benchmark: null };
 }
 
 const ROGLY = [
@@ -114,5 +114,47 @@ describe('catalog normalisation', () => {
     const { dedupeDatedVariants } = await import('./catalog');
     const out = dedupeDatedVariants([model('gpt-5.5', false, 11), model('gpt-5.5-2026-04-23', false, 11), model('gpt-5-2025-08-07', false, 3), model('gpt-5-2025-10-01', false, 3)]);
     expect(out.filter((m) => m.autoEligible).map((m) => m.model)).toEqual(['gpt-5.5', 'gpt-5-2025-10-01']);
+  });
+});
+
+describe('benchmark ranking', () => {
+  it('matches provider ids to leaderboard entries regardless of word order, prefixes, dates and run settings', async () => {
+    const { modelKey, matchBenchmark, parseBenchmarkResponse } = await import('./benchmarks');
+    expect(modelKey('anthropic/claude-sonnet-4.5')).toBe(modelKey('claude-4-5-sonnet-thinking'));
+    expect(modelKey('models/gemini-3.1-pro-preview')).toBe(modelKey('gemini-3-1-pro'));
+    expect(modelKey('gpt-5-2025-08-07')).toBe(modelKey('gpt-5-high'));
+    expect(modelKey('gpt-5-mini')).not.toBe(modelKey('gpt-5'));
+
+    const rows = parseBenchmarkResponse({
+      data: [
+        { slug: 'gpt-5', name: 'GPT-5 (high)', model_creator: { name: 'OpenAI' }, evaluations: { artificial_analysis_intelligence_index: 68, artificial_analysis_coding_index: 55 } },
+        { slug: 'gpt-5-minimal', name: 'GPT-5 (minimal)', model_creator: { name: 'OpenAI' }, evaluations: { artificial_analysis_intelligence_index: 44 } },
+        { slug: 'claude-4-5-sonnet-thinking', name: 'Claude 4.5 Sonnet', model_creator: { name: 'Anthropic' }, evaluations: { artificial_analysis_intelligence_index: 63, artificial_analysis_coding_index: 60 } },
+        { name: 'no slug' },
+      ],
+    });
+    expect(rows).toHaveLength(3);
+    expect(matchBenchmark('gpt-5-2025-08-07', rows)).toMatchObject({ intelligence: 68, coding: 55, source: 'gpt-5' });
+    expect(matchBenchmark('anthropic/claude-sonnet-4.5', rows)).toMatchObject({ intelligence: 63, coding: 60 });
+    expect(matchBenchmark('gpt-5-mini', rows)).toBeNull();
+  });
+
+  it('ranks by the task’s benchmark across providers; unscored models follow, by price', () => {
+    const scored = (id: string, price: number, intelligence: number, coding: number) => ({ ...model(id, false, price), benchmark: { intelligence, coding, math: null, source: id } });
+    const models = [
+      ...ROGLY,
+      scored('gpt-6-astra', 20, 70, 58),
+      scored('gemini-3.1-pro-preview', 4.5, 73, 62),
+      scored('anthropic/claude-sonnet-5', 4, 69, 66),
+      scored('deepseek-v4-pro', 2, 64, 50),
+      model('gpt-5.6-sol', false, 8),
+    ];
+    expect(pick('plan', 'high', models).primary).toBe('gemini-3.1-pro-preview');
+    expect(pick('plan', 'medium', models).primary).toBe('gpt-6-astra');
+    expect(pick('plan', 'low', models).primary).toBe('anthropic/claude-sonnet-5');
+    // Code ranks on the coding index: claude 66, gemini 62, astra 58, deepseek 50, then unscored sol.
+    expect(pick('code', 'high', models).primary).toBe('gpt-6-astra');
+    expect(pick('code', 'medium', models).fallback).toBe('gemini-3.1-pro-preview');
+    expect(pick('write', 'high', models).primary).toBe('anthropic/claude-sonnet-5');
   });
 });

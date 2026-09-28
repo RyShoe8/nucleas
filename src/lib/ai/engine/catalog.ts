@@ -6,6 +6,7 @@ import { buildModelMetaView, isFreeCredential } from '@/lib/ai/rolePipeline/mode
 import { findCatalogModel, type ModelStrength } from '@/lib/ai/rolePipeline/providerCatalog';
 import { lookupModelTokenRate } from '@/lib/ai/pricing/modelRates';
 import { fetchPricingCatalog, type PricingRow } from '@/lib/ai/pricing/liveCatalog';
+import { benchmarkRows, matchBenchmark, type ModelBenchmark } from './benchmarks';
 
 /**
  * Every model the organization can actually call: each enabled credential's live model list,
@@ -50,6 +51,8 @@ export interface AvailableModel {
   blendedPricePer1M: number | null;
   /** Considered by automatic selection (current, text-capable, priced, within the price cap). */
   autoEligible: boolean;
+  /** Artificial Analysis scores when the model is on their leaderboard. */
+  benchmark: ModelBenchmark | null;
 }
 
 type ProfileRow = { _id: Types.ObjectId; label: string; provider?: string; tier: string; endpoint: string; secretCiphertext: string; model?: string };
@@ -141,7 +144,7 @@ async function modelIdsFor(profile: ProfileRow, force: boolean): Promise<string[
   return ids;
 }
 
-export function describeModel(id: string, provider: string | undefined, free: boolean, rows: PricingRow[]): Omit<AvailableModel, 'profileId' | 'profileLabel' | 'model'> {
+export function describeModel(id: string, provider: string | undefined, free: boolean, rows: PricingRow[]): Omit<AvailableModel, 'profileId' | 'profileLabel' | 'model' | 'benchmark'> {
   const normalized = normalizeModelId(id);
   const curated = findCatalogModel(normalized) ?? findCatalogModel(id);
   const meta = buildModelMetaView({ id: normalized, free });
@@ -182,14 +185,16 @@ export async function listAvailableModels(options: { force?: boolean } = {}): Pr
   const profiles = await AiModelProfile.find({ enabled: true })
     .select('label provider tier endpoint secretCiphertext model')
     .lean<ProfileRow[]>();
-  const rows = profiles.some((p) => !isFreeCredential({ provider: p.provider, tier: p.tier })) ? await registryRows() : [];
+  const anyPaid = profiles.some((p) => !isFreeCredential({ provider: p.provider, tier: p.tier }));
+  const rows = anyPaid ? await registryRows() : [];
+  const scores = anyPaid ? await benchmarkRows(Boolean(options.force)) : [];
   const out: AvailableModel[] = [];
   for (const profile of profiles) {
     const free = isFreeCredential({ provider: profile.provider, tier: profile.tier });
     for (const id of await modelIdsFor(profile, Boolean(options.force))) {
       const described = describeModel(id, profile.provider, free, rows);
       if (!isTextChatModel(normalizeModelId(id))) continue;
-      out.push({ profileId: String(profile._id), profileLabel: profile.label, model: id, ...described });
+      out.push({ profileId: String(profile._id), profileLabel: profile.label, model: id, ...described, benchmark: free ? null : matchBenchmark(id, scores) });
     }
   }
   return dedupeDatedVariants(out);

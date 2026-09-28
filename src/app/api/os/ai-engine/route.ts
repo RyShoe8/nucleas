@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import User from '@/lib/models/User';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { listAvailableModels } from '@/lib/ai/engine/catalog';
-import { COST_LEVELS, NEED_LABELS, NEEDS, isCostLevel, readEngineSettings, saveEngineSettings, selectModel, type Need } from '@/lib/ai/engine/select';
+import { BENCHMARK_SOURCE, benchmarkStatus, saveBenchmarkKey } from '@/lib/ai/engine/benchmarks';
+import { COST_LEVELS, NEED_LABELS, NEEDS, isCostLevel, rankPaid, readEngineSettings, saveEngineSettings, selectModel, type Need } from '@/lib/ai/engine/select';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,18 +37,28 @@ export async function GET(request: NextRequest) {
   return NextResponse.json(
     {
       defaultCostLevel: settings.defaultCostLevel,
+      benchmarks: { ...(await benchmarkStatus()), source: BENCHMARK_SOURCE },
       needs,
-      models: models.map((m) => ({ profileId: m.profileId, profileLabel: m.profileLabel, model: m.model, free: m.free, strengths: m.strengths, price: m.blendedPricePer1M })),
+      rankings: Object.fromEntries(
+        (['plan', 'code'] as const).map((need) => [need, rankPaid(models, need).slice(0, 12).map((m) => ({ profileLabel: m.profileLabel, model: m.model, price: m.blendedPricePer1M, benchmark: m.benchmark }))])
+      ),
+      models: models.map((m) => ({ profileId: m.profileId, profileLabel: m.profileLabel, model: m.model, free: m.free, strengths: m.strengths, price: m.blendedPricePer1M, benchmark: m.benchmark })),
     },
     { headers: { 'Cache-Control': 'no-store' } }
   );
 }
 
-/** Set the org default cost level, or pin/unpin a model for a need. */
+/** Set the org default cost level, pin/unpin a model for a need, or set/remove the benchmark API key. */
 export async function PUT(request: NextRequest) {
   const viewer = await requireAdmin(request);
   if (viewer instanceof NextResponse) return viewer;
-  const body = (await request.json().catch(() => ({}))) as { defaultCostLevel?: unknown; pin?: { need?: unknown; profileId?: unknown; model?: unknown }; unpin?: unknown };
+  const body = (await request.json().catch(() => ({}))) as { defaultCostLevel?: unknown; pin?: { need?: unknown; profileId?: unknown; model?: unknown }; unpin?: unknown; benchmarkApiKey?: unknown };
+  if ('benchmarkApiKey' in body) {
+    const key = typeof body.benchmarkApiKey === 'string' && body.benchmarkApiKey.trim() ? body.benchmarkApiKey : null;
+    const saved = await saveBenchmarkKey(key);
+    if (!saved.ok) return NextResponse.json({ error: saved.error }, { status: 400 });
+    return NextResponse.json({ ok: true });
+  }
   const need = (v: unknown): Need | undefined => ((NEEDS as readonly string[]).includes(String(v)) ? (v as Need) : undefined);
   const result = await saveEngineSettings(
     String(viewer.organizationId),

@@ -1,0 +1,166 @@
+import mongoose, { Schema, type InferSchemaType, type Model } from 'mongoose';
+import { decryptModelSecret, encryptModelSecret, secretLast4 } from '@/lib/ai/modelSecrets';
+
+/**
+ * Benchmark scores from Artificial Analysis (https://artificialanalysis.ai/, free API, attribution
+ * required). The engine ranks paid models by these scores per task: the coding index for code, the
+ * intelligence index for everything else. One key for the whole install, pasted by an admin in the
+ * AI Engine window; rows are cached for a day and the last good set is kept when a refresh fails.
+ */
+
+const ENDPOINT = 'https://artificialanalysis.ai/api/v2/data/llms/models';
+const TTL_MS = 24 * 60 * 60 * 1000;
+export const BENCHMARK_SOURCE = { name: 'Artificial Analysis', url: 'https://artificialanalysis.ai/' };
+
+export interface BenchmarkRow {
+  slug: string;
+  name: string;
+  creator: string;
+  intelligence: number | null;
+  coding: number | null;
+  math: number | null;
+}
+
+export interface ModelBenchmark {
+  intelligence: number | null;
+  coding: number | null;
+  math: number | null;
+  /** The Artificial Analysis entry the scores came from. */
+  source: string;
+}
+
+const sourceSchema = new Schema(
+  {
+    key: { type: String, required: true, unique: true },
+    apiKeyCiphertext: { type: String },
+    apiKeyLast4: { type: String },
+    rows: { type: Schema.Types.Mixed, default: [] },
+    fetchedAt: { type: Date },
+    error: { type: String },
+  },
+  { timestamps: true }
+);
+type SourceDoc = InferSchemaType<typeof sourceSchema>;
+export const AiBenchmarkSource: Model<SourceDoc> =
+  (mongoose.models.AiBenchmarkSource as Model<SourceDoc> | undefined) ?? mongoose.model<SourceDoc>('AiBenchmarkSource', sourceSchema);
+
+const KEY = 'artificial_analysis';
+
+type Stored = { apiKeyCiphertext?: string; apiKeyLast4?: string; rows?: BenchmarkRow[]; fetchedAt?: Date; error?: string };
+
+function num(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+export function parseBenchmarkResponse(body: unknown): BenchmarkRow[] {
+  const data = (body as { data?: unknown })?.data;
+  if (!Array.isArray(data)) return [];
+  return data.flatMap((raw) => {
+    const r = raw as { slug?: unknown; name?: unknown; model_creator?: { name?: unknown }; evaluations?: Record<string, unknown> };
+    if (typeof r.slug !== 'string') return [];
+    const e = r.evaluations ?? {};
+    return [
+      {
+        slug: r.slug,
+        name: typeof r.name === 'string' ? r.name : r.slug,
+        creator: typeof r.model_creator?.name === 'string' ? r.model_creator.name : '',
+        intelligence: num(e.artificial_analysis_intelligence_index),
+        coding: num(e.artificial_analysis_coding_index),
+        math: num(e.artificial_analysis_math_index),
+      },
+    ];
+  });
+}
+
+async function fetchRows(apiKey: string): Promise<BenchmarkRow[]> {
+  const res = await fetch(ENDPOINT, { headers: { 'x-api-key': apiKey }, cache: 'no-store', signal: AbortSignal.timeout(20_000) });
+  if (res.status === 401 || res.status === 403) throw new Error('Artificial Analysis rejected the API key.');
+  if (!res.ok) throw new Error(`Artificial Analysis returned ${res.status}.`);
+  const rows = parseBenchmarkResponse(await res.json());
+  if (rows.length === 0) throw new Error('Artificial Analysis returned no models.');
+  return rows;
+}
+
+/** Cached benchmark rows; refreshed daily (or when forced) while a key is configured. */
+export async function benchmarkRows(force = false): Promise<BenchmarkRow[]> {
+  const doc = await AiBenchmarkSource.findOne({ key: KEY }).lean<Stored>();
+  if (!doc?.apiKeyCiphertext) return [];
+  const fresh = doc.fetchedAt && Date.now() - new Date(doc.fetchedAt).getTime() < TTL_MS;
+  if (!force && fresh) return doc.rows ?? [];
+  try {
+    const rows = await fetchRows(decryptModelSecret(doc.apiKeyCiphertext));
+    await AiBenchmarkSource.updateOne({ key: KEY }, { $set: { rows, fetchedAt: new Date() }, $unset: { error: '' } });
+    return rows;
+  } catch (err) {
+    // Keep the last good scores; retry on the next day's refresh.
+    await AiBenchmarkSource.updateOne({ key: KEY }, { $set: { error: err instanceof Error ? err.message : 'refresh failed', fetchedAt: new Date() } });
+    return doc.rows ?? [];
+  }
+}
+
+/** Saves (after verifying) or removes the Artificial Analysis API key. */
+export async function saveBenchmarkKey(apiKey: string | null): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!apiKey) {
+    await AiBenchmarkSource.deleteOne({ key: KEY });
+    return { ok: true };
+  }
+  const trimmed = apiKey.trim();
+  let rows: BenchmarkRow[];
+  try {
+    rows = await fetchRows(trimmed);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Could not reach Artificial Analysis.' };
+  }
+  await AiBenchmarkSource.updateOne(
+    { key: KEY },
+    { $set: { apiKeyCiphertext: encryptModelSecret(trimmed), apiKeyLast4: secretLast4(trimmed), rows, fetchedAt: new Date() }, $unset: { error: '' } },
+    { upsert: true }
+  );
+  return { ok: true };
+}
+
+export async function benchmarkStatus(): Promise<{ configured: boolean; keyLast4: string | null; models: number; fetchedAt: string | null; error: string | null }> {
+  const doc = await AiBenchmarkSource.findOne({ key: KEY }).lean<Stored>();
+  return {
+    configured: Boolean(doc?.apiKeyCiphertext),
+    keyLast4: doc?.apiKeyLast4 ?? null,
+    models: doc?.rows?.length ?? 0,
+    fetchedAt: doc?.fetchedAt ? new Date(doc.fetchedAt).toISOString() : null,
+    error: doc?.error ?? null,
+  };
+}
+
+// ---------- Matching provider model ids to benchmark entries ----------
+
+/** Words that name a run setting or release stage rather than a different model. */
+const VARIANT_WORDS = new Set(['reasoning', 'non', 'thinking', 'high', 'medium', 'low', 'minimal', 'xhigh', 'max', 'adaptive', 'preview', 'exp', 'experimental', 'latest', 'instruct', 'it']);
+
+/**
+ * Order-insensitive identity of a model name: "anthropic/claude-sonnet-4.5" and Artificial
+ * Analysis's "claude-4-5-sonnet-thinking" both become "4 5 claude sonnet".
+ */
+export function modelKey(id: string): string {
+  const base = id
+    .toLowerCase()
+    .replace(/^models\//, '')
+    .replace(/^.*\//, '')
+    .replace(/[-_](20\d{2})-?(\d{2})-?(\d{2})$/, '')
+    .replace(/:.*$/, '');
+  return base
+    .split(/[-._\s]+/)
+    .filter((t) => t && !VARIANT_WORDS.has(t))
+    .sort()
+    .join(' ');
+}
+
+/** Best benchmark entry for a provider model id (the strongest variant when several match), or null. */
+export function matchBenchmark(id: string, rows: BenchmarkRow[]): ModelBenchmark | null {
+  const key = modelKey(id);
+  if (!key) return null;
+  const hits = rows.filter((r) => modelKey(r.slug) === key && (r.intelligence !== null || r.coding !== null));
+  if (hits.length === 0) return null;
+  const best = (pick: (r: BenchmarkRow) => number | null) =>
+    hits.reduce<number | null>((acc, r) => (pick(r) !== null && (acc === null || pick(r)! > acc) ? pick(r) : acc), null);
+  const top = [...hits].sort((a, b) => (b.intelligence ?? -1) - (a.intelligence ?? -1))[0];
+  return { intelligence: best((r) => r.intelligence), coding: best((r) => r.coding), math: best((r) => r.math), source: top.slug };
+}
