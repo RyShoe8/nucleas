@@ -204,7 +204,8 @@ describe('orchestrated Ask', () => {
     chat.mockImplementation(async () => reply('{"kind":"clarify","clarifyQuestion":"Which business do you mean?"}'));
     const clarify = await ask('how is it going?');
     expect(clarify).toMatchObject({ role: 'assistant', text: 'Which business do you mean?' });
-    expect(chat).toHaveBeenCalledTimes(1 + 2 + 1);
+    // 2 calls (plan + write), 3 plan attempts (retry, then one step up), 1 clarify.
+    expect(chat).toHaveBeenCalledTimes(2 + 3 + 1);
   });
 });
 
@@ -283,5 +284,38 @@ describe('deep research', () => {
     const out = await ask('What are casino affiliates promoting this month?');
     expect(out.role).toBe('assistant');
     expect(chat.mock.calls.filter((c) => stageOf(c[0]) === 'research')).toHaveLength(1);
+  });
+});
+
+describe('planner robustness', () => {
+  it('retries a bad plan once, then escalates one rank up, and records each attempt', async () => {
+    const planners: string[] = [];
+    chat.mockImplementation(async (input) => {
+      if (stageOf(input) === 'plan') {
+        planners.push(input.model);
+        if (input.model === 'o4-mini') return reply('');
+        return reply('{"kind":"answer","scope":"general","outline":[],"review":false}');
+      }
+      return reply('An answer.');
+    });
+    const out = await ask('summarize', 'low');
+    expect(out.role).toBe('assistant');
+    expect(planners).toEqual(['o4-mini', 'o4-mini', 'anthropic/claude-sonnet-5']);
+    expect(out.stages.filter((s) => s.stage === 'plan').map((s) => s.note ?? 'ok')).toEqual(['unusable plan (not valid JSON)', 'unusable plan (not valid JSON)', 'ok']);
+  });
+
+  it('a corrective retry on the same model is enough when it works', async () => {
+    let calls = 0;
+    chat.mockImplementation(async (input) => {
+      if (stageOf(input) === 'plan') {
+        calls += 1;
+        if (calls === 1) return reply('Sure! Here is my plan: step one...');
+        expect(input.userText).toContain('Reply with ONLY the JSON object');
+        return reply('{"kind":"answer","scope":"general","outline":[],"review":false}');
+      }
+      return reply('An answer.');
+    });
+    expect((await ask('summarize', 'low')).role).toBe('assistant');
+    expect(calls).toBe(2);
   });
 });

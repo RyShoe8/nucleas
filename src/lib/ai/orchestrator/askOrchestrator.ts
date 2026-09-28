@@ -22,6 +22,9 @@ import { formatResearchResultContext } from '@/lib/ai/tools/serverBrowseAssist';
 const MAX_FETCH_JOBS = 8;
 const MAX_ACTIONS = 3;
 const MAX_RESEARCH = 3;
+/** Reasoning models count hidden thinking against the output cap. */
+const PLAN_MAX_TOKENS = 4000;
+const REVIEW_MAX_TOKENS = 5000;
 
 const planSchema = z.object({
   kind: z.enum(['answer', 'clarify']),
@@ -238,20 +241,41 @@ export async function runAskOrchestrator(
   const writeTools = new Set(CAPABILITIES.filter((c) => c.kind === 'write').map((c) => toolNameFor(c.id)));
   const toolCatalog = toolDefs.map((d) => `- ${d.function.name}${writeTools.has(d.function.name) ? ' (makes a change)' : ''}: ${d.function.description}`).join('\n');
 
-  // 1. Plan (paid, small).
-  const planTurn = await call(planRoute.primary, {
-    viewer,
-    projectId: input.projectId,
-    system: plannerPrompt(input.context, toolCatalog, today),
-    user: input.text,
-    history: input.history.slice(-6),
-    signal: input.signal,
-    maxTokens: 1200,
-  });
-  stages.push({ stage: 'plan', model: planRoute.primary.model, free: planRoute.primary.free, costMicros: addCost(planTurn) });
-  if (planTurn.role !== 'assistant') return status(planTurn.text || 'Planning failed.');
-  const parsed = planSchema.safeParse(extractJson(planTurn.text));
-  if (!parsed.success) return status('The planner did not return a usable plan. Try again, or use Direct mode.');
+  // 1. Plan (paid, small). Reasoning models spend output tokens thinking, so give them room.
+  // One corrective retry on the same model, then one step up the ranking, before giving up.
+  const planOnce = async (choice: ModelChoice, correction?: string) => {
+    const turn = await call(choice, {
+      viewer,
+      projectId: input.projectId,
+      system: plannerPrompt(input.context, toolCatalog, today),
+      user: correction ? `${input.text}\n\n${correction}` : input.text,
+      history: input.history.slice(-6),
+      signal: input.signal,
+      maxTokens: PLAN_MAX_TOKENS,
+    });
+    const parsedPlan = turn.role === 'assistant' ? planSchema.safeParse(extractJson(turn.text)) : null;
+    stages.push({
+      stage: 'plan',
+      model: choice.model,
+      free: choice.free,
+      costMicros: addCost(turn),
+      note: parsedPlan?.success ? undefined : turn.role !== 'assistant' ? `failed: ${turn.text.slice(0, 120)}` : 'unusable plan (not valid JSON)',
+    });
+    return { turn, parsedPlan };
+  };
+
+  const CORRECTION = 'Your previous reply was not a valid plan. Reply with ONLY the JSON object described above, no prose.';
+  let attempt = await planOnce(planRoute.primary);
+  if (!attempt.parsedPlan?.success) attempt = await planOnce(planRoute.primary, CORRECTION);
+  if (!attempt.parsedPlan?.success && input.level !== 'high') {
+    const upOne = await selectModel(org, 'plan', input.level === 'low' ? 'medium' : 'high', { models, settings });
+    if (upOne.primary && upOne.primary.model !== planRoute.primary.model) attempt = await planOnce(upOne.primary, CORRECTION);
+  }
+  const planTurn = attempt.turn;
+  if (!attempt.parsedPlan?.success) {
+    return status(planTurn.role !== 'assistant' ? planTurn.text || 'Planning failed.' : 'The planner did not return a usable plan after retrying. Try again, or use Direct mode.');
+  }
+  const parsed = attempt.parsedPlan;
   const plan = parsed.data;
   if (plan.kind === 'clarify' && plan.clarifyQuestion) {
     return { role: 'assistant', text: plan.clarifyQuestion, stages, invocationIds: [], costMicros, runId: planTurn.runId };
@@ -377,7 +401,7 @@ export async function runAskOrchestrator(
       system: reviewerPrompt(),
       user: [`Question: ${input.text}`, '', '# Facts', facts || '(none)', ...(research.length ? ['', '# Web research', research.join('\n\n')] : []), '', untraced.length ? `Numbers not found in the facts: ${untraced.join(', ')}` : '', '', '# Answer to review', answer].join('\n'),
       signal: input.signal,
-      maxTokens: 2500,
+      maxTokens: REVIEW_MAX_TOKENS,
     });
     const verdict = z
       .object({ verdict: z.enum(['accept', 'revise']), answer: z.string().max(20_000).optional(), notes: z.string().max(500).optional() })
