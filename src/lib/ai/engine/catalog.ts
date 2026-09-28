@@ -353,10 +353,19 @@ export async function contextWindowFor(model: string, provider: string | undefin
 }
 
 /**
- * Characters of prompt a model can take, leaving room for its answer. ~3 characters per token is
- * conservative for code. Capped so one request stays reasonable in cost.
+ * Cap a requested answer relative to the model's configured window. Reasoning, tool calls and the
+ * prompt must share this same window; a nominal 8k answer is unsafe on a 16k local deployment.
+ */
+export function outputBudgetTokens(contextTokens: number, requestedTokens: number): number {
+  return Math.max(256, Math.min(requestedTokens, Math.floor(contextTokens * 0.25)));
+}
+
+/**
+ * Characters of message content a model can take, leaving room for its answer plus tool schemas,
+ * chat framing and tokenizer variance. 2.5 characters/token is deliberately conservative for code.
  */
 export function contextBudgetChars(contextTokens: number, maxOutputTokens: number): number {
-  const chars = (contextTokens - maxOutputTokens) * 3;
-  return Math.max(24_000, Math.min(chars, 1_200_000));
+  const overheadTokens = Math.max(1_024, Math.ceil(contextTokens * 0.1));
+  const inputTokens = Math.max(512, contextTokens - maxOutputTokens - overheadTokens);
+  return Math.max(1_280, Math.min(Math.floor(inputTokens * 2.5), 1_200_000));
 }

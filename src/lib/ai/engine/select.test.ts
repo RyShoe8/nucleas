@@ -207,9 +207,9 @@ describe('free models ranked by Nucleas checks', () => {
     expect(checkScore(gemma, 'write')).toBeNull();
   });
 
-  it('prefers a measured model that passed over the name-based favourite, and drops ones that failed', () => {
+  it('keeps the vision specialist out of utilities and drops text models that failed', () => {
     const models = [measured(gemma, { json: 0.2, routing: 0.2, tools: 0, grounded: 0.3 }), coder, measured(vl, { json: 1, routing: 1, tools: 1, grounded: 1 })];
-    expect(pick('utility', 'low', models).primary).toBe(vl.model);
+    expect(pick('utility', 'low', models).primary).toBe(coder.model);
     // Unmeasured beats measured-and-failed.
     const twoLeft = [measured(gemma, { json: 0.2, routing: 0.2, tools: 0, grounded: 0.3 }), coder];
     expect(pick('write', 'low', twoLeft).primary).toBe(coder.model);
@@ -218,6 +218,19 @@ describe('free models ranked by Nucleas checks', () => {
   it('skips models whose host refused tool calls for tool-driven work', () => {
     const models = [gemma, measured(coder, { json: 1, routing: 1, tools: 0, grounded: 1 }, false), vl];
     expect([gemma.model, vl.model]).toContain(pick('code', 'low', models).primary);
+  });
+
+  it('does not route to a model whose latest check failed, even when its old score is highest', () => {
+    const unavailable = measured(vl, { json: 1, routing: 1, tools: 1, grounded: 1 });
+    unavailable.checks = { ...unavailable.checks!, status: 'failed', error: 'unavailable (504)' };
+    const models = [measured(gemma, { json: 1, routing: 1, tools: 1, grounded: 0.83, code: 0.67 }), coder, unavailable];
+    expect(pick('plan', 'free', models).primary).toBe(gemma.model);
+  });
+
+  it('reserves the vision specialist for vision when healthy text models are available', () => {
+    const models = [measured(gemma, { json: 1, routing: 1, tools: 1, grounded: 0.83, code: 0.67 }), measured(vl, { json: 1, routing: 1, tools: 1, grounded: 1 })];
+    expect(pick('plan', 'free', models).primary).toBe(gemma.model);
+    expect(pick('vision', 'free', models).primary).toBe(vl.model);
   });
 });
 

@@ -139,7 +139,10 @@ const PASSING_CHECK = 0.5;
  * automatically and measured the next time checks run.
  */
 function freeFor(models: AvailableModel[], need: Need): AvailableModel | undefined {
-  const free = models.filter((m) => m.free && m.autoEligible);
+  // A failed check is newer availability evidence than the last completed score. Keep the old
+  // scores visible in Admin for diagnosis, but do not route live work to that model until a later
+  // check succeeds. Without this guard, a strong stale score can keep winning after a 504.
+  const free = models.filter((m) => m.free && m.autoEligible && m.checks?.status !== 'failed');
   const tier = (m: AvailableModel) => {
     const score = checkScore(m, need);
     return score === null ? 1 : score >= PASSING_CHECK ? 0 : 2;
@@ -158,8 +161,10 @@ function freeFor(models: AvailableModel[], need: Need): AvailableModel | undefin
   const toolCapable = (pool: AvailableModel[]) => pool.filter((m) => m.checks?.supports.tools !== false);
   if (need === 'code' || need === 'research') return strongest(toolCapable(withStrength(free, 'coding'))) ?? strongest(toolCapable(free)) ?? strongest(free);
   if (need === 'vision') return strongest(withStrength(free, 'vision'));
-  // Writing and utilities: any text-capable model; take the strongest.
-  return strongest(withStrength(free, 'chat', 'reasoning')) ?? strongest(free);
+  // Keep multimodal specialists available for vision. For ordinary text work prefer a text model
+  // when one exists; an excellent vision benchmark should not make the VL deployment the planner.
+  const text = free.filter((m) => !m.strengths.includes('vision'));
+  return strongest(withStrength(text, 'chat', 'reasoning')) ?? strongest(text) ?? strongest(withStrength(free, 'chat', 'reasoning')) ?? strongest(free);
 }
 
 /**

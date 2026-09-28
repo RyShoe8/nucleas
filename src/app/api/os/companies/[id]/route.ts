@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Types } from 'mongoose';
 import Project from '@/lib/models/Project';
-import { getCompanyProfile } from '@/lib/companies/companyProfile';
+import Client from '@/lib/models/Client';
+import { getCompanyProfile, isCompanyManager } from '@/lib/companies/companyProfile';
 import { listCompanyConnections } from '@/lib/integrations/connections';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
+import { normalizeProductionDomain } from '@/lib/companies/productionDomain';
+import { recordActivity } from '@/lib/companies/activityLog';
 
 /** Company overview: resolved profile, its projects and its integrations. */
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -37,6 +40,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     ]);
 
     return NextResponse.json({
+      canManage: isCompanyManager(viewer),
       company: profile,
       projects: projects.map((p) => ({
         id: String(p._id),
@@ -50,6 +54,50 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     });
   } catch (error) {
     console.error('[os/companies/:id] failed', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+/** Update company-level profile fields that are not sourced from the hub project. */
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const viewer = await requireCompanyViewer(request);
+    if (viewer instanceof NextResponse) return viewer;
+    if (!isCompanyManager(viewer)) return NextResponse.json({ error: 'Only Managers and Administrators can update company settings.' }, { status: 403 });
+
+    const { id } = await params;
+    if (!Types.ObjectId.isValid(id)) return NextResponse.json({ error: 'Company not found' }, { status: 404 });
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Request body must be valid JSON.' }, { status: 400 });
+    }
+    if (!body || typeof body !== 'object' || !Object.prototype.hasOwnProperty.call(body, 'domain')) {
+      return NextResponse.json({ error: 'Production domain is required.' }, { status: 400 });
+    }
+    const parsed = normalizeProductionDomain((body as { domain?: unknown }).domain);
+    if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
+
+    const company = await Client.findOne({ _id: id, organizationId: viewer.organizationId });
+    if (!company) return NextResponse.json({ error: 'Company not found' }, { status: 404 });
+    const previous = company.domain ?? null;
+    company.domain = parsed.domain ?? undefined;
+    await company.save();
+
+    if (previous !== parsed.domain) {
+      await recordActivity({
+        organizationId: viewer.organizationId,
+        companyId: id,
+        kind: 'company',
+        title: parsed.domain ? 'Production domain set' : 'Production domain cleared',
+        detail: parsed.domain ?? previous ?? undefined,
+        actorUserId: viewer.userId,
+      });
+    }
+    return NextResponse.json({ domain: parsed.domain });
+  } catch (error) {
+    console.error('[os/companies/:id] update failed', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

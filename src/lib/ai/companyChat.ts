@@ -173,7 +173,7 @@ import { companyChatAdmissionMessage } from '@/lib/ai/companyChatAdmission';
 import { recordModelFailure, recordModelSuccess } from '@/lib/ai/engine/health';
 import type { RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 import { describeToolCall, type ProgressFn } from '@/lib/ai/progress';
-import { contextBudgetChars, contextWindowFor } from '@/lib/ai/engine/catalog';
+import { contextBudgetChars, contextWindowFor, outputBudgetTokens } from '@/lib/ai/engine/catalog';
 
 /**
  * Governed IDE chat via a company credential (Direct or AI Team Worker binding).
@@ -399,10 +399,9 @@ export async function attemptCompanyCredentialChat(input: {
     ? requestedCap
     : Math.min(OUTPUT_HARD_CAP, Math.max(requestedCap, policy.maxOutputTokens));
   // Prompts are sized to this model's real context window, not a fixed pilot cap.
-  const contextChars = contextBudgetChars(
-    await contextWindowFor(gateway.model, profile.provider, freeCredential, input.modelProfileId).catch(() => (freeCredential ? 16_000 : 64_000)),
-    maxOutputTokens
-  );
+  const contextTokens = await contextWindowFor(gateway.model, profile.provider, freeCredential, input.modelProfileId).catch(() => (freeCredential ? 16_000 : 64_000));
+  maxOutputTokens = outputBudgetTokens(contextTokens, maxOutputTokens);
+  let contextChars = contextBudgetChars(contextTokens, maxOutputTokens);
 
   try {
     let loop: Awaited<ReturnType<typeof runIdeToolLoop>> | undefined;
@@ -627,7 +626,11 @@ export async function attemptCompanyCredentialChat(input: {
       latencyMs: number;
     }> {
       phase = 'length_retry';
-      maxOutputTokens = Math.min(OUTPUT_HARD_CAP, Math.max(maxOutputTokens * 2, 4096));
+      maxOutputTokens = outputBudgetTokens(
+        contextTokens,
+        Math.min(OUTPUT_HARD_CAP, Math.max(maxOutputTokens * 2, 4096))
+      );
+      contextChars = contextBudgetChars(contextTokens, maxOutputTokens);
       const plain = await plainInvoke({
         systemExtra: `${systemExtra} The previous attempt hit the output token limit before any visible text. Finish the full answer now in one shot. Do not call tools.`,
         userContent: userTextForModel,

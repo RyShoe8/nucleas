@@ -32,6 +32,7 @@ export interface OsConnection {
 }
 
 export interface OsCompanyDetail {
+    canManage: boolean;
     company: OsCompanySummary & {
         description?: string;
         liveUrl?: string;

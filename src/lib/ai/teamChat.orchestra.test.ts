@@ -15,7 +15,11 @@ vi.mock('server-only', () => ({}));
 vi.mock('@/lib/ai/companyChat', () => ({
   attemptCompanyCredentialChat: (...args: unknown[]) => mocks.companyChat(...args),
 }));
-vi.mock('@/lib/ai/engine/catalog', () => ({ listAvailableModels: async () => [] }));
+vi.mock('@/lib/ai/engine/catalog', () => ({
+  listAvailableModels: async () => [],
+  outputBudgetTokens: (_context: number, requested: number) => requested,
+  contextBudgetChars: () => 48_000,
+}));
 vi.mock('@/lib/ai/engine/select', () => ({
   readEngineSettings: async () => ({ defaultCostLevel: 'low', priceCeilings: { low: 1.5, medium: 5, high: null }, pins: {} }),
   selectModel: (...args: unknown[]) => mocks.selectModel(...args),
@@ -482,6 +486,37 @@ describe('provider refusals during code planning', () => {
     const progress: string[] = [];
     await attemptOrchestratedIdeReply({ projectName: 'PlayBound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'hello there, what does the build do?', priorTurns: [], interactionMode: 'chat', onProgress: (t) => progress.push(t) });
     expect(planners).toEqual(['meta/muse-spark-1.3', 'gpt-6-sol']);
-    expect(progress).toContain('muse-spark-1.3 was refused by its provider; switching to gpt-6-sol');
+    expect(progress).toContain('muse-spark-1.3 did not complete; switching to gpt-6-sol');
+  });
+
+  it('re-picks a free planner immediately when the selected deployment returns 504', async () => {
+    let planPicks = 0;
+    mocks.selectModel.mockImplementation(async (_org: string, need: string) => {
+      if (need === 'plan') {
+        planPicks += 1;
+        return {
+          primary: planPicks === 1
+            ? { profileId: 'a'.repeat(24), model: 'Qwen/Qwen3-VL-8B-Thinking-FP8', free: true, label: 'Rogly' }
+            : { profileId: 'a'.repeat(24), model: 'google/gemma-4-12B-it-qat-w4a16-ct', free: true, label: 'Rogly' },
+          fallback: null,
+        };
+      }
+      return { primary: { profileId: 'b'.repeat(24), model: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', free: true, label: 'Rogly' }, fallback: null };
+    });
+    const planners: string[] = [];
+    mocks.companyChat.mockImplementation(async (input: { model: string; systemPrompt: string }) => {
+      if (/Pipeline stage: planner/.test(input.systemPrompt)) {
+        planners.push(input.model);
+        if (input.model.includes('Qwen3-VL')) {
+          return { requestId: 'timeout', role: 'status', text: 'HTTP 504 (upstream timeout).', failureCategory: 'unavailable', debugHint: 'code=unavailable kind=http httpStatus=504' };
+        }
+        return { requestId: 'plan', role: 'assistant', text: 'Investigation done.', costMicros: 0, noProviderFee: true };
+      }
+      return { requestId: 'worker', role: 'assistant', text: 'ok', costMicros: 0, noProviderFee: true };
+    });
+    const progress: string[] = [];
+    await attemptOrchestratedIdeReply({ projectName: 'PlayBound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'Remove OpenHV from the OpenRA listing.', priorTurns: [], interactionMode: 'plan', level: 'free', onProgress: (text) => progress.push(text) });
+    expect(planners).toEqual(['Qwen/Qwen3-VL-8B-Thinking-FP8', 'google/gemma-4-12B-it-qat-w4a16-ct']);
+    expect(progress).toContain('Qwen3-VL-8B-Thinking-FP8 did not complete; switching to gemma-4-12B-it-qat-w4a16-ct');
   });
 });

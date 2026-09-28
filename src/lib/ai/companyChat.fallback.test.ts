@@ -677,7 +677,8 @@ describe('attemptCompanyCredentialChat free tools', () => {
     expect(turn.text).toMatch(/nucleas-plan|Blog/);
     expect(mocks.invokeModel).toHaveBeenCalled();
     const invokeArg = mocks.invokeModel.mock.calls.at(-1)?.[1] as { maxOutputTokens?: number };
-    expect(invokeArg.maxOutputTokens).toBeGreaterThanOrEqual(8192);
+    // Even the length retry remains within one quarter of this deployment's context window.
+    expect(invokeArg.maxOutputTokens).toBeLessThanOrEqual(4096);
   });
 
   it('forces the tool loop when forceToolLoop is set even for short non-lookup asks', async () => {

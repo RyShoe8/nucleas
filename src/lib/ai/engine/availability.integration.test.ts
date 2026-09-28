@@ -87,4 +87,15 @@ describe('benched credentials', () => {
     await recordModelSuccess(id, 'coder');
     expect(await eligible()).toHaveLength(1);
   });
+
+  it('isolates repeated 5xx failures to one LiteLLM model instead of benching its credential', async () => {
+    const profile = await AiModelProfile.create({ key: 'model-5xx', label: 'Model 5xx', provider: 'custom', tier: 'local_remote', protocol: 'openai-chat', endpoint: 'https://model-5xx.test/v1/chat/completions', secretCiphertext: encryptModelSecret('k'), secretLast4: 'kkkk', enabled: true });
+    const models = ['vision', 'coder'];
+    await AiModelCatalogSnapshot.create({ profileId: profile._id, modelIds: models, fetchedAt: new Date() });
+    const id = String(profile._id);
+    await recordModelFailure({ profileId: id, model: 'vision', httpStatus: 504, message: 'context exceeded' });
+    await recordModelFailure({ profileId: id, model: 'vision', httpStatus: 504, message: 'context exceeded' });
+    const eligible = (await listAvailableModels()).filter((m) => m.profileId === id && m.autoEligible).map((m) => m.model);
+    expect(eligible).toEqual(['coder']);
+  });
 });

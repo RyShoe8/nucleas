@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import type { ModuleRenderContext } from '@/lib/os/types';
 import { RELATIONSHIP_LABEL, type OsCompanyDetail, type OsConnection } from './companyTypes';
@@ -50,10 +50,17 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                     <h2 className="text-lg font-semibold leading-tight">{company.name}</h2>
                     <p className="text-xs text-text-secondary">
                         {RELATIONSHIP_LABEL[company.relationship]}
-                        {' · '}
-                        {company.domain ?? 'No production domain'}
                         {company.devUrl ? ` · dev ${company.devUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}` : ''}
                     </p>
+                    <ProductionDomainEditor
+                        companyId={company.id}
+                        domain={company.domain}
+                        canManage={detail.canManage}
+                        onSaved={(domain) => {
+                            setDetail((current) => current ? { ...current, company: { ...current.company, domain: domain ?? undefined } } : current);
+                            setActivityKey((key) => key + 1);
+                        }}
+                    />
                     {company.description ? (
                         <p className="mt-1 text-sm text-text-secondary line-clamp-2">{company.description}</p>
                     ) : null}
@@ -72,6 +79,74 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
             <CompanyActivity companyId={company.id} refreshKey={activityKey} />
             <IntegrationsSummary companyId={company.id} companyName={company.name} connections={connections} />
         </div>
+    );
+}
+
+function ProductionDomainEditor({ companyId, domain, canManage, onSaved }: { companyId: string; domain?: string; canManage: boolean; onSaved: (domain: string | null) => void }) {
+    const [editing, setEditing] = useState(false);
+    const [value, setValue] = useState(domain ?? '');
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => setValue(domain ?? ''), [domain]);
+
+    async function save(event: FormEvent) {
+        event.preventDefault();
+        if (saving) return;
+        setSaving(true);
+        setError(null);
+        try {
+            const response = await fetch(`/api/os/companies/${companyId}`, {
+                method: 'PATCH',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ domain: value }),
+            });
+            const data = await response.json().catch(() => ({})) as { domain?: string | null; error?: string };
+            if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+            onSaved(data.domain ?? null);
+            setEditing(false);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Could not save the production domain.');
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    if (!editing) {
+        return (
+            <div className="mt-1 flex items-center gap-2 text-xs">
+                {domain ? (
+                    <a href={`https://${domain}`} target="_blank" rel="noreferrer" className="text-primary hover:underline" onClick={(event) => event.stopPropagation()}>{domain}</a>
+                ) : (
+                    <span className="text-text-secondary">No production domain</span>
+                )}
+                {canManage ? (
+                    <button type="button" className="text-[11px] text-text-secondary hover:text-text-primary underline-offset-2 hover:underline" onClick={() => { setValue(domain ?? ''); setError(null); setEditing(true); }}>
+                        {domain ? 'Edit' : 'Set domain'}
+                    </button>
+                ) : null}
+            </div>
+        );
+    }
+
+    return (
+        <form onSubmit={save} className="mt-2 max-w-md space-y-1.5">
+            <label className="block text-[11px] text-text-secondary" htmlFor={`production-domain-${companyId}`}>Production domain</label>
+            <div className="flex gap-2">
+                <input
+                    id={`production-domain-${companyId}`}
+                    value={value}
+                    onChange={(event) => setValue(event.target.value)}
+                    placeholder="example.com"
+                    autoFocus
+                    className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-xs text-text-primary"
+                />
+                <button type="submit" disabled={saving} className="rounded bg-primary px-2.5 py-1 text-xs text-white disabled:opacity-50">{saving ? 'Saving…' : 'Save'}</button>
+                <button type="button" disabled={saving} className="rounded border border-border px-2.5 py-1 text-xs hover:bg-background-card disabled:opacity-50" onClick={() => { setEditing(false); setError(null); setValue(domain ?? ''); }}>Cancel</button>
+            </div>
+            <p className="text-[11px] text-text-secondary">Used to match analytics, search, hosting, and other company integrations. This does not change DNS.</p>
+            {error ? <p className="text-[11px] text-red-400">{error}</p> : null}
+        </form>
     );
 }
 
@@ -160,4 +235,3 @@ function ProjectsSection({ projects }: { projects: OsCompanyDetail['projects'] }
         </section>
     );
 }
-

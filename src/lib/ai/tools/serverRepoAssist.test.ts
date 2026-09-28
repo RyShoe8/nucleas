@@ -52,6 +52,21 @@ describe('gatherRepoAssistContext', () => {
     expect(mocks.listTree).not.toHaveBeenCalled();
   });
 
+  it('uses a model-sized budget and centers excerpts on the densest relevant section', async () => {
+    const incidental = `// OpenHV mentioned once\n${'const filler = 1;\n'.repeat(500)}`;
+    const relevant = "const OpenRA = { editions: ['OpenHV'], route: '/admin/connect/game-servers' };";
+    mocks.snapshot.mockResolvedValue({
+      ok: true,
+      snapshot: { owner: 'playbound', repo: 'platform', branch: 'main', commit: 'b'.repeat(40), skipped: [], files: new Map([['src/servers.ts', incidental + relevant]]) },
+    });
+    const result = await gatherRepoAssistContext({
+      organizationId: 'org', projectId: new Types.ObjectId(), userText: 'Remove OpenHV under OpenRA on game servers.', maxContextChars: 4_000, maxFiles: 2,
+    });
+    expect(result.evidenceBlock.length).toBeLessThanOrEqual(4_000);
+    expect(result.evidenceBlock).toContain("editions: ['OpenHV']");
+    expect(result.evidenceBlock).not.toContain('OpenHV mentioned once');
+  });
+
   it('returns unbound note when root tree fails', async () => {
     mocks.listTree.mockResolvedValue({ ok: false, reason: 'Bind a GitHub repository.' });
     const result = await gatherRepoAssistContext({

@@ -18,7 +18,7 @@ import { parseReviewerGate } from '@/lib/ide/parseReviewerGate';
 import { looksLikeProjectInternalQuery } from '@/lib/ai/tools/serverBrowseAssist';
 import { gatherRepoAssistContext } from '@/lib/ai/tools/serverRepoAssist';
 import { AiObjective, AiRun } from '@/lib/models/AiControl';
-import { listAvailableModels } from '@/lib/ai/engine/catalog';
+import { contextBudgetChars, listAvailableModels, outputBudgetTokens } from '@/lib/ai/engine/catalog';
 import { readEngineSettings, selectModel, type CostLevel, type Need } from '@/lib/ai/engine/select';
 import { executeInRemoteSandbox } from '@/lib/ai/executionWorkerClient';
 import { gatewayFromModelProfile } from '@/lib/ai/rolePipeline/profiles';
@@ -64,6 +64,17 @@ type StageBinding = { profileId: string; model: string };
 /** The provider turned the request away because of the account, not the request (401/402/403). */
 function providerRefused(turn: TeamChatTurn): boolean {
   return turn.failureCategory === 'credentials' || /httpStatus=(401|402|403)\b/.test(turn.debugHint ?? '');
+}
+
+/** A different model may still work when one deployment times out, rate-limits, or returns 5xx. */
+function retryableProviderFailure(turn: TeamChatTurn): boolean {
+  if (turn.role !== 'status') return false;
+  return (
+    providerRefused(turn) ||
+    turn.failureCategory === 'rate_limit' ||
+    turn.failureCategory === 'unavailable' ||
+    /httpStatus=(429|5\d\d)\b|kind=(timeout|transport)\b/.test(turn.debugHint ?? '')
+  );
 }
 
 /** What kind of work the request is: building, planning or repo questions are code; the rest is research. */
@@ -369,10 +380,20 @@ export async function attemptOrchestratedIdeReply(input: {
   let repoEvidenceReceipts: RepositoryEvidenceReceipt[] = [];
   if (looksLikeProjectInternalQuery(input.userText)) {
     try {
+      const plannerModel = models.find((model) => model.profileId === plannerBinding.profileId && model.model === plannerBinding.model);
+      const plannerContextTokens = plannerModel?.contextTokens ?? (plannerPick.primary?.free ? 16_000 : 64_000);
+      const plannerOutputTokens = outputBudgetTokens(plannerContextTokens, interactionMode === 'plan' || interactionMode === 'build' ? 8_192 : 4_096);
+      const plannerPromptChars = contextBudgetChars(plannerContextTokens, plannerOutputTokens);
+      // Repository evidence gets at most 55% of the prompt. The rest belongs to instructions,
+      // history, task rules and protocol/tool schemas. Small local windows therefore get a much
+      // smaller deterministic dig without spending model tokens on summarization.
+      const repoBudgetChars = Math.max(4_000, Math.min(16_000, Math.floor(plannerPromptChars * 0.55)));
       const dig = await gatherRepoAssistContext({
         organizationId: input.organizationId,
         projectId: input.projectId,
         userText: input.userText,
+        maxContextChars: repoBudgetChars,
+        maxFiles: Math.max(2, Math.min(8, Math.floor(repoBudgetChars / 2_000))),
       });
       if (!dig.ok && dig.okReads === 0) {
         return statusTurn(
@@ -388,7 +409,7 @@ export async function attemptOrchestratedIdeReply(input: {
         );
       }
       const block = (dig.evidenceBlock || dig.contextBlock).trim();
-      if (block) repoContextBlock = block.slice(0, 48_000);
+      if (block) repoContextBlock = block.slice(0, repoBudgetChars);
       repoEvidenceReceipts = dig.evidenceReceipts ?? [];
     } catch {
       return statusTurn(
@@ -501,14 +522,15 @@ export async function attemptOrchestratedIdeReply(input: {
     if (turn.role === 'assistant' && args.stage !== 'reviewer' && repoEvidenceReceipts.length) {
       turn.evidenceReceipts = dedupeEvidenceReceipts([...(turn.evidenceReceipts ?? []), ...repoEvidenceReceipts]);
     }
-    // The provider refused (bad key, no credit, model not allowed): it is now benched, so pick this
-    // stage's model again from the providers still working and try once more.
-    if (turn.role === 'status' && providerRefused(turn)) {
+    // Retry once on another eligible model. Transient failures do not open the shared circuit on
+    // their first occurrence, so explicitly remove this request's failed binding before re-picking.
+    if (retryableProviderFailure(turn)) {
       const need: Need = args.stage === 'planner' ? 'plan' : args.stage === 'reviewer' ? 'review' : workNeedFor(interactionMode, input.userText);
       const fresh = await listAvailableModels().catch(() => null);
-      const next = fresh ? binding((await selectModel(input.organizationId, need, level, { models: fresh, settings })).primary) : null;
+      const candidates = fresh?.filter((model) => model.profileId !== args.binding.profileId || model.model !== args.binding.model);
+      const next = candidates ? binding((await selectModel(input.organizationId, need, level, { models: candidates, settings })).primary) : null;
       if (next && (next.profileId !== args.binding.profileId || next.model !== args.binding.model)) {
-        input.onProgress?.(`${shortModel(args.binding.model)} was refused by its provider; switching to ${shortModel(next.model)}`);
+        input.onProgress?.(`${shortModel(args.binding.model)} did not complete; switching to ${shortModel(next.model)}`);
         announce(next);
         return exec(next);
       }

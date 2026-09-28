@@ -124,8 +124,8 @@ function pickReadPaths(
   return ordered;
 }
 
-function fileCharBudget(path: string): number {
-  return PRIORITY_PATH_SET.has(path) ? PRIORITY_FILE_CHARS : PER_FILE_CHARS;
+function fileCharBudget(path: string, ceiling = PRIORITY_FILE_CHARS): number {
+  return Math.min(PRIORITY_PATH_SET.has(path) ? PRIORITY_FILE_CHARS : PER_FILE_CHARS, ceiling);
 }
 
 function queryTokens(query: string): string[] {
@@ -153,14 +153,35 @@ export function snapshotCandidates(snapshot: LoadedSnapshot, query: string, limi
   return scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path)).slice(0, limit).map(row => row.path);
 }
 
-function snapshotExcerpt(snapshot: LoadedSnapshot, path: string, query: string): { block: string; receipt: RepositoryEvidenceReceipt } | null {
+/** Center an excerpt on the densest cluster of query terms, not merely the first incidental hit. */
+function relevantExcerptStart(content: string, query: string, excerptChars: number): number {
+  const lower = content.toLowerCase();
+  const positions: number[] = [];
+  for (const token of queryTokens(query)) {
+    let from = 0;
+    for (let count = 0; count < 12; count += 1) {
+      const position = lower.indexOf(token, from);
+      if (position < 0) break;
+      positions.push(position);
+      from = position + token.length;
+    }
+  }
+  if (!positions.length) return 0;
+  const radius = Math.max(400, Math.floor(excerptChars / 2));
+  const center = positions.reduce((best, candidate) => {
+    const density = positions.filter((position) => Math.abs(position - candidate) <= radius).length;
+    const bestDensity = positions.filter((position) => Math.abs(position - best) <= radius).length;
+    return density > bestDensity ? candidate : best;
+  }, positions[0]!);
+  return Math.max(0, center - Math.floor(excerptChars / 2));
+}
+
+function snapshotExcerpt(snapshot: LoadedSnapshot, path: string, query: string, maxChars: number): { block: string; receipt: RepositoryEvidenceReceipt } | null {
   const content = snapshot.files.get(path);
   if (content === undefined) return null;
-  const lower = content.toLowerCase();
-  const positions = queryTokens(query).map(token => lower.indexOf(token)).filter(index => index >= 0);
-  const center = positions.length ? Math.min(...positions) : 0;
-  const start = Math.max(0, center - 1800);
-  const excerpt = content.slice(start, start + fileCharBudget(path));
+  const excerptChars = fileCharBudget(path, maxChars);
+  const start = relevantExcerptStart(content, query, excerptChars);
+  const excerpt = content.slice(start, start + excerptChars);
   const startLine = content.slice(0, start).split('\n').length;
   const endLine = startLine + excerpt.split('\n').length - 1;
   return {
@@ -172,7 +193,8 @@ function snapshotExcerpt(snapshot: LoadedSnapshot, path: string, query: string):
 async function readPathsBatch(
   organizationId: string,
   projectId: Types.ObjectId,
-  paths: string[]
+  paths: string[],
+  maxCharsPerFile = PRIORITY_FILE_CHARS
 ): Promise<{
   fileBlocks: string[];
   readErrors: string[];
@@ -199,7 +221,7 @@ async function readPathsBatch(
       continue;
     }
     okReads += 1;
-    const excerpt = file.content.slice(0, fileCharBudget(path));
+    const excerpt = file.content.slice(0, fileCharBudget(path, maxCharsPerFile));
     fileBlocks.push(`File ${file.path} (branch ${file.branch}):\n${excerpt}`);
     evidenceReceipts.push(repositoryEvidenceReceipt({
       tool: 'repo_read', path: file.path, revision: file.sha || file.branch,
@@ -214,8 +236,14 @@ export async function gatherRepoAssistContext(input: {
   organizationId: string;
   projectId: Types.ObjectId;
   userText: string;
+  /** Model-aware server-side cap; evidence is reduced before it enters an inference request. */
+  maxContextChars?: number;
+  maxFiles?: number;
 }): Promise<RepoAssistResult> {
   const query = extractChatHeuristicText(input.userText);
+  const maxContextChars = Math.max(4_000, Math.min(input.maxContextChars ?? CONTEXT_CHARS, CONTEXT_CHARS));
+  const maxFiles = Math.max(2, Math.min(input.maxFiles ?? BATCH_SIZE, BATCH_SIZE));
+  const maxCharsPerFile = Math.max(1_200, Math.floor((maxContextChars - 1_000) / maxFiles));
   const toolsUsed: string[] = [];
   const candidateFiles: { path: string; score: number }[] = [];
   const treeLines: string[] = [];
@@ -225,12 +253,12 @@ export async function gatherRepoAssistContext(input: {
   const local = await getRepoSnapshot(input.organizationId, input.projectId).catch(() => null);
   if (local?.ok) {
     toolsUsed.push('repo_search');
-    const paths = snapshotCandidates(local.snapshot, query);
-    const excerpts = paths.map(path => snapshotExcerpt(local.snapshot, path, query)).filter((item): item is NonNullable<typeof item> => Boolean(item));
+    const paths = snapshotCandidates(local.snapshot, query, maxFiles);
+    const excerpts = paths.map(path => snapshotExcerpt(local.snapshot, path, query, maxCharsPerFile)).filter((item): item is NonNullable<typeof item> => Boolean(item));
     const fileBlocks = excerpts.map(item => item.block);
     if (fileBlocks.length) {
       toolsUsed.push('repo_read');
-      const evidenceBlock = fileBlocks.join('\n\n').slice(0, 24_000);
+      const evidenceBlock = fileBlocks.join('\n\n').slice(0, maxContextChars);
       return {
         ok: true,
         note: `Read ${fileBlocks.length} whole-repository match(es) from commit ${local.snapshot.commit.slice(0, 12)}.`,
@@ -241,9 +269,9 @@ export async function gatherRepoAssistContext(input: {
         contextBlock: [
           'Repository dig results (deterministic whole-repository search; use these excerpts before calling more tools):',
           `Query focus: ${query}`,
-          fileBlocks.join('\n\n').slice(0, FILES_CHARS),
+          fileBlocks.join('\n\n').slice(0, Math.min(FILES_CHARS, maxContextChars)),
           'If anything is still missing, use repo_search/repo_read for another range. Do not stop at path lists.',
-        ].join('\n\n').slice(0, CONTEXT_CHARS),
+        ].join('\n\n').slice(0, maxContextChars),
       };
     }
   }
@@ -292,8 +320,8 @@ export async function gatherRepoAssistContext(input: {
     }
   }
 
-  const uniquePaths = pickReadPaths(query, candidateFiles, BATCH_SIZE);
-  const first = await readPathsBatch(input.organizationId, input.projectId, uniquePaths);
+  const uniquePaths = pickReadPaths(query, candidateFiles, maxFiles);
+  const first = await readPathsBatch(input.organizationId, input.projectId, uniquePaths, maxCharsPerFile);
   toolsUsed.push(...first.toolsUsed);
 
   const fileBlocks = first.fileBlocks;
@@ -316,7 +344,7 @@ export async function gatherRepoAssistContext(input: {
   const filesSection =
     okReads > 0
       ? [
-          fileBlocks.join('\n\n').slice(0, FILES_CHARS),
+          fileBlocks.join('\n\n').slice(0, Math.min(FILES_CHARS, maxContextChars)),
           'This dig is a seed. If anything is still missing, keep using repo_search/repo_read until the question is fully answered with quoted evidence.',
         ].join('\n\n')
       : emptyReadGuidance;
@@ -334,15 +362,15 @@ export async function gatherRepoAssistContext(input: {
   ]
     .filter(Boolean)
     .join('\n\n')
-    .slice(0, CONTEXT_CHARS);
+    .slice(0, maxContextChars);
 
   const evidenceBlock = [
     errorHeader,
-    okReads > 0 ? fileBlocks.join('\n\n').slice(0, 24_000) : '',
+    okReads > 0 ? fileBlocks.join('\n\n').slice(0, maxContextChars) : '',
   ]
     .filter(Boolean)
     .join('\n\n')
-    .slice(0, 24_000);
+    .slice(0, maxContextChars);
 
   return {
     ok: true,

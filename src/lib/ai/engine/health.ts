@@ -50,7 +50,9 @@ export function failurePolicy(input: { httpStatus?: number; code?: string; kind?
   if (httpStatus === 401 || httpStatus === 402) return { scope: 'credential', threshold: 1, baseCooldownMs: MAX_CIRCUIT_MS, category: 'credentials' };
   if (httpStatus === 403) return { scope: 'model', threshold: 1, baseCooldownMs: MAX_CIRCUIT_MS, category: 'credentials' };
   if (httpStatus === 429) return { scope: 'credential', threshold: 1, baseCooldownMs: 2 * 60_000, category: 'rate_limit' };
-  if (httpStatus !== undefined && httpStatus >= 500) return { scope: 'credential', threshold: 2, baseCooldownMs: 60_000, category: 'upstream' };
+  // Gateways may surface a model-specific failure (including context overflow) as 5xx. Isolate the
+  // deployment rather than benching every model that happens to share the LiteLLM credential.
+  if (httpStatus !== undefined && httpStatus >= 500) return { scope: 'model', threshold: 2, baseCooldownMs: 60_000, category: 'upstream' };
   if (input.code === 'invalid_response') return { scope: 'model', threshold: 3, baseCooldownMs: 60_000, category: 'invalid_response' };
   if (input.code === 'unavailable' || input.kind === 'timeout' || input.kind === 'transport') {
     return { scope: 'credential', threshold: 3, baseCooldownMs: 60_000, category: 'upstream' };
