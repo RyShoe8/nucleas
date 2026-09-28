@@ -7,7 +7,8 @@ vi.mock('server-only', () => ({}));
 import { AiModelProfile } from '@/lib/models/AiModelProfile';
 import { encryptModelSecret } from '@/lib/ai/modelSecrets';
 import { gatewayFromModelProfile } from '@/lib/ai/rolePipeline/profiles';
-import { AiModelCatalogSnapshot, describeModel, isModelListedForProfile } from './catalog';
+import { AiModelCatalogSnapshot, describeModel, isModelListedForProfile, listAvailableModels } from './catalog';
+import { recordModelFailure, recordModelSuccess } from './health';
 
 let replica: MongoMemoryReplSet;
 
@@ -47,5 +48,27 @@ describe('only models a provider lists right now are callable', () => {
     const rows = [{ id: 'anthropic/claude-opus-5.5', provider: 'openrouter', mode: 'chat', input: 5, output: 25, cacheRead: null, variable: false, supportsReasoning: true }];
     expect(describeModel('anthropic/claude-opus-5.5', 'openrouter', false, rows).autoEligible).toBe(true);
     expect(describeModel('anthropic/claude-opus-5.5:batch', 'openrouter', false, rows).autoEligible).toBe(false);
+  });
+});
+
+describe('benched credentials', () => {
+  it('401 benches the credential, 403 only the model, 429 nothing; a success clears it', async () => {
+    const profile = await AiModelProfile.create({ key: 'bench', label: 'Bench', provider: 'custom', tier: 'local_remote', protocol: 'openai-chat', endpoint: 'https://bench.test/v1/chat/completions', secretCiphertext: encryptModelSecret('k'), secretLast4: 'kkkk', enabled: true });
+    await AiModelCatalogSnapshot.create({ profileId: profile._id, modelIds: ['google/gemma-4-12B-it-qat-w4a16-ct', 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ'], fetchedAt: new Date() });
+    const id = String(profile._id);
+    const eligible = async () => (await listAvailableModels()).filter((m) => m.profileId === id && m.autoEligible).map((m) => m.model).sort();
+
+    expect(await eligible()).toHaveLength(2);
+    await recordModelFailure({ profileId: id, model: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', httpStatus: 429 });
+    expect(await eligible()).toHaveLength(2);
+    await recordModelFailure({ profileId: id, model: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', httpStatus: 403, message: 'Model not allowed' });
+    expect(await eligible()).toEqual(['google/gemma-4-12B-it-qat-w4a16-ct']);
+    await recordModelFailure({ profileId: id, model: 'google/gemma-4-12B-it-qat-w4a16-ct', httpStatus: 401 });
+    expect(await eligible()).toEqual([]);
+    const benched = (await listAvailableModels()).find((m) => m.profileId === id);
+    expect(benched?.benched).toMatchObject({ httpStatus: 401, model: null });
+
+    await recordModelSuccess(id, 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ');
+    expect(await eligible()).toHaveLength(2);
   });
 });

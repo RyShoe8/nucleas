@@ -239,9 +239,11 @@ export async function runAskOrchestrator(
   };
   const status = (text: string): OrchestratedAnswer => ({ role: 'status', text, stages, invocationIds: [], costMicros });
 
-  const [models, settings] = await Promise.all([listAvailableModels(), readEngineSettings(org)]);
+  const settings = await readEngineSettings(org);
+  let models = await listAvailableModels();
   const pick = (need: Need) => selectModel(org, need, input.level, { models, settings });
-  const [planRoute, workRoute, reviewRoute] = await Promise.all([pick('plan'), pick('write'), pick('review')]);
+  const routes = async () => Promise.all([pick('plan'), pick('write'), pick('review')]);
+  let [planRoute, workRoute, reviewRoute] = await routes();
   if (!planRoute.primary) return status('No model is available for planning. Enable an AI credential in Admin → AI models.');
   if (!workRoute.primary) return status('No model is available for writing. Check that Rogly (or another credential) is enabled.');
 
@@ -284,9 +286,15 @@ export async function runAskOrchestrator(
   // Correct the same model only when it answered badly; a failed call (unavailable, error) moves on.
   if (!attempt.parsedPlan?.success && attempt.turn.role === 'assistant') attempt = await planOnce(planRoute.primary, CORRECTION);
   if (!attempt.parsedPlan?.success) {
-    // Another model: one rank up (low → #2, medium → #1); high has no rank above, so its #2.
-    const other = await selectModel(org, 'plan', input.level === 'low' ? 'medium' : input.level === 'medium' ? 'high' : 'medium', { models, settings });
-    if (other.primary && other.primary.model !== planRoute.primary.model) attempt = await planOnce(other.primary, CORRECTION);
+    // Re-read the models: a provider that just rejected its key is now benched. Pick again at this
+    // level (another provider); if that is still the same model, go one level up (high: medium).
+    const failed = planRoute.primary;
+    models = await listAvailableModels();
+    [planRoute, workRoute, reviewRoute] = await routes();
+    let other = planRoute.primary && planRoute.primary.model !== failed.model ? planRoute : null;
+    if (!other) other = await selectModel(org, 'plan', input.level === 'low' ? 'medium' : input.level === 'medium' ? 'high' : 'medium', { models, settings });
+    if (other.primary && other.primary.model !== failed.model) attempt = await planOnce(other.primary, CORRECTION);
+    if (!planRoute.primary) planRoute = { ...planRoute, primary: failed };
   }
   const planTurn = attempt.turn;
   if (!attempt.parsedPlan?.success) {
@@ -419,6 +427,7 @@ export async function runAskOrchestrator(
 
   // 3. Work (Rogly), with explicit-consent paid fallback only.
   let workChoice = workRoute.primary;
+  if (!workChoice) return status('No model is available for writing. Check that Rogly (or another credential) is enabled.');
   let workTurn = await call(workChoice, { viewer, projectId: input.projectId, system: writerPrompt(today), user: workUser, history: input.history.slice(-4), signal: input.signal, maxTokens: 2000 });
   stages.push({ stage: 'work', model: workChoice.model, free: workChoice.free, costMicros: addCost(workTurn) });
   if ((workTurn.role !== 'assistant' || !workTurn.text.trim()) && workRoute.fallback) {

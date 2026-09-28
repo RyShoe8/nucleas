@@ -27,6 +27,7 @@ import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { resolvePortfolioContext } from '@/lib/context/resolveCompanyContext';
 import { AiModelCatalogSnapshot } from '@/lib/ai/engine/catalog';
 import { AiEngineSettings, saveEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
+import { AiModelHealth, recordModelFailure } from '@/lib/ai/engine/health';
 
 const ROGLY_MODELS = {
   general: 'google/gemma-4-12B-it-qat-w4a16-ct',
@@ -55,7 +56,7 @@ afterAll(async () => {
 beforeEach(async () => {
   chat.mockReset();
   search.mockReset();
-  await Promise.all([Client.deleteMany({}), Project.deleteMany({}), AiModelProfile.deleteMany({}), AiEngineSettings.deleteMany({}), AiModelCatalogSnapshot.deleteMany({}), MetricSnapshot.deleteMany({}), CapabilityInvocation.deleteMany({})]);
+  await Promise.all([Client.deleteMany({}), Project.deleteMany({}), AiModelProfile.deleteMany({}), AiEngineSettings.deleteMany({}), AiModelCatalogSnapshot.deleteMany({}), MetricSnapshot.deleteMany({}), CapabilityInvocation.deleteMany({}), AiModelHealth.deleteMany({})]);
   const paid = await AiModelProfile.create({ key: 'anthropic', label: 'Anthropic', provider: 'openrouter', tier: 'commercial', protocol: 'openai-chat', endpoint: 'https://x.test/v1/chat/completions', secretCiphertext: 'x', secretLast4: '1234', enabled: true });
   const rogly = await AiModelProfile.create({ key: 'rogly', label: 'Rogly', provider: 'custom', tier: 'local_remote', protocol: 'openai-chat', endpoint: 'https://rogly.test/v1/chat/completions', secretCiphertext: 'x', secretLast4: '1234', enabled: true });
   roglyProfile = String(rogly._id);
@@ -356,5 +357,30 @@ describe('code changes', () => {
     const answer = await ask('Plan a FAQ page for Frugal Gambler');
     expect(propose).not.toHaveBeenCalled();
     expect(answer.text).toMatch(/no GitHub repository connected/);
+  });
+});
+
+describe('provider failures', () => {
+  it('when a provider rejects its key, the planner retries on a different provider, not the same account', async () => {
+    const other = await AiModelProfile.create({ key: 'openai', label: 'OpenAI', provider: 'openai', tier: 'commercial', protocol: 'openai-chat', endpoint: 'https://api.openai.test/v1/chat/completions', secretCiphertext: 'x', secretLast4: '1234', enabled: true });
+    await AiModelCatalogSnapshot.create({ profileId: other._id, modelIds: ['o3'], fetchedAt: new Date() });
+    const planners: string[] = [];
+    chat.mockImplementation(async (input) => {
+      const stage = stageOf(input);
+      if (stage === 'plan') {
+        planners.push(input.model);
+        if (planners.length === 1) {
+          // What companyChat does on a 401: bench the whole credential, then report the failure.
+          await recordModelFailure({ profileId: input.modelProfileId, model: input.model, httpStatus: 401, message: 'Invalid API key' });
+          return { role: 'status', text: 'Remote authentication was rejected.', requestId: 'r' };
+        }
+        return reply('{"kind":"answer","scope":"general","outline":[],"review":false}');
+      }
+      return reply('An answer.');
+    });
+    const answer = await ask('summarize', 'low');
+    expect(answer.role).toBe('assistant');
+    expect(planners).toEqual(['o4-mini', 'o3']);
+    expect(answer.stages[0].note).toMatch(/Remote authentication was rejected/);
   });
 });

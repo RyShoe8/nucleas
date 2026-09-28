@@ -164,10 +164,12 @@ function gatewayDebugParts(error: unknown): Record<string, string | number | boo
     contentChars: details?.contentChars,
     hasToolCalls: details?.hasToolCalls,
     hasReasoning: details?.hasReasoning,
+    providerMessage: details?.providerMessage,
   };
 }
 
 import { companyChatAdmissionMessage } from '@/lib/ai/companyChatAdmission';
+import { recordModelFailure, recordModelSuccess } from '@/lib/ai/engine/health';
 
 /**
  * Governed IDE chat via a company credential (Direct or AI Team Worker binding).
@@ -964,6 +966,8 @@ export async function attemptCompanyCredentialChat(input: {
       ),
       result: loop,
     });
+    // A working call clears any bench on this credential or model.
+    void recordModelSuccess(input.modelProfileId, gateway.model).catch(() => undefined);
     return {
       requestId: randomUUID(),
       role: 'assistant',
@@ -1001,6 +1005,13 @@ export async function attemptCompanyCredentialChat(input: {
     }).catch(() => undefined);
 
     if (error instanceof GatewayError) {
+      // Rejected keys, unpaid accounts and refused models are benched so selection picks elsewhere.
+      await recordModelFailure({
+        profileId: input.modelProfileId,
+        model: gateway.model,
+        httpStatus: error.details?.httpStatus,
+        message: error.details?.providerMessage,
+      }).catch(() => undefined);
       if (error.details?.httpStatus === 504) {
         return statusTurn(
           'HTTP 504 (upstream timeout): The upstream model gateway timed out. Please try again.',
@@ -1032,7 +1043,11 @@ export async function attemptCompanyCredentialChat(input: {
             : 'The remote response could not be validated.',
         cancelled: 'The chat request was cancelled before completion.',
       };
-      return statusTurn(messagesByCode[error.code], error.code, String(runId), {
+      // Say what the provider said (HTTP status and its own message) so failures are actionable.
+      const providerNote = !freeCredential && error.details?.httpStatus
+        ? ` ${profile.label} returned HTTP ${error.details.httpStatus}${error.details.providerMessage ? `: ${error.details.providerMessage}` : ''}.`
+        : '';
+      return statusTurn(`${messagesByCode[error.code]}${providerNote}`, error.code, String(runId), {
         costMicros: errorCost,
         reservedMicros: reservationMicros,
         noProviderFee,

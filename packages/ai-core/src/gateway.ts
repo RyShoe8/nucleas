@@ -17,6 +17,8 @@ export type GatewayErrorDetails = {
   contentChars?: number;
   hasToolCalls?: boolean;
   hasReasoning?: boolean;
+  /** The provider's own short error message (secrets stripped), e.g. "Insufficient credits". */
+  providerMessage?: string;
 };
 
 export class GatewayError extends Error {
@@ -237,14 +239,30 @@ export function visibleAssistantText(message: {
   return { text: '', hasReasoning: false };
 }
 
-function httpGatewayError(status: number): GatewayError {
-  if (status === 401 || status === 403) {
-    return new GatewayError('credentials', { kind: 'http', httpStatus: status });
+/** Anything that looks like a key or token, so a provider message never echoes one back. */
+const SECRETISH = /(sk|pk|rk|or|gsk|key|tok)[-_][A-Za-z0-9_-]{8,}|[A-Za-z0-9_-]{32,}/g;
+
+export function sanitizeProviderMessage(raw: string, secrets: string[] = []): string | undefined {
+  let text = raw.trim();
+  try {
+    const body = JSON.parse(text) as { error?: { message?: unknown } | string; message?: unknown; detail?: unknown };
+    const candidate = typeof body.error === 'object' && body.error ? body.error.message : body.error ?? body.message ?? body.detail;
+    if (typeof candidate === 'string') text = candidate;
+  } catch {
+    // Not JSON: use the text as is.
   }
-  if (status === 429) {
-    return new GatewayError('rate_limit', { kind: 'http', httpStatus: status });
-  }
-  return new GatewayError('unavailable', { kind: 'http', httpStatus: status });
+  for (const secret of secrets) if (secret.length >= 4) text = text.split(secret).join('[redacted]');
+  const clean = text.replace(/<[^>]*>/g, ' ').replace(SECRETISH, '[redacted]').replace(/\s+/g, ' ').trim();
+  return clean ? clean.slice(0, 200) : undefined;
+}
+
+async function httpGatewayError(response: Response, bearerToken: string): Promise<GatewayError> {
+  const status = response.status;
+  const providerMessage = sanitizeProviderMessage(await response.text().then((t) => t.slice(0, 4000)).catch(() => ''), [bearerToken]);
+  const details = { kind: 'http', httpStatus: status, ...(providerMessage ? { providerMessage } : {}) };
+  if (status === 401 || status === 403) return new GatewayError('credentials', details);
+  if (status === 429) return new GatewayError('rate_limit', details);
+  return new GatewayError('unavailable', details);
 }
 
 /** Called only by a server-side, budget-authorized dispatcher; never directly by a browser route. */
@@ -276,8 +294,7 @@ export async function invokeModel(
       }),
     });
     if (!response.ok) {
-      await response.body?.cancel();
-      throw httpGatewayError(response.status);
+      throw await httpGatewayError(response, config.bearerToken);
     }
     const parsed = responseSchema.parse(await readBoundedJson(response, 512000));
     const choice = parsed.choices[0]!;
@@ -345,8 +362,7 @@ export async function invokeModelWithTools(
       }),
     });
     if (!response.ok) {
-      await response.body?.cancel();
-      throw httpGatewayError(response.status);
+      throw await httpGatewayError(response, config.bearerToken);
     }
     const parsed = responseSchema.parse(await readBoundedJson(response, 512000));
     const choice = parsed.choices[0]!;

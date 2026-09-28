@@ -7,6 +7,7 @@ import { findCatalogModel, type ModelStrength } from '@/lib/ai/rolePipeline/prov
 import { lookupModelTokenRate } from '@/lib/ai/pricing/modelRates';
 import { fetchPricingCatalog, type PricingRow } from '@/lib/ai/pricing/liveCatalog';
 import { benchmarkRows, matchBenchmark, type ModelBenchmark } from './benchmarks';
+import { activeHealthIssues, isBenched, type HealthIssue } from './health';
 
 /**
  * Every model the organization can actually call: each enabled credential's live model list,
@@ -55,6 +56,8 @@ export interface AvailableModel {
   autoEligible: boolean;
   /** Artificial Analysis scores when the model is on their leaderboard. */
   benchmark: ModelBenchmark | null;
+  /** Set while the provider is rejecting this credential or model; not auto-selected meanwhile. */
+  benched?: HealthIssue | null;
 }
 
 type ProfileRow = { _id: Types.ObjectId; label: string; provider?: string; tier: string; endpoint: string; secretCiphertext: string; model?: string };
@@ -224,7 +227,15 @@ export async function listAvailableModels(options: { force?: boolean } = {}): Pr
       out.push({ profileId: String(profile._id), profileLabel: profile.label, provider: profile.provider ?? 'custom', model: id, ...described, benchmark: free ? null : matchBenchmark(id, scores) });
     }
   }
-  return dedupeAcrossCredentials(dedupeDatedVariants(out));
+  // Benched credentials and models sit out automatic selection until they recover.
+  const issues = await activeHealthIssues().catch(() => [] as HealthIssue[]);
+  const withHealth = issues.length
+    ? out.map((m) => {
+        const benched = isBenched(issues, m.profileId, m.model);
+        return benched ? { ...m, benched, autoEligible: false } : m;
+      })
+    : out;
+  return dedupeAcrossCredentials(dedupeDatedVariants(withHealth));
 }
 
 /** Aggregators resell other providers' models; a direct credential for the same model wins. */

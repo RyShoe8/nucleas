@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import User from '@/lib/models/User';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { listAvailableModels, shortlistModels } from '@/lib/ai/engine/catalog';
+import { activeHealthIssues } from '@/lib/ai/engine/health';
 import { BENCHMARK_SOURCE, benchmarkStatus, saveBenchmarkKey } from '@/lib/ai/engine/benchmarks';
 import { COST_LEVELS, NEED_LABELS, NEEDS, isCostLevel, isPriceCeiling, rankPaid, readEngineSettings, saveEngineSettings, selectModel, type Need } from '@/lib/ai/engine/select';
 
@@ -39,6 +40,10 @@ export async function GET(request: NextRequest) {
       defaultCostLevel: settings.defaultCostLevel,
       priceCeilings: settings.priceCeilings,
       benchmarks: { ...(await benchmarkStatus()), source: BENCHMARK_SOURCE },
+      health: (await activeHealthIssues()).map((h) => ({
+        ...h,
+        profileLabel: models.find((m) => m.profileId === h.profileId)?.profileLabel ?? 'Credential',
+      })),
       needs,
       rankings: Object.fromEntries(
         (['plan', 'code'] as const).map((need) => [need, rankPaid(models, need).filter((m) => m.autoEligible).slice(0, 12).map((m) => ({ profileLabel: m.profileLabel, model: m.model, price: m.blendedPricePer1M, benchmark: m.benchmark }))])

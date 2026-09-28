@@ -57,7 +57,16 @@ interface BenchmarkStatus {
     source: { name: string; url: string };
 }
 
-type EngineData = { defaultCostLevel: Level; priceCeilings: Ceilings; needs: NeedRow[]; models: ModelRow[]; benchmarks: BenchmarkStatus; rankings: Record<'plan' | 'code', RankRow[]> };
+interface HealthIssue {
+    profileId: string;
+    profileLabel: string;
+    model: string | null;
+    httpStatus: number;
+    message: string | null;
+    until: string;
+}
+
+type EngineData = { health: HealthIssue[]; defaultCostLevel: Level; priceCeilings: Ceilings; needs: NeedRow[]; models: ModelRow[]; benchmarks: BenchmarkStatus; rankings: Record<'plan' | 'code', RankRow[]> };
 
 const LEVELS: { key: Level; label: string; hint: string }[] = [
     { key: 'low', label: 'Low', hint: 'Best-scoring paid model under this ceiling plans and reviews; Rogly does the work; never pays to retry.' },
@@ -255,6 +264,25 @@ export default function AiRoutingModule() {
             </section>
 
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
+
+            {data.health.length ? (
+                <section className="rounded-md border border-amber-400/50 p-3 space-y-1">
+                    <h2 className="text-sm font-semibold text-amber-400">Skipped for now</h2>
+                    <p className="text-[11px] text-text-secondary">
+                        These providers rejected recent requests, so automatic selection skips them until the time shown or until a call succeeds.
+                    </p>
+                    <ul className="text-xs space-y-0.5">
+                        {data.health.map((h) => (
+                            <li key={`${h.profileId}:${h.model ?? ''}`}>
+                                <span className="font-medium">{h.profileLabel}</span>
+                                {h.model ? ` · ${h.model}` : ' · every model'} — HTTP {h.httpStatus}
+                                {h.message ? `: ${h.message}` : ''}
+                                <span className="text-text-secondary"> (until {new Date(h.until).toLocaleTimeString()})</span>
+                            </li>
+                        ))}
+                    </ul>
+                </section>
+            ) : null}
 
             <section className="space-y-2">
                 <h2 className="text-sm font-semibold">Benchmark ranking</h2>

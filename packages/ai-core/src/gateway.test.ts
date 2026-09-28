@@ -3,6 +3,7 @@ import {
   completionLimitBody,
   invokeModel,
   invokeModelWithTools,
+  sanitizeProviderMessage,
   toolCallReasoningBody,
   usesMaxCompletionTokens,
   validateGatewayConfiguration,
@@ -64,6 +65,19 @@ describe('remote inference gateway', () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('test-secret', { status: Number(status) }));
     await expect(invokeModel(config, request, { fetcher })).rejects.toMatchObject({ code, message: `Model gateway: ${code}` });
     expect(fetcher).toHaveBeenCalledTimes(1);
+    // The body echoed the key; the kept provider message must not contain it.
+    const error = await invokeModel(config, request, { fetcher: vi.fn<typeof fetch>().mockResolvedValue(new Response('bad key test-secret', { status: Number(status) })) }).catch((e) => e);
+    expect(JSON.stringify(error.details)).not.toContain('test-secret');
+  });
+  it("keeps the provider's own reason so failures are actionable", async () => {
+    const body = JSON.stringify({ error: { message: 'Insufficient credits. Add more using https://openrouter.ai/credits', code: 402 } });
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, { status: 402 }));
+    await expect(invokeModel(config, request, { fetcher })).rejects.toMatchObject({
+      code: 'unavailable',
+      details: { httpStatus: 402, providerMessage: 'Insufficient credits. Add more using https://openrouter.ai/credits' },
+    });
+    expect(sanitizeProviderMessage('Invalid key sk-or-v1-abcdef0123456789abcdef')).toBe('Invalid key [redacted]');
+    expect(sanitizeProviderMessage('<html><body>Bad Gateway</body></html>')).toBe('Bad Gateway');
   });
   it('rejects oversized responses', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('x'.repeat(512001)));
