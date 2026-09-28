@@ -13,7 +13,7 @@ import { getJob, type JobView } from '@/lib/jobs/jobs';
 import { processAttachments, type AttachmentRef, type ProcessedAttachment } from '@/lib/ai/attachments/uploads';
 import { renderAttachments } from '@/lib/ai/attachments/extract';
 import { withActionTools } from './actionTools';
-import { routeDirectRequest, type RouteDecision } from './directRouter';
+import { isFreeProfile, routeDirectRequest, type RouteDecision } from './directRouter';
 import type { ExtraToolSet } from '@/lib/ai/tools/runToolLoop';
 import { readEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
 
@@ -139,7 +139,9 @@ export async function askAssistant(
 
   const tools = await buildAssistantTools(viewer, context.companies);
   // Direct models can plan code changes and design jobs too, through the same approved processes.
-  const actionTools = await withActionTools(tools.toolSet, { viewer, companies: context.companies, level, signal: input.signal, onProgress: input.onProgress });
+  // A free Direct model keeps every step free: plans and jobs it starts run at the Free level too.
+  const directLevel: CostLevel = (await isFreeProfile(input.modelProfileId!)) ? 'free' : level;
+  const actionTools = await withActionTools(tools.toolSet, { viewer, companies: context.companies, level: directLevel, signal: input.signal, onProgress: input.onProgress });
   const history = prior.slice().reverse();
   const modelName = (input.model ?? '').split('/').pop();
 

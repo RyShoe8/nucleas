@@ -51,7 +51,7 @@ describe('gatewayFromModelProfile timeouts', () => {
     expect(gateway.timeoutMs).toBe(120000);
   });
 
-  it('uses 60s for commercial credentials', async () => {
+  it('uses 120s for commercial credentials too (long plan drafts exceed 60s)', async () => {
     const id = new Types.ObjectId();
     mocks.findById.mockReturnValue({
       select: () => ({
@@ -72,6 +72,6 @@ describe('gatewayFromModelProfile timeouts', () => {
     });
 
     const { gateway } = await gatewayFromModelProfile(String(id), 'gpt-4o-mini');
-    expect(gateway.timeoutMs).toBe(60000);
+    expect(gateway.timeoutMs).toBe(120000);
   });
 });

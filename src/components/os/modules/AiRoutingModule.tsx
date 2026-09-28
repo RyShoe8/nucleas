@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-type Level = 'low' | 'medium' | 'high';
+type Level = 'free' | 'low' | 'medium' | 'high';
+type PaidLevel = Exclude<Level, 'free'>;
 
 interface Choice {
     profileId: string;
@@ -73,7 +74,7 @@ interface CheckRow {
     status: 'queued' | 'running' | 'done' | 'failed';
     checkedAt: string | null;
     supports: { jsonSchema: boolean | null; jsonObject: boolean | null; tools: boolean | null };
-    scores: { json: number | null; routing: number | null; tools: number | null; grounded: number | null };
+    scores: { json: number | null; routing: number | null; tools: number | null; grounded: number | null; code: number | null };
     overall: number | null;
     avgLatencyMs: number | null;
     notes: string[];
@@ -84,15 +85,16 @@ interface CheckRow {
 type EngineData = { checks: CheckRow[]; health: HealthIssue[]; defaultCostLevel: Level; priceCeilings: Ceilings; needs: NeedRow[]; models: ModelRow[]; benchmarks: BenchmarkStatus; rankings: Record<'plan' | 'code', RankRow[]> };
 
 const LEVELS: { key: Level; label: string; hint: string }[] = [
+    { key: 'free', label: 'Free', hint: 'Rogly models only, for every step. Never calls or retries on a paid model.' },
     { key: 'low', label: 'Low', hint: 'Best-scoring paid model under this ceiling plans and reviews; Rogly does the work; never pays to retry.' },
     { key: 'medium', label: 'Medium', hint: 'Best-scoring paid model under this ceiling plans and reviews; Rogly does the work and may retry on that model.' },
     { key: 'high', label: 'High', hint: 'Best-scoring model under this ceiling plans and reviews; the best model under the Medium ceiling does the work.' },
 ];
 
-type Ceilings = Record<Level, number | null>;
+type Ceilings = Record<PaidLevel, number | null>;
 
 /** Max $ per 1M tokens for a level; empty means no ceiling. Saves on blur or Enter. */
-function CeilingInput({ level, value, onSave }: { level: Level; value: number | null; onSave: (v: number | null) => void }) {
+function CeilingInput({ level, value, onSave }: { level: PaidLevel; value: number | null; onSave: (v: number | null) => void }) {
     const [draft, setDraft] = useState(value === null ? '' : String(value));
     const commit = () => {
         const trimmed = draft.trim();
@@ -231,7 +233,7 @@ function FreeModelChecks({ rows, onRun }: { rows: CheckRow[]; onRun: () => Promi
                 </button>
             </div>
             <p className="text-[11px] text-text-secondary">
-                Nucleas runs each free model through small tests of the work Ask gives it: forced JSON, sorting requests into questions, code changes and jobs, calling the right tool, and answering only from given
+                Nucleas runs each free model through tests of the work Ask gives it: forced JSON, sorting requests (including follow-ups) into questions, code changes and jobs, calling the right tool with exact arguments over several steps, exact code edits, and answering only from given
                 facts. Rogly models are ranked by these scores. Checks are free and take a minute or two per model.
             </p>
             {rows.length ? (
@@ -244,6 +246,7 @@ function FreeModelChecks({ rows, onRun }: { rows: CheckRow[]; onRun: () => Promi
                             <th className="font-normal py-1 px-1">Routing</th>
                             <th className="font-normal py-1 px-1">Tools</th>
                             <th className="font-normal py-1 px-1">Grounded</th>
+                            <th className="font-normal py-1 px-1">Code</th>
                             <th className="font-normal py-1 px-1" title="Host supports: schema-guided JSON / tool calls">Supports</th>
                             <th className="font-normal py-1 pl-1 text-right">Speed</th>
                         </tr>
@@ -273,6 +276,7 @@ function FreeModelChecks({ rows, onRun }: { rows: CheckRow[]; onRun: () => Promi
                                     <td className="py-1 px-1">{pct(r.scores.routing)}</td>
                                     <td className="py-1 px-1">{pct(r.scores.tools)}</td>
                                     <td className="py-1 px-1">{pct(r.scores.grounded)}</td>
+                                    <td className="py-1 px-1">{pct(r.scores.code)}</td>
                                     <td className="py-1 px-1 text-[10px] text-text-secondary whitespace-nowrap">
                                         schema {yesNo(r.supports.jsonSchema)} · tools {r.toolMode === 'prompted' ? 'via prompt' : yesNo(r.supports.tools)}
                                     </td>
@@ -354,7 +358,7 @@ export default function AiRoutingModule() {
                         Refresh model lists
                     </button>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                     {LEVELS.map((l) => (
                         <div key={l.key} className={`rounded-md border p-2 ${data.defaultCostLevel === l.key ? 'border-primary bg-primary/10' : 'border-border'}`}>
                             <button type="button" onClick={() => void save({ defaultCostLevel: l.key })} className="w-full text-left" title="Make this the default level">
@@ -364,12 +368,16 @@ export default function AiRoutingModule() {
                                 </div>
                                 <div className="text-[11px] text-text-secondary">{l.hint}</div>
                             </button>
-                            <CeilingInput
-                                key={`${l.key}:${data.priceCeilings[l.key] ?? ''}`}
-                                level={l.key}
-                                value={data.priceCeilings[l.key]}
-                                onSave={(v) => void save({ priceCeilings: { [l.key]: v } })}
-                            />
+                            {l.key === 'free' ? (
+                                <div className="mt-1 text-[11px] text-text-secondary">No price ceiling: $0 always.</div>
+                            ) : (
+                                <CeilingInput
+                                    key={`${l.key}:${data.priceCeilings[l.key] ?? ''}`}
+                                    level={l.key}
+                                    value={data.priceCeilings[l.key]}
+                                    onSave={(v) => void save({ priceCeilings: { [l.key]: v } })}
+                                />
+                            )}
                         </div>
                     ))}
                 </div>

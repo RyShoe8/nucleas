@@ -1046,7 +1046,9 @@ export async function attemptCompanyCredentialChat(input: {
         configuration: 'Inference is not configured for this chat.',
         credentials: 'Remote authentication was rejected.',
         rate_limit: 'The remote provider rate-limited this request.',
-        unavailable: freeCredential
+        unavailable: error.details?.kind === 'timeout'
+          ? `${gateway.model.split('/').pop()} took longer than ${Math.round((gateway.timeoutMs ?? 60000) / 1000)} seconds to answer and was stopped.`
+          : freeCredential
           ? error.details?.httpStatus
             ? `Local model gateway returned HTTP ${error.details.httpStatus}. Check the saved model ID and the provider/router logs for this request.`
             : 'Local model request failed before a usable response was received. See the diagnostic details below; this does not establish that web search failed.'

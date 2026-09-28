@@ -15,8 +15,12 @@ import { localModelPowerScore } from '@/lib/ai/rolePipeline/modelMeta';
  * Rogly always uses its strongest model for the job.
  */
 
-export const COST_LEVELS = ['low', 'medium', 'high'] as const;
+/** free: Rogly models only, never a paid call or paid retry. The others allow paid models up to their price ceiling. */
+export const COST_LEVELS = ['free', 'low', 'medium', 'high'] as const;
 export type CostLevel = (typeof COST_LEVELS)[number];
+/** Levels that allow paid models, and so have a price ceiling. */
+export type PaidCostLevel = Exclude<CostLevel, 'free'>;
+export const PAID_COST_LEVELS: readonly PaidCostLevel[] = ['low', 'medium', 'high'];
 
 export const NEEDS = ['plan', 'review', 'write', 'research', 'code', 'vision', 'utility'] as const;
 export type Need = (typeof NEEDS)[number];
@@ -82,7 +86,7 @@ function rankByPower(models: AvailableModel[], need: Need): AvailableModel[] {
 }
 
 /** Max blended $ per 1M tokens a level may spend on a paid model; null = no ceiling. */
-export type PriceCeilings = Record<CostLevel, number | null>;
+export type PriceCeilings = Record<PaidCostLevel, number | null>;
 export const DEFAULT_PRICE_CEILINGS: PriceCeilings = { low: 1.5, medium: 5, high: null };
 
 /**
@@ -97,23 +101,29 @@ function bestUnder(pool: AvailableModel[], need: Need, ceiling: number | null): 
 
 /**
  * How well a free model did on Nucleas's own checks for the kind of work a need is (0–1), or null
- * when it has not been measured. Tool use dominates code and research; routing and forced JSON
- * dominate planning and utilities; grounded answers dominate writing.
+ * when it has not been measured. Code weighs exact edits and tool use; research weighs tool use and
+ * grounded answers; planning mixes all of them; utilities are mostly routing and forced JSON;
+ * writing is grounded answers. Results from before the code check existed skip it.
  */
 export function checkScore(m: AvailableModel, need: Need): number | null {
   const s = m.checks?.scores;
   if (!s || m.checks?.overall === null || m.checks?.overall === undefined) return null;
   const v = (n: number | null) => n ?? 0;
+  const code = s.code ?? null;
   switch (need) {
     case 'code':
+      return code === null ? 0.5 * v(s.tools) + 0.25 * v(s.grounded) + 0.25 * v(s.json) : 0.4 * code + 0.35 * v(s.tools) + 0.15 * v(s.grounded) + 0.1 * v(s.json);
     case 'research':
-      return 0.5 * v(s.tools) + 0.25 * v(s.grounded) + 0.25 * v(s.json);
+      return 0.5 * v(s.tools) + 0.4 * v(s.grounded) + 0.1 * v(s.json);
     case 'plan':
     case 'review':
+      return code === null
+        ? 0.3 * v(s.routing) + 0.3 * v(s.grounded) + 0.2 * v(s.tools) + 0.2 * v(s.json)
+        : 0.25 * v(s.routing) + 0.25 * v(s.grounded) + 0.2 * v(s.tools) + 0.15 * v(s.json) + 0.15 * code;
     case 'utility':
-      return 0.4 * v(s.routing) + 0.3 * v(s.json) + 0.3 * v(s.grounded);
+      return 0.5 * v(s.routing) + 0.3 * v(s.json) + 0.2 * v(s.grounded);
     case 'write':
-      return 0.6 * v(s.grounded) + 0.4 * v(s.json);
+      return 0.7 * v(s.grounded) + 0.3 * v(s.json);
     default:
       return null;
   }
@@ -139,6 +149,8 @@ function freeFor(models: AvailableModel[], need: Need): AvailableModel | undefin
       (a, b) =>
         tier(a) - tier(b) ||
         (checkScore(b, need) ?? 0) - (checkScore(a, need) ?? 0) ||
+        // Equal scores: the faster model (measured average reply time).
+        (a.checks?.avgLatencyMs ?? 1e9) - (b.checks?.avgLatencyMs ?? 1e9) ||
         localModelPowerScore(b.model) - localModelPowerScore(a.model) ||
         (b.contextTokens ?? 0) - (a.contextTokens ?? 0)
     )[0];
@@ -176,9 +188,11 @@ function paidFor(models: AvailableModel[], need: Need): AvailableModel[] {
 }
 
 export function selectFrom(models: AvailableModel[], need: Need, level: CostLevel, ceilings: PriceCeilings = DEFAULT_PRICE_CEILINGS): Omit<Selection, 'source'> {
-  const paid = paidFor(models, need);
   const free = freeFor(models, need);
   const base = { need, level };
+  // Free: Rogly for everything, no paid fallback of any kind.
+  if (level === 'free') return { ...base, primary: choice(free), fallback: null };
+  const paid = paidFor(models, need);
   // The strongest paid model for this task within the level's price ceiling.
   const paidPick = bestUnder(paid, need, ceilings[level]);
 
@@ -259,7 +273,8 @@ export async function selectModel(
   const pin = settings.pins[need];
   if (pin) {
     const pinned = models.find((m) => m.profileId === pin.profileId && m.model === pin.model);
-    if (pinned) return { need, level, primary: choice(pinned), fallback: null, source: 'pinned' };
+    // At the free level a paid pin does not apply.
+    if (pinned && (level !== 'free' || pinned.free)) return { need, level, primary: choice(pinned), fallback: null, source: 'pinned' };
   }
   const auto = selectFrom(models, need, level, settings.priceCeilings);
   return { ...auto, source: auto.primary ? 'auto' : 'none' };
@@ -277,7 +292,7 @@ export async function saveEngineSettings(
   }
   const set: Record<string, unknown> = { ...update };
   for (const [level, ceiling] of Object.entries(input.priceCeilings ?? {})) {
-    if (!isCostLevel(level) || !isPriceCeiling(ceiling)) return { ok: false, error: 'Price ceilings must be a dollar amount above 0, or empty for none.' };
+    if (!(PAID_COST_LEVELS as readonly string[]).includes(level) || !isPriceCeiling(ceiling)) return { ok: false, error: 'Price ceilings must be a dollar amount above 0, or empty for none.' };
     set[`priceCeilings.${level}`] = ceiling === null ? null : Math.round(ceiling * 1000) / 1000;
   }
   const unset: Record<string, ''> = {};

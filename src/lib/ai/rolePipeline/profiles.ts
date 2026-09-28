@@ -101,8 +101,8 @@ export async function gatewayFromModelProfile(
     model,
     protocol: 'openai-chat',
     bearerToken,
-    // Cold local hosts often exceed 60s; schema allows up to 120s.
-    timeoutMs: free ? 120000 : 60000,
+    // Cold local hosts and long plan drafts from paid models both exceed 60s; the schema allows up to 120s.
+    timeoutMs: 120000,
   };
   validateGatewayConfiguration(gateway);
   // Free models take tools the way the model checks found works best (native or described in the prompt).

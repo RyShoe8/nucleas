@@ -16,6 +16,8 @@ const scoresSchema = new Schema(
     tools: { type: Number, default: null },
     /** Answering from given facts and admitting when they do not say. */
     grounded: { type: Number, default: null },
+    /** Exact code edits, scored by applying them. */
+    code: { type: Number, default: null },
   },
   { _id: false }
 );
@@ -57,6 +59,7 @@ export interface CheckScores {
   routing: number | null;
   tools: number | null;
   grounded: number | null;
+  code: number | null;
 }
 
 export interface ModelCheckSummary {
@@ -97,7 +100,7 @@ export function toCheckRow(doc: LeanCheck): ModelCheckRow {
     status: doc.status,
     checkedAt: doc.checkedAt ? doc.checkedAt.toISOString() : null,
     supports: { jsonSchema: doc.supports?.jsonSchema ?? null, jsonObject: doc.supports?.jsonObject ?? null, tools: doc.supports?.tools ?? null },
-    scores: { json: doc.scores?.json ?? null, routing: doc.scores?.routing ?? null, tools: doc.scores?.tools ?? null, grounded: doc.scores?.grounded ?? null },
+    scores: { json: doc.scores?.json ?? null, routing: doc.scores?.routing ?? null, tools: doc.scores?.tools ?? null, grounded: doc.scores?.grounded ?? null, code: doc.scores?.code ?? null },
     overall: doc.overall ?? null,
     avgLatencyMs: doc.avgLatencyMs ?? null,
     notes: doc.notes ?? [],

@@ -312,7 +312,9 @@ export async function runAskOrchestrator(
     models = await listAvailableModels();
     [planRoute, workRoute, reviewRoute] = await routes();
     let other = planRoute.primary && planRoute.primary.model !== failed.model ? planRoute : null;
-    if (!other) other = await selectModel(org, 'plan', input.level === 'low' ? 'medium' : input.level === 'medium' ? 'high' : 'medium', { models, settings });
+    // Free never escalates to a paid model.
+    if (!other && input.level !== 'free') other = await selectModel(org, 'plan', input.level === 'low' ? 'medium' : input.level === 'medium' ? 'high' : 'medium', { models, settings });
+    if (!other) other = { ...planRoute, primary: null };
     if (other.primary && other.primary.model !== failed.model) {
       attempt = await planOnce(other.primary, CORRECTION);
       // The replacement answered but not in the required shape: one correction, as for the first model.

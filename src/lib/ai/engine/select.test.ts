@@ -189,17 +189,20 @@ describe('short list', () => {
   });
 });
 
-const measured = (m: AvailableModel, scores: { json: number; routing: number; tools: number; grounded: number }, tools = true): AvailableModel => ({
+const measured = (m: AvailableModel, partial: { json: number; routing: number; tools: number; grounded: number; code?: number }, tools = true): AvailableModel => {
+  const scores = { code: partial.tools, ...partial };
+  return {
   ...m,
-  checks: { status: 'done', checkedAt: '2026-09-28T00:00:00.000Z', supports: { jsonSchema: true, jsonObject: true, tools }, scores, overall: (scores.json + scores.routing + scores.tools + scores.grounded) / 4, avgLatencyMs: 900, notes: [], error: null, toolMode: 'native' },
-});
+  checks: { status: 'done', checkedAt: '2026-09-28T00:00:00.000Z', supports: { jsonSchema: true, jsonObject: true, tools }, scores, overall: (scores.json + scores.routing + scores.tools + scores.grounded + scores.code) / 5, avgLatencyMs: 900, notes: [], error: null, toolMode: 'native' },
+  };
+};
 
 describe('free models ranked by Nucleas checks', () => {
   const [gemma, coder, vl] = ROGLY;
   it('weights the checks by the kind of work', () => {
     const m = measured(gemma, { json: 1, routing: 0.5, tools: 0, grounded: 1 });
-    expect(checkScore(m, 'code')).toBeCloseTo(0.5);
-    expect(checkScore(m, 'utility')).toBeCloseTo(0.8);
+    expect(checkScore(m, 'code')).toBeCloseTo(0.25);
+    expect(checkScore(m, 'utility')).toBeCloseTo(0.75);
     expect(checkScore(m, 'write')).toBeCloseTo(1);
     expect(checkScore(gemma, 'write')).toBeNull();
   });
@@ -215,5 +218,16 @@ describe('free models ranked by Nucleas checks', () => {
   it('skips models whose host refused tool calls for tool-driven work', () => {
     const models = [gemma, measured(coder, { json: 1, routing: 1, tools: 0, grounded: 1 }, false), vl];
     expect([gemma.model, vl.model]).toContain(pick('code', 'low', models).primary);
+  });
+});
+
+describe('free level', () => {
+  it('uses only Rogly for every need, with no paid fallback, even when paid models would win', () => {
+    for (const need of ['plan', 'review', 'code', 'research', 'write', 'utility'] as const) {
+      const s = selectFrom(WITH_SCORES, need, 'free');
+      expect(s.primary?.free).toBe(true);
+      expect(s.fallback).toBeNull();
+    }
+    expect(selectFrom(PAID, 'plan', 'free').primary).toBeNull();
   });
 });

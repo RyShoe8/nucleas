@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
  */
 
 export type ChatMode = 'orchestrated' | 'direct';
-export type CostChoice = 'default' | 'low' | 'medium' | 'high';
+export type CostChoice = 'default' | 'free' | 'low' | 'medium' | 'high';
 
 export interface ProviderModel {
     id: string;
@@ -51,7 +51,7 @@ function storageSet(key: string, value: string) {
 
 export function readCostChoice(): CostChoice {
     const v = storageGet(COST_KEY);
-    return v === 'low' || v === 'medium' || v === 'high' ? v : 'default';
+    return v === 'free' || v === 'low' || v === 'medium' || v === 'high' ? v : 'default';
 }
 
 export function writeCostChoice(v: CostChoice) {
@@ -59,7 +59,7 @@ export function writeCostChoice(v: CostChoice) {
 }
 
 /** The request field for a cost choice: omitted for the organization default. */
-export function levelParam(cost: CostChoice): { level?: 'low' | 'medium' | 'high' } {
+export function levelParam(cost: CostChoice): { level?: Exclude<CostChoice, 'default'> } {
     return cost === 'default' ? {} : { level: cost };
 }
 
@@ -138,11 +138,12 @@ export function CostSelect({ value, onChange, disabled }: { value: CostChoice; o
                 writeCostChoice(v);
                 onChange(v);
             }}
-            title="Each level uses the best-scoring model under its price ceiling (set by admins in the AI Engine window)."
+            title="Free uses only Rogly models. The other levels use the best-scoring model under their price ceiling (set by admins in the AI Engine window)."
             className={`${CONTROL} px-2`}
             aria-label="Cost level"
         >
             <option value="default">Cost: default</option>
+            <option value="free">Cost: free (Rogly only)</option>
             <option value="low">Cost: low</option>
             <option value="medium">Cost: medium</option>
             <option value="high">Cost: high</option>

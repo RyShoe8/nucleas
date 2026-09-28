@@ -398,7 +398,7 @@ export async function invokeModel(
   } catch (error) {
     if (error instanceof GatewayError) throw error;
     if (options.signal?.aborted) throw new GatewayError('cancelled', { kind: 'cancelled' });
-    throw new GatewayError('unavailable', { kind: 'transport' });
+    throw new GatewayError('unavailable', { kind: controller.signal.aborted ? 'timeout' : 'transport' });
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener('abort', cancel);
@@ -484,7 +484,7 @@ export async function invokeModelWithTools(
   } catch (error) {
     if (error instanceof GatewayError) throw error;
     if (options.signal?.aborted) throw new GatewayError('cancelled', { kind: 'cancelled' });
-    throw new GatewayError('unavailable', { kind: 'transport' });
+    throw new GatewayError('unavailable', { kind: controller.signal.aborted ? 'timeout' : 'transport' });
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener('abort', cancel);

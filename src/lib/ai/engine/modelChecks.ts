@@ -8,11 +8,27 @@ import { holdDispatchLock, releaseDispatchLock, waitForDispatchLock } from '@/li
 import { extractJson } from '@/lib/ai/json';
 import { listAvailableModels } from './catalog';
 import { AiModelCheck, toCheckRow, type CheckScores, type ModelCheckRow } from './checkResults';
+import { routerPrompt, routerUserMessage, routeSchema, parseDecision } from '@/lib/ai/company/directRouter';
+import {
+  applyEdits,
+  CHECK_CODE_COMPANIES,
+  CHECK_COMPANIES,
+  CHECK_TOOLS,
+  EDIT_CASES,
+  EDIT_SCHEMA,
+  EDIT_SYSTEM,
+  GROUNDED_CASES,
+  GROUNDED_SYSTEM,
+  ROUTING_CASES,
+  TOOL_CASES,
+  type ToolMessages,
+} from './checkCases';
 
 /**
  * Nucleas measures its free models by running them: which request features the host supports
  * (forced JSON, tool calls) and how well each model does the small jobs Ask hands it: deciding
- * what a request is, calling the right tool, answering only from given facts. Checks cost nothing
+ * what a request is, calling the right tool, answering only from given facts, editing code exactly
+ * (cases in checkCases.ts). Checks cost nothing
  * on free models and take the shared lock like any chat, one model at a time.
  */
 
@@ -23,7 +39,7 @@ export type JsonMode = 'json_schema' | 'json_object' | 'prompt';
 /** How the checks reach a model; the real one goes through the gateway, tests pass a fake. */
 export interface CheckCaller {
   plain(messages: Message[], format?: ResponseFormat): Promise<{ text: string; latencyMs: number }>;
-  tools(messages: Message[], tools: ToolDefinition[], mode: ToolMode): Promise<{ text: string; toolCalls: { name: string; arguments: string }[]; latencyMs: number }>;
+  tools(messages: ToolMessages, tools: ToolDefinition[], mode: ToolMode): Promise<{ text: string; toolCalls: { name: string; arguments: string }[]; latencyMs: number }>;
 }
 
 export type ToolMode = 'native' | 'prompted';
@@ -44,33 +60,6 @@ function refusedShape(error: unknown): boolean {
   return error instanceof GatewayError && (error.details?.httpStatus === 400 || error.details?.httpStatus === 422);
 }
 
-export const ROUTES = ['answer', 'code_change', 'job'] as const;
-export type Route = (typeof ROUTES)[number];
-
-export const ROUTE_SYSTEM = [
-  'You sort requests sent to Nucleas, the operating system for a group of companies.',
-  'answer: a question about the companies, their numbers or their work that can be answered now.',
-  'code_change: a change to a website or app (fix, remove, add or edit something on a page or in the code).',
-  'job: non-code work to carry out once or on a repeat (research, collecting details into a catalog, outreach, content).',
-  'Reply with JSON only: {"route": "answer" | "code_change" | "job"}.',
-].join('\n');
-
-export const ROUTE_SCHEMA = {
-  type: 'object',
-  properties: { route: { type: 'string', enum: [...ROUTES] } },
-  required: ['route'],
-  additionalProperties: false,
-};
-
-const ROUTING_CASES: { request: string; route: Route }[] = [
-  { request: "How many visitors did PlayBound get last week compared to the week before?", route: 'answer' },
-  { request: 'On the game servers page, remove the OpenHV listing that shows under OpenRA.', route: 'code_change' },
-  { request: 'Every day, earn one dofollow backlink for a PlayBound page.', route: 'job' },
-  { request: 'The footer on frugalgambler.club has a typo in the copyright line, fix it.', route: 'code_change' },
-  { request: 'Research the game Factorio in detail and add its details to the PlayBound catalog.', route: 'job' },
-  { request: 'Which of our companies made the most revenue this month?', route: 'answer' },
-];
-
 const EXTRACT_SCHEMA = {
   type: 'object',
   properties: { city: { type: 'string' }, population: { type: 'integer' } },
@@ -82,59 +71,6 @@ const EXTRACT_MESSAGES: Message[] = [
   { role: 'user', content: 'Springfield, the county seat, counted 167,882 residents in its latest census.' },
 ];
 
-const CHECK_TOOLS: ToolDefinition[] = [
-  {
-    type: 'function',
-    function: {
-      name: 'company_metrics',
-      description: "Read a company's recorded numbers: visitors, revenue or signups over a period.",
-      parameters: {
-        type: 'object',
-        properties: {
-          company: { type: 'string', description: 'Company name' },
-          metric: { type: 'string', enum: ['visitors', 'revenue', 'signups'] },
-          days: { type: 'integer', description: 'How many days back' },
-        },
-        required: ['company', 'metric'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'repo_search',
-      description: "Search a company's code repository for text and return matching files and lines.",
-      parameters: {
-        type: 'object',
-        properties: { company: { type: 'string' }, query: { type: 'string', description: 'Text to find' } },
-        required: ['company', 'query'],
-      },
-    },
-  },
-];
-
-const TOOL_CASES: { request: string; expect: (name: string, args: Record<string, unknown>) => boolean }[] = [
-  {
-    request: 'How many visitors did Playbound.club have in the last 7 days?',
-    expect: (name, args) => name === 'company_metrics' && /playbound/i.test(String(args.company)) && args.metric === 'visitors',
-  },
-  {
-    request: 'Where in the PlayBound code is the OpenHV game server listing defined?',
-    expect: (name, args) => name === 'repo_search' && /openhv/i.test(String(args.query)),
-  },
-];
-
-const FACTS = 'PlayBound release notes. Version 2.3 shipped on 14 August 2026 and added 41 new games. The catalog now holds 1,204 games. Search was rebuilt to rank by player count.';
-const GROUNDED_SYSTEM = `Answer only from these notes. If the notes do not say, reply that the notes do not say.\n\n${FACTS}`;
-const GROUNDED_CASES: { question: string; pass: (text: string) => boolean }[] = [
-  { question: 'How many games does the catalog hold now?', pass: (t) => /1[,.\s]?204/.test(t) },
-  { question: 'When did version 2.3 ship?', pass: (t) => /14/.test(t) && /aug/i.test(t) },
-  {
-    question: 'Who designed the new logo in version 2.3?',
-    pass: (t) => /(not|n't)\s+(say|said|mention|state|specif|includ|provide|contain)|no (information|mention|details?)|unknown|not (in|found in) the notes/i.test(t),
-  },
-];
-
 function formatFor(mode: JsonMode, name: string, schema: Record<string, unknown>): ResponseFormat {
   if (mode === 'json_schema') return { type: 'json_schema', name, schema };
   if (mode === 'json_object') return { type: 'json_object' };
@@ -143,6 +79,7 @@ function formatFor(mode: JsonMode, name: string, schema: Record<string, unknown>
 
 const mean = (values: number[]) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0);
 const round = (n: number) => Math.round(n * 100) / 100;
+const clip = (text: string, n = 100) => text.replace(/\s+/g, ' ').trim().slice(0, n);
 
 /** Runs every check against one model. Transport failures propagate; refused request shapes are recorded. */
 export async function checkModel(caller: CheckCaller, onProgress?: (text: string) => void): Promise<CheckOutcome> {
@@ -173,23 +110,24 @@ export async function checkModel(caller: CheckCaller, onProgress?: (text: string
   }
   if (supports.jsonSchema) supports.jsonObject = true;
 
-  // 2. Routing, in the best JSON mode the host offers.
+  // 2. Routing with the real Direct-mode router prompt: route and company both count.
   onProgress?.('Checking request routing');
   const routed: number[] = [];
   for (const item of ROUTING_CASES) {
     const reply = await caller.plain(
       [
-        { role: 'system', content: ROUTE_SYSTEM },
-        { role: 'user', content: item.request },
+        { role: 'system', content: routerPrompt(CHECK_COMPANIES, CHECK_CODE_COMPANIES) },
+        { role: 'user', content: routerUserMessage(item.prior ?? [], item.text) },
       ],
-      formatFor(jsonMode, 'route', ROUTE_SCHEMA)
+      formatFor(jsonMode, 'route', routeSchema(CHECK_COMPANIES))
     );
     latencies.push(reply.latencyMs);
-    const parsed = extractJson(reply.text) as { route?: unknown } | null;
-    jsonResults.push(parsed && (ROUTES as readonly string[]).includes(String(parsed.route)) ? 1 : 0);
-    const correct = parsed?.route === item.route;
-    routed.push(correct ? 1 : 0);
-    if (!correct) notes.push(`Routed "${item.request.slice(0, 50)}…" as ${parsed?.route ?? 'nothing'} (expected ${item.route}).`);
+    const decision = parseDecision(reply.text, CHECK_COMPANIES, item.text);
+    jsonResults.push(decision ? 1 : 0);
+    const routeOk = decision?.route === item.route;
+    const companyOk = decision ? decision.company === item.company : false;
+    routed.push(routeOk ? (companyOk ? 1 : 0.5) : 0);
+    if (!routeOk || !companyOk) notes.push(`Routing "${clip(item.text, 50)}": got ${decision ? `${decision.route} / ${decision.company ?? 'none'}` : 'no decision'}, expected ${item.route} / ${item.company ?? 'none'}.`);
   }
 
   // 3. Tool calls: the provider's tools parameter first; when that misses, tools described in the
@@ -201,29 +139,24 @@ export async function checkModel(caller: CheckCaller, onProgress?: (text: string
     let accepted = false;
     for (const item of TOOL_CASES) {
       try {
-        const reply = await caller.tools(
-          [
-            { role: 'system', content: 'You help run a group of companies. Use a tool when it can answer the request.' },
-            { role: 'user', content: item.request },
-          ],
-          CHECK_TOOLS,
-          mode
-        );
+        const reply = await caller.tools(item.messages, CHECK_TOOLS, mode);
         latencies.push(reply.latencyMs);
         accepted = true;
-        const call = reply.toolCalls[0];
-        let args: Record<string, unknown> = {};
-        try {
-          args = call ? (JSON.parse(call.arguments || '{}') as Record<string, unknown>) : {};
-        } catch {
-          modeNotes.push(`${mode}: tool arguments were not valid JSON.`);
+        const raw = reply.toolCalls[0];
+        let call: { name: string; args: Record<string, unknown> } | null = null;
+        if (raw) {
+          try {
+            call = { name: raw.name, args: JSON.parse(raw.arguments || '{}') as Record<string, unknown> };
+          } catch {
+            call = { name: raw.name, args: {} };
+            modeNotes.push(`${mode}: tool arguments were not valid JSON (${item.label}).`);
+          }
         }
-        const ok = Boolean(call && item.expect(call.name, args));
+        const ok = item.expect(call);
         results.push(ok ? 1 : 0);
         if (!ok) {
-          const said = reply.text.replace(/\s+/g, ' ').trim().slice(0, 120);
           modeNotes.push(
-            call ? `${mode}: called ${call.name} ${call.arguments.slice(0, 80)} for "${item.request.slice(0, 40)}…".` : `${mode}: no tool call for "${item.request.slice(0, 40)}…"; replied: ${said || '(nothing)'}`
+            raw ? `${mode} (${item.label}): called ${raw.name} ${clip(raw.arguments, 80)}` : `${mode} (${item.label}): no tool call; replied: ${clip(reply.text) || '(nothing)'}`
           );
         }
       } catch (error) {
@@ -239,18 +172,19 @@ export async function checkModel(caller: CheckCaller, onProgress?: (text: string
   supports.tools = native.accepted;
   let toolMode: ToolMode = 'native';
   let toolScore = native.score;
-  notes.push(...native.notes);
+  let toolNotes = native.notes;
   if (native.score < 1) {
     onProgress?.('Checking tools described in the prompt');
     const prompted = await runToolCases('prompted');
-    notes.push(...prompted.notes);
     if (prompted.score > native.score) {
       toolMode = 'prompted';
       toolScore = prompted.score;
+      toolNotes = prompted.notes;
     }
   }
+  notes.push(...toolNotes);
 
-  // 4. Grounded answers.
+  // 4. Grounded answers: combine facts, resist common knowledge, admit what the notes do not say.
   onProgress?.('Checking grounded answers');
   const grounded: number[] = [];
   for (const item of GROUNDED_CASES) {
@@ -261,7 +195,27 @@ export async function checkModel(caller: CheckCaller, onProgress?: (text: string
     latencies.push(reply.latencyMs);
     const ok = item.pass(reply.text);
     grounded.push(ok ? 1 : 0);
-    if (!ok) notes.push(`Grounded answer missed: "${item.question}"`);
+    if (!ok) notes.push(`Grounded "${item.question}": ${clip(reply.text)}`);
+  }
+
+  // 5. Code edits, scored by applying them.
+  onProgress?.('Checking code edits');
+  const coded: number[] = [];
+  for (const item of EDIT_CASES) {
+    const reply = await caller.plain(
+      [
+        { role: 'system', content: EDIT_SYSTEM },
+        { role: 'user', content: `File ${item.path}:\n\`\`\`ts\n${item.file}\`\`\`\n\nTask: ${item.task}` },
+      ],
+      formatFor(jsonMode, 'edits', EDIT_SCHEMA)
+    );
+    latencies.push(reply.latencyMs);
+    const parsed = extractJson(reply.text) as { edits?: unknown } | null;
+    jsonResults.push(parsed && Array.isArray(parsed.edits) ? 1 : 0);
+    const result = parsed ? applyEdits(item.file, parsed.edits) : null;
+    const ok = result !== null && item.pass(result);
+    coded.push(ok ? 1 : 0);
+    if (!ok) notes.push(`Code edit (${item.label}): ${result === null ? 'edits did not apply' : 'wrong result'}.`);
   }
 
   const scores: CheckScores = {
@@ -269,15 +223,16 @@ export async function checkModel(caller: CheckCaller, onProgress?: (text: string
     routing: round(mean(routed)),
     tools: round(toolScore),
     grounded: round(mean(grounded)),
+    code: round(mean(coded)),
   };
   return {
     supports,
     jsonMode,
     toolMode,
     scores,
-    overall: round(mean([scores.json!, scores.routing!, scores.tools!, scores.grounded!])),
+    overall: round(mean([scores.json!, scores.routing!, scores.tools!, scores.grounded!, scores.code!])),
     avgLatencyMs: latencies.length ? Math.round(mean(latencies)) : null,
-    notes: notes.slice(0, 12),
+    notes: notes.slice(0, 20),
   };
 }
 

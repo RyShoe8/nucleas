@@ -8,6 +8,7 @@ import { isFreeCredential } from '@/lib/ai/rolePipeline/modelMeta';
 import { holdDispatchLock, releaseDispatchLock, waitForDispatchLock } from '@/lib/ai/control/dispatchLock';
 import { AiModelCheck } from '@/lib/ai/engine/checkResults';
 import { extractJson } from '@/lib/ai/json';
+import { AiModelProfile } from '@/lib/models/AiModelProfile';
 
 /**
  * Direct mode with a free model: the model first sorts the request (forced JSON), then Nucleas
@@ -65,7 +66,8 @@ export function parseDecision(text: string, companies: string[], fallbackRequest
   return { route: parsed.route as DirectRoute, company: named ?? null, request };
 }
 
-function conversation(prior: Turn[], text: string): string {
+/** The router's user message: recent conversation (for follow-ups) and the latest message. */
+export function routerUserMessage(prior: Turn[], text: string): string {
   const recent = prior
     .filter((t) => t.role !== 'status')
     .slice(-6)
@@ -113,7 +115,7 @@ export async function routeDirectRequest(input: {
       role: 'worker',
       messages: [
         { role: 'system', content: routerPrompt(input.companies, input.codeCompanies) },
-        { role: 'user', content: conversation(input.prior, input.text) },
+        { role: 'user', content: routerUserMessage(input.prior, input.text) },
       ],
       maxOutputTokens: 2048,
       responseFormat,
@@ -124,4 +126,11 @@ export async function routeDirectRequest(input: {
   } finally {
     await releaseDispatchLock(token);
   }
+}
+
+/** True when the credential is a free (Rogly/local) one: Direct then keeps every step free. */
+export async function isFreeProfile(profileId: string): Promise<boolean> {
+  if (!Types.ObjectId.isValid(profileId) || mongoose.connection.readyState !== 1) return false;
+  const row = await AiModelProfile.findById(profileId).select('provider tier').lean<{ provider?: string; tier?: string }>();
+  return Boolean(row && isFreeCredential({ provider: row.provider, tier: row.tier }));
 }
