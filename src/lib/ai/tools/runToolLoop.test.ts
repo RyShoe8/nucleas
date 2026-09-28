@@ -9,11 +9,13 @@ vi.mock('@/lib/models/AiControl', () => ({
 }));
 
 const mockInvokeModelWithTools = vi.fn();
+const mockInvokeModel = vi.fn();
 vi.mock('@nucleas/ai-core/gateway', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@nucleas/ai-core/gateway')>();
   return {
     ...actual,
     invokeModelWithTools: (...args: unknown[]) => mockInvokeModelWithTools(...args),
+    invokeModel: (...args: unknown[]) => mockInvokeModel(...args),
   };
 });
 
@@ -101,7 +103,7 @@ describe('runIdeToolLoop message compaction', () => {
       round++;
       if (round > 5) {
         // After compaction, messages[0] must be the system prompt, and messages[1] must be the active user task
-        expect(req.messages[0]).toMatchObject({ role: 'system', content: 'System prompt' });
+        expect(req.messages[0]).toMatchObject({ role: 'system', content: expect.stringMatching(/^System prompt\n\nYou can use tools for at most \d+ rounds/) });
         expect(req.messages[1]).toMatchObject({ role: 'user', content: 'Active user blog request' });
         // The old history request must NOT be at index 1
         expect(req.messages[1].content).not.toBe('Old history request about notifications');
@@ -194,5 +196,40 @@ describe('runIdeToolLoop extra tools', () => {
     expect(offered).not.toContain('repo_read');
     expect(execute).toHaveBeenCalledWith('company_metrics', '{"days":28}', { runId });
     expect(result.content).toBe('Sessions were 42.');
+  });
+});
+
+describe('runIdeToolLoop tool budget', () => {
+  it('warns before the budget runs out and, when it does, writes the answer without tools from the evidence', async () => {
+    mockInvokeModelWithTools.mockReset();
+    mockInvokeModel.mockReset();
+    const seen: string[][] = [];
+    mockInvokeModelWithTools.mockImplementation(async (_gateway, req) => {
+      seen.push(req.messages.map((m: { role: string; content: string | null }) => `${m.role}:${m.content ?? ''}`));
+      // A model that never stops reading files.
+      return { content: '', toolCalls: [{ id: `c${seen.length}`, type: 'function', function: { name: 'repo_read', arguments: '{"path":"src/file.ts"}' } }], inputTokens: 10, outputTokens: 2, latencyMs: 1 };
+    });
+    mockInvokeModel.mockResolvedValue({ content: 'Plan: remove OpenHV from the OpenRA editions list.', model: 'm', inputTokens: 50, outputTokens: 20, latencyMs: 1, finishReason: 'stop' });
+
+    const result = await runIdeToolLoop({
+      gateway: { endpoint: 'https://x.test', model: 'm' } as never,
+      messages: [{ role: 'system', content: 'You plan.' }, { role: 'user', content: 'Fix OpenHV listing' }],
+      maxOutputTokens: 100,
+      includeImageTool: false,
+      maxRounds: 8,
+      organizationId: 'org',
+      projectId: new Types.ObjectId(),
+      userId: 'u',
+      runId: new Types.ObjectId(),
+    });
+
+    expect(seen).toHaveLength(8);
+    expect(seen[0][0]).toContain('at most 8 rounds');
+    expect(seen[5].some((m) => m.includes('Only 3 tool rounds remain'))).toBe(true);
+    const final = mockInvokeModel.mock.calls[0][1];
+    expect(final.messages[1].content).toContain('Evidence you gathered with tools');
+    expect(final.messages[1].content).toContain('src/file.ts');
+    expect(result.content).toBe('Plan: remove OpenHV from the OpenRA editions list.');
+    expect(result.inputTokens).toBe(8 * 10 + 50);
   });
 });

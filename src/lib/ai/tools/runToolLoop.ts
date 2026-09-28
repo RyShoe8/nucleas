@@ -1,6 +1,6 @@
 import 'server-only';
 import type { GatewayConfiguration } from '@nucleas/ai-core/gateway';
-import { GatewayError, invokeModelWithTools } from '@nucleas/ai-core/gateway';
+import { GatewayError, invokeModel, invokeModelWithTools } from '@nucleas/ai-core/gateway';
 import type { ToolCall, ToolDefinition } from '@nucleas/ai-contracts';
 import { Types } from 'mongoose';
 import { AiRunEvent } from '@/lib/models/AiControl';
@@ -69,11 +69,15 @@ export async function runIdeToolLoop(input: {
     Math.max(input.maxRounds ?? DEFAULT_MAX_ROUNDS, 1),
     DEEP_REPO_MAX_ROUNDS
   );
-  const messages: LoopMessage[] = [...input.messages];
+  // Tell the model its budget so it stops exploring in time to answer.
+  const budgetNote = `You can use tools for at most ${maxRounds} rounds. Gather only what you need, then give your final answer.`;
+  const messages: LoopMessage[] = input.messages.map((m) =>
+    m.role === 'system' ? { ...m, content: `${m.content ?? ''}\n\n${budgetNote}` } : m
+  );
   const initialSystemMessage =
-    input.messages.find((m) => m.role === 'system') ?? {
+    messages.find((m) => m.role === 'system') ?? {
       role: 'system' as const,
-      content: 'You are an AI assistant.',
+      content: `You are an AI assistant. ${budgetNote}`,
     };
   const initialTaskMessage =
     [...input.messages].reverse().find((m) => m.role === 'user') ??
@@ -88,6 +92,9 @@ export async function runIdeToolLoop(input: {
   try {
     for (let round = 0; round < maxRounds; round += 1) {
       if (input.signal?.aborted) throw new GatewayError('cancelled');
+      if (maxRounds >= 6 && round === maxRounds - 3) {
+        messages.push({ role: 'user', content: 'Only 3 tool rounds remain. Finish gathering evidence and write your final answer.' });
+      }
 
       // Message compaction to prevent exceeding gateway 40-message limit (F14)
       // Must preserve assistant-tool turn pairing and anchor on the actual user task message
@@ -271,7 +278,17 @@ export async function runIdeToolLoop(input: {
       }
     }
 
-    throw new GatewayError('invalid_response');
+    // Out of tool rounds: one last call without tools writes the answer from what was gathered,
+    // instead of discarding the whole investigation.
+    const final = await invokeModel(
+      input.gateway,
+      { role: 'architect', messages: finalAnswerMessages(initialSystemMessage.content ?? '', initialTaskMessage?.content ?? '', messages), maxOutputTokens: input.maxOutputTokens },
+      { signal: input.signal }
+    );
+    latencyMs += final.latencyMs;
+    if (final.inputTokens != null) inputTokens = (inputTokens ?? 0) + final.inputTokens;
+    if (final.outputTokens != null) outputTokens = (outputTokens ?? 0) + final.outputTokens;
+    return { content: final.content.trim().slice(0, 16000), toolCallsMade, artifacts, inputTokens, outputTokens, latencyMs };
   } catch (err) {
     if (err && typeof err === 'object') {
       (err as { usage?: { inputTokens: number | null; outputTokens: number | null; latencyMs: number } }).usage = {
@@ -282,4 +299,34 @@ export async function runIdeToolLoop(input: {
     }
     throw err;
   }
+}
+
+/**
+ * The tool-free closing request: the original instructions and task plus the most recent tool
+ * results, within the plain-chat limits (48k characters, 32k per message).
+ */
+export function finalAnswerMessages(system: string, task: string, transcript: LoopMessage[]): { role: 'system' | 'user'; content: string }[] {
+  const evidence: string[] = [];
+  let used = 0;
+  for (const m of [...transcript].reverse()) {
+    if (m.role !== 'tool' || !m.content) continue;
+    const piece = m.content.slice(0, 4000);
+    if (used + piece.length > 24_000) break;
+    evidence.unshift(piece);
+    used += piece.length;
+  }
+  return [
+    { role: 'system', content: system.slice(0, 10_000) },
+    {
+      role: 'user',
+      content: [
+        task.slice(0, 8000),
+        '',
+        '# Evidence you gathered with tools (most recent)',
+        evidence.join('\n---\n') || '(none)',
+        '',
+        'Your tool budget is used up. Do not ask for more tools. Write your final answer now from this evidence, and say what you could not verify.',
+      ].join('\n'),
+    },
+  ];
 }

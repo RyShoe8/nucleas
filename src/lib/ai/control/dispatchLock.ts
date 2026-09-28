@@ -89,3 +89,21 @@ export function watchAbortReleaseDispatchLock(
   signal.addEventListener('abort', onAbort, { once: true });
   return () => signal.removeEventListener('abort', onAbort);
 }
+
+/**
+ * Waits (up to maxWaitMs) until the shared lock can be claimed, instead of failing straight away
+ * when another run is using the shared local model. Throws unavailable after the wait.
+ */
+export async function waitForDispatchLock(options: { maxWaitMs?: number; pollMs?: number; signal?: AbortSignal } = {}): Promise<void> {
+  const deadline = Date.now() + (options.maxWaitMs ?? 90_000);
+  for (;;) {
+    try {
+      await assertDispatchLockClaimable(new Date());
+      return;
+    } catch (error) {
+      if (!(error instanceof GatewayError) || Date.now() + (options.pollMs ?? 2000) > deadline) throw error;
+    }
+    if (options.signal?.aborted) throw new GatewayError('cancelled');
+    await new Promise((resolve) => setTimeout(resolve, options.pollMs ?? 2000));
+  }
+}

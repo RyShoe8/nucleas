@@ -15,6 +15,7 @@ import {
   assertDispatchLockClaimable,
   claimDispatchLock,
   releaseDispatchLock,
+  waitForDispatchLock,
   watchAbortReleaseDispatchLock,
 } from '@/lib/ai/control/dispatchLock';
 import { aiTransaction } from '@/lib/ai/control/transaction';
@@ -225,6 +226,9 @@ export async function attemptCompanyCredentialChat(input: {
   let reservationMicros = 0;
 
   try {
+    // The shared lock protects the shared free/local model (one request at a time). Paid providers
+    // take many requests at once, so they skip it. Free calls wait their turn instead of failing.
+    if (freeCredential) await waitForDispatchLock({ signal: input.signal });
     const admitted = await aiTransaction(async (session) => {
       policy = await getPipelineInferencePolicy(
         input.organizationId,
@@ -234,7 +238,7 @@ export async function attemptCompanyCredentialChat(input: {
       );
       reservationMicros = freeCredential ? 0 : policy.reservationMicros;
       const now = new Date();
-      await assertDispatchLockClaimable(now, session);
+      if (freeCredential) await assertDispatchLockClaimable(now, session);
       // Company credentials call the org's own provider (OpenAI, local host, etc.).
       // Do not consume platform shared remote spacing/daily counters meant for the Nucleas shared endpoint.
 
@@ -254,12 +258,14 @@ export async function attemptCompanyCredentialChat(input: {
         { session }
       );
 
-      await claimDispatchLock({
-        token: lockToken,
-        expiresAt: new Date(now.getTime() + LOCK_MS),
-        runId: run._id,
-        session,
-      });
+      if (freeCredential) {
+        await claimDispatchLock({
+          token: lockToken,
+          expiresAt: new Date(now.getTime() + LOCK_MS),
+          runId: run._id,
+          session,
+        });
+      }
 
       if (reservationMicros > 0) {
         const period = now.toISOString().slice(0, 7);
