@@ -3,7 +3,7 @@ import User from '@/lib/models/User';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { listAvailableModels, shortlistModels } from '@/lib/ai/engine/catalog';
 import { BENCHMARK_SOURCE, benchmarkStatus, saveBenchmarkKey } from '@/lib/ai/engine/benchmarks';
-import { COST_LEVELS, NEED_LABELS, NEEDS, isCostLevel, rankPaid, readEngineSettings, saveEngineSettings, selectModel, type Need } from '@/lib/ai/engine/select';
+import { COST_LEVELS, NEED_LABELS, NEEDS, isCostLevel, isPriceCeiling, rankPaid, readEngineSettings, saveEngineSettings, selectModel, type Need } from '@/lib/ai/engine/select';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,6 +37,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json(
     {
       defaultCostLevel: settings.defaultCostLevel,
+      priceCeilings: settings.priceCeilings,
       benchmarks: { ...(await benchmarkStatus()), source: BENCHMARK_SOURCE },
       needs,
       rankings: Object.fromEntries(
@@ -48,11 +49,11 @@ export async function GET(request: NextRequest) {
   );
 }
 
-/** Set the org default cost level, pin/unpin a model for a need, or set/remove the benchmark API key. */
+/** Set the org default cost level or price ceilings, pin/unpin a model for a need, or set/remove the benchmark API key. */
 export async function PUT(request: NextRequest) {
   const viewer = await requireAdmin(request);
   if (viewer instanceof NextResponse) return viewer;
-  const body = (await request.json().catch(() => ({}))) as { defaultCostLevel?: unknown; pin?: { need?: unknown; profileId?: unknown; model?: unknown }; unpin?: unknown; benchmarkApiKey?: unknown };
+  const body = (await request.json().catch(() => ({}))) as { defaultCostLevel?: unknown; pin?: { need?: unknown; profileId?: unknown; model?: unknown }; unpin?: unknown; benchmarkApiKey?: unknown; priceCeilings?: unknown };
   if ('benchmarkApiKey' in body) {
     const key = typeof body.benchmarkApiKey === 'string' && body.benchmarkApiKey.trim() ? body.benchmarkApiKey : null;
     const saved = await saveBenchmarkKey(key);
@@ -64,6 +65,10 @@ export async function PUT(request: NextRequest) {
     String(viewer.organizationId),
     {
       defaultCostLevel: isCostLevel(body.defaultCostLevel) ? body.defaultCostLevel : undefined,
+      priceCeilings:
+        body.priceCeilings && typeof body.priceCeilings === 'object'
+          ? Object.fromEntries(Object.entries(body.priceCeilings as Record<string, unknown>).filter(([level, v]) => isCostLevel(level) && isPriceCeiling(v)))
+          : undefined,
       pin:
         body.pin && need(body.pin.need) && typeof body.pin.profileId === 'string' && typeof body.pin.model === 'string'
           ? { need: need(body.pin.need)!, profileId: body.pin.profileId, model: body.pin.model }

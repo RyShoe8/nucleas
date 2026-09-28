@@ -29,6 +29,21 @@ const pick = (need: Need, level: CostLevel, models = ALL) => {
   return { primary: s.primary?.model ?? null, fallback: s.fallback?.model ?? null };
 };
 
+const scored = (id: string, price: number, intelligence: number, coding: number) => ({ ...model(id, false, price), benchmark: { intelligence, coding, math: null, source: id } });
+const SCORED = [
+  scored('anthropic/claude-opus-5.5', 8, 58, 80),
+  scored('anthropic/claude-fable-5.1', 20, 53, 82),
+  scored('gpt-6-astra', 20, 52.7, 77),
+  scored('gpt-6-sol', 4, 47.5, 60),
+  scored('meta/muse-spark-1.3', 2, 48.1, 76),
+  scored('xiaomi/mimo-v2.6-pro', 0.54, 46.3, 70),
+  scored('gemini-3.8-flash', 1.5, 40.9, 75),
+  scored('gpt-4o', 4.4, 30, 40),
+  model('some-unpriced-model', false, null),
+  model('unscored-model', false, 3),
+];
+const WITH_SCORES = [...ROGLY, ...SCORED];
+
 describe('automatic model selection', () => {
   it('Rogly: always the strongest free model that fits the job', () => {
     expect(pick('write', 'low').primary).toBe('google/gemma-4-12B-it-qat-w4a16-ct');
@@ -38,47 +53,54 @@ describe('automatic model selection', () => {
     expect(pick('vision', 'low').primary).toBe('Qwen/Qwen3-VL-8B-Thinking-FP8');
   });
 
-  it('paid picks by power rank for the task: high #1, medium #2, low #3', () => {
-    expect(pick('plan', 'high').primary).toBe('gpt-6-astra');
-    expect(pick('plan', 'medium').primary).toBe('gpt-5.6-sol');
-    expect(pick('plan', 'low').primary).toBe('anthropic/claude-sonnet-5');
-    expect(pick('review', 'low').primary).toBe('anthropic/claude-sonnet-5');
+  it('each level plans with the best-scoring model under its price ceiling, from every provider', () => {
+    expect(pick('plan', 'high', WITH_SCORES).primary).toBe('anthropic/claude-opus-5.5');
+    expect(pick('plan', 'medium', WITH_SCORES).primary).toBe('meta/muse-spark-1.3');
+    expect(pick('plan', 'low', WITH_SCORES).primary).toBe('xiaomi/mimo-v2.6-pro');
+    expect(pick('review', 'low', WITH_SCORES).primary).toBe('xiaomi/mimo-v2.6-pro');
   });
 
-  it('low and medium keep the work on Rogly; medium retries on its #2 paid model, low never pays to retry', () => {
-    expect(pick('write', 'low')).toEqual({ primary: 'google/gemma-4-12B-it-qat-w4a16-ct', fallback: null });
-    expect(pick('code', 'low').fallback).toBeNull();
-    expect(pick('write', 'medium')).toEqual({ primary: 'google/gemma-4-12B-it-qat-w4a16-ct', fallback: 'gpt-4o' });
-    expect(pick('code', 'medium')).toEqual({ primary: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', fallback: 'gpt-5.6-sol' });
-  });
-
-  it('high: the #3 paid model for the specific task does the work; utilities stay on Rogly', () => {
-    expect(pick('write', 'high').primary).toBe('anthropic/claude-sonnet-5');
-    expect(pick('code', 'high').primary).toBe('gpt-4o');
-    expect(pick('research', 'high').primary).toBe('anthropic/claude-sonnet-5');
-    expect(pick('plan', 'high').primary).toBe('gpt-6-astra');
-    expect(pick('vision', 'high').primary).toBe('gpt-4o');
-    expect(pick('utility', 'high').primary).toBe('google/gemma-4-12B-it-qat-w4a16-ct');
-  });
-
-  it('uses the nearest available rank when a task has fewer than three capable models', () => {
-    const two = [...ROGLY, model('o4-mini', false, 1.9), model('gpt-5.6-sol', false, 8)];
-    expect(pick('plan', 'low', two).primary).toBe('o4-mini');
-    expect(pick('plan', 'medium', two).primary).toBe('o4-mini');
-    expect(pick('plan', 'high', two).primary).toBe('gpt-5.6-sol');
-  });
-
-  it('never auto-selects paid models with unknown prices', () => {
-    for (const need of ['plan', 'review', 'write', 'code'] as Need[]) {
+  it('only benchmarked models take part once scores exist; unpriced models never do', () => {
+    for (const need of ['plan', 'review', 'write', 'research', 'code'] as Need[]) {
       for (const level of ['low', 'medium', 'high'] as CostLevel[]) {
-        expect(pick(need, level).primary).not.toBe('some-unpriced-model');
+        const s = selectFrom(WITH_SCORES, need, level);
+        for (const m of [s.primary?.model, s.fallback?.model]) {
+          expect(m).not.toBe('some-unpriced-model');
+          expect(m).not.toBe('unscored-model');
+        }
       }
     }
   });
 
+  it('low and medium keep the work on Rogly; medium retries on its paid pick, low never pays to retry', () => {
+    expect(pick('write', 'low', WITH_SCORES)).toEqual({ primary: 'google/gemma-4-12B-it-qat-w4a16-ct', fallback: null });
+    expect(pick('code', 'low', WITH_SCORES).fallback).toBeNull();
+    expect(pick('write', 'medium', WITH_SCORES)).toEqual({ primary: 'google/gemma-4-12B-it-qat-w4a16-ct', fallback: 'meta/muse-spark-1.3' });
+    expect(pick('code', 'medium', WITH_SCORES)).toEqual({ primary: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', fallback: 'meta/muse-spark-1.3' });
+  });
+
+  it('high: the best model under the medium ceiling does the work, by the task’s score; utilities stay on Rogly', () => {
+    expect(pick('write', 'high', WITH_SCORES).primary).toBe('meta/muse-spark-1.3');
+    expect(pick('research', 'high', WITH_SCORES).primary).toBe('meta/muse-spark-1.3');
+    // Code ranks on the coding score: muse 76 beats gemini flash 75, mimo 70 and gpt-6-sol 60.
+    expect(pick('code', 'high', WITH_SCORES).primary).toBe('meta/muse-spark-1.3');
+    expect(pick('utility', 'high', WITH_SCORES).primary).toBe('google/gemma-4-12B-it-qat-w4a16-ct');
+  });
+
+  it('uses edited ceilings, and the cheapest model when nothing fits under one', () => {
+    const ceilings = { low: 0.1, medium: 25, high: null };
+    expect(selectFrom(WITH_SCORES, 'plan', 'low', ceilings).primary?.model).toBe('xiaomi/mimo-v2.6-pro');
+    expect(selectFrom(WITH_SCORES, 'plan', 'medium', ceilings).primary?.model).toBe('anthropic/claude-opus-5.5');
+  });
+
+  it('without benchmark scores, falls back to price as the power signal', () => {
+    expect(pick('plan', 'high').primary).toBe('gpt-6-astra');
+    expect(pick('plan', 'medium').primary).toBe('anthropic/claude-sonnet-5');
+  });
+
   it('falls back to Rogly when no paid credential exists, and to paid when Rogly is missing', () => {
     expect(pick('plan', 'high', ROGLY).primary).not.toBeNull();
-    expect(pick('write', 'low', PAID).primary).toBe('anthropic/claude-sonnet-5');
+    expect(pick('write', 'low', PAID).primary).not.toBeNull();
     expect(pick('vision', 'low', PAID).primary).toBe('gpt-4o');
   });
 });
@@ -150,25 +172,6 @@ describe('benchmark ranking', () => {
     expect(matchBenchmark('gpt-5-2025-08-07', rows)).toMatchObject({ intelligence: 68, coding: 55, source: 'gpt-5' });
     expect(matchBenchmark('anthropic/claude-sonnet-4.5', rows)).toMatchObject({ intelligence: 63, coding: 60 });
     expect(matchBenchmark('gpt-5-mini', rows)).toBeNull();
-  });
-
-  it('ranks by the task’s benchmark across providers; unscored models follow, by price', () => {
-    const scored = (id: string, price: number, intelligence: number, coding: number) => ({ ...model(id, false, price), benchmark: { intelligence, coding, math: null, source: id } });
-    const models = [
-      ...ROGLY,
-      scored('gpt-6-astra', 20, 70, 58),
-      scored('gemini-3.1-pro-preview', 4.5, 73, 62),
-      scored('anthropic/claude-sonnet-5', 4, 69, 66),
-      scored('deepseek-v4-pro', 2, 64, 50),
-      model('gpt-5.6-sol', false, 8),
-    ];
-    expect(pick('plan', 'high', models).primary).toBe('gemini-3.1-pro-preview');
-    expect(pick('plan', 'medium', models).primary).toBe('gpt-6-astra');
-    expect(pick('plan', 'low', models).primary).toBe('anthropic/claude-sonnet-5');
-    // Code ranks on the coding index: claude 66, gemini 62, astra 58, deepseek 50, then unscored sol.
-    expect(pick('code', 'high', models).primary).toBe('gpt-6-astra');
-    expect(pick('code', 'medium', models).fallback).toBe('gemini-3.1-pro-preview');
-    expect(pick('write', 'high', models).primary).toBe('anthropic/claude-sonnet-5');
   });
 });
 

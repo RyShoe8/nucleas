@@ -7,10 +7,11 @@ import { localModelPowerScore } from '@/lib/ai/rolePipeline/modelMeta';
  * The one model-selection system. Every AI job asks for a need at a cost level; the engine picks
  * the best available model automatically. Admins may pin a model per need (applies at every level).
  *
- * Paid models are ranked by power for each task (benchmark scores, price when unscored): high uses #1, medium #2, low #3.
- *   low    — #3 paid model plans and reviews; Rogly does the work; never pays to retry
- *   medium — #2 paid model plans and reviews; Rogly does the work and may retry on the #2 model
- *   high   — #1 paid model plans and reviews; the #3 paid model for the task does the work; Rogly only for utilities
+ * Each level has a price ceiling (blended $ per 1M tokens, editable by admins). The paid pick is the
+ * model with the best benchmark score for the task that costs no more than the ceiling:
+ *   low    — plans and reviews under the low ceiling; Rogly does the work; never pays to retry
+ *   medium — plans and reviews under the medium ceiling; Rogly does the work, retrying on that model
+ *   high   — plans and reviews with no ceiling; the best model under the medium ceiling does the work
  * Rogly always uses its strongest model for the job.
  */
 
@@ -67,31 +68,31 @@ export function benchmarkScore(m: AvailableModel, need: Need): number | null {
 }
 
 /**
- * Paid models ranked by power for the task. Benchmark scores (Artificial Analysis) decide across
- * providers; models without a score rank after scored ones, ordered by price (the fallback power
- * signal, and the whole ranking when no benchmark key is configured). Flagship breaks ties.
+ * Paid models strongest first for the task: benchmark score, then price (the only signal when no
+ * benchmark key is configured), then flagship, then id.
  */
 function rankByPower(models: AvailableModel[], need: Need): AvailableModel[] {
-  return [...models].sort((a, b) => {
-    const sa = benchmarkScore(a, need);
-    const sb = benchmarkScore(b, need);
-    if (sa !== null || sb !== null) {
-      if (sa === null) return 1;
-      if (sb === null) return -1;
-      if (sb !== sa) return sb - sa;
-    }
-    return (b.blendedPricePer1M ?? 0) - (a.blendedPricePer1M ?? 0) || Number(b.flagship) - Number(a.flagship) || a.model.localeCompare(b.model);
-  });
+  return [...models].sort(
+    (a, b) =>
+      (benchmarkScore(b, need) ?? -1) - (benchmarkScore(a, need) ?? -1) ||
+      (b.blendedPricePer1M ?? 0) - (a.blendedPricePer1M ?? 0) ||
+      Number(b.flagship) - Number(a.flagship) ||
+      a.model.localeCompare(b.model)
+  );
 }
 
-/** Power rank per level: high = #1, medium = #2, low = #3 (nearest available when fewer exist). */
-export const LEVEL_RANK: Record<CostLevel, number> = { high: 1, medium: 2, low: 3 };
-/** At high cost, the work itself (write/research/code/vision) uses this paid rank for the task. */
-export const HIGH_WORK_RANK = 3;
+/** Max blended $ per 1M tokens a level may spend on a paid model; null = no ceiling. */
+export type PriceCeilings = Record<CostLevel, number | null>;
+export const DEFAULT_PRICE_CEILINGS: PriceCeilings = { low: 1.5, medium: 5, high: null };
 
-function ranked(models: AvailableModel[], need: Need, rank: number): AvailableModel | undefined {
-  const sorted = rankByPower(models, need);
-  return sorted[Math.min(rank, sorted.length) - 1];
+/**
+ * The strongest model the level can afford. When nothing fits under the ceiling, the cheapest
+ * capable model (so a level never fails just because prices moved).
+ */
+function bestUnder(pool: AvailableModel[], need: Need, ceiling: number | null): AvailableModel | undefined {
+  const affordable = pool.filter((m) => ceiling === null || (m.blendedPricePer1M ?? Infinity) <= ceiling);
+  if (affordable.length) return rankByPower(affordable, need)[0];
+  return [...pool].sort((a, b) => (a.blendedPricePer1M ?? Infinity) - (b.blendedPricePer1M ?? Infinity))[0];
 }
 
 /**
@@ -109,30 +110,37 @@ function freeFor(models: AvailableModel[], need: Need): AvailableModel | undefin
   return strongest(withStrength(free, 'chat', 'reasoning')) ?? strongest(free);
 }
 
+/**
+ * Paid models that can do the task. Every model with a benchmark score for it takes part; models
+ * without one are used only when nothing is scored (no benchmark key yet), matched by strength tags.
+ */
 function paidFor(models: AvailableModel[], need: Need): AvailableModel[] {
   const paid = models.filter((m) => !m.free && m.autoEligible && m.blendedPricePer1M !== null);
-  // A model with a benchmark score for the task competes on that score, whatever its strength tags.
-  const withScored = (pool: AvailableModel[]) => [...new Set([...pool, ...paid.filter((m) => benchmarkScore(m, need) !== null)])];
+  if (need === 'vision') {
+    const vision = withStrength(paid, 'vision');
+    const scored = vision.filter((m) => benchmarkScore(m, need) !== null);
+    return scored.length ? scored : vision;
+  }
+  const scored = paid.filter((m) => benchmarkScore(m, need) !== null);
+  if (scored.length) return scored;
   switch (need) {
     case 'plan':
     case 'review':
     case 'research':
-      return withScored(withStrength(paid, 'reasoning', 'coding', 'chat'));
+      return withStrength(paid, 'reasoning', 'coding', 'chat');
     case 'code':
-      return withScored(withStrength(paid, 'coding', 'reasoning'));
-    case 'vision':
-      return withStrength(paid, 'vision');
+      return withStrength(paid, 'coding', 'reasoning');
     default:
-      return withScored(withStrength(paid, 'chat', 'reasoning'));
+      return withStrength(paid, 'chat', 'reasoning');
   }
 }
 
-export function selectFrom(models: AvailableModel[], need: Need, level: CostLevel): Omit<Selection, 'source'> {
+export function selectFrom(models: AvailableModel[], need: Need, level: CostLevel, ceilings: PriceCeilings = DEFAULT_PRICE_CEILINGS): Omit<Selection, 'source'> {
   const paid = paidFor(models, need);
   const free = freeFor(models, need);
   const base = { need, level };
-  // The paid model for this task at this level: #1 (high), #2 (medium) or #3 (low) by power.
-  const paidPick = ranked(paid, need, LEVEL_RANK[level]);
+  // The strongest paid model for this task within the level's price ceiling.
+  const paidPick = bestUnder(paid, need, ceilings[level]);
 
   switch (need) {
     case 'plan':
@@ -146,13 +154,14 @@ export function selectFrom(models: AvailableModel[], need: Need, level: CostLeve
     case 'research':
     case 'code':
     case 'vision':
-      // High: the #3 paid model best suited to this task does the work (the #1 model plans and
-      // reviews). Low/medium: Rogly does the work; medium may retry on its #2 paid model when Rogly
-      // fails, low never pays to retry.
-      if (level === 'high') return { ...base, primary: choice(ranked(paid, need, HIGH_WORK_RANK) ?? free), fallback: null };
+      // High: a paid model does the work — the strongest within the medium ceiling (the high-ceiling
+      // model plans and reviews). Low/medium: Rogly does the work; medium may retry on its paid
+      // pick when Rogly fails, low never pays to retry.
+      if (level === 'high') return { ...base, primary: choice(bestUnder(paid, need, ceilings.medium) ?? free), fallback: null };
       return { ...base, primary: choice(free ?? paidPick), fallback: level === 'medium' && free ? choice(paidPick) : null };
   }
 }
+
 
 // ---------- Settings: org default level and optional pins ----------
 
@@ -160,6 +169,8 @@ const settingsSchema = new Schema(
   {
     organizationId: { type: String, required: true, unique: true },
     defaultCostLevel: { type: String, enum: COST_LEVELS, default: 'low' },
+    /** level -> max blended $ per 1M tokens (null = none). Missing levels use the defaults. */
+    priceCeilings: { type: Schema.Types.Mixed },
     /** need -> pinned model (applies at every level). */
     pins: { type: Schema.Types.Mixed, default: {} },
     updatedByUserId: { type: Schema.Types.ObjectId },
@@ -172,9 +183,24 @@ export const AiEngineSettings: Model<SettingsDoc> =
 
 type Pins = Partial<Record<Need, { profileId: string; model: string }>>;
 
-export async function readEngineSettings(organizationId: string): Promise<{ defaultCostLevel: CostLevel; pins: Pins }> {
-  const doc = await AiEngineSettings.findOne({ organizationId }).lean<{ defaultCostLevel?: CostLevel; pins?: Pins }>();
-  return { defaultCostLevel: doc?.defaultCostLevel ?? 'low', pins: doc?.pins ?? {} };
+export interface EngineSettings {
+  defaultCostLevel: CostLevel;
+  priceCeilings: PriceCeilings;
+  pins: Pins;
+}
+
+export async function readEngineSettings(organizationId: string): Promise<EngineSettings> {
+  const doc = await AiEngineSettings.findOne({ organizationId }).lean<{ defaultCostLevel?: CostLevel; priceCeilings?: Partial<PriceCeilings>; pins?: Pins }>();
+  return {
+    defaultCostLevel: doc?.defaultCostLevel ?? 'low',
+    priceCeilings: { ...DEFAULT_PRICE_CEILINGS, ...(doc?.priceCeilings ?? {}) },
+    pins: doc?.pins ?? {},
+  };
+}
+
+/** A ceiling is a positive dollar amount, or null for none. */
+export function isPriceCeiling(value: unknown): value is number | null {
+  return value === null || (typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 1000);
 }
 
 export function isCostLevel(value: unknown): value is CostLevel {
@@ -186,7 +212,7 @@ export async function selectModel(
   organizationId: string,
   need: Need,
   level: CostLevel,
-  options: { models?: AvailableModel[]; settings?: { pins: Pins } } = {}
+  options: { models?: AvailableModel[]; settings?: Pick<EngineSettings, 'pins' | 'priceCeilings'> } = {}
 ): Promise<Selection> {
   const models = options.models ?? (await listAvailableModels());
   const settings = options.settings ?? (await readEngineSettings(organizationId));
@@ -195,13 +221,13 @@ export async function selectModel(
     const pinned = models.find((m) => m.profileId === pin.profileId && m.model === pin.model);
     if (pinned) return { need, level, primary: choice(pinned), fallback: null, source: 'pinned' };
   }
-  const auto = selectFrom(models, need, level);
+  const auto = selectFrom(models, need, level, settings.priceCeilings);
   return { ...auto, source: auto.primary ? 'auto' : 'none' };
 }
 
 export async function saveEngineSettings(
   organizationId: string,
-  input: { defaultCostLevel?: CostLevel; pin?: { need: Need; profileId: string; model: string } | null; unpin?: Need },
+  input: { defaultCostLevel?: CostLevel; priceCeilings?: Partial<PriceCeilings>; pin?: { need: Need; profileId: string; model: string } | null; unpin?: Need },
   userId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const update: Record<string, unknown> = { updatedByUserId: Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : undefined };
@@ -210,6 +236,10 @@ export async function saveEngineSettings(
     update.defaultCostLevel = input.defaultCostLevel;
   }
   const set: Record<string, unknown> = { ...update };
+  for (const [level, ceiling] of Object.entries(input.priceCeilings ?? {})) {
+    if (!isCostLevel(level) || !isPriceCeiling(ceiling)) return { ok: false, error: 'Price ceilings must be a dollar amount above 0, or empty for none.' };
+    set[`priceCeilings.${level}`] = ceiling === null ? null : Math.round(ceiling * 1000) / 1000;
+  }
   const unset: Record<string, ''> = {};
   if (input.pin) {
     if (!(NEEDS as readonly string[]).includes(input.pin.need)) return { ok: false, error: 'Unknown need.' };

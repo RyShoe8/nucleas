@@ -57,13 +57,47 @@ interface BenchmarkStatus {
     source: { name: string; url: string };
 }
 
-type EngineData = { defaultCostLevel: Level; needs: NeedRow[]; models: ModelRow[]; benchmarks: BenchmarkStatus; rankings: Record<'plan' | 'code', RankRow[]> };
+type EngineData = { defaultCostLevel: Level; priceCeilings: Ceilings; needs: NeedRow[]; models: ModelRow[]; benchmarks: BenchmarkStatus; rankings: Record<'plan' | 'code', RankRow[]> };
 
 const LEVELS: { key: Level; label: string; hint: string }[] = [
-    { key: 'low', label: 'Low', hint: '3rd ranked paid model for planning and review; Rogly does the work; never pays to retry.' },
-    { key: 'medium', label: 'Medium', hint: '2nd ranked paid model; Rogly does the work and may retry on that model if it fails.' },
-    { key: 'high', label: 'High', hint: 'The #1 ranked paid model plans and reviews; the #3 ranked paid model to each task does the work; Rogly only for utilities.' },
+    { key: 'low', label: 'Low', hint: 'Best-scoring paid model under this ceiling plans and reviews; Rogly does the work; never pays to retry.' },
+    { key: 'medium', label: 'Medium', hint: 'Best-scoring paid model under this ceiling plans and reviews; Rogly does the work and may retry on that model.' },
+    { key: 'high', label: 'High', hint: 'Best-scoring model under this ceiling plans and reviews; the best model under the Medium ceiling does the work.' },
 ];
+
+type Ceilings = Record<Level, number | null>;
+
+/** Max $ per 1M tokens for a level; empty means no ceiling. Saves on blur or Enter. */
+function CeilingInput({ level, value, onSave }: { level: Level; value: number | null; onSave: (v: number | null) => void }) {
+    const [draft, setDraft] = useState(value === null ? '' : String(value));
+    const commit = () => {
+        const trimmed = draft.trim();
+        const next = trimmed === '' ? null : Number(trimmed);
+        if (next !== null && (!Number.isFinite(next) || next <= 0)) return setDraft(value === null ? '' : String(value));
+        if (next !== value) onSave(next);
+    };
+    return (
+        <label className="mt-2 flex items-center gap-1 text-[11px] text-text-secondary">
+            Max $
+            <input
+                type="number"
+                min="0"
+                step="0.25"
+                inputMode="decimal"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={commit}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                }}
+                placeholder="no limit"
+                className="h-6 w-20 px-1 rounded border border-border bg-background-elevated text-xs text-text-primary"
+                aria-label={`Price ceiling for ${level}`}
+            />
+            / 1M tokens
+        </label>
+    );
+}
 
 function short(model?: string): string {
     return (model ?? '').split('/').pop() ?? '';
@@ -191,25 +225,33 @@ export default function AiRoutingModule() {
         <div className="h-full overflow-y-auto p-4 space-y-4 text-text-primary">
             <section className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
-                    <h2 className="text-sm font-semibold">Default cost level</h2>
+                    <h2 className="text-sm font-semibold">Cost levels</h2>
                     <button type="button" onClick={() => reload(true)} className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card">
                         Refresh model lists
                     </button>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     {LEVELS.map((l) => (
-                        <button
-                            key={l.key}
-                            type="button"
-                            onClick={() => void save({ defaultCostLevel: l.key })}
-                            className={`text-left rounded-md border p-2 ${data.defaultCostLevel === l.key ? 'border-primary bg-primary/10' : 'border-border hover:bg-background-card'}`}
-                        >
-                            <div className="text-sm font-medium">{l.label}</div>
-                            <div className="text-[11px] text-text-secondary">{l.hint}</div>
-                        </button>
+                        <div key={l.key} className={`rounded-md border p-2 ${data.defaultCostLevel === l.key ? 'border-primary bg-primary/10' : 'border-border'}`}>
+                            <button type="button" onClick={() => void save({ defaultCostLevel: l.key })} className="w-full text-left" title="Make this the default level">
+                                <div className="text-sm font-medium">
+                                    {l.label}
+                                    {data.defaultCostLevel === l.key ? <span className="ml-1 text-[10px] text-primary">default</span> : null}
+                                </div>
+                                <div className="text-[11px] text-text-secondary">{l.hint}</div>
+                            </button>
+                            <CeilingInput
+                                key={`${l.key}:${data.priceCeilings[l.key] ?? ''}`}
+                                level={l.key}
+                                value={data.priceCeilings[l.key]}
+                                onSave={(v) => void save({ priceCeilings: { [l.key]: v } })}
+                            />
+                        </div>
                     ))}
                 </div>
-                <p className="text-[11px] text-text-secondary">This is the default everywhere; each Ask or IDE request can choose its own level.</p>
+                <p className="text-[11px] text-text-secondary">
+                    Prices are blended $ per 1M tokens (3 parts input to 1 part output). Click a level to make it the default; each Ask or IDE request can choose its own.
+                </p>
             </section>
 
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
