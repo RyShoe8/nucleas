@@ -195,7 +195,10 @@ describe('appendIdeChatTurns', () => {
         model: 'gpt',
         turns: [
           { requestId: 'u1', role: 'user', text: 'hello' },
-          { requestId: 'a1', role: 'assistant', text: 'world', debugHint: 'kind=http httpStatus=400' },
+          {
+            requestId: 'a1', role: 'assistant', text: 'world', debugHint: 'kind=http httpStatus=400',
+            evidenceReceipts: [{ kind: 'repository', tool: 'repo_read', path: 'src/a.ts', revision: 'a'.repeat(40), startLine: 1, endLine: 2, sha256: 'b'.repeat(64) }],
+          },
         ],
       })
     ).resolves.toBe(true);
@@ -212,6 +215,7 @@ describe('appendIdeChatTurns', () => {
           requestId: 'a1',
           role: 'assistant',
           debugHint: 'kind=http httpStatus=400',
+          evidenceReceipts: [expect.objectContaining({ path: 'src/a.ts', sha256: 'b'.repeat(64) })],
         }),
       ],
       { ordered: false }

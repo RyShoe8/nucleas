@@ -35,6 +35,19 @@ const planSchema = new Schema(
   { _id: false }
 );
 
+const evidenceReceiptSchema = new Schema(
+  {
+    kind: { type: String, enum: ['repository'] as const, required: true },
+    tool: { type: String, enum: ['repo_search', 'repo_read'] as const, required: true },
+    path: { type: String, required: true, maxlength: 500 },
+    revision: { type: String, required: true, maxlength: 64 },
+    startLine: { type: Number, required: true, min: 1 },
+    endLine: { type: Number, required: true, min: 1 },
+    sha256: { type: String, required: true, match: /^[a-f0-9]{64}$/ },
+  },
+  { _id: false }
+);
+
 const schema = new Schema(
   {
     organizationId: { type: String, required: true, immutable: true },
@@ -70,6 +83,7 @@ const schema = new Schema(
     noProviderFee: { type: Boolean },
     toolsUsed: { type: [String], default: undefined },
     artifacts: { type: [artifactSchema], default: undefined },
+    evidenceReceipts: { type: [evidenceReceiptSchema], default: undefined },
     plan: { type: planSchema, default: undefined },
   },
   { timestamps: true }

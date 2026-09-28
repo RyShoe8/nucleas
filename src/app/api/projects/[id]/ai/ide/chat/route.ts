@@ -26,6 +26,7 @@ import {
 } from '@/lib/ide/ideChatStream';
 import { isMongoDuplicateKeyError, isMongoNetworkError, MONGO_NETWORK_USER_MESSAGE } from '@/lib/utils/mongoErrors';
 import { mergeAbortSignals } from '@/lib/ai/control/mergeAbortSignals';
+import type { RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -43,6 +44,7 @@ function turnPayload(turn: {
   noProviderFee?: boolean;
   toolsUsed?: string[];
   artifacts?: { kind: 'image'; assetId: string; name: string; url: string }[];
+  evidenceReceipts?: RepositoryEvidenceReceipt[];
   plan?: {
     title: string;
     summary: string;
@@ -63,6 +65,7 @@ function turnPayload(turn: {
     noProviderFee: turn.noProviderFee ?? false,
     artifacts: turn.artifacts ?? [],
     toolsUsed: turn.toolsUsed ?? [],
+    evidenceReceipts: turn.evidenceReceipts ?? [],
     ...(turn.plan ? { plan: turn.plan } : {}),
   };
 }
@@ -177,8 +180,9 @@ export async function POST(request: NextRequest, context: Context) {
         reservedMicros: existingAssistantTurn.reservedMicros ?? undefined,
         noProviderFee: existingAssistantTurn.noProviderFee ?? undefined,
         toolsUsed: existingAssistantTurn.toolsUsed ?? undefined,
-        artifacts: (existingAssistantTurn.artifacts as any) ?? undefined,
-        plan: (existingAssistantTurn.plan as any) ?? undefined,
+        artifacts: existingAssistantTurn.artifacts ?? undefined,
+        evidenceReceipts: existingAssistantTurn.evidenceReceipts ?? undefined,
+        plan: existingAssistantTurn.plan ?? undefined,
       });
       if (stream) {
         return ndjsonResponse(request, async (send) => {
@@ -243,6 +247,7 @@ export async function POST(request: NextRequest, context: Context) {
             noProviderFee: reply.noProviderFee ?? false,
             toolsUsed: reply.toolsUsed ?? [],
             artifacts: reply.artifacts ?? [],
+            evidenceReceipts: reply.evidenceReceipts ?? [],
             plan: reply.plan ?? null,
           },
         ],

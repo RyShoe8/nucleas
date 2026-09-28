@@ -65,6 +65,8 @@ interface HealthIssue {
     httpStatus: number;
     message: string | null;
     until: string;
+    failureCount: number;
+    category: string | null;
 }
 
 interface CheckRow {
@@ -393,13 +395,15 @@ export default function AiRoutingModule() {
                 <section className="rounded-md border border-amber-400/50 p-3 space-y-1">
                     <h2 className="text-sm font-semibold text-amber-400">Skipped for now</h2>
                     <p className="text-[11px] text-text-secondary">
-                        These providers rejected recent requests, so automatic selection skips them until the time shown or until a call succeeds.
+                        Adaptive circuits temporarily skip providers after rejected credentials, rate limits, or repeated endpoint failures. Any successful call closes the circuit immediately.
                     </p>
                     <ul className="text-xs space-y-0.5">
                         {data.health.map((h) => (
                             <li key={`${h.profileId}:${h.model ?? ''}`}>
                                 <span className="font-medium">{h.profileLabel}</span>
-                                {h.model ? ` · ${h.model}` : ' · every model'} — HTTP {h.httpStatus}
+                                {h.model ? ` · ${h.model}` : ' · every model'} — {h.httpStatus ? `HTTP ${h.httpStatus}` : 'transport failure'}
+                                {h.category ? ` · ${h.category.replace('_', ' ')}` : ''}
+                                {h.failureCount > 1 ? ` · ${h.failureCount} consecutive failures` : ''}
                                 {h.message ? `: ${h.message}` : ''}
                                 <span className="text-text-secondary"> (until {new Date(h.until).toLocaleTimeString()})</span>
                             </li>

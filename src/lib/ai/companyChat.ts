@@ -171,6 +171,7 @@ function gatewayDebugParts(error: unknown): Record<string, string | number | boo
 
 import { companyChatAdmissionMessage } from '@/lib/ai/companyChatAdmission';
 import { recordModelFailure, recordModelSuccess } from '@/lib/ai/engine/health';
+import type { RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 import { describeToolCall, type ProgressFn } from '@/lib/ai/progress';
 import { contextBudgetChars, contextWindowFor } from '@/lib/ai/engine/catalog';
 
@@ -581,6 +582,7 @@ export async function attemptCompanyCredentialChat(input: {
       inputTokens: number | null;
       outputTokens: number | null;
       latencyMs: number;
+      evidenceReceipts?: RepositoryEvidenceReceipt[];
     } | null> {
       if (!repoToolsOn) return null;
       if (!projectInternal && !input.forceToolLoop) return null;
@@ -604,6 +606,7 @@ export async function attemptCompanyCredentialChat(input: {
         inputTokens: plain.inputTokens,
         outputTokens: plain.outputTokens,
         latencyMs: plain.latencyMs,
+        evidenceReceipts: dig.evidenceReceipts,
       };
     }
 
@@ -995,6 +998,7 @@ export async function attemptCompanyCredentialChat(input: {
       noProviderFee,
       artifacts: loop.artifacts,
       toolsUsed: loop.toolCallsMade,
+      evidenceReceipts: loop.evidenceReceipts,
     };
   } catch (error) {
     const errorUsage = (error as { usage?: { inputTokens?: number; outputTokens?: number } })?.usage;
@@ -1028,6 +1032,8 @@ export async function attemptCompanyCredentialChat(input: {
         model: gateway.model,
         httpStatus: error.details?.httpStatus,
         message: error.details?.providerMessage,
+        code: error.code,
+        kind: error.details?.kind,
       }).catch(() => undefined);
       if (error.details?.httpStatus === 504) {
         return statusTurn(

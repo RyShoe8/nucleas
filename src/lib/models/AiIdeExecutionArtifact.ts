@@ -5,6 +5,14 @@ const evidenceSchema = new Schema({
   timedOut: { type: Boolean, required: true }, output: { type: String, required: true, maxlength: 16000 },
 }, { _id: false });
 
+const verificationSchema = new Schema({
+  verified: { type: Boolean, required: true },
+  payloadSha256: { type: String, required: true, match: /^[a-f0-9]{64}$/ },
+  patchSha256: { type: String, required: true, match: /^[a-f0-9]{64}$/ },
+  checksObserved: { type: Number, required: true, min: 0 },
+  checksPassed: { type: Number, required: true, min: 0 },
+}, { _id: false });
+
 const schema = new Schema({
   organizationId: { type: String, required: true, immutable: true },
   projectId: { type: Schema.Types.ObjectId, required: true, immutable: true },
@@ -18,6 +26,7 @@ const schema = new Schema({
   patch: { type: Buffer, required: true, select: false },
   changedFiles: { type: [String], required: true },
   evidence: { type: [evidenceSchema], required: true },
+  verification: { type: verificationSchema, required: false },
   limitations: { type: [String], required: true },
   expiresAt: { type: Date, required: true },
 }, { timestamps: true });

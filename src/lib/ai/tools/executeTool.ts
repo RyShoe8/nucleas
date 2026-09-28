@@ -11,6 +11,7 @@ import { listIdeTree, readIdeFile } from '@/lib/ai/ideCommitPush';
 import { getRepoSnapshot, listSnapshotDir, searchSnapshot } from '@/lib/ai/repo/snapshot';
 import type { LoadedSnapshot, SearchResult } from '@/lib/ai/repo/snapshot';
 import { commitWithDiff, recentCommits } from '@/lib/ai/repo/history';
+import { repositoryEvidenceReceipt, type RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 
 export type ToolArtifact = {
   kind: 'image';
@@ -22,6 +23,7 @@ export type ToolArtifact = {
 export type ToolExecutionResult = {
   content: string;
   artifacts: ToolArtifact[];
+  evidenceReceipts?: RepositoryEvidenceReceipt[];
 };
 
 function parseArgs(raw: string): Record<string, unknown> {
@@ -109,12 +111,16 @@ export async function executeIdeTool(input: {
       contextLines: typeof args.contextLines === 'number' ? args.contextLines : undefined,
     });
     if ('error' in found) return { content: JSON.stringify({ ok: false, error: found.error }), artifacts };
+    const fileEvidence = buildRepoSearchEvidence(snap.snapshot, found);
     return { content: JSON.stringify({
       ok: true,
       commit: snap.snapshot.commit.slice(0, 12),
       ...found,
-      fileEvidence: buildRepoSearchEvidence(snap.snapshot, found),
-    }), artifacts };
+      fileEvidence,
+    }), artifacts, evidenceReceipts: fileEvidence.map((item) => repositoryEvidenceReceipt({
+      tool: 'repo_search', path: item.path, revision: snap.snapshot.commit,
+      startLine: item.startLine, endLine: item.endLine, content: item.excerpt,
+    })) };
   }
 
   if (input.name === 'repo_tree') {
@@ -205,6 +211,7 @@ export async function executeIdeTool(input: {
     } else if (offsetArg !== undefined) {
       const offset = Math.min(offsetArg, totalChars);
       extracted = fullContent.slice(offset, offset + maxChars);
+      effectiveStartLine = fullContent.slice(0, offset).split('\n').length;
       isTruncated = offset + extracted.length < totalChars;
     } else {
       if (fullContent.length > maxChars) {
@@ -214,7 +221,14 @@ export async function executeIdeTool(input: {
         extracted = fullContent;
       }
     }
+    if (startLineArg === undefined) {
+      effectiveEndLine = effectiveStartLine + extracted.split('\n').length - 1;
+    }
 
+    const evidenceReceipt = repositoryEvidenceReceipt({
+      tool: 'repo_read', path: result.path, revision: result.sha || result.branch,
+      startLine: effectiveStartLine, endLine: effectiveEndLine, content: extracted,
+    });
     return {
       content: JSON.stringify({
         ok: true,
@@ -229,6 +243,7 @@ export async function executeIdeTool(input: {
         truncated: isTruncated,
       }),
       artifacts,
+      evidenceReceipts: [evidenceReceipt],
     };
   }
 

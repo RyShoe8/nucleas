@@ -46,6 +46,9 @@ describe('gatherRepoAssistContext', () => {
     expect(result.toolsUsed).toEqual(['repo_search', 'repo_read']);
     expect(result.evidenceBlock).toContain('platform/src/app/admin/connect/game-servers/page.tsx');
     expect(result.evidenceBlock).toContain('platform/src/lib/gameHost/recipes.js');
+    expect(result.evidenceReceipts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'repository', path: 'platform/src/lib/gameHost/recipes.js', revision: 'a'.repeat(40), sha256: expect.stringMatching(/^[a-f0-9]{64}$/) }),
+    ]));
     expect(mocks.listTree).not.toHaveBeenCalled();
   });
 

@@ -5,6 +5,7 @@ import { isIdeDirectMode, storedModeValues } from '@/lib/ide/modes';
 import type { IdePlanDocument } from '@/lib/ide/idePlan';
 import { AiIdeChatTurn } from '@/lib/models/AiIdeChatTurn';
 import { isMongoDuplicateKeyError } from '@/lib/utils/mongoErrors';
+import type { RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 
 const HISTORY_LIMIT = 50;
 
@@ -32,6 +33,7 @@ export type IdePersistedTurn = {
   noProviderFee?: boolean;
   toolsUsed?: string[];
   artifacts?: { kind: 'image'; assetId: string; name: string; url: string }[];
+  evidenceReceipts?: RepositoryEvidenceReceipt[];
   plan?: IdePlanDocument | null;
   createdAt?: string | null;
 };
@@ -106,6 +108,9 @@ function toInsertDocs(
           })),
         }
       : {}),
+    ...(turn.evidenceReceipts?.length
+      ? { evidenceReceipts: turn.evidenceReceipts.slice(0, 50) }
+      : {}),
     ...(options.includePlan && turn.plan
       ? {
           plan: {
@@ -176,6 +181,7 @@ export async function loadIdeChatHistory(input: {
         name: item.name,
         url: item.url,
       })),
+      evidenceReceipts: (row.evidenceReceipts ?? []) as RepositoryEvidenceReceipt[],
       plan: mapPlan(row.plan),
       createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : null,
     }));
@@ -305,7 +311,13 @@ export async function findExistingIdeAssistantTurn(input: {
     reservedMicros: row.reservedMicros ?? null,
     noProviderFee: row.noProviderFee ?? false,
     toolsUsed: row.toolsUsed ?? [],
-    artifacts: (row.artifacts as any) ?? [],
+    artifacts: (row.artifacts ?? []).map((item) => ({
+      kind: 'image' as const,
+      assetId: item.assetId,
+      name: item.name,
+      url: item.url,
+    })),
+    evidenceReceipts: (row.evidenceReceipts as RepositoryEvidenceReceipt[] | undefined) ?? [],
     plan: mapPlan(row.plan),
     createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : null,
   };

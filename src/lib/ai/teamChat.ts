@@ -25,6 +25,7 @@ import { gatewayFromModelProfile } from '@/lib/ai/rolePipeline/profiles';
 import { getRepoSnapshot } from '@/lib/ai/repo/snapshot';
 import { projectGuide } from '@/lib/ai/repo/projectGuide';
 import { shortModel, type ProgressFn } from '@/lib/ai/progress';
+import { dedupeEvidenceReceipts, type RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 import {
   type TeamContextSummary,
   type TeamMessageRole,
@@ -53,6 +54,8 @@ export type TeamChatTurn = {
   noProviderFee?: boolean;
   artifacts?: { kind: 'image'; assetId: string; name: string; url: string }[];
   toolsUsed?: string[];
+  /** Exact repository excerpts used to ground this answer, identified by revision and digest. */
+  evidenceReceipts?: RepositoryEvidenceReceipt[];
   plan?: IdePlanDocument;
 };
 
@@ -79,12 +82,14 @@ function mergeTurnCosts(turns: TeamChatTurn[]): {
   noProviderFee: boolean;
   toolsUsed: string[];
   artifacts: NonNullable<TeamChatTurn['artifacts']>;
+  evidenceReceipts: RepositoryEvidenceReceipt[];
 } {
   let costMicros: number | null = 0;
   let reservedMicros = 0;
   let noProviderFee = true;
   const toolsUsed: string[] = [];
   const artifacts: NonNullable<TeamChatTurn['artifacts']> = [];
+  const evidenceReceipts: RepositoryEvidenceReceipt[] = [];
   for (const turn of turns) {
     if (costMicros != null) {
       if (turn.costMicros == null) costMicros = null;
@@ -96,8 +101,9 @@ function mergeTurnCosts(turns: TeamChatTurn[]): {
       if (!toolsUsed.includes(tool)) toolsUsed.push(tool);
     }
     artifacts.push(...(turn.artifacts ?? []));
+    evidenceReceipts.push(...(turn.evidenceReceipts ?? []));
   }
-  return { costMicros, reservedMicros, noProviderFee, toolsUsed, artifacts };
+  return { costMicros, reservedMicros, noProviderFee, toolsUsed, artifacts, evidenceReceipts: dedupeEvidenceReceipts(evidenceReceipts) };
 }
 
 async function recentActivityCounts(organizationId: string, projectId: Types.ObjectId) {
@@ -330,6 +336,7 @@ export async function attemptOrchestratedIdeReply(input: {
   }
 
   let repoContextBlock: string | undefined;
+  let repoEvidenceReceipts: RepositoryEvidenceReceipt[] = [];
   if (looksLikeProjectInternalQuery(input.userText)) {
     try {
       const dig = await gatherRepoAssistContext({
@@ -352,6 +359,7 @@ export async function attemptOrchestratedIdeReply(input: {
       }
       const block = (dig.evidenceBlock || dig.contextBlock).trim();
       if (block) repoContextBlock = block.slice(0, 48_000);
+      repoEvidenceReceipts = dig.evidenceReceipts ?? [];
     } catch {
       return statusTurn(
         'Repository dig failed before orchestra could start. Check GitHub bind/App connection and retry.',
@@ -460,6 +468,9 @@ export async function attemptOrchestratedIdeReply(input: {
 
     announce(args.binding);
     const turn = await exec(args.binding);
+    if (turn.role === 'assistant' && args.stage !== 'reviewer' && repoEvidenceReceipts.length) {
+      turn.evidenceReceipts = dedupeEvidenceReceipts([...(turn.evidenceReceipts ?? []), ...repoEvidenceReceipts]);
+    }
     // The provider refused (bad key, no credit, model not allowed): it is now benched, so pick this
     // stage's model again from the providers still working and try once more.
     if (turn.role === 'status' && providerRefused(turn)) {
@@ -554,6 +565,9 @@ export async function attemptOrchestratedIdeReply(input: {
           `Model reported by provider: ${execution.routing.providerReportedModels.join(', ') || 'not reported'}`,
           `Base commit: ${execution.baseCommit}`,
           `Changed files:\n${execution.changedFiles.map((file) => `- ${file}`).join('\n') || '- none'}`,
+          execution.verification
+            ? `Worker payload: verified · ${execution.verification.payloadSha256.slice(0, 12)} · ${execution.verification.checksPassed}/${execution.verification.checksObserved} recorded checks passed`
+            : 'Worker payload: legacy worker response (verification receipt unavailable)',
           checks ? `Checks:\n${checks}` : 'Checks: none recorded',
           execution.limitations.length ? `Limitations:\n${execution.limitations.map((item) => `- ${item}`).join('\n')}` : '',
           `Patch artifact: /api/projects/${String(input.projectId)}/ai/ide/executions/${execution.artifactId}`,
@@ -708,6 +722,7 @@ export async function attemptOrchestratedIdeReply(input: {
         text: reviewerUserFacingText(reviewerTurn.text),
         toolsUsed: costs.toolsUsed,
         artifacts: costs.artifacts,
+        evidenceReceipts: costs.evidenceReceipts,
         costMicros: costs.costMicros,
         reservedMicros: costs.reservedMicros,
         noProviderFee: costs.noProviderFee,
@@ -732,6 +747,7 @@ export async function attemptOrchestratedIdeReply(input: {
         ].join('\n'),
         toolsUsed: costs.toolsUsed,
         artifacts: costs.artifacts,
+        evidenceReceipts: costs.evidenceReceipts,
         costMicros: costs.costMicros,
         reservedMicros: costs.reservedMicros,
         noProviderFee: costs.noProviderFee,
@@ -750,6 +766,7 @@ export async function attemptOrchestratedIdeReply(input: {
       ].join('\n'),
       toolsUsed: costs.toolsUsed,
       artifacts: costs.artifacts,
+      evidenceReceipts: costs.evidenceReceipts,
       costMicros: costs.costMicros,
       reservedMicros: costs.reservedMicros,
       noProviderFee: costs.noProviderFee,
@@ -762,6 +779,7 @@ export async function attemptOrchestratedIdeReply(input: {
     text: workerTurn.text.trim(),
     toolsUsed: costs.toolsUsed,
     artifacts: costs.artifacts,
+    evidenceReceipts: costs.evidenceReceipts,
     costMicros: costs.costMicros,
     reservedMicros: costs.reservedMicros,
     noProviderFee: costs.noProviderFee,

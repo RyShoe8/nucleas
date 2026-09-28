@@ -52,7 +52,7 @@ describe('only models a provider lists right now are callable', () => {
 });
 
 describe('benched credentials', () => {
-  it('401 benches the credential, 403 only the model, 429 nothing; a success clears it', async () => {
+  it('opens credential/model circuits for permanent refusals and rate limits; a success clears them', async () => {
     const profile = await AiModelProfile.create({ key: 'bench', label: 'Bench', provider: 'custom', tier: 'local_remote', protocol: 'openai-chat', endpoint: 'https://bench.test/v1/chat/completions', secretCiphertext: encryptModelSecret('k'), secretLast4: 'kkkk', enabled: true });
     await AiModelCatalogSnapshot.create({ profileId: profile._id, modelIds: ['google/gemma-4-12B-it-qat-w4a16-ct', 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ'], fetchedAt: new Date() });
     const id = String(profile._id);
@@ -60,6 +60,8 @@ describe('benched credentials', () => {
 
     expect(await eligible()).toHaveLength(2);
     await recordModelFailure({ profileId: id, model: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', httpStatus: 429 });
+    expect(await eligible()).toHaveLength(0);
+    await recordModelSuccess(id, 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ');
     expect(await eligible()).toHaveLength(2);
     await recordModelFailure({ profileId: id, model: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', httpStatus: 403, message: 'Model not allowed' });
     expect(await eligible()).toEqual(['google/gemma-4-12B-it-qat-w4a16-ct']);
@@ -70,5 +72,19 @@ describe('benched credentials', () => {
 
     await recordModelSuccess(id, 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ');
     expect(await eligible()).toHaveLength(2);
+  });
+
+  it('opens an endpoint circuit only after repeated transient failures', async () => {
+    const profile = await AiModelProfile.create({ key: 'transient', label: 'Transient', provider: 'custom', tier: 'local_remote', protocol: 'openai-chat', endpoint: 'https://transient.test/v1/chat/completions', secretCiphertext: encryptModelSecret('k'), secretLast4: 'kkkk', enabled: true });
+    await AiModelCatalogSnapshot.create({ profileId: profile._id, modelIds: ['coder'], fetchedAt: new Date() });
+    const id = String(profile._id);
+    const eligible = async () => (await listAvailableModels()).filter((m) => m.profileId === id && m.autoEligible);
+    await recordModelFailure({ profileId: id, model: 'coder', code: 'unavailable', kind: 'transport' });
+    await recordModelFailure({ profileId: id, model: 'coder', code: 'unavailable', kind: 'transport' });
+    expect(await eligible()).toHaveLength(1);
+    await recordModelFailure({ profileId: id, model: 'coder', code: 'unavailable', kind: 'transport' });
+    expect(await eligible()).toHaveLength(0);
+    await recordModelSuccess(id, 'coder');
+    expect(await eligible()).toHaveLength(1);
   });
 });

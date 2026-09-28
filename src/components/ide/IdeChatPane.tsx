@@ -31,6 +31,7 @@ import type { IdeChatStage, IdeChatStreamEvent } from '@/lib/ide/ideChatStream';
 import { userFirstNameFromProfile } from '@/lib/utils/userDisplayName';
 import { isIdeFreeChatScope } from '@/lib/ide/freeChat';
 import type { MutableRefObject } from 'react';
+import type { RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 
 function ideChatEndpoint(projectId: string): string {
   return isIdeFreeChatScope(projectId)
@@ -49,10 +50,12 @@ type ChatTurn = {
   noProviderFee?: boolean;
   artifacts?: { kind: 'image'; assetId: string; name: string; url: string }[];
   toolsUsed?: string[];
+  evidenceReceipts?: RepositoryEvidenceReceipt[];
   plan?: IdePlanDocument;
 };
 
 function fallbackStageForMode(_mode: IdeInteractionMode): IdeChatStage {
+  void _mode;
   return 'planner';
 }
 
@@ -682,7 +685,8 @@ export default function IdeChatPane({
       setTurns((current) => {
         const next = current.map((turn) => {
           if (!turn.plan) return turn;
-          const { plan: _removed, ...rest } = turn;
+          const rest = { ...turn };
+          delete rest.plan;
           return rest;
         });
         const key = ideChatThreadCacheKey({
@@ -827,6 +831,20 @@ export default function IdeChatPane({
                 <div className="mt-1 text-[11px] text-text-secondary">
                   Tools: {turn.toolsUsed.join(', ')}
                 </div>
+              ) : null}
+              {turn.evidenceReceipts?.length ? (
+                <details className="mt-2 rounded border border-border/70 bg-background/50 px-2 py-1 text-[11px] text-text-secondary">
+                  <summary className="cursor-pointer select-none">
+                    Repository evidence · {turn.evidenceReceipts.length} hashed excerpt{turn.evidenceReceipts.length === 1 ? '' : 's'}
+                  </summary>
+                  <ul className="mt-1 space-y-1 font-mono">
+                    {turn.evidenceReceipts.map((receipt) => (
+                      <li key={`${receipt.path}:${receipt.startLine}:${receipt.sha256}`} className="break-all">
+                        {receipt.path}:{receipt.startLine}-{receipt.endLine} · {receipt.revision.slice(0, 12)} · {receipt.sha256.slice(0, 12)}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               ) : null}
               {turn.artifacts?.length ? (
                 <div className="mt-3 space-y-3">

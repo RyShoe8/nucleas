@@ -189,6 +189,9 @@ describe('invokeModelWithTools', () => {
     expect(parsed.startLine).toBe(10);
     expect(parsed.endLine).toBe(14);
     expect(parsed.totalLines).toBe(50);
+    expect(res.evidenceReceipts).toEqual([
+      expect.objectContaining({ tool: 'repo_read', path: 'src/index.ts', revision: 'sha123', startLine: 10, endLine: 14, sha256: expect.stringMatching(/^[a-f0-9]{64}$/) }),
+    ]);
   });
 });
 

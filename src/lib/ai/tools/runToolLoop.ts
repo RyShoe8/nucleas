@@ -6,6 +6,7 @@ import { Types } from 'mongoose';
 import { AiRunEvent } from '@/lib/models/AiControl';
 import { executeIdeTool, type ToolArtifact } from '@/lib/ai/tools/executeTool';
 import { ideChatToolDefinitions, type IdeToolProfile } from '@/lib/ai/tools/definitions';
+import { dedupeEvidenceReceipts, type RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 
 const DEFAULT_MAX_ROUNDS = 6;
 /** Without a model-specific budget, the historical prompt size. */
@@ -19,6 +20,7 @@ export type ToolLoopResult = {
   content: string;
   toolCallsMade: string[];
   artifacts: ToolArtifact[];
+  evidenceReceipts?: RepositoryEvidenceReceipt[];
   inputTokens: number | null;
   outputTokens: number | null;
   latencyMs: number;
@@ -91,6 +93,7 @@ export async function runIdeToolLoop(input: {
     [...input.messages].reverse().find((m) => m.role === 'user') ??
     input.messages[input.messages.length - 1];
   const artifacts: ToolArtifact[] = [];
+  const evidenceReceipts: RepositoryEvidenceReceipt[] = [];
   const toolCallsMade: string[] = [];
   let inputTokens: number | null = null;
   let outputTokens: number | null = null;
@@ -132,6 +135,7 @@ export async function runIdeToolLoop(input: {
           content: result.content.trim().slice(0, 16000),
           toolCallsMade,
           artifacts,
+          evidenceReceipts: dedupeEvidenceReceipts(evidenceReceipts),
           inputTokens,
           outputTokens,
           latencyMs,
@@ -211,6 +215,7 @@ export async function runIdeToolLoop(input: {
             signal: input.signal,
           });
           artifacts.push(...executed.artifacts);
+          evidenceReceipts.push(...(executed.evidenceReceipts ?? []));
           toolContent = executed.content;
           sequence += 1;
           await AiRunEvent.create({
@@ -254,7 +259,7 @@ export async function runIdeToolLoop(input: {
     latencyMs += final.latencyMs;
     if (final.inputTokens != null) inputTokens = (inputTokens ?? 0) + final.inputTokens;
     if (final.outputTokens != null) outputTokens = (outputTokens ?? 0) + final.outputTokens;
-    return { content: final.content.trim().slice(0, 16000), toolCallsMade, artifacts, inputTokens, outputTokens, latencyMs };
+    return { content: final.content.trim().slice(0, 16000), toolCallsMade, artifacts, evidenceReceipts: dedupeEvidenceReceipts(evidenceReceipts), inputTokens, outputTokens, latencyMs };
   } catch (err) {
     if (err && typeof err === 'object') {
       (err as { usage?: { inputTokens: number | null; outputTokens: number | null; latencyMs: number } }).usage = {

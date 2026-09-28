@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { listIdeTree, readIdeFile } from '@/lib/ai/ideCommitPush';
 import { extractChatHeuristicText } from '@/lib/ai/tools/serverBrowseAssist';
 import { getRepoSnapshot, type LoadedSnapshot } from '@/lib/ai/repo/snapshot';
+import { repositoryEvidenceReceipt, type RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 
 const PATH_HINT =
   /\b(rule|rules|task.?rule|taskRule|AiProjectTaskRule|IdeTaskRules|planMode|ideChat|prompt|\.cursor|nucleas|architecture|companyChat|teamChat)\b/i;
@@ -80,6 +81,7 @@ export type RepoAssistResult = {
   contextBlock: string;
   /** Compact excerpts for Reviewer (file bodies only, no tree). */
   evidenceBlock: string;
+  evidenceReceipts: RepositoryEvidenceReceipt[];
 };
 
 function scorePath(path: string, query: string): number {
@@ -151,7 +153,7 @@ export function snapshotCandidates(snapshot: LoadedSnapshot, query: string, limi
   return scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path)).slice(0, limit).map(row => row.path);
 }
 
-function snapshotExcerpt(snapshot: LoadedSnapshot, path: string, query: string): string | null {
+function snapshotExcerpt(snapshot: LoadedSnapshot, path: string, query: string): { block: string; receipt: RepositoryEvidenceReceipt } | null {
   const content = snapshot.files.get(path);
   if (content === undefined) return null;
   const lower = content.toLowerCase();
@@ -159,7 +161,12 @@ function snapshotExcerpt(snapshot: LoadedSnapshot, path: string, query: string):
   const center = positions.length ? Math.min(...positions) : 0;
   const start = Math.max(0, center - 1800);
   const excerpt = content.slice(start, start + fileCharBudget(path));
-  return `File ${path} (branch ${snapshot.branch}, commit ${snapshot.commit.slice(0, 12)}; query excerpt):\n${start > 0 ? '[…]\n' : ''}${excerpt}${start + excerpt.length < content.length ? '\n[…]' : ''}`;
+  const startLine = content.slice(0, start).split('\n').length;
+  const endLine = startLine + excerpt.split('\n').length - 1;
+  return {
+    block: `File ${path} (branch ${snapshot.branch}, commit ${snapshot.commit.slice(0, 12)}; lines ${startLine}-${endLine}):\n${start > 0 ? '[…]\n' : ''}${excerpt}${start + excerpt.length < content.length ? '\n[…]' : ''}`,
+    receipt: repositoryEvidenceReceipt({ tool: 'repo_search', path, revision: snapshot.commit, startLine, endLine, content: excerpt }),
+  };
 }
 
 async function readPathsBatch(
@@ -171,6 +178,7 @@ async function readPathsBatch(
   readErrors: string[];
   okReads: number;
   toolsUsed: string[];
+  evidenceReceipts: RepositoryEvidenceReceipt[];
 }> {
   const toolsUsed: string[] = [];
   const reads = await Promise.all(
@@ -179,10 +187,11 @@ async function readPathsBatch(
       return { path, file };
     })
   );
-  for (const _ of paths) toolsUsed.push('repo_read');
+  toolsUsed.push(...paths.map(() => 'repo_read'));
 
   const fileBlocks: string[] = [];
   const readErrors: string[] = [];
+  const evidenceReceipts: RepositoryEvidenceReceipt[] = [];
   let okReads = 0;
   for (const { path, file } of reads) {
     if (!file.ok) {
@@ -190,11 +199,14 @@ async function readPathsBatch(
       continue;
     }
     okReads += 1;
-    fileBlocks.push(
-      `File ${file.path} (branch ${file.branch}):\n${file.content.slice(0, fileCharBudget(path))}`
-    );
+    const excerpt = file.content.slice(0, fileCharBudget(path));
+    fileBlocks.push(`File ${file.path} (branch ${file.branch}):\n${excerpt}`);
+    evidenceReceipts.push(repositoryEvidenceReceipt({
+      tool: 'repo_read', path: file.path, revision: file.sha || file.branch,
+      startLine: 1, endLine: excerpt.split('\n').length, content: excerpt,
+    }));
   }
-  return { fileBlocks, readErrors, okReads, toolsUsed };
+  return { fileBlocks, readErrors, okReads, toolsUsed, evidenceReceipts };
 }
 
 /** Nucleas-side repo dig for hosts that struggle with tool calling. */
@@ -214,7 +226,8 @@ export async function gatherRepoAssistContext(input: {
   if (local?.ok) {
     toolsUsed.push('repo_search');
     const paths = snapshotCandidates(local.snapshot, query);
-    const fileBlocks = paths.map(path => snapshotExcerpt(local.snapshot, path, query)).filter((block): block is string => Boolean(block));
+    const excerpts = paths.map(path => snapshotExcerpt(local.snapshot, path, query)).filter((item): item is NonNullable<typeof item> => Boolean(item));
+    const fileBlocks = excerpts.map(item => item.block);
     if (fileBlocks.length) {
       toolsUsed.push('repo_read');
       const evidenceBlock = fileBlocks.join('\n\n').slice(0, 24_000);
@@ -224,6 +237,7 @@ export async function gatherRepoAssistContext(input: {
         okReads: fileBlocks.length,
         toolsUsed,
         evidenceBlock,
+        evidenceReceipts: excerpts.map(item => item.receipt),
         contextBlock: [
           'Repository dig results (deterministic whole-repository search; use these excerpts before calling more tools):',
           `Query focus: ${query}`,
@@ -248,6 +262,7 @@ export async function gatherRepoAssistContext(input: {
         'No repo tree available. Tell the user to bind a GitHub repository or connect the GitHub App for this project.',
       ].join('\n'),
       evidenceBlock: '',
+      evidenceReceipts: [],
     };
   }
 
@@ -258,7 +273,7 @@ export async function gatherRepoAssistContext(input: {
       tree: await listIdeTree(input.organizationId, input.projectId, dir),
     }))
   );
-  for (const _ of nestedDirs) toolsUsed.push('repo_tree');
+  toolsUsed.push(...nestedDirs.map(() => 'repo_tree'));
 
   const allTrees: { dir: string; tree: Awaited<ReturnType<typeof listIdeTree>> }[] = [
     { dir: '', tree: rootTree },
@@ -336,6 +351,7 @@ export async function gatherRepoAssistContext(input: {
     toolsUsed: [...new Set(toolsUsed)],
     contextBlock,
     evidenceBlock,
+    evidenceReceipts: first.evidenceReceipts,
   };
 }
 

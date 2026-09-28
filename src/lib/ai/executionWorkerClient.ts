@@ -1,5 +1,5 @@
 import 'server-only';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { executionWorkerResponseSchema } from '@nucleas/ai-contracts';
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
@@ -9,6 +9,47 @@ import { AiIdeExecutionArtifact } from '@/lib/models/AiIdeExecutionArtifact';
 import { readPlatformSettings } from '@/lib/ai/control/settings';
 
 let indexes: Promise<unknown> | undefined;
+
+export type ExecutionPayloadVerification = {
+  verified: true;
+  payloadSha256: string;
+  patchSha256: string;
+  checksObserved: number;
+  checksPassed: number;
+};
+
+/**
+ * Verify the worker's actual returned artifact, independently of its prose summary. Schema parsing
+ * proves shape; this proves that completed work has a real patch, safe unique paths, matching diff
+ * content, and records command outcomes rather than trusting a model's claim that checks passed.
+ */
+export function verifyExecutionWorkerPayload(result: ReturnType<typeof executionWorkerResponseSchema.parse>): ExecutionPayloadVerification {
+  const paths = result.changedFiles;
+  const unsafe = paths.find((path) => !path || path.startsWith('/') || path.includes('\\') || path.split('/').includes('..'));
+  if (unsafe) throw new Error(`Execution worker returned an unsafe changed-file path: ${unsafe.slice(0, 200)}`);
+  if (new Set(paths).size !== paths.length) throw new Error('Execution worker returned duplicate changed-file paths.');
+  if (result.status === 'completed' && (!result.patch.trim() || paths.length === 0)) {
+    throw new Error('Execution worker reported completion without a patch and changed files.');
+  }
+  for (const path of paths) {
+    if (!result.patch.includes(`a/${path}`) && !result.patch.includes(`b/${path}`)) {
+      throw new Error(`Execution worker patch does not contain the reported file: ${path.slice(0, 200)}`);
+    }
+  }
+  const patchSha256 = createHash('sha256').update(result.patch, 'utf8').digest('hex');
+  const payloadSha256 = createHash('sha256').update(JSON.stringify({
+    requestId: result.requestId, status: result.status, summary: result.summary,
+    baseCommit: result.baseCommit, changedFiles: paths, patchSha256, evidence: result.evidence,
+    limitations: result.limitations, routing: result.routing,
+  }), 'utf8').digest('hex');
+  return {
+    verified: true,
+    payloadSha256,
+    patchSha256,
+    checksObserved: result.evidence.length,
+    checksPassed: result.evidence.filter((item) => !item.timedOut && item.exitCode === 0).length,
+  };
+}
 
 export function executionWorkerConfigured(): boolean {
   return Boolean(process.env.NUCLEAS_EXECUTION_WORKER_URL?.trim() && process.env.NUCLEAS_EXECUTION_WORKER_TOKEN?.trim());
@@ -63,6 +104,7 @@ export async function executeInRemoteSandbox(input: {
     if (responseBytes.byteLength > 1_500_000) throw new Error('Execution worker response exceeds the limit.');
     const result = executionWorkerResponseSchema.parse(JSON.parse(Buffer.from(responseBytes).toString('utf8')));
     if (result.requestId !== requestId) throw new Error('Execution worker response did not match this request.');
+    const verification = verifyExecutionWorkerPayload(result);
     indexes ??= AiIdeExecutionArtifact.createIndexes().catch((error) => { indexes = undefined; throw error; });
     await indexes;
     const [artifact] = await AiIdeExecutionArtifact.create([{
@@ -70,9 +112,10 @@ export async function executeInRemoteSandbox(input: {
       requestId, status: result.status, summary: result.summary, baseCommit: result.baseCommit,
       requestedModel: result.routing.requestedModel, providerReportedModels: result.routing.providerReportedModels,
       patch: Buffer.from(result.patch, 'utf8'), changedFiles: result.changedFiles, evidence: result.evidence,
+      verification,
       limitations: result.limitations, expiresAt: new Date(Date.now() + 30 * 86400000),
     }]);
-    return { ...result, artifactId: String(artifact._id), usedEngineModel: Boolean(inference) };
+    return { ...result, verification, artifactId: String(artifact._id), usedEngineModel: Boolean(inference) };
   } finally {
     clearTimeout(timer); input.signal?.removeEventListener('abort', abort);
   }
