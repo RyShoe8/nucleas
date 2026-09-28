@@ -9,6 +9,7 @@ import { toInvocationView, type InvocationView } from '@/lib/capabilities/runtim
 import { buildAssistantTools } from './companyTools';
 import { runAskOrchestrator, type StageRecord } from '@/lib/ai/orchestrator/askOrchestrator';
 import { getBuild, linkAssistantTurn, type BuildView } from '@/lib/building/builds';
+import { getJob, type JobView } from '@/lib/jobs/jobs';
 import { processAttachments, type AttachmentRef, type ProcessedAttachment } from '@/lib/ai/attachments/uploads';
 import { renderAttachments } from '@/lib/ai/attachments/extract';
 import { readEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
@@ -38,7 +39,7 @@ export function buildSystemPrompt(contextBlock: string, today: string, focusName
 }
 
 export interface AssistantReply {
-  turn: { id: string; role: 'assistant' | 'status'; text: string; createdAt: string; costMicros?: number | null; mode: 'orchestrated' | 'direct'; stages?: StageRecord[]; build?: BuildView | null };
+  turn: { id: string; role: 'assistant' | 'status'; text: string; createdAt: string; costMicros?: number | null; mode: 'orchestrated' | 'direct'; stages?: StageRecord[]; build?: BuildView | null; job?: JobView | null };
   actions: (InvocationView & { companyName?: string })[];
   focused: { id: string; name: string }[];
   contextSources: string[];
@@ -118,12 +119,13 @@ export async function askAssistant(
       mode,
       stages: result.stages,
       ...(result.build ? { buildRequestId: new Types.ObjectId(result.build.id) } : {}),
+      ...(result.job ? { jobId: new Types.ObjectId(result.job.id) } : {}),
     });
     if (result.build) await linkAssistantTurn(result.build.id, saved._id);
     return {
       ok: true,
       reply: {
-        turn: { id: String(saved._id), role: result.role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: result.costMicros, mode, stages: result.stages, build: result.build ?? null },
+        turn: { id: String(saved._id), role: result.role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: result.costMicros, mode, stages: result.stages, build: result.build ?? null, job: result.job ?? null },
         actions: await actionViews(result.invocationIds, context.companies),
         focused: focusedCompanies.map((c) => ({ id: c.id, name: c.name })),
         contextSources: context.sources,
@@ -197,12 +199,17 @@ export async function listAssistantTurns(viewer: CompanyViewer, limit = 40) {
   const rows = await CompanyAssistantTurn.find({ organizationId: viewer.organizationId, userId: new Types.ObjectId(viewer.userId) })
     .sort({ createdAt: -1 })
     .limit(Math.min(limit, 100))
-    .select('role text createdAt invocationIds costMicros mode stages buildRequestId attachments.name attachments.kind attachments.size attachments.error')
-    .lean<{ _id: Types.ObjectId; role: string; text: string; createdAt: Date; invocationIds?: Types.ObjectId[]; costMicros?: number; mode?: string; stages?: StageRecord[]; buildRequestId?: Types.ObjectId; attachments?: { name: string; kind: string; size: number; error?: string }[] }[]>();
+    .select('role text createdAt invocationIds costMicros mode stages buildRequestId jobId attachments.name attachments.kind attachments.size attachments.error')
+    .lean<{ _id: Types.ObjectId; role: string; text: string; createdAt: Date; invocationIds?: Types.ObjectId[]; costMicros?: number; mode?: string; stages?: StageRecord[]; buildRequestId?: Types.ObjectId; jobId?: Types.ObjectId; attachments?: { name: string; kind: string; size: number; error?: string }[] }[]>();
   // Proposed builds show their current state (approved, building, …) wherever they appear.
   const builds = new Map<string, BuildView | null>();
   for (const r of rows) {
     if (r.buildRequestId && !builds.has(String(r.buildRequestId))) builds.set(String(r.buildRequestId), await getBuild(viewer, String(r.buildRequestId)));
+  }
+  // Jobs show their current state (answered, approved, ready…) wherever they appear.
+  const jobs = new Map<string, JobView | null>();
+  for (const r of rows) {
+    if (r.jobId && !jobs.has(String(r.jobId))) jobs.set(String(r.jobId), await getJob(viewer, String(r.jobId)));
   }
   return rows.reverse().map((r) => ({
     id: String(r._id),
@@ -214,6 +221,7 @@ export async function listAssistantTurns(viewer: CompanyViewer, limit = 40) {
     mode: r.mode ?? 'direct',
     stages: r.stages ?? [],
     build: r.buildRequestId ? builds.get(String(r.buildRequestId)) ?? null : null,
+    job: r.jobId ? jobs.get(String(r.jobId)) ?? null : null,
     attachments: (r.attachments ?? []).map((a) => ({ name: a.name, kind: a.kind, size: a.size, error: a.error ?? null })),
   }));
 }

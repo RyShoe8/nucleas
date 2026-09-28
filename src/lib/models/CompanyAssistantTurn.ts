@@ -34,6 +34,8 @@ const turnSchema = new Schema(
       ],
       default: undefined,
     },
+    /** A job this answer designed (see Jobs). */
+    jobId: { type: Schema.Types.ObjectId, ref: 'Job' },
     /** A code change this answer proposed (see Building). */
     buildRequestId: { type: Schema.Types.ObjectId, ref: 'BuildRequest' },
   },

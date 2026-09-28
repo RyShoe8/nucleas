@@ -15,6 +15,7 @@ import AssistantModule from './AssistantModule';
 import AiSpendModule from './AiSpendModule';
 import AiRoutingModule from './AiRoutingModule';
 import BuildingModule from './BuildingModule';
+import JobsModule from './JobsModule';
 
 let registered = false;
 
@@ -102,6 +103,36 @@ export function registerOsModules(): void {
             canPopout: true,
             permissions: 'member',
             render: () => createElement(BuildingModule),
+        },
+        {
+            id: 'jobs',
+            title: 'Jobs',
+            icon: '🗂️',
+            defaultSize: { width: 800, height: 660 },
+            minSize: { width: 460, height: 320 },
+            canPopout: true,
+            permissions: 'member',
+            render: () => createElement(JobsModule),
+        },
+        {
+            id: 'marketing',
+            title: 'Marketing',
+            icon: '📣',
+            defaultSize: { width: 800, height: 660 },
+            minSize: { width: 460, height: 320 },
+            canPopout: true,
+            permissions: 'member',
+            render: () => createElement(JobsModule, { categories: ['marketing', 'outreach'], title: 'Marketing' }),
+        },
+        {
+            id: 'content',
+            title: 'Content',
+            icon: '✍️',
+            defaultSize: { width: 800, height: 660 },
+            minSize: { width: 460, height: 320 },
+            canPopout: true,
+            permissions: 'member',
+            render: () => createElement(JobsModule, { categories: ['content'], title: 'Content' }),
         },
         {
             id: 'integrations',

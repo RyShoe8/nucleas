@@ -16,6 +16,8 @@ vi.mock('@/lib/ai/tools/serverBrowseAssist', () => ({
 
 const propose = vi.fn();
 vi.mock('@/lib/building/builds', () => ({ proposeCodeChange: (...args: unknown[]) => propose(...args) }));
+const createJob = vi.fn();
+vi.mock('@/lib/jobs/jobs', () => ({ createJob: (...args: unknown[]) => createJob(...args) }));
 
 import Client from '@/lib/models/Client';
 import { AiProjectRepository } from '@/lib/models/AiProjectRepository';
@@ -425,5 +427,22 @@ describe('live progress', () => {
       'Checking every number against the data',
       'Reviewing the answer with o4-mini',
     ]);
+  });
+});
+
+describe('jobs from Ask', () => {
+  it('turns a request for work into a job that Nucleas designs, and relays its questions', async () => {
+    chat.mockImplementation(async () =>
+      reply('{"kind":"answer","scope":"company","job":{"company":"Frugal Gambler","request":"Every day, earn one dofollow backlink to a Frugal Gambler page"},"outline":[],"review":false}')
+    );
+    createJob.mockResolvedValue({ ok: true, job: { id: 'j1', status: 'needs_answers', design: { title: 'Daily backlink', questions: [{ id: 'sender' }] } } });
+    const steps: string[] = [];
+    const context = await resolvePortfolioContext(admin, { message: 'Every day build a follow link for Frugal Gambler' });
+    const answer = await runAskOrchestrator(admin, { text: 'Every day build a follow link for Frugal Gambler', context, projectId: new Types.ObjectId(), history: [], level: 'low', onProgress: (t) => steps.push(t) });
+    expect(createJob).toHaveBeenCalledWith(admin, expect.objectContaining({ request: 'Every day, earn one dofollow backlink to a Frugal Gambler page', level: 'low' }));
+    expect(answer.job).toMatchObject({ id: 'j1', status: 'needs_answers' });
+    expect(answer.text).toContain('only you can decide');
+    expect(steps).toContain('Designing a job for Frugal Gambler');
+    expect(chat).toHaveBeenCalledTimes(1);
   });
 });

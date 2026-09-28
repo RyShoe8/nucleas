@@ -14,6 +14,8 @@ import { formatResearchResultContext } from '@/lib/ai/tools/serverBrowseAssist';
 import { companiesWithRepositories } from '@/lib/building/companyCode';
 import { proposeCodeChange, type BuildView } from '@/lib/building/builds';
 import { describeToolCall, shortModel, type ProgressFn } from '@/lib/ai/progress';
+import { createJob, type JobView } from '@/lib/jobs/jobs';
+import { extractJson } from '@/lib/ai/json';
 
 /**
  * Cost-aware Ask pipeline:
@@ -47,11 +49,13 @@ const planSchema = z.object({
   review: z.boolean().default(false),
   /** A change to a company's website or app code; planned against its repository and queued for approval. */
   codeChange: z.object({ company: z.string().max(200), request: z.string().min(5).max(4000) }).optional(),
+  /** Non-code work to set up as a job (once or repeating); Nucleas designs it and a person approves. */
+  job: z.object({ company: z.string().max(200), request: z.string().min(5).max(4000) }).optional(),
 });
 export type AskPlan = z.infer<typeof planSchema>;
 
 export interface StageRecord {
-  stage: 'plan' | 'fetch' | 'research' | 'work' | 'check' | 'review' | 'code';
+  stage: 'plan' | 'fetch' | 'research' | 'work' | 'check' | 'review' | 'code' | 'job';
   model?: string;
   free?: boolean;
   costMicros?: number | null;
@@ -67,20 +71,11 @@ export interface OrchestratedAnswer {
   runId?: string;
   /** A proposed code change awaiting approval (Building). */
   build?: BuildView;
+  /** A job Nucleas designed (or is asking questions about). */
+  job?: JobView;
 }
 
-export function extractJson(text: string): unknown {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = (fenced?.[1] ?? text).trim();
-  const start = candidate.indexOf('{');
-  const end = candidate.lastIndexOf('}');
-  if (start < 0 || end <= start) return null;
-  try {
-    return JSON.parse(candidate.slice(start, end + 1));
-  } catch {
-    return null;
-  }
-}
+export { extractJson } from '@/lib/ai/json';
 
 /** Numbers of 3+ significant digits in text, normalised (commas, $, % stripped). */
 export function significantNumbers(text: string): string[] {
@@ -143,7 +138,7 @@ function plannerPrompt(context: PortfolioContext, toolCatalog: string, today: st
     'Do NOT answer the question. Decide what data to fetch and how the answer should be structured. A separate writer produces the answer from the data you request.',
     '',
     'Return ONLY a JSON object:',
-    '{"kind":"answer"|"clarify","scope":"company"|"general"|"mixed","clarifyQuestion":"...","research":[{"query":"..."}],"deepResearch":{"question":"..."},"fetch":[{"company":"<exact name>","tool":"<tool>","days":28}],"actions":[{"company":"<exact name>","tool":"<change tool>"}],"codeChange":{"company":"<exact name>","request":"<the change, in full>"},"outline":["point 1","point 2"],"review":true|false}',
+    '{"kind":"answer"|"clarify","scope":"company"|"general"|"mixed","clarifyQuestion":"...","research":[{"query":"..."}],"deepResearch":{"question":"..."},"fetch":[{"company":"<exact name>","tool":"<tool>","days":28}],"actions":[{"company":"<exact name>","tool":"<change tool>"}],"codeChange":{"company":"<exact name>","request":"<the change, in full>"},"job":{"company":"<exact name>","request":"<the work, in full>"},"outline":["point 1","point 2"],"review":true|false}',
     '',
     'Rules:',
     '- scope: "company" for questions about these businesses, "general" for anything else (world knowledge, how-to, industry questions), "mixed" when both are needed.',
@@ -151,6 +146,7 @@ function plannerPrompt(context: PortfolioContext, toolCatalog: string, today: st
     '- deepResearch: only when the answer needs several rounds of searching where later searches depend on earlier findings (e.g. comparing competitors, investigating a market). Give one clear research question. Use research instead for single lookups.',
     `- fetch: at most ${MAX_FETCH_JOBS} jobs, only for company data. Prefer company_metrics. Only request tools listed for that company.`,
     `- actions: only when the user explicitly asks for a change; at most ${MAX_ACTIONS}.`,
+    '- job: when the user asks for non-code WORK to be done for a company — research something and collect details, add items to a catalog or list, produce content, outreach such as earning backlinks, or anything repeating ("every day…", "weekly…"). Restate the full request (what, for which company, how often, where results should go if said). Nucleas designs the job, asks what it must, and a person approves it. Leave fetch, research and actions empty when you set it. A question to answer now is not a job; a change to site code is a codeChange.',
     '- codeChange: when the user asks to change, fix, add to or plan an edit of a company website or app (its code), OR reports something wrong on it that code would fix ("X shows up where it should not", "remove the listing under Y", a page URL plus a problem), and that company has a code repository listed below. Restate the full request so it stands alone, including any URL, what is wrong and what they want instead. It is planned against the repository and waits for approval; nothing is changed yet. Leave fetch, research and actions empty when you set it. Never answer such a report from guesses about the code.',
     '- review: true only when the answer recommends business decisions for these companies or compares them; false for lookups and general questions.',
     '- Prefer a reasonable assumption over a question: infer missing details (market, time frame, company) from the portfolio and conversation, and put the assumption in the outline so the answer states it. Use kind "clarify" only when no sensible answer is possible without it.',
@@ -332,6 +328,27 @@ export async function runAskOrchestrator(
   const plan = parsed.data;
   if (plan.kind === 'clarify' && plan.clarifyQuestion) {
     return { role: 'assistant', text: plan.clarifyQuestion, stages, invocationIds: [], costMicros, runId: planTurn.runId };
+  }
+
+  // Job: Nucleas designs it (investigating the company and asking what it must), then a person approves.
+  if (plan.job) {
+    const company = input.context.companies.find((c) => c.name.toLowerCase() === plan.job!.company.trim().toLowerCase());
+    if (!company) {
+      return { role: 'assistant', text: `I couldn't tell which company "${plan.job.company}" is. Which company is this job for?`, stages, invocationIds: [], costMicros, runId: planTurn.runId };
+    }
+    const request = input.attachments ? `${plan.job.request}\n\nAttached by the user:\n${input.attachments}`.slice(0, 6000) : plan.job.request;
+    say(`Designing a job for ${company.name}`);
+    const created = await createJob(viewer, { companyId: company.id, request, level: input.level, signal: input.signal, onProgress: input.onProgress });
+    if (!created.ok) return { role: 'status', text: `I couldn't set up that job: ${created.error}`, stages, invocationIds: [], costMicros, runId: planTurn.runId };
+    const job = created.job;
+    stages.push({ stage: 'job', note: job.status === 'needs_answers' ? `${job.design?.questions.length ?? 0} question(s)` : job.status });
+    const text =
+      job.status === 'needs_answers'
+        ? `I looked into **${company.name}** to set this up. A few things only you can decide are below — answer them and I'll finish the design.`
+        : job.status === 'proposed'
+          ? `Here's the job I designed for **${company.name}**: **${job.design?.title}**. Choose review or automatic completion and approve it to start a dry run; nothing runs for real until you accept the sample.`
+          : `I couldn't finish designing this job: ${job.error ?? 'unknown error'}`;
+    return { role: job.status === 'failed' ? 'status' : 'assistant', text, stages, invocationIds: [], costMicros, runId: planTurn.runId, job };
   }
 
   // Code change: plan it against the company's repository and hold it for approval.

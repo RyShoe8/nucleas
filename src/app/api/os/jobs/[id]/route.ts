@@ -1,0 +1,90 @@
+import { after, NextRequest, NextResponse } from 'next/server';
+import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
+import {
+  answerQuestions,
+  approveJob,
+  archiveJob,
+  decideRun,
+  executeJobRun,
+  getJob,
+  pauseJob,
+  rejectJob,
+  resumeJob,
+  runDesign,
+  runNow,
+  type ActionResult,
+} from '@/lib/jobs/jobs';
+
+export const dynamic = 'force-dynamic';
+// Runs and redesigns continue after the response.
+export const maxDuration = 300;
+type Context = { params: Promise<{ id: string }> };
+
+export async function GET(request: NextRequest, { params }: Context) {
+  const viewer = await requireCompanyViewer(request);
+  if (viewer instanceof NextResponse) return viewer;
+  const job = await getJob(viewer, (await params).id);
+  if (!job) return NextResponse.json({ error: 'Job not found.' }, { status: 404 });
+  return NextResponse.json({ job }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+/**
+ * { action: answer | approve | reject | run_now | accept_run | reject_run | pause | resume | archive, ... }
+ *   answer: { answers: { [questionId]: { option?, text? } } }
+ *   approve: { completion: 'review' | 'automatic', monthlyBudgetUsd? }
+ *   accept_run / reject_run: { runId, note? }
+ */
+export async function POST(request: NextRequest, { params }: Context) {
+  const viewer = await requireCompanyViewer(request);
+  if (viewer instanceof NextResponse) return viewer;
+  const id = (await params).id;
+  const body = (await request.json().catch(() => ({}))) as {
+    action?: unknown;
+    answers?: unknown;
+    completion?: unknown;
+    monthlyBudgetUsd?: unknown;
+    runId?: unknown;
+    note?: unknown;
+  };
+  const note = typeof body.note === 'string' ? body.note : undefined;
+  let result: ActionResult & { runId?: string; dryRunId?: string };
+  switch (body.action) {
+    case 'answer': {
+      const answers = body.answers && typeof body.answers === 'object' ? (body.answers as Record<string, { option?: string; text?: string }>) : {};
+      result = await answerQuestions(viewer, id, answers);
+      if (result.ok) after(() => runDesign(viewer, id));
+      break;
+    }
+    case 'approve':
+      result = await approveJob(viewer, id, {
+        completion: body.completion === 'automatic' ? 'automatic' : body.completion === 'review' ? 'review' : ('' as 'review'),
+        monthlyBudgetMicros: typeof body.monthlyBudgetUsd === 'number' ? Math.round(body.monthlyBudgetUsd * 1_000_000) : undefined,
+      });
+      break;
+    case 'reject':
+      result = await rejectJob(viewer, id, note);
+      break;
+    case 'run_now':
+      result = await runNow(viewer, id);
+      break;
+    case 'accept_run':
+    case 'reject_run':
+      result = await decideRun(viewer, id, typeof body.runId === 'string' ? body.runId : '', body.action === 'accept_run' ? 'accept' : 'reject', note);
+      break;
+    case 'pause':
+      result = await pauseJob(viewer, id);
+      break;
+    case 'resume':
+      result = await resumeJob(viewer, id);
+      break;
+    case 'archive':
+      result = await archiveJob(viewer, id);
+      break;
+    default:
+      return NextResponse.json({ error: 'Unknown action.' }, { status: 400 });
+  }
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
+  const runId = result.runId ?? result.dryRunId;
+  if (runId) after(() => executeJobRun(runId));
+  return NextResponse.json({ job: result.job });
+}

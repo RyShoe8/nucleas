@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import IdeChatMarkdown from '@/components/ide/IdeChatMarkdown';
 import BuildCard, { type BuildView } from './building/BuildCard';
+import JobCard, { type JobView } from './jobs/JobCard';
 import AskComposer, { type AttachmentRef } from './assistant/AskComposer';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import {
@@ -33,6 +34,8 @@ interface Turn {
     costMicros?: number | null;
     /** A code change this answer proposed. */
     build?: BuildView | null;
+    /** A job this answer designed. */
+    job?: JobView | null;
     /** Files attached to a user message. */
     attachments?: { name: string; kind?: string; size: number; error?: string | null }[];
     /** While answering: what Nucleas has done so far, newest last. */
@@ -362,6 +365,16 @@ export default function AssistantModule() {
                                         compact
                                         onChange={(next) => setTurns((list) => (list ?? []).map((x) => (x.build?.id === next.id ? { ...x, build: next } : x)))}
                                         onOpenBuilding={() => wm.open('building')}
+                                    />
+                                </div>
+                            ) : null}
+                            {t.job ? (
+                                <div className="mt-2">
+                                    <JobCard
+                                        job={t.job}
+                                        compact
+                                        onChange={(next) => setTurns((list) => (list ?? []).map((x) => (x.job?.id === next.id ? { ...x, job: next } : x)))}
+                                        onOpenJobs={() => wm.open('jobs')}
                                     />
                                 </div>
                             ) : null}
