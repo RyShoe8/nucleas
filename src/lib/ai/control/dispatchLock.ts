@@ -107,3 +107,15 @@ export async function waitForDispatchLock(options: { maxWaitMs?: number; pollMs?
     await new Promise((resolve) => setTimeout(resolve, options.pollMs ?? 2000));
   }
 }
+
+/**
+ * Holds the shared lock for work that is not an AiRun (model checks). A lock without a run id is
+ * respected until it expires, so chats wait their turn; release it as soon as the work is done.
+ */
+export async function holdDispatchLock(token: string, ms: number): Promise<void> {
+  await AiDispatchLock.updateOne(
+    { _id: DISPATCH_USAGE_ID },
+    { $set: { token, expiresAt: new Date(Date.now() + ms) }, $unset: { runId: '' } },
+    { upsert: true }
+  );
+}

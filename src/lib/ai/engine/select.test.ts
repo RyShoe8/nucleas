@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AvailableModel } from './catalog';
-import { selectFrom, type CostLevel, type Need } from './select';
+import { checkScore, selectFrom, type CostLevel, type Need } from './select';
 import { buildModelMetaView } from '@/lib/ai/rolePipeline/modelMeta';
 
 function model(id: string, free: boolean, price: number | null, profile = free ? 'rogly' : 'paid'): AvailableModel {
@@ -186,5 +186,34 @@ describe('short list', () => {
     expect(out).not.toContain('m-8');
     expect(out).not.toContain('unscored-x');
     expect(out).toHaveLength(3 + 6 + 1);
+  });
+});
+
+const measured = (m: AvailableModel, scores: { json: number; routing: number; tools: number; grounded: number }, tools = true): AvailableModel => ({
+  ...m,
+  checks: { status: 'done', checkedAt: '2026-09-28T00:00:00.000Z', supports: { jsonSchema: true, jsonObject: true, tools }, scores, overall: (scores.json + scores.routing + scores.tools + scores.grounded) / 4, avgLatencyMs: 900, notes: [], error: null },
+});
+
+describe('free models ranked by Nucleas checks', () => {
+  const [gemma, coder, vl] = ROGLY;
+  it('weights the checks by the kind of work', () => {
+    const m = measured(gemma, { json: 1, routing: 0.5, tools: 0, grounded: 1 });
+    expect(checkScore(m, 'code')).toBeCloseTo(0.5);
+    expect(checkScore(m, 'utility')).toBeCloseTo(0.8);
+    expect(checkScore(m, 'write')).toBeCloseTo(1);
+    expect(checkScore(gemma, 'write')).toBeNull();
+  });
+
+  it('prefers a measured model that passed over the name-based favourite, and drops ones that failed', () => {
+    const models = [measured(gemma, { json: 0.2, routing: 0.2, tools: 0, grounded: 0.3 }), coder, measured(vl, { json: 1, routing: 1, tools: 1, grounded: 1 })];
+    expect(pick('utility', 'low', models).primary).toBe(vl.model);
+    // Unmeasured beats measured-and-failed.
+    const twoLeft = [measured(gemma, { json: 0.2, routing: 0.2, tools: 0, grounded: 0.3 }), coder];
+    expect(pick('write', 'low', twoLeft).primary).toBe(coder.model);
+  });
+
+  it('skips models whose host refused tool calls for tool-driven work', () => {
+    const models = [gemma, measured(coder, { json: 1, routing: 1, tools: 0, grounded: 1 }, false), vl];
+    expect([gemma.model, vl.model]).toContain(pick('code', 'low', models).primary);
   });
 });

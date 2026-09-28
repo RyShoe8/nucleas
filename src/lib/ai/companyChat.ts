@@ -399,7 +399,7 @@ export async function attemptCompanyCredentialChat(input: {
     : Math.min(OUTPUT_HARD_CAP, Math.max(requestedCap, policy.maxOutputTokens));
   // Prompts are sized to this model's real context window, not a fixed pilot cap.
   const contextChars = contextBudgetChars(
-    await contextWindowFor(gateway.model, profile.provider, freeCredential).catch(() => (freeCredential ? 16_000 : 64_000)),
+    await contextWindowFor(gateway.model, profile.provider, freeCredential, input.modelProfileId).catch(() => (freeCredential ? 16_000 : 64_000)),
     maxOutputTokens
   );
 

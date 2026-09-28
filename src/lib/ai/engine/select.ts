@@ -96,15 +96,55 @@ function bestUnder(pool: AvailableModel[], need: Need, ceiling: number | null): 
 }
 
 /**
- * Rogly pick for a need. Free models have no cost, so the rule is purely quality: the most advanced
- * free model that fits the job (localModelPowerScore: newer generation > size > reasoning). New
- * Rogly models are picked up automatically when they outrank the current ones.
+ * How well a free model did on Nucleas's own checks for the kind of work a need is (0–1), or null
+ * when it has not been measured. Tool use dominates code and research; routing and forced JSON
+ * dominate planning and utilities; grounded answers dominate writing.
+ */
+export function checkScore(m: AvailableModel, need: Need): number | null {
+  const s = m.checks?.scores;
+  if (!s || m.checks?.overall === null || m.checks?.overall === undefined) return null;
+  const v = (n: number | null) => n ?? 0;
+  switch (need) {
+    case 'code':
+    case 'research':
+      return 0.5 * v(s.tools) + 0.25 * v(s.grounded) + 0.25 * v(s.json);
+    case 'plan':
+    case 'review':
+    case 'utility':
+      return 0.4 * v(s.routing) + 0.3 * v(s.json) + 0.3 * v(s.grounded);
+    case 'write':
+      return 0.6 * v(s.grounded) + 0.4 * v(s.json);
+    default:
+      return null;
+  }
+}
+
+/** Measured models that passed come first, then unmeasured ones, then measured ones that did poorly. */
+const PASSING_CHECK = 0.5;
+
+/**
+ * Rogly pick for a need. Free models have no cost, so the rule is purely quality: the best score on
+ * Nucleas's own checks when the models have been measured, otherwise the most advanced model by its
+ * name (localModelPowerScore: newer generation > size > reasoning). New Rogly models are picked up
+ * automatically and measured the next time checks run.
  */
 function freeFor(models: AvailableModel[], need: Need): AvailableModel | undefined {
   const free = models.filter((m) => m.free && m.autoEligible);
+  const tier = (m: AvailableModel) => {
+    const score = checkScore(m, need);
+    return score === null ? 1 : score >= PASSING_CHECK ? 0 : 2;
+  };
   const strongest = (pool: AvailableModel[]) =>
-    [...pool].sort((a, b) => localModelPowerScore(b.model) - localModelPowerScore(a.model) || (b.contextTokens ?? 0) - (a.contextTokens ?? 0))[0];
-  if (need === 'code' || need === 'research') return strongest(withStrength(free, 'coding')) ?? strongest(free);
+    [...pool].sort(
+      (a, b) =>
+        tier(a) - tier(b) ||
+        (checkScore(b, need) ?? 0) - (checkScore(a, need) ?? 0) ||
+        localModelPowerScore(b.model) - localModelPowerScore(a.model) ||
+        (b.contextTokens ?? 0) - (a.contextTokens ?? 0)
+    )[0];
+  // Tool-driven work skips models whose host was measured to refuse tool calls.
+  const toolCapable = (pool: AvailableModel[]) => pool.filter((m) => m.checks?.supports.tools !== false);
+  if (need === 'code' || need === 'research') return strongest(toolCapable(withStrength(free, 'coding'))) ?? strongest(toolCapable(free)) ?? strongest(free);
   if (need === 'vision') return strongest(withStrength(free, 'vision'));
   // Writing and utilities: any text-capable model; take the strongest.
   return strongest(withStrength(free, 'chat', 'reasoning')) ?? strongest(free);

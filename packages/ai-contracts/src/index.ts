@@ -66,6 +66,11 @@ export const modelRequestSchema = z.object({
     content: z.string().max(MAX_MESSAGE_CHARS),
   }).strict()).min(1).max(400),
   maxOutputTokens: z.number().int().min(1).max(32768),
+  /** Constrain the reply to JSON: a schema (guided decoding where the host supports it) or any object. */
+  responseFormat: z.union([
+    z.object({ type: z.literal('json_schema'), name: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), schema: z.record(z.string(), z.unknown()) }).strict(),
+    z.object({ type: z.literal('json_object') }).strict(),
+  ]).optional(),
 }).strict().superRefine((value, ctx) => {
   // Callers size prompts to each model's context window; this is only an outer safety bound.
   if (value.messages.reduce((size, message) => size + message.content.length, 0) > MAX_REQUEST_CHARS) {

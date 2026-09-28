@@ -8,6 +8,7 @@ import { lookupModelTokenRate } from '@/lib/ai/pricing/modelRates';
 import { fetchPricingCatalog, type PricingRow } from '@/lib/ai/pricing/liveCatalog';
 import { benchmarkRows, matchBenchmark, type ModelBenchmark } from './benchmarks';
 import { activeHealthIssues, isBenched, type HealthIssue } from './health';
+import { checksFor, modelCheckRows, type ModelCheckSummary } from './checkResults';
 
 /**
  * Every model the organization can actually call: each enabled credential's live model list,
@@ -24,6 +25,8 @@ const snapshotSchema = new Schema(
   {
     profileId: { type: Schema.Types.ObjectId, required: true, unique: true },
     modelIds: { type: [String], default: [] },
+    /** Context window per model as the provider reports it (e.g. vLLM max_model_len). */
+    contextWindows: { type: [{ model: String, tokens: Number, _id: false }], default: [] },
     error: { type: String },
     fetchedAt: { type: Date, required: true },
   },
@@ -58,6 +61,8 @@ export interface AvailableModel {
   benchmark: ModelBenchmark | null;
   /** Set while the provider is rejecting this credential or model; not auto-selected meanwhile. */
   benched?: HealthIssue | null;
+  /** What Nucleas measured by running the model (free models; see modelChecks.ts). */
+  checks?: ModelCheckSummary | null;
 }
 
 type ProfileRow = { _id: Types.ObjectId; label: string; provider?: string; tier: string; endpoint: string; secretCiphertext: string; model?: string };
@@ -138,22 +143,34 @@ export function findRegistryRow(id: string, provider: string | undefined, rows: 
 
 // ---------- Catalog ----------
 
-async function modelIdsFor(profile: ProfileRow, force: boolean): Promise<string[]> {
-  const cached = await AiModelCatalogSnapshot.findOne({ profileId: profile._id }).lean<{ modelIds: string[]; fetchedAt: Date }>();
-  if (!force && cached && Date.now() - cached.fetchedAt.getTime() < CACHE_TTL_MS) return cached.modelIds;
+async function modelIdsFor(profile: ProfileRow, force: boolean): Promise<{ ids: string[]; contexts: Record<string, number> }> {
+  const cached = await AiModelCatalogSnapshot.findOne({ profileId: profile._id }).lean<{ modelIds: string[]; contextWindows?: { model: string; tokens: number }[]; fetchedAt: Date }>();
+  const cachedContexts: Record<string, number> = Object.fromEntries((cached?.contextWindows ?? []).map((c) => [c.model, c.tokens]));
+  if (!force && cached && Date.now() - cached.fetchedAt.getTime() < CACHE_TTL_MS) return { ids: cached.modelIds, contexts: cachedContexts };
   let ids: string[] = [];
+  let contexts: Record<string, number> = {};
   let error: string | undefined;
   try {
     const discovered = await discoverOpenAiCompatibleModels({ endpoint: profile.endpoint, bearerToken: decryptModelSecret(profile.secretCiphertext) });
     ids = discovered.models.map((m) => m.id);
+    contexts = Object.fromEntries(discovered.models.filter((m) => m.contextTokens).map((m) => [m.id, m.contextTokens as number]));
     error = discovered.error ?? undefined;
   } catch (err) {
     error = err instanceof Error ? err.message.slice(0, 200) : 'discovery failed';
   }
   // Keep the last good list if discovery fails; fall back to the credential's default model.
-  if (ids.length === 0) ids = cached?.modelIds?.length ? cached.modelIds : profile.model ? [profile.model] : [];
-  await AiModelCatalogSnapshot.updateOne({ profileId: profile._id }, error ? { $set: { modelIds: ids, error, fetchedAt: new Date() } } : { $set: { modelIds: ids, fetchedAt: new Date() }, $unset: { error: '' } }, { upsert: true });
-  return ids;
+  if (ids.length === 0) {
+    ids = cached?.modelIds?.length ? cached.modelIds : profile.model ? [profile.model] : [];
+    contexts = cachedContexts;
+  }
+  // Model ids contain dots, so windows are stored as a list rather than a map keyed by id.
+  const contextWindows = Object.entries(contexts).map(([model, tokens]) => ({ model, tokens }));
+  await AiModelCatalogSnapshot.updateOne(
+    { profileId: profile._id },
+    error ? { $set: { modelIds: ids, contextWindows, error, fetchedAt: new Date() } } : { $set: { modelIds: ids, contextWindows, fetchedAt: new Date() }, $unset: { error: '' } },
+    { upsert: true }
+  );
+  return { ids, contexts };
 }
 
 export function describeModel(id: string, provider: string | undefined, free: boolean, rows: PricingRow[]): Omit<AvailableModel, 'profileId' | 'profileLabel' | 'provider' | 'model' | 'benchmark'> {
@@ -220,13 +237,17 @@ export async function listAvailableModels(options: { force?: boolean } = {}): Pr
   const anyPaid = profiles.some((p) => !isFreeCredential({ provider: p.provider, tier: p.tier }));
   const rows = anyPaid ? await registryRows() : [];
   const scores = anyPaid ? await benchmarkRows(Boolean(options.force)) : [];
+  const checkRows = await modelCheckRows().catch(() => []);
   const out: AvailableModel[] = [];
   for (const profile of profiles) {
     const free = isFreeCredential({ provider: profile.provider, tier: profile.tier });
-    for (const id of await modelIdsFor(profile, Boolean(options.force))) {
+    const { ids, contexts } = await modelIdsFor(profile, Boolean(options.force));
+    for (const id of ids) {
       const described = describeModel(id, profile.provider, free, rows);
       if (!isTextChatModel(normalizeModelId(id))) continue;
-      out.push({ profileId: String(profile._id), profileLabel: profile.label, provider: profile.provider ?? 'custom', model: id, ...described, benchmark: free ? null : matchBenchmark(id, scores) });
+      // What the provider says it serves beats any listed or guessed window.
+      const contextTokens = contexts[id] ?? described.contextTokens;
+      out.push({ profileId: String(profile._id), profileLabel: profile.label, provider: profile.provider ?? 'custom', model: id, ...described, contextTokens, benchmark: free ? null : matchBenchmark(id, scores), checks: free ? checksFor(checkRows, String(profile._id), id) : null });
     }
   }
   // Benched credentials and models sit out automatic selection until they recover.
@@ -314,7 +335,12 @@ export function shortlistModels(models: AvailableModel[]): AvailableModel[] {
 const DEFAULT_CONTEXT_TOKENS = { paid: 64_000, free: 16_000 };
 
 /** A model's context window in tokens: curated list, then the price registry, then a safe default. */
-export async function contextWindowFor(model: string, provider: string | undefined, free: boolean): Promise<number> {
+export async function contextWindowFor(model: string, provider: string | undefined, free: boolean, profileId?: string): Promise<number> {
+  if (profileId && Types.ObjectId.isValid(profileId) && mongoose.connection.readyState === 1) {
+    const snap = await AiModelCatalogSnapshot.findOne({ profileId: new Types.ObjectId(profileId) }).select('contextWindows').lean<{ contextWindows?: { model: string; tokens: number }[] }>();
+    const served = snap?.contextWindows?.find((c) => c.model === model)?.tokens;
+    if (typeof served === 'number' && served > 0) return served;
+  }
   const normalized = normalizeModelId(model);
   const curated = findCatalogModel(normalized) ?? findCatalogModel(model);
   if (curated?.contextTokens) return curated.contextTokens;

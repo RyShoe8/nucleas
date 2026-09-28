@@ -265,6 +265,13 @@ async function httpGatewayError(response: Response, bearerToken: string): Promis
   return new GatewayError('unavailable', details);
 }
 
+/** OpenAI-compatible response_format (vLLM turns json_schema into guided decoding). */
+export function responseFormatBody(format: ModelRequest['responseFormat']): Record<string, unknown> {
+  if (!format) return {};
+  if (format.type === 'json_object') return { response_format: { type: 'json_object' } };
+  return { response_format: { type: 'json_schema', json_schema: { name: format.name, schema: format.schema, strict: true } } };
+}
+
 /** Called only by a server-side, budget-authorized dispatcher; never directly by a browser route. */
 export async function invokeModel(
   config: GatewayConfiguration,
@@ -290,6 +297,7 @@ export async function invokeModel(
         model: config.model,
         messages: input.messages,
         ...completionLimitBody(config.model, input.maxOutputTokens),
+        ...responseFormatBody(input.responseFormat),
         stream: false,
       }),
     });

@@ -1,12 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import User from '@/lib/models/User';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { listAvailableModels, shortlistModels } from '@/lib/ai/engine/catalog';
 import { activeHealthIssues } from '@/lib/ai/engine/health';
+import { listModelChecks, queueModelChecks, runQueuedModelChecks } from '@/lib/ai/engine/modelChecks';
 import { BENCHMARK_SOURCE, benchmarkStatus, saveBenchmarkKey } from '@/lib/ai/engine/benchmarks';
 import { COST_LEVELS, NEED_LABELS, NEEDS, isCostLevel, isPriceCeiling, rankPaid, readEngineSettings, saveEngineSettings, selectModel, type Need } from '@/lib/ai/engine/select';
 
 export const dynamic = 'force-dynamic';
+/** Model checks run after the response; each free model takes a minute or two. */
+export const maxDuration = 300;
 
 async function requireAdmin(request: NextRequest) {
   const viewer = await requireCompanyViewer(request);
@@ -45,6 +48,7 @@ export async function GET(request: NextRequest) {
         profileLabel: models.find((m) => m.profileId === h.profileId)?.profileLabel ?? 'Credential',
       })),
       needs,
+      checks: (await listModelChecks()).map((c) => ({ ...c, profileLabel: models.find((m) => m.profileId === c.profileId)?.profileLabel ?? 'Credential' })),
       rankings: Object.fromEntries(
         (['plan', 'code'] as const).map((need) => [need, rankPaid(models, need).filter((m) => m.autoEligible).slice(0, 12).map((m) => ({ profileLabel: m.profileLabel, model: m.model, price: m.blendedPricePer1M, benchmark: m.benchmark }))])
       ),
@@ -84,4 +88,16 @@ export async function PUT(request: NextRequest) {
   );
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
   return NextResponse.json({ ok: true });
+}
+
+/** Measure every free model now (Nucleas's own checks). Runs in the background; unfinished ones continue on the next cron pass. */
+export async function POST(request: NextRequest) {
+  const viewer = await requireAdmin(request);
+  if (viewer instanceof NextResponse) return viewer;
+  const body = (await request.json().catch(() => ({}))) as { action?: unknown };
+  if (body.action !== 'run_checks') return NextResponse.json({ error: 'Unknown action.' }, { status: 400 });
+  const queued = await queueModelChecks();
+  if (queued === 0) return NextResponse.json({ error: 'No free models are available to check.' }, { status: 400 });
+  after(() => runQueuedModelChecks({ budgetMs: 270_000 }).catch((error) => console.error('[ai-engine] model checks failed', error instanceof Error ? error.message : 'unknown')));
+  return NextResponse.json({ ok: true, queued });
 }

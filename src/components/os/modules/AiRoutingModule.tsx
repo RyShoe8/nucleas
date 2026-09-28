@@ -66,7 +66,21 @@ interface HealthIssue {
     until: string;
 }
 
-type EngineData = { health: HealthIssue[]; defaultCostLevel: Level; priceCeilings: Ceilings; needs: NeedRow[]; models: ModelRow[]; benchmarks: BenchmarkStatus; rankings: Record<'plan' | 'code', RankRow[]> };
+interface CheckRow {
+    profileId: string;
+    profileLabel: string;
+    model: string;
+    status: 'queued' | 'running' | 'done' | 'failed';
+    checkedAt: string | null;
+    supports: { jsonSchema: boolean | null; jsonObject: boolean | null; tools: boolean | null };
+    scores: { json: number | null; routing: number | null; tools: number | null; grounded: number | null };
+    overall: number | null;
+    avgLatencyMs: number | null;
+    notes: string[];
+    error: string | null;
+}
+
+type EngineData = { checks: CheckRow[]; health: HealthIssue[]; defaultCostLevel: Level; priceCeilings: Ceilings; needs: NeedRow[]; models: ModelRow[]; benchmarks: BenchmarkStatus; rankings: Record<'plan' | 'code', RankRow[]> };
 
 const LEVELS: { key: Level; label: string; hint: string }[] = [
     { key: 'low', label: 'Low', hint: 'Best-scoring paid model under this ceiling plans and reviews; Rogly does the work; never pays to retry.' },
@@ -190,6 +204,90 @@ function BenchmarkKey({ status, onSave }: { status: BenchmarkStatus; onSave: (ke
     );
 }
 
+const pct = (v: number | null) => (v === null ? '–' : `${Math.round(v * 100)}%`);
+const yesNo = (v: boolean | null) => (v === null ? '?' : v ? 'yes' : 'no');
+
+/** Nucleas measures its free models by running them; selection ranks Rogly models by these scores. */
+function FreeModelChecks({ rows, onRun }: { rows: CheckRow[]; onRun: () => Promise<void> }) {
+    const [busy, setBusy] = useState(false);
+    const [open, setOpen] = useState<string | null>(null);
+    const active = rows.some((r) => r.status === 'queued' || r.status === 'running');
+    return (
+        <section className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold">Free model checks</h2>
+                <button
+                    type="button"
+                    disabled={busy || active}
+                    onClick={async () => {
+                        setBusy(true);
+                        await onRun();
+                        setBusy(false);
+                    }}
+                    className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card disabled:opacity-50"
+                >
+                    {active ? 'Checking…' : busy ? 'Starting…' : 'Run checks'}
+                </button>
+            </div>
+            <p className="text-[11px] text-text-secondary">
+                Nucleas runs each free model through small tests of the work Ask gives it: forced JSON, sorting requests into questions, code changes and jobs, calling the right tool, and answering only from given
+                facts. Rogly models are ranked by these scores. Checks are free and take a minute or two per model.
+            </p>
+            {rows.length ? (
+                <table className="w-full text-xs">
+                    <thead>
+                        <tr className="text-[11px] text-text-secondary text-left">
+                            <th className="font-normal py-1 pr-2">Model</th>
+                            <th className="font-normal py-1 px-1">Overall</th>
+                            <th className="font-normal py-1 px-1">JSON</th>
+                            <th className="font-normal py-1 px-1">Routing</th>
+                            <th className="font-normal py-1 px-1">Tools</th>
+                            <th className="font-normal py-1 px-1">Grounded</th>
+                            <th className="font-normal py-1 px-1" title="Host supports: schema-guided JSON / tool calls">Supports</th>
+                            <th className="font-normal py-1 pl-1 text-right">Speed</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.map((r) => {
+                            const key = `${r.profileId}:${r.model}`;
+                            return (
+                                <tr key={key} className="border-t border-border align-top">
+                                    <td className="py-1 pr-2 min-w-0">
+                                        <button type="button" onClick={() => setOpen(open === key ? null : key)} className="text-left truncate max-w-[16rem]" title={r.notes.length ? 'Show what went wrong' : r.model}>
+                                            {short(r.model)}
+                                        </button>
+                                        <div className="text-[10px] text-text-secondary">
+                                            {r.status === 'queued' ? 'queued' : r.status === 'running' ? 'checking now' : r.status === 'failed' ? <span className="text-amber-400">failed: {r.error}</span> : r.checkedAt ? `checked ${new Date(r.checkedAt).toLocaleString()}` : ''}
+                                        </div>
+                                        {open === key && r.notes.length ? (
+                                            <ul className="mt-1 text-[10px] text-text-secondary list-disc pl-4">
+                                                {r.notes.map((n) => (
+                                                    <li key={n}>{n}</li>
+                                                ))}
+                                            </ul>
+                                        ) : null}
+                                    </td>
+                                    <td className="py-1 px-1 font-medium">{pct(r.overall)}</td>
+                                    <td className="py-1 px-1">{pct(r.scores.json)}</td>
+                                    <td className="py-1 px-1">{pct(r.scores.routing)}</td>
+                                    <td className="py-1 px-1">{pct(r.scores.tools)}</td>
+                                    <td className="py-1 px-1">{pct(r.scores.grounded)}</td>
+                                    <td className="py-1 px-1 text-[10px] text-text-secondary whitespace-nowrap">
+                                        schema {yesNo(r.supports.jsonSchema)} · tools {yesNo(r.supports.tools)}
+                                    </td>
+                                    <td className="py-1 pl-1 text-right text-text-secondary whitespace-nowrap">{r.avgLatencyMs !== null ? `${(r.avgLatencyMs / 1000).toFixed(1)}s` : ''}</td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            ) : (
+                <p className="text-[11px] text-text-secondary">No checks yet.</p>
+            )}
+        </section>
+    );
+}
+
 /** The AI engine: default cost level, what it picks per need and level, and optional pins (administrators). */
 export default function AiRoutingModule() {
     const [data, setData] = useState<EngineData | null>(null);
@@ -225,6 +323,22 @@ export default function AiRoutingModule() {
         }
         setError(null);
         setPinning(null);
+        reload();
+    };
+
+    // While checks run, refresh every 10s to show progress.
+    const checking = Boolean(data?.checks.some((c) => c.status === 'queued' || c.status === 'running'));
+    useEffect(() => {
+        if (!checking) return;
+        const timer = setTimeout(() => setReloadKey((k) => k + 1), 10_000);
+        return () => clearTimeout(timer);
+    }, [checking, reloadKey]);
+
+    const runChecks = async () => {
+        const res = await fetch('/api/os/ai-engine', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'run_checks' }) });
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) setError(body.error ?? `Failed (${res.status})`);
+        else setError(null);
         reload();
     };
 
@@ -284,6 +398,8 @@ export default function AiRoutingModule() {
                 </section>
             ) : null}
 
+            <FreeModelChecks rows={data.checks} onRun={runChecks} />
+
             <section className="space-y-2">
                 <h2 className="text-sm font-semibold">Benchmark ranking</h2>
                 <BenchmarkKey status={data.benchmarks} onSave={(key) => save({ benchmarkApiKey: key })} />
@@ -303,7 +419,7 @@ export default function AiRoutingModule() {
             <section>
                 <h2 className="text-sm font-semibold mb-1">What the engine picks</h2>
                 <p className="text-[11px] text-text-secondary mb-2">
-                    Chosen automatically from every enabled credential. Rogly always uses its strongest model for the job. Pin a model to override a need at every level.
+                    Chosen automatically from every enabled credential. Rogly uses its best-checked model for the job (by name until checks have run). Pin a model to override a need at every level.
                 </p>
                 <table className="w-full text-sm">
                     <thead>
