@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import IdeChatMarkdown from '@/components/ide/IdeChatMarkdown';
+import BuildCard, { type BuildView } from './building/BuildCard';
+import { useWindowManager } from '@/hooks/os/useWindowManager';
 import {
     ChatModeSwitch,
     CostSelect,
@@ -28,6 +30,8 @@ interface Turn {
     mode?: 'orchestrated' | 'direct';
     stages?: { stage: string; model?: string; free?: boolean; costMicros?: number | null; note?: string }[];
     costMicros?: number | null;
+    /** A code change this answer proposed. */
+    build?: BuildView | null;
 }
 
 const MODE_KEY = 'nucleas.os.assistant.mode';
@@ -85,6 +89,7 @@ const ACTION_TONE: Record<string, string> = {
  */
 export default function AssistantModule() {
     const focus = useSyncExternalStore(subscribeAssistantFocus, getAssistantFocus, () => null);
+    const wm = useWindowManager();
     const [turns, setTurns] = useState<Turn[] | null>(null);
     const { providers } = useEngineProviders();
     const [storedSelection, setStoredSelection] = useState<DirectSelection | null>(null);
@@ -248,6 +253,16 @@ export default function AssistantModule() {
                                         </li>
                                     ))}
                                 </ul>
+                            ) : null}
+                            {t.build ? (
+                                <div className="mt-2">
+                                    <BuildCard
+                                        build={t.build}
+                                        compact
+                                        onChange={(next) => setTurns((list) => (list ?? []).map((x) => (x.build?.id === next.id ? { ...x, build: next } : x)))}
+                                        onOpenBuilding={() => wm.open('building')}
+                                    />
+                                </div>
                             ) : null}
                             {t.role !== 'user' && !t.pending ? <StageLine turn={t} /> : null}
                         </div>

@@ -11,6 +11,8 @@ import { readEngineSettings, selectModel, type CostLevel, type ModelChoice, type
 import { listAvailableModels } from '@/lib/ai/engine/catalog';
 import { webSearch } from '@/lib/ai/tools/webSearch';
 import { formatResearchResultContext } from '@/lib/ai/tools/serverBrowseAssist';
+import { companiesWithRepositories } from '@/lib/building/companyCode';
+import { proposeCodeChange, type BuildView } from '@/lib/building/builds';
 
 /**
  * Cost-aware Ask pipeline:
@@ -42,11 +44,13 @@ const planSchema = z.object({
   actions: z.array(z.object({ company: z.string().max(200), tool: z.string().max(100) })).max(MAX_ACTIONS).default([]),
   outline: z.array(z.string().max(400)).max(12).default([]),
   review: z.boolean().default(false),
+  /** A change to a company's website or app code; planned against its repository and queued for approval. */
+  codeChange: z.object({ company: z.string().max(200), request: z.string().min(5).max(4000) }).optional(),
 });
 export type AskPlan = z.infer<typeof planSchema>;
 
 export interface StageRecord {
-  stage: 'plan' | 'fetch' | 'research' | 'work' | 'check' | 'review';
+  stage: 'plan' | 'fetch' | 'research' | 'work' | 'check' | 'review' | 'code';
   model?: string;
   free?: boolean;
   costMicros?: number | null;
@@ -60,6 +64,8 @@ export interface OrchestratedAnswer {
   invocationIds: string[];
   costMicros: number;
   runId?: string;
+  /** A proposed code change awaiting approval (Building). */
+  build?: BuildView;
 }
 
 export function extractJson(text: string): unknown {
@@ -122,14 +128,14 @@ export function factSheet(results: { company: string; tool: string; result: Reco
   return lines.join('\n');
 }
 
-function plannerPrompt(context: PortfolioContext, toolCatalog: string, today: string): string {
+function plannerPrompt(context: PortfolioContext, toolCatalog: string, today: string, codeCatalog: string): string {
   const overview = context.sections.find((s) => s.key === 'portfolio');
   return [
     `You plan answers for Nucleas, the operating assistant for a portfolio of businesses. Today is ${today} (UTC).`,
     'Do NOT answer the question. Decide what data to fetch and how the answer should be structured. A separate writer produces the answer from the data you request.',
     '',
     'Return ONLY a JSON object:',
-    '{"kind":"answer"|"clarify","scope":"company"|"general"|"mixed","clarifyQuestion":"...","research":[{"query":"..."}],"deepResearch":{"question":"..."},"fetch":[{"company":"<exact name>","tool":"<tool>","days":28}],"actions":[{"company":"<exact name>","tool":"<change tool>"}],"outline":["point 1","point 2"],"review":true|false}',
+    '{"kind":"answer"|"clarify","scope":"company"|"general"|"mixed","clarifyQuestion":"...","research":[{"query":"..."}],"deepResearch":{"question":"..."},"fetch":[{"company":"<exact name>","tool":"<tool>","days":28}],"actions":[{"company":"<exact name>","tool":"<change tool>"}],"codeChange":{"company":"<exact name>","request":"<the change, in full>"},"outline":["point 1","point 2"],"review":true|false}',
     '',
     'Rules:',
     '- scope: "company" for questions about these businesses, "general" for anything else (world knowledge, how-to, industry questions), "mixed" when both are needed.',
@@ -137,6 +143,7 @@ function plannerPrompt(context: PortfolioContext, toolCatalog: string, today: st
     '- deepResearch: only when the answer needs several rounds of searching where later searches depend on earlier findings (e.g. comparing competitors, investigating a market). Give one clear research question. Use research instead for single lookups.',
     `- fetch: at most ${MAX_FETCH_JOBS} jobs, only for company data. Prefer company_metrics. Only request tools listed for that company.`,
     `- actions: only when the user explicitly asks for a change; at most ${MAX_ACTIONS}.`,
+    '- codeChange: when the user asks to change, fix, add to or plan an edit of a company website or app (its code), and that company has a code repository listed below. Restate the full request so it stands alone. It is planned against the repository and waits for approval; nothing is changed yet. Leave fetch, research and actions empty when you set it.',
     '- review: true only when the answer recommends business decisions for these companies or compares them; false for lookups and general questions.',
     '- Prefer a reasonable assumption over a question: infer missing details (market, time frame, company) from the portfolio and conversation, and put the assumption in the outline so the answer states it. Use kind "clarify" only when no sensible answer is possible without it.',
     '- Outline exactly what the user asked for. Do not add requirements, verification checklists or extra sections they did not ask for.',
@@ -147,6 +154,9 @@ function plannerPrompt(context: PortfolioContext, toolCatalog: string, today: st
     '',
     '# Tools per company',
     toolCatalog,
+    '',
+    '# Code repositories',
+    codeCatalog || 'None connected.',
   ].join('\n');
 }
 
@@ -240,6 +250,11 @@ export async function runAskOrchestrator(
   const toolDefs = tools.toolSet.definitions.filter((d) => d.function.name !== 'list_companies');
   const writeTools = new Set(CAPABILITIES.filter((c) => c.kind === 'write').map((c) => toolNameFor(c.id)));
   const toolCatalog = toolDefs.map((d) => `- ${d.function.name}${writeTools.has(d.function.name) ? ' (makes a change)' : ''}: ${d.function.description}`).join('\n');
+  const repos = await companiesWithRepositories(viewer, input.context.companies.map((c) => c.id));
+  const codeCatalog = input.context.companies
+    .filter((c) => repos.has(c.id))
+    .map((c) => `- ${c.name}: ${repos.get(c.id)}`)
+    .join('\n');
 
   // 1. Plan (paid, small). Reasoning models spend output tokens thinking, so give them room.
   // One corrective retry on the same model, then one step up the ranking, before giving up.
@@ -247,7 +262,7 @@ export async function runAskOrchestrator(
     const turn = await call(choice, {
       viewer,
       projectId: input.projectId,
-      system: plannerPrompt(input.context, toolCatalog, today),
+      system: plannerPrompt(input.context, toolCatalog, today, codeCatalog),
       user: correction ? `${input.text}\n\n${correction}` : input.text,
       history: input.history.slice(-6),
       signal: input.signal,
@@ -281,6 +296,43 @@ export async function runAskOrchestrator(
   const plan = parsed.data;
   if (plan.kind === 'clarify' && plan.clarifyQuestion) {
     return { role: 'assistant', text: plan.clarifyQuestion, stages, invocationIds: [], costMicros, runId: planTurn.runId };
+  }
+
+  // Code change: plan it against the company's repository and hold it for approval.
+  if (plan.codeChange) {
+    const company = input.context.companies.find((c) => c.name.toLowerCase() === plan.codeChange!.company.trim().toLowerCase());
+    if (!company || !repos.has(company.id)) {
+      return {
+        role: 'assistant',
+        text: `${company?.name ?? plan.codeChange.company} has no GitHub repository connected, so I can't plan code changes for it yet. Connect one in its Integrations window under Code repository.`,
+        stages,
+        invocationIds: [],
+        costMicros,
+        runId: planTurn.runId,
+      };
+    }
+    const proposal = await proposeCodeChange(viewer, { companyId: company.id, request: plan.codeChange.request, level: input.level, signal: input.signal });
+    costMicros += proposal.costMicros;
+    stages.push({ stage: 'code', costMicros: proposal.costMicros, note: proposal.ok ? `planned against ${proposal.build.repository.fullName}` : proposal.message.slice(0, 120) });
+    if (!proposal.ok) {
+      return { role: 'status', text: `I couldn't plan that change for ${company.name}: ${proposal.message}`, stages, invocationIds: [], costMicros, runId: planTurn.runId };
+    }
+    const b = proposal.build;
+    return {
+      role: 'assistant',
+      text: [
+        `I planned this change for **${company.name}** (${b.repository.fullName}): **${b.title}**`,
+        b.summary,
+        'Approve it to queue the build, edit the plan first, or reject it. Nothing changes in the repository until you open a pull request from Building.',
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+      stages,
+      invocationIds: [],
+      costMicros,
+      runId: planTurn.runId,
+      build: b,
+    };
   }
 
   // 2. Fetch and act (plain code through the capability runtime; approvals and receipts apply).

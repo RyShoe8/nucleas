@@ -8,6 +8,7 @@ import { renderContext, resolvePortfolioContext } from '@/lib/context/resolveCom
 import { toInvocationView, type InvocationView } from '@/lib/capabilities/runtime';
 import { buildAssistantTools } from './companyTools';
 import { runAskOrchestrator, type StageRecord } from '@/lib/ai/orchestrator/askOrchestrator';
+import { getBuild, linkAssistantTurn, type BuildView } from '@/lib/building/builds';
 import { readEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
 
 const HISTORY_TURNS = 12;
@@ -35,7 +36,7 @@ export function buildSystemPrompt(contextBlock: string, today: string, focusName
 }
 
 export interface AssistantReply {
-  turn: { id: string; role: 'assistant' | 'status'; text: string; createdAt: string; costMicros?: number | null; mode: 'orchestrated' | 'direct'; stages?: StageRecord[] };
+  turn: { id: string; role: 'assistant' | 'status'; text: string; createdAt: string; costMicros?: number | null; mode: 'orchestrated' | 'direct'; stages?: StageRecord[]; build?: BuildView | null };
   actions: (InvocationView & { companyName?: string })[];
   focused: { id: string; name: string }[];
   contextSources: string[];
@@ -85,11 +86,13 @@ export async function askAssistant(
       contextSources: context.sources,
       mode,
       stages: result.stages,
+      ...(result.build ? { buildRequestId: new Types.ObjectId(result.build.id) } : {}),
     });
+    if (result.build) await linkAssistantTurn(result.build.id, saved._id);
     return {
       ok: true,
       reply: {
-        turn: { id: String(saved._id), role: result.role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: result.costMicros, mode, stages: result.stages },
+        turn: { id: String(saved._id), role: result.role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: result.costMicros, mode, stages: result.stages, build: result.build ?? null },
         actions: await actionViews(result.invocationIds, context.companies),
         focused: focusedCompanies.map((c) => ({ id: c.id, name: c.name })),
         contextSources: context.sources,
@@ -161,8 +164,13 @@ export async function listAssistantTurns(viewer: CompanyViewer, limit = 40) {
   const rows = await CompanyAssistantTurn.find({ organizationId: viewer.organizationId, userId: new Types.ObjectId(viewer.userId) })
     .sort({ createdAt: -1 })
     .limit(Math.min(limit, 100))
-    .select('role text createdAt invocationIds costMicros mode stages')
-    .lean<{ _id: Types.ObjectId; role: string; text: string; createdAt: Date; invocationIds?: Types.ObjectId[]; costMicros?: number; mode?: string; stages?: StageRecord[] }[]>();
+    .select('role text createdAt invocationIds costMicros mode stages buildRequestId')
+    .lean<{ _id: Types.ObjectId; role: string; text: string; createdAt: Date; invocationIds?: Types.ObjectId[]; costMicros?: number; mode?: string; stages?: StageRecord[]; buildRequestId?: Types.ObjectId }[]>();
+  // Proposed builds show their current state (approved, building, …) wherever they appear.
+  const builds = new Map<string, BuildView | null>();
+  for (const r of rows) {
+    if (r.buildRequestId && !builds.has(String(r.buildRequestId))) builds.set(String(r.buildRequestId), await getBuild(viewer, String(r.buildRequestId)));
+  }
   return rows.reverse().map((r) => ({
     id: String(r._id),
     role: r.role,
@@ -172,5 +180,6 @@ export async function listAssistantTurns(viewer: CompanyViewer, limit = 40) {
     costMicros: r.costMicros ?? null,
     mode: r.mode ?? 'direct',
     stages: r.stages ?? [],
+    build: r.buildRequestId ? builds.get(String(r.buildRequestId)) ?? null : null,
   }));
 }

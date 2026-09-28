@@ -14,6 +14,7 @@ import IntegrationsModule from './IntegrationsModule';
 import AssistantModule from './AssistantModule';
 import AiSpendModule from './AiSpendModule';
 import AiRoutingModule from './AiRoutingModule';
+import BuildingModule from './BuildingModule';
 
 let registered = false;
 
@@ -91,6 +92,16 @@ export function registerOsModules(): void {
             canPopout: true,
             permissions: 'admin',
             render: () => createElement(AiRoutingModule),
+        },
+        {
+            id: 'building',
+            title: 'Building',
+            icon: '🏗️',
+            defaultSize: { width: 760, height: 640 },
+            minSize: { width: 440, height: 320 },
+            canPopout: true,
+            permissions: 'member',
+            render: () => createElement(BuildingModule),
         },
         {
             id: 'integrations',

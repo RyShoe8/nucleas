@@ -8,6 +8,7 @@ import { DOMAIN_LABEL, RELATIONSHIP_LABEL, type OsCompanyDetail, type OsConnecti
 import { useOsCompanies } from './CompaniesModule';
 import ResourcePicker from './ResourcePicker';
 import WebhookSetup from './WebhookSetup';
+import CodeRepositories from './CodeRepositories';
 
 const PINNABLE_PROVIDERS: Record<string, string> = { ga4: 'Choose property', gsc: 'Choose site', ahrefs: 'Choose project', adsense: 'Choose site' };
 
@@ -101,6 +102,7 @@ function CompanyIntegrations({ companyId }: { companyId: string }) {
                 {detail.company.name} · {detail.company.domain ?? 'no production domain'}
             </p>
             <ConnectionsSection companyId={detail.company.id} connections={detail.connections} onChanged={reload} />
+            <CodeRepositories companyId={detail.company.id} />
         </div>
     );
 }

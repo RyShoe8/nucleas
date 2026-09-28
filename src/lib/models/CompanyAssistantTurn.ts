@@ -18,6 +18,8 @@ const turnSchema = new Schema(
     mode: { type: String, enum: ['orchestrated', 'direct'] },
     /** Per-step record: which model handled each step and what it cost. */
     stages: { type: Schema.Types.Mixed },
+    /** A code change this answer proposed (see Building). */
+    buildRequestId: { type: Schema.Types.ObjectId, ref: 'BuildRequest' },
   },
   { timestamps: true }
 );

@@ -68,3 +68,46 @@ export async function verifyInstallationRepositoryAccess(
   }
 }
 
+export interface AppRepository {
+  installationId: string;
+  owner: string;
+  repo: string;
+  fullName: string;
+  defaultBranch: string;
+  private: boolean;
+}
+
+let repoCache: { at: number; repos: AppRepository[] } | null = null;
+const REPO_CACHE_MS = 5 * 60 * 1000;
+
+/**
+ * Every repository the GitHub App can reach, across all its installations (our account and any
+ * client account that installed it). Cached for five minutes.
+ */
+export async function listAppRepositories(options: { force?: boolean } = {}): Promise<AppRepository[]> {
+  if (!githubAppConfigured()) throw new Error('GitHub App credentials are not configured.');
+  if (!options.force && repoCache && Date.now() - repoCache.at < REPO_CACHE_MS) return repoCache.repos;
+  const app = new Octokit({
+    authStrategy: createAppAuth,
+    auth: { appId: process.env.GITHUB_APP_ID!.trim(), privateKey: normalizePrivateKey(process.env.GITHUB_APP_PRIVATE_KEY!.trim()) },
+  });
+  const installations = await app.paginate(app.apps.listInstallations, { per_page: 100 });
+  const repos: AppRepository[] = [];
+  for (const installation of installations) {
+    const octokit = createInstallationOctokit(String(installation.id));
+    const list = await octokit.paginate(octokit.apps.listReposAccessibleToInstallation, { per_page: 100 });
+    for (const r of list) {
+      repos.push({
+        installationId: String(installation.id),
+        owner: r.owner.login,
+        repo: r.name,
+        fullName: r.full_name,
+        defaultBranch: r.default_branch ?? 'main',
+        private: r.private,
+      });
+    }
+  }
+  repos.sort((a, b) => a.fullName.localeCompare(b.fullName));
+  repoCache = { at: Date.now(), repos };
+  return repos;
+}

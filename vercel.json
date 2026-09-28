@@ -19,6 +19,10 @@
     {
       "path": "/api/cron/metrics-sync",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/builds",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

@@ -14,7 +14,11 @@ vi.mock('@/lib/ai/tools/serverBrowseAssist', () => ({
     [`Search: ${r.query}`, ...r.hits.map((h) => `- [${h.title}](${h.url}): ${h.snippet}`)].join('\n'),
 }));
 
+const propose = vi.fn();
+vi.mock('@/lib/building/builds', () => ({ proposeCodeChange: (...args: unknown[]) => propose(...args) }));
+
 import Client from '@/lib/models/Client';
+import { AiProjectRepository } from '@/lib/models/AiProjectRepository';
 import Project from '@/lib/models/Project';
 import { AiModelProfile } from '@/lib/models/AiModelProfile';
 import { MetricSnapshot } from '@/lib/models/Metric';
@@ -317,5 +321,40 @@ describe('planner robustness', () => {
     });
     expect((await ask('summarize', 'low')).role).toBe('assistant');
     expect(calls).toBe(2);
+  });
+});
+
+describe('code changes', () => {
+  async function connectRepository() {
+    const fg = await Client.findOne({ name: 'Frugal Gambler' }).lean<{ _id: Types.ObjectId; hubProjectId: Types.ObjectId }>();
+    await AiProjectRepository.create({ organizationId: String(org), projectId: fg!.hubProjectId, owner: 'RyShoe8', repo: 'frugalgambler', installationId: '42' });
+    return String(fg!._id);
+  }
+
+  it('tells the planner which companies have code, and turns a code request into a proposal awaiting approval', async () => {
+    await AiProjectRepository.deleteMany({});
+    const companyId = await connectRepository();
+    let plannerSystem = '';
+    chat.mockImplementation(async (input) => {
+      plannerSystem = input.systemPrompt;
+      return reply('{"kind":"answer","scope":"company","codeChange":{"company":"Frugal Gambler","request":"Add a FAQ page linked from the footer"},"outline":[],"review":false}');
+    });
+    propose.mockResolvedValue({ ok: true, costMicros: 900, build: { id: 'b1', title: 'Add a FAQ page', summary: 'Static FAQ.', status: 'proposed', repository: { fullName: 'RyShoe8/frugalgambler' } } });
+    const answer = await ask('Plan a FAQ page for Frugal Gambler');
+    expect(plannerSystem).toContain('- Frugal Gambler: RyShoe8/frugalgambler');
+    expect(propose).toHaveBeenCalledWith(admin, expect.objectContaining({ companyId, request: 'Add a FAQ page linked from the footer', level: 'low' }));
+    expect(answer.build).toMatchObject({ id: 'b1', status: 'proposed' });
+    expect(answer.text).toContain('Add a FAQ page');
+    expect(answer.stages.map((s) => s.stage)).toEqual(['plan', 'code']);
+    expect(chat).toHaveBeenCalledTimes(1);
+  });
+
+  it('explains when the company has no repository instead of planning', async () => {
+    await AiProjectRepository.deleteMany({});
+    propose.mockReset();
+    chat.mockImplementation(async () => reply('{"kind":"answer","scope":"company","codeChange":{"company":"Frugal Gambler","request":"Add a FAQ page"},"outline":[],"review":false}'));
+    const answer = await ask('Plan a FAQ page for Frugal Gambler');
+    expect(propose).not.toHaveBeenCalled();
+    expect(answer.text).toMatch(/no GitHub repository connected/);
   });
 });
