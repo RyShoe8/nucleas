@@ -44,6 +44,8 @@ const checkSchema = new Schema(
     /** How chats give this model tools: native tools parameter, or described in the prompt. */
     toolMode: { type: String, enum: ['native', 'prompted'], default: null },
     error: { type: String, maxlength: 300 },
+    /** Partial results while a check runs across several passes (see runQueuedModelChecks). */
+    progress: { type: Schema.Types.Mixed },
   },
   { timestamps: false }
 );
@@ -77,6 +79,8 @@ export interface ModelCheckSummary {
 export interface ModelCheckRow extends ModelCheckSummary {
   profileId: string;
   model: string;
+  /** While a check runs across passes: parts finished so far (of 5). */
+  stagesDone: number;
 }
 
 type LeanCheck = {
@@ -91,6 +95,7 @@ type LeanCheck = {
   notes?: string[];
   toolMode?: 'native' | 'prompted' | null;
   error?: string | null;
+  progress?: { done?: string[] } | null;
 };
 
 export function toCheckRow(doc: LeanCheck): ModelCheckRow {
@@ -105,6 +110,7 @@ export function toCheckRow(doc: LeanCheck): ModelCheckRow {
     avgLatencyMs: doc.avgLatencyMs ?? null,
     notes: doc.notes ?? [],
     toolMode: doc.toolMode ?? null,
+    stagesDone: doc.progress?.done?.length ?? 0,
     error: doc.error ?? null,
   };
 }

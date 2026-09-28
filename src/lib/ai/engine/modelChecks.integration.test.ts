@@ -33,9 +33,9 @@ beforeEach(async () => {
 const refused = () => new GatewayError('unavailable', { kind: 'http', httpStatus: 400 });
 
 /** A model that gets everything right (an answer key for checkCases); options make its host refuse features. */
-function fakeModel(options: { schema?: boolean; tools?: boolean; routeAll?: string; nativeTools?: 'ignored' } = {}): CheckCaller & { formats: string[] } {
+function fakeModel(options: { schema?: boolean; tools?: boolean; routeAll?: string; nativeTools?: 'ignored'; latencyMs?: number } = {}): CheckCaller & { formats: string[] } {
   const formats: string[] = [];
-  const reply = (text: string) => ({ text, latencyMs: 100 });
+  const reply = (text: string) => ({ text, latencyMs: options.latencyMs ?? 100 });
   return {
     formats,
     async plain(messages, format) {
@@ -70,13 +70,13 @@ function fakeModel(options: { schema?: boolean; tools?: boolean; routeAll?: stri
       if (options.nativeTools === 'ignored' && mode === 'native') return { text: 'Playbound.club had many visitors.', toolCalls: [], latencyMs: 200 };
       const last = messages[messages.length - 1];
       const user = String(messages[1].content);
-      const call = (name: string, args: Record<string, unknown>) => ({ text: '', toolCalls: [{ name, arguments: JSON.stringify(args) }], latencyMs: 300 });
+      const call = (name: string, args: Record<string, unknown>) => ({ text: '', toolCalls: [{ name, arguments: JSON.stringify(args) }], latencyMs: options.latencyMs ?? 300 });
       if (last.role === 'tool') return call('repo_read', { company: 'Playbound.club', path: 'src/data/gameServers.ts' });
       if (/14 days/.test(user)) return call('company_metrics', { company: 'Playbound.club', metric: 'visitors', days: 14 });
       if (/What changed/.test(user)) return call('company_activity', { company: 'Frugal Gambler' });
       if (/Where in the PlayBound code/.test(user)) return call('repo_search', { company: 'Playbound.club', query: 'OpenHV' });
       if (/revenue/.test(user)) return call('company_metrics', { company: 'Frugal Gambler', metric: 'revenue', days: 30 });
-      return { text: "You're welcome.", toolCalls: [], latencyMs: 300 };
+      return { text: "You're welcome.", toolCalls: [], latencyMs: options.latencyMs ?? 300 };
     },
   };
 }
@@ -114,8 +114,13 @@ describe('free model checks', () => {
     const result = await runQueuedModelChecks({
       caller: async (_profileId, model) => {
         if (model.startsWith('Qwen')) throw new GatewayError('unavailable', { kind: 'http', httpStatus: 503, providerMessage: 'Model loading' });
-        lockHeldDuringCheck = Boolean(await AiDispatchLock.exists({ expiresAt: { $gt: new Date() } }));
-        return fakeModel();
+        const model_ = fakeModel();
+        const plain = model_.plain.bind(model_);
+        model_.plain = async (...args) => {
+          lockHeldDuringCheck ||= Boolean(await AiDispatchLock.exists({ expiresAt: { $gt: new Date() } }));
+          return plain(...args);
+        };
+        return model_;
       },
     });
     expect(result.checked).toBe(1);
@@ -151,5 +156,26 @@ describe('code edit scoring', () => {
     // Removing the wrong OpenHV line fails.
     const wrong = applyEdits(removeCase.file, [{ find: "  { id: 'openhv', name: 'OpenHV', parent: null },\n", replace: '' }]);
     expect(wrong && removeCase.pass(wrong)).toBe(false);
+  });
+});
+
+describe('slow models', () => {
+  it('checks a slow model one stage per run, saving progress and releasing the lock between stages', async () => {
+    const profileId = String(new Types.ObjectId());
+    listed.models = [{ profileId, model: 'Qwen/Qwen3-VL-8B-Thinking', free: true }];
+    await queueModelChecks();
+    // Replies that take a minute each: after the first stage, the next never fits in the time left.
+    const caller = async () => fakeModel({ latencyMs: 60_000 });
+    for (let run = 1; run <= 4; run += 1) {
+      await runQueuedModelChecks({ caller, budgetMs: 200_000 });
+      const row = await AiModelCheck.findOne({}).lean<{ status: string; progress?: { done: string[] } }>();
+      expect(row).toMatchObject({ status: 'queued' });
+      expect(row?.progress?.done).toHaveLength(run);
+      expect(await AiDispatchLock.countDocuments()).toBe(0);
+    }
+    await runQueuedModelChecks({ caller, budgetMs: 200_000 });
+    const done = (await modelCheckRows())[0];
+    expect(done).toMatchObject({ status: 'done', overall: 1, avgLatencyMs: 60_000 });
+    expect((await AiModelCheck.findOne({}).lean<{ progress?: unknown }>())?.progress).toBeUndefined();
   });
 });

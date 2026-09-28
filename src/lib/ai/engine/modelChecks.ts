@@ -81,159 +81,220 @@ const mean = (values: number[]) => (values.length ? values.reduce((a, b) => a + 
 const round = (n: number) => Math.round(n * 100) / 100;
 const clip = (text: string, n = 100) => text.replace(/\s+/g, ' ').trim().slice(0, n);
 
-/** Runs every check against one model. Transport failures propagate; refused request shapes are recorded. */
-export async function checkModel(caller: CheckCaller, onProgress?: (text: string) => void): Promise<CheckOutcome> {
-  const notes: string[] = [];
-  const latencies: number[] = [];
-  const jsonResults: number[] = [];
+export const CHECK_STAGES = ['json', 'routing', 'tools', 'grounded', 'code'] as const;
+export type CheckStage = (typeof CHECK_STAGES)[number];
 
-  // 1. Forced JSON: schema-guided first, then any-object, then prompt only.
-  const supports = { jsonSchema: false, jsonObject: false, tools: false };
-  let jsonMode: JsonMode = 'prompt';
-  onProgress?.('Checking forced JSON');
-  for (const mode of ['json_schema', 'json_object', 'prompt'] as const) {
-    try {
-      const reply = await caller.plain(EXTRACT_MESSAGES, formatFor(mode, 'extract', EXTRACT_SCHEMA));
-      latencies.push(reply.latencyMs);
-      const parsed = extractJson(reply.text) as { city?: unknown; population?: unknown } | null;
-      const valid = Boolean(parsed && /springfield/i.test(String(parsed.city)) && Number(parsed.population) === 167882);
-      if (mode === 'json_schema') supports.jsonSchema = true;
-      if (mode === 'json_object') supports.jsonObject = true;
-      jsonResults.push(valid ? 1 : 0);
-      if (!valid) notes.push(`Extraction with ${mode} was wrong or not JSON.`);
-      jsonMode = mode;
+/** Rough model calls per stage (tools may run twice: native, then prompted), to fit stages into the time left. */
+const STAGE_CALLS: Record<CheckStage, number> = {
+  json: 2,
+  routing: ROUTING_CASES.length,
+  tools: TOOL_CASES.length * 2,
+  grounded: GROUNDED_CASES.length,
+  code: EDIT_CASES.length,
+};
+
+/** Everything measured so far; saved after each stage so a check cut off mid-way resumes. */
+export interface CheckProgress {
+  done: CheckStage[];
+  supports: { jsonSchema: boolean; jsonObject: boolean; tools: boolean };
+  jsonMode: JsonMode;
+  toolMode: ToolMode;
+  notes: string[];
+  latencies: number[];
+  jsonResults: number[];
+  routed: number[];
+  toolScore: number | null;
+  grounded: number[];
+  coded: number[];
+}
+
+export function newProgress(): CheckProgress {
+  return {
+    done: [],
+    supports: { jsonSchema: false, jsonObject: false, tools: false },
+    jsonMode: 'prompt',
+    toolMode: 'native',
+    notes: [],
+    latencies: [],
+    jsonResults: [],
+    routed: [],
+    toolScore: null,
+    grounded: [],
+    coded: [],
+  };
+}
+
+/** Runs one stage against one model, adding its results to the progress. Transport failures propagate. */
+export async function runCheckStage(caller: CheckCaller, stage: CheckStage, p: CheckProgress, onProgress?: (text: string) => void): Promise<void> {
+  switch (stage) {
+    case 'json': {
+      // Forced JSON: schema-guided first, then any-object, then prompt only.
+      onProgress?.('Checking forced JSON');
+      for (const mode of ['json_schema', 'json_object', 'prompt'] as const) {
+        try {
+          const reply = await caller.plain(EXTRACT_MESSAGES, formatFor(mode, 'extract', EXTRACT_SCHEMA));
+          p.latencies.push(reply.latencyMs);
+          const parsed = extractJson(reply.text) as { city?: unknown; population?: unknown } | null;
+          const valid = Boolean(parsed && /springfield/i.test(String(parsed.city)) && Number(parsed.population) === 167882);
+          if (mode === 'json_schema') p.supports.jsonSchema = true;
+          if (mode === 'json_object') p.supports.jsonObject = true;
+          p.jsonResults.push(valid ? 1 : 0);
+          if (!valid) p.notes.push(`Extraction with ${mode} was wrong or not JSON.`);
+          p.jsonMode = mode;
+          break;
+        } catch (error) {
+          if (!refusedShape(error)) throw error;
+          p.notes.push(`Host refused response_format ${mode}.`);
+        }
+      }
+      if (p.supports.jsonSchema) p.supports.jsonObject = true;
       break;
-    } catch (error) {
-      if (!refusedShape(error)) throw error;
-      notes.push(`Host refused response_format ${mode}.`);
     }
-  }
-  if (supports.jsonSchema) supports.jsonObject = true;
 
-  // 2. Routing with the real Direct-mode router prompt: route and company both count.
-  onProgress?.('Checking request routing');
-  const routed: number[] = [];
-  for (const item of ROUTING_CASES) {
-    const reply = await caller.plain(
-      [
-        { role: 'system', content: routerPrompt(CHECK_COMPANIES, CHECK_CODE_COMPANIES) },
-        { role: 'user', content: routerUserMessage(item.prior ?? [], item.text) },
-      ],
-      formatFor(jsonMode, 'route', routeSchema(CHECK_COMPANIES))
-    );
-    latencies.push(reply.latencyMs);
-    const decision = parseDecision(reply.text, CHECK_COMPANIES, item.text);
-    jsonResults.push(decision ? 1 : 0);
-    const routeOk = decision?.route === item.route;
-    const companyOk = decision ? decision.company === item.company : false;
-    routed.push(routeOk ? (companyOk ? 1 : 0.5) : 0);
-    if (!routeOk || !companyOk) notes.push(`Routing "${clip(item.text, 50)}": got ${decision ? `${decision.route} / ${decision.company ?? 'none'}` : 'no decision'}, expected ${item.route} / ${item.company ?? 'none'}.`);
-  }
+    case 'routing': {
+      // The real Direct-mode router prompt: route and company both count.
+      onProgress?.('Checking request routing');
+      for (const item of ROUTING_CASES) {
+        const reply = await caller.plain(
+          [
+            { role: 'system', content: routerPrompt(CHECK_COMPANIES, CHECK_CODE_COMPANIES) },
+            { role: 'user', content: routerUserMessage(item.prior ?? [], item.text) },
+          ],
+          formatFor(p.jsonMode, 'route', routeSchema(CHECK_COMPANIES))
+        );
+        p.latencies.push(reply.latencyMs);
+        const decision = parseDecision(reply.text, CHECK_COMPANIES, item.text);
+        p.jsonResults.push(decision ? 1 : 0);
+        const routeOk = decision?.route === item.route;
+        const companyOk = decision ? decision.company === item.company : false;
+        p.routed.push(routeOk ? (companyOk ? 1 : 0.5) : 0);
+        if (!routeOk || !companyOk) p.notes.push(`Routing "${clip(item.text, 50)}": got ${decision ? `${decision.route} / ${decision.company ?? 'none'}` : 'no decision'}, expected ${item.route} / ${item.company ?? 'none'}.`);
+      }
+      break;
+    }
 
-  // 3. Tool calls: the provider's tools parameter first; when that misses, tools described in the
-  // prompt (hosts whose chat template drops tools). Chats use whichever mode scored better.
-  onProgress?.('Checking tool calls');
-  const runToolCases = async (mode: ToolMode) => {
-    const results: number[] = [];
-    const modeNotes: string[] = [];
-    let accepted = false;
-    for (const item of TOOL_CASES) {
-      try {
-        const reply = await caller.tools(item.messages, CHECK_TOOLS, mode);
-        latencies.push(reply.latencyMs);
-        accepted = true;
-        const raw = reply.toolCalls[0];
-        let call: { name: string; args: Record<string, unknown> } | null = null;
-        if (raw) {
+    case 'tools': {
+      // The provider's tools parameter first; when that misses, tools described in the prompt
+      // (hosts whose chat template drops tools). Chats use whichever mode scored better.
+      onProgress?.('Checking tool calls');
+      const runToolCases = async (mode: ToolMode) => {
+        const results: number[] = [];
+        const modeNotes: string[] = [];
+        let accepted = false;
+        for (const item of TOOL_CASES) {
           try {
-            call = { name: raw.name, args: JSON.parse(raw.arguments || '{}') as Record<string, unknown> };
-          } catch {
-            call = { name: raw.name, args: {} };
-            modeNotes.push(`${mode}: tool arguments were not valid JSON (${item.label}).`);
+            const reply = await caller.tools(item.messages, CHECK_TOOLS, mode);
+            p.latencies.push(reply.latencyMs);
+            accepted = true;
+            const raw = reply.toolCalls[0];
+            let call: { name: string; args: Record<string, unknown> } | null = null;
+            if (raw) {
+              try {
+                call = { name: raw.name, args: JSON.parse(raw.arguments || '{}') as Record<string, unknown> };
+              } catch {
+                call = { name: raw.name, args: {} };
+                modeNotes.push(`${mode}: tool arguments were not valid JSON (${item.label}).`);
+              }
+            }
+            const ok = item.expect(call);
+            results.push(ok ? 1 : 0);
+            if (!ok) {
+              modeNotes.push(
+                raw ? `${mode} (${item.label}): called ${raw.name} ${clip(raw.arguments, 80)}` : `${mode} (${item.label}): no tool call; replied: ${clip(reply.text) || '(nothing)'}`
+              );
+            }
+          } catch (error) {
+            if (!refusedShape(error)) throw error;
+            modeNotes.push(`${mode}: host refused tool calls.`);
+            results.push(0);
+            break;
           }
         }
-        const ok = item.expect(call);
-        results.push(ok ? 1 : 0);
-        if (!ok) {
-          modeNotes.push(
-            raw ? `${mode} (${item.label}): called ${raw.name} ${clip(raw.arguments, 80)}` : `${mode} (${item.label}): no tool call; replied: ${clip(reply.text) || '(nothing)'}`
-          );
+        return { score: mean(results), notes: modeNotes, accepted };
+      };
+      const native = await runToolCases('native');
+      p.supports.tools = native.accepted;
+      p.toolMode = 'native';
+      p.toolScore = native.score;
+      let toolNotes = native.notes;
+      if (native.score < 1) {
+        onProgress?.('Checking tools described in the prompt');
+        const prompted = await runToolCases('prompted');
+        if (prompted.score > native.score) {
+          p.toolMode = 'prompted';
+          p.toolScore = prompted.score;
+          toolNotes = prompted.notes;
         }
-      } catch (error) {
-        if (!refusedShape(error)) throw error;
-        modeNotes.push(`${mode}: host refused tool calls.`);
-        results.push(0);
-        break;
       }
+      p.notes.push(...toolNotes);
+      break;
     }
-    return { score: mean(results), notes: modeNotes, accepted };
-  };
-  const native = await runToolCases('native');
-  supports.tools = native.accepted;
-  let toolMode: ToolMode = 'native';
-  let toolScore = native.score;
-  let toolNotes = native.notes;
-  if (native.score < 1) {
-    onProgress?.('Checking tools described in the prompt');
-    const prompted = await runToolCases('prompted');
-    if (prompted.score > native.score) {
-      toolMode = 'prompted';
-      toolScore = prompted.score;
-      toolNotes = prompted.notes;
+
+    case 'grounded': {
+      // Combine facts, resist common knowledge, admit what the notes do not say.
+      onProgress?.('Checking grounded answers');
+      for (const item of GROUNDED_CASES) {
+        const reply = await caller.plain([
+          { role: 'system', content: GROUNDED_SYSTEM },
+          { role: 'user', content: item.question },
+        ]);
+        p.latencies.push(reply.latencyMs);
+        const ok = item.pass(reply.text);
+        p.grounded.push(ok ? 1 : 0);
+        if (!ok) p.notes.push(`Grounded "${item.question}": ${clip(reply.text)}`);
+      }
+      break;
+    }
+
+    case 'code': {
+      // Code edits, scored by applying them.
+      onProgress?.('Checking code edits');
+      for (const item of EDIT_CASES) {
+        const reply = await caller.plain(
+          [
+            { role: 'system', content: EDIT_SYSTEM },
+            { role: 'user', content: `File ${item.path}:\n\`\`\`ts\n${item.file}\`\`\`\n\nTask: ${item.task}` },
+          ],
+          formatFor(p.jsonMode, 'edits', EDIT_SCHEMA)
+        );
+        p.latencies.push(reply.latencyMs);
+        const parsed = extractJson(reply.text) as { edits?: unknown } | null;
+        p.jsonResults.push(parsed && Array.isArray(parsed.edits) ? 1 : 0);
+        const result = parsed ? applyEdits(item.file, parsed.edits) : null;
+        const ok = result !== null && item.pass(result);
+        p.coded.push(ok ? 1 : 0);
+        if (!ok) p.notes.push(`Code edit (${item.label}): ${result === null ? 'edits did not apply' : 'wrong result'}.`);
+      }
+      break;
     }
   }
-  notes.push(...toolNotes);
+  if (!p.done.includes(stage)) p.done.push(stage);
+}
 
-  // 4. Grounded answers: combine facts, resist common knowledge, admit what the notes do not say.
-  onProgress?.('Checking grounded answers');
-  const grounded: number[] = [];
-  for (const item of GROUNDED_CASES) {
-    const reply = await caller.plain([
-      { role: 'system', content: GROUNDED_SYSTEM },
-      { role: 'user', content: item.question },
-    ]);
-    latencies.push(reply.latencyMs);
-    const ok = item.pass(reply.text);
-    grounded.push(ok ? 1 : 0);
-    if (!ok) notes.push(`Grounded "${item.question}": ${clip(reply.text)}`);
-  }
-
-  // 5. Code edits, scored by applying them.
-  onProgress?.('Checking code edits');
-  const coded: number[] = [];
-  for (const item of EDIT_CASES) {
-    const reply = await caller.plain(
-      [
-        { role: 'system', content: EDIT_SYSTEM },
-        { role: 'user', content: `File ${item.path}:\n\`\`\`ts\n${item.file}\`\`\`\n\nTask: ${item.task}` },
-      ],
-      formatFor(jsonMode, 'edits', EDIT_SCHEMA)
-    );
-    latencies.push(reply.latencyMs);
-    const parsed = extractJson(reply.text) as { edits?: unknown } | null;
-    jsonResults.push(parsed && Array.isArray(parsed.edits) ? 1 : 0);
-    const result = parsed ? applyEdits(item.file, parsed.edits) : null;
-    const ok = result !== null && item.pass(result);
-    coded.push(ok ? 1 : 0);
-    if (!ok) notes.push(`Code edit (${item.label}): ${result === null ? 'edits did not apply' : 'wrong result'}.`);
-  }
-
+export function finishCheck(p: CheckProgress): CheckOutcome {
   const scores: CheckScores = {
-    json: round(mean(jsonResults)),
-    routing: round(mean(routed)),
-    tools: round(toolScore),
-    grounded: round(mean(grounded)),
-    code: round(mean(coded)),
+    json: round(mean(p.jsonResults)),
+    routing: round(mean(p.routed)),
+    tools: round(p.toolScore ?? 0),
+    grounded: round(mean(p.grounded)),
+    code: round(mean(p.coded)),
   };
   return {
-    supports,
-    jsonMode,
-    toolMode,
+    supports: p.supports,
+    jsonMode: p.jsonMode,
+    toolMode: p.toolMode,
     scores,
     overall: round(mean([scores.json!, scores.routing!, scores.tools!, scores.grounded!, scores.code!])),
-    avgLatencyMs: latencies.length ? Math.round(mean(latencies)) : null,
-    notes: notes.slice(0, 20),
+    avgLatencyMs: p.latencies.length ? Math.round(mean(p.latencies)) : null,
+    notes: p.notes.slice(0, 20),
   };
+}
+
+/** Runs every stage against one model in one go (tests; admin runs go stage by stage). */
+export async function checkModel(caller: CheckCaller, onProgress?: (text: string) => void): Promise<CheckOutcome> {
+  const p = newProgress();
+  for (const stage of CHECK_STAGES) await runCheckStage(caller, stage, p, onProgress);
+  return finishCheck(p);
 }
 
 /** The real caller: the credential's gateway, small outputs, plain chat or tools. */
@@ -258,7 +319,7 @@ export async function queueModelChecks(): Promise<number> {
   for (const m of free) {
     await AiModelCheck.updateOne(
       { profileId: new Types.ObjectId(m.profileId), model: m.model, status: { $ne: 'running' } },
-      { $set: { status: 'queued', queuedAt: now }, $unset: { error: '' } },
+      { $set: { status: 'queued', queuedAt: now }, $unset: { error: '', progress: '' } },
       { upsert: true }
     ).catch((error: { code?: number }) => {
       // The row is running (the filter missed and the upsert hit the unique index): leave it.
@@ -268,34 +329,77 @@ export async function queueModelChecks(): Promise<number> {
   return free.length;
 }
 
-const STALE_RUNNING_MS = 15 * 60 * 1000;
-const LOCK_HOLD_MS = 10 * 60 * 1000;
+/** A stage never runs longer than the route allows (300s), so a "running" row older than this was cut off. */
+const STALE_RUNNING_MS = 6 * 60 * 1000;
+const STAGE_LOCK_MS = 5 * 60 * 1000;
+const DEFAULT_CALL_MS = 8_000;
 
-/** Runs queued checks one model at a time until the time budget is spent. */
+function failureMessage(error: unknown): string {
+  return error instanceof GatewayError ? `${error.code}${error.details?.httpStatus ? ` (${error.details.httpStatus})` : ''}${error.details?.providerMessage ? `: ${error.details.providerMessage}` : ''}` : 'Check failed.';
+}
+
+/**
+ * Runs queued checks one stage at a time until the time budget is spent. Each stage takes the
+ * shared lock and releases it (chats get turns in between) and is saved, so a slow model is
+ * checked across several runs and a run cut off mid-stage only repeats that stage. A stage starts
+ * only when it is expected to finish in the time left, except the first stage of a run.
+ */
 export async function runQueuedModelChecks(options: { budgetMs?: number; caller?: (profileId: string, model: string) => Promise<CheckCaller> } = {}): Promise<{ checked: number }> {
   const deadline = Date.now() + (options.budgetMs ?? 240_000);
   let checked = 0;
+  let stagesThisRun = 0;
   while (Date.now() < deadline) {
     const now = new Date();
     const claimed = await AiModelCheck.findOneAndUpdate(
       { $or: [{ status: 'queued' }, { status: 'running', startedAt: { $lt: new Date(now.getTime() - STALE_RUNNING_MS) } }] },
       { $set: { status: 'running', startedAt: now } },
       { sort: { queuedAt: 1 }, new: true }
-    ).lean<{ _id: Types.ObjectId; profileId: Types.ObjectId; model: string }>();
+    ).lean<{ _id: Types.ObjectId; profileId: Types.ObjectId; model: string; progress?: CheckProgress | null }>();
     if (!claimed) break;
 
-    const token = randomUUID();
+    const progress: CheckProgress = { ...newProgress(), ...(claimed.progress ?? {}) };
+    let caller: CheckCaller;
     try {
-      await waitForDispatchLock();
-    } catch {
-      // The shared model is busy with chats; try again on the next pass.
-      await AiModelCheck.updateOne({ _id: claimed._id }, { $set: { status: 'queued' } });
-      break;
+      caller = await (options.caller ?? gatewayCaller)(String(claimed.profileId), claimed.model);
+    } catch (error) {
+      await AiModelCheck.updateOne({ _id: claimed._id }, { $set: { status: 'failed', error: failureMessage(error).slice(0, 300) }, $unset: { progress: '' } });
+      continue;
     }
-    await holdDispatchLock(token, LOCK_HOLD_MS);
-    try {
-      const caller = await (options.caller ?? gatewayCaller)(String(claimed.profileId), claimed.model);
-      const outcome = await checkModel(caller);
+
+    let stopped = false;
+    let failed = false;
+    for (const stage of CHECK_STAGES.filter((st) => !progress.done.includes(st))) {
+      const perCall = progress.latencies.length ? mean(progress.latencies) : DEFAULT_CALL_MS;
+      const expected = STAGE_CALLS[stage] * perCall * 1.2;
+      if (stagesThisRun > 0 && Date.now() + expected > deadline) {
+        stopped = true;
+        break;
+      }
+      const token = randomUUID();
+      try {
+        await waitForDispatchLock();
+      } catch {
+        // The shared model is busy with chats; pick up from here on the next run.
+        stopped = true;
+        break;
+      }
+      await holdDispatchLock(token, STAGE_LOCK_MS);
+      try {
+        await runCheckStage(caller, stage, progress);
+        stagesThisRun += 1;
+        await AiModelCheck.updateOne({ _id: claimed._id }, { $set: { progress, startedAt: new Date() } });
+      } catch (error) {
+        await AiModelCheck.updateOne({ _id: claimed._id }, { $set: { status: 'failed', error: failureMessage(error).slice(0, 300) }, $unset: { progress: '' } });
+        stopped = true;
+        failed = true;
+        break;
+      } finally {
+        await releaseDispatchLock(token);
+      }
+    }
+
+    if (progress.done.length === CHECK_STAGES.length) {
+      const outcome = finishCheck(progress);
       await AiModelCheck.updateOne(
         { _id: claimed._id },
         {
@@ -309,16 +413,14 @@ export async function runQueuedModelChecks(options: { budgetMs?: number; caller?
             notes: outcome.notes,
             toolMode: outcome.toolMode,
           },
-          $unset: { error: '' },
+          $unset: { error: '', progress: '' },
         }
       );
       checked += 1;
-    } catch (error) {
-      const message =
-        error instanceof GatewayError ? `${error.code}${error.details?.httpStatus ? ` (${error.details.httpStatus})` : ''}${error.details?.providerMessage ? `: ${error.details.providerMessage}` : ''}` : 'Check failed.';
-      await AiModelCheck.updateOne({ _id: claimed._id }, { $set: { status: 'failed', error: message.slice(0, 300) } });
-    } finally {
-      await releaseDispatchLock(token);
+    } else if (stopped && !failed) {
+      // Out of time or the model is busy: keep the progress and continue on the next run.
+      await AiModelCheck.updateOne({ _id: claimed._id, status: 'running' }, { $set: { status: 'queued' } });
+      break;
     }
   }
   return { checked };

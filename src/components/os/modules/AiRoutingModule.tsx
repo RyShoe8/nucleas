@@ -79,6 +79,7 @@ interface CheckRow {
     avgLatencyMs: number | null;
     notes: string[];
     toolMode: 'native' | 'prompted' | null;
+    stagesDone: number;
     error: string | null;
 }
 
@@ -234,7 +235,7 @@ function FreeModelChecks({ rows, onRun }: { rows: CheckRow[]; onRun: () => Promi
             </div>
             <p className="text-[11px] text-text-secondary">
                 Nucleas runs each free model through tests of the work Ask gives it: forced JSON, sorting requests (including follow-ups) into questions, code changes and jobs, calling the right tool with exact arguments over several steps, exact code edits, and answering only from given
-                facts. Rogly models are ranked by these scores. Checks are free and take a minute or two per model.
+                facts. Rogly models are ranked by these scores. Checks are free. Fast models finish in a couple of minutes; slow ones are checked in parts over several passes (every 10 minutes), and the scores in use stay until new ones land.
             </p>
             {rows.length ? (
                 <table className="w-full text-xs">
@@ -261,7 +262,7 @@ function FreeModelChecks({ rows, onRun }: { rows: CheckRow[]; onRun: () => Promi
                                             {short(r.model)}
                                         </button>
                                         <div className="text-[10px] text-text-secondary">
-                                            {r.status === 'queued' ? 'queued' : r.status === 'running' ? 'checking now' : r.status === 'failed' ? <span className="text-amber-400">failed: {r.error}</span> : r.checkedAt ? `checked ${new Date(r.checkedAt).toLocaleString()}` : ''}
+                                            {r.status === 'queued' ? (r.stagesDone ? `${r.stagesDone} of 5 parts done · continues shortly` : 'queued') : r.status === 'running' ? `checking now · ${r.stagesDone} of 5 parts done` : r.status === 'failed' ? <span className="text-amber-400">failed: {r.error}</span> : r.checkedAt ? `checked ${new Date(r.checkedAt).toLocaleString()}` : ''}
                                         </div>
                                         {open === key && r.notes.length ? (
                                             <ul className="mt-1 text-[10px] text-text-secondary list-disc pl-4">
