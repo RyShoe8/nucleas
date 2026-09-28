@@ -72,6 +72,12 @@ export function toolCallsFromText(text: string, toolNames: string[]): { calls: T
     return hit;
   };
 
+  // 0. Gemma 4: <|tool_call>call:name{key:<|"|>value<|"|>,n:7}<tool_call|>, or call:name{JSON} without the tokens.
+  for (const found of gemmaCalls(text)) {
+    if (add(found.name, found.args)) rest = rest.replace(found.raw, '');
+  }
+  if (calls.length) return { calls, rest: rest.replace(/<\|?\/?tool_call\|?>/g, '').trim() };
+
   // 1. <tool_call>…</tool_call> blocks.
   for (const m of text.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi)) {
     if (fromValues(jsonValuesIn(m[1]))) rest = rest.replace(m[0], '');
@@ -86,4 +92,70 @@ export function toolCallsFromText(text: string, toolNames: string[]): { calls: T
   // 3. The whole reply is a JSON call or bare name(args) lines.
   if (!calls.length && (fromValues(jsonValuesIn(text)) || fromCallSyntax(text))) rest = '';
   return { calls, rest: rest.trim() };
+}
+
+const GEMMA_QUOTE = '<|"|>';
+
+/**
+ * Gemma 4 call syntax: `call:name{…}` (optionally wrapped in <|tool_call> … <tool_call|>), where the
+ * braces hold JSON or Gemma's own form: bare keys and strings delimited by <|"|>.
+ */
+function gemmaCalls(text: string): { raw: string; name: string; args: Record<string, unknown> }[] {
+  const out: { raw: string; name: string; args: Record<string, unknown> }[] = [];
+  const re = /(?:<\|tool_call>\s*)?call:([A-Za-z_]\w*)\s*\{/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const open = m.index + m[0].length - 1;
+    const close = matchingBrace(text, open);
+    if (close < 0) continue;
+    const body = text.slice(open, close + 1);
+    const args = gemmaArgs(body);
+    let end = close + 1;
+    const tail = text.slice(end).match(/^\s*<tool_call\|>/);
+    if (tail) end += tail[0].length;
+    if (args) out.push({ raw: text.slice(m.index, end), name: m[1], args });
+    re.lastIndex = end;
+  }
+  return out;
+}
+
+/** Index of the brace closing the one at `open`, skipping strings ("…" or <|"|>…<|"|>). */
+function matchingBrace(text: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < text.length; i += 1) {
+    if (text.startsWith(GEMMA_QUOTE, i)) {
+      const endQuote = text.indexOf(GEMMA_QUOTE, i + GEMMA_QUOTE.length);
+      if (endQuote < 0) return -1;
+      i = endQuote + GEMMA_QUOTE.length - 1;
+      continue;
+    }
+    const ch = text[i];
+    if (ch === '"') {
+      for (i += 1; i < text.length && text[i] !== '"'; i += text[i] === '\\' ? 2 : 1);
+      continue;
+    }
+    if (ch === '{') depth += 1;
+    else if (ch === '}' && --depth === 0) return i;
+  }
+  return -1;
+}
+
+function gemmaArgs(body: string): Record<string, unknown> | null {
+  const tryParse = (s: string) => {
+    try {
+      const v = JSON.parse(s);
+      return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  };
+  const direct = tryParse(body);
+  if (direct) return direct;
+  // Gemma form: turn <|"|>…<|"|> into JSON strings, then quote bare keys outside strings.
+  const parts = body.split(GEMMA_QUOTE);
+  if (parts.length % 2 === 0) return null;
+  const rebuilt = parts
+    .map((part, i) => (i % 2 === 1 ? JSON.stringify(part) : part.replace(/([{,]\s*)([A-Za-z_]\w*)\s*:/g, '$1"$2":')))
+    .join('');
+  return tryParse(rebuilt);
 }

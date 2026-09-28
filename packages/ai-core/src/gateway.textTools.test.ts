@@ -90,3 +90,22 @@ describe('prompted tool mode', () => {
     expect(result.toolCalls[0].function.name).toBe('repo_search');
   });
 });
+
+describe('Gemma 4 tool calls', () => {
+  it('reads the native <|tool_call>call:name{…}<tool_call|> form with <|"|> strings', () => {
+    const { calls, rest } = toolCallsFromText('<|tool_call>call:company_metrics{company:<|"|>Playbound.club<|"|>,days:7,metric:<|"|>visitors<|"|>}<tool_call|>', TOOLS);
+    expect(calls.map((c) => c.function.name)).toEqual(['company_metrics']);
+    expect(args(calls)).toEqual({ company: 'Playbound.club', days: 7, metric: 'visitors' });
+    expect(rest).toBe('');
+    expect(args(toolCallsFromText('<|tool_call>call:repo_search{company:<|"|>PlayBound<|"|>,query:<|"|>OpenHV game server listing<|"|>}<tool_call|>', TOOLS).calls)).toEqual({
+      company: 'PlayBound',
+      query: 'OpenHV game server listing',
+    });
+  });
+
+  it('reads call:name{JSON} and keeps braces and commas inside strings', () => {
+    expect(args(toolCallsFromText('call:company_metrics{"company":"Playbound.club","metric":"visitors","days":7}', TOOLS).calls)).toEqual({ company: 'Playbound.club', metric: 'visitors', days: 7 });
+    expect(args(toolCallsFromText('call:repo_search{query:<|"|>a {b}, c: d<|"|>}', TOOLS).calls)).toEqual({ query: 'a {b}, c: d' });
+    expect(toolCallsFromText('call:drop_tables{}', TOOLS).calls).toEqual([]);
+  });
+});
