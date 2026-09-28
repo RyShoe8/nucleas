@@ -18,6 +18,22 @@ const turnSchema = new Schema(
     mode: { type: String, enum: ['orchestrated', 'direct'] },
     /** Per-step record: which model handled each step and what it cost. */
     stages: { type: Schema.Types.Mixed },
+    /** Files attached to a user message: what they were and the text models were given (capped). */
+    attachments: {
+      type: [
+        {
+          name: String,
+          mime: String,
+          size: Number,
+          kind: { type: String, enum: ['text', 'pdf', 'image'] },
+          text: { type: String, maxlength: 20_000 },
+          error: String,
+          describedBy: String,
+          _id: false,
+        },
+      ],
+      default: undefined,
+    },
     /** A code change this answer proposed (see Building). */
     buildRequestId: { type: Schema.Types.ObjectId, ref: 'BuildRequest' },
   },

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import IdeChatMarkdown from '@/components/ide/IdeChatMarkdown';
 import BuildCard, { type BuildView } from './building/BuildCard';
+import AskComposer, { type AttachmentRef } from './assistant/AskComposer';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import {
     ChatModeSwitch,
@@ -32,6 +33,8 @@ interface Turn {
     costMicros?: number | null;
     /** A code change this answer proposed. */
     build?: BuildView | null;
+    /** Files attached to a user message. */
+    attachments?: { name: string; kind?: string; size: number; error?: string | null }[];
 }
 
 const MODE_KEY = 'nucleas.os.assistant.mode';
@@ -95,7 +98,6 @@ export default function AssistantModule() {
     const [storedSelection, setStoredSelection] = useState<DirectSelection | null>(null);
     const [mode, setMode] = useState<ChatMode>('orchestrated');
     const [cost, setCost] = useState<CostChoice>('default');
-    const [text, setText] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const endRef = useRef<HTMLDivElement | null>(null);
@@ -123,13 +125,18 @@ export default function AssistantModule() {
         endRef.current?.scrollIntoView({ block: 'end' });
     }, [turns]);
 
-    const send = async (message: string) => {
+    const send = async (message: string, attachments: AttachmentRef[] = []): Promise<boolean> => {
         const trimmed = message.trim();
-        if (!trimmed || busy || (mode === 'direct' && !selection)) return;
+        if ((!trimmed && !attachments.length) || busy || (mode === 'direct' && !selection)) return false;
         setBusy(true);
         setError(null);
-        setText('');
-        const optimistic: Turn = { id: `local-${Date.now()}`, role: 'user', text: trimmed, createdAt: new Date().toISOString() };
+        const optimistic: Turn = {
+            id: `local-${Date.now()}`,
+            role: 'user',
+            text: trimmed || 'Please look at the attached file(s).',
+            createdAt: new Date().toISOString(),
+            attachments: attachments.map((a) => ({ name: a.name, size: a.size })),
+        };
         setTurns((t) => [...(t ?? []), optimistic, { id: 'pending', role: 'assistant', text: 'Looking into it…', createdAt: '', pending: true }]);
         try {
             const res = await fetch('/api/os/assistant', {
@@ -141,6 +148,7 @@ export default function AssistantModule() {
                     mode,
                     ...(mode === 'orchestrated' ? levelParam(cost) : {}),
                     ...(mode === 'direct' && selection ? { modelProfileId: selection.profileId, model: selection.model } : {}),
+                    ...(attachments.length ? { attachments } : {}),
                 }),
             });
             const body = (await res.json().catch(() => ({}))) as {
@@ -151,18 +159,18 @@ export default function AssistantModule() {
             if (!res.ok || !body.turn) {
                 setError(body.error ?? `Failed (${res.status})`);
                 setTurns((t) => (t ?? []).filter((x) => x.id !== 'pending'));
-                return;
+                return false;
             }
             const reply: Turn = { ...body.turn, actions: body.actions };
             setTurns((t) => [...(t ?? []).filter((x) => x.id !== 'pending'), reply]);
+            return true;
+        } catch {
+            setError('The request did not reach Nucleas. Try again.');
+            setTurns((t) => (t ?? []).filter((x) => x.id !== 'pending'));
+            return false;
         } finally {
             setBusy(false);
         }
-    };
-
-    const onSubmit = (e: FormEvent) => {
-        e.preventDefault();
-        void send(text);
     };
 
     const suggestions = focus
@@ -241,6 +249,20 @@ export default function AssistantModule() {
                             } ${t.pending ? 'text-text-secondary animate-pulse' : ''}`}
                         >
                             {t.role === 'assistant' && !t.pending ? <IdeChatMarkdown text={t.text} /> : <p className="whitespace-pre-wrap">{t.text}</p>}
+                            {t.attachments?.length ? (
+                                <ul className="mt-1.5 flex flex-wrap gap-1">
+                                    {t.attachments.map((a, i) => (
+                                        <li
+                                            key={`${a.name}-${i}`}
+                                            title={a.error ?? undefined}
+                                            className={`text-[10px] px-1.5 py-0.5 rounded border ${a.error ? 'border-amber-400/50 text-amber-400' : 'border-border text-text-secondary'}`}
+                                        >
+                                            {a.kind === 'image' ? '🖼️' : '📄'} {a.name}
+                                            {a.error ? ' · could not be read' : ''}
+                                        </li>
+                                    ))}
+                                </ul>
+                            ) : null}
                             {t.actions?.length ? (
                                 <ul className="mt-2 pt-2 border-t border-border space-y-0.5">
                                     {t.actions.map((a) => (
@@ -272,25 +294,12 @@ export default function AssistantModule() {
             </div>
 
             {error ? <p className="px-3 pb-1 text-xs text-red-400">{error}</p> : null}
-            <form onSubmit={onSubmit} className="flex gap-2 p-3 border-t border-border">
-                <textarea
-                    value={text}
-                    onChange={(e) => setText(e.target.value)}
-                    onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            void send(text);
-                        }
-                    }}
-                    placeholder={(mode === 'orchestrated' || selection) ? (focus ? `Ask about ${focus.companyName} or anything else…` : 'Ask about any business…') : 'Configure an AI credential in Admin → AI Settings first'}
-                    rows={2}
-                    disabled={!(mode === 'orchestrated' || selection)}
-                    className="flex-1 min-w-0 px-2 py-1.5 rounded border border-border bg-background-elevated text-sm resize-none"
-                />
-                <button type="submit" disabled={busy || !text.trim() || !(mode === 'orchestrated' || selection)} className="px-3 rounded bg-primary text-white text-sm disabled:opacity-50">
-                    {busy ? '…' : 'Ask'}
-                </button>
-            </form>
+            <AskComposer
+                disabled={!(mode === 'orchestrated' || selection)}
+                busy={busy}
+                placeholder={(mode === 'orchestrated' || selection) ? (focus ? `Ask about ${focus.companyName} or anything else…` : 'Ask about any business… (drop files here to attach)') : 'Configure an AI credential in Admin → AI Settings first'}
+                onSend={send}
+            />
         </div>
     );
 }

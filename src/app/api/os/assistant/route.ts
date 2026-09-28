@@ -3,6 +3,7 @@ import { askAssistant, listAssistantTurns } from '@/lib/ai/company/companyAssist
 import { isCostLevel } from '@/lib/ai/engine/select';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { enforceRateLimit, rateLimitKey } from '@/lib/security/rateLimit';
+import { parseAttachmentRefs } from '@/lib/ai/attachments/uploads';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -20,7 +21,9 @@ export async function POST(request: NextRequest) {
   if (limited) return limited;
   const viewer = await requireCompanyViewer(request);
   if (viewer instanceof NextResponse) return viewer;
-  const body = (await request.json().catch(() => ({}))) as { text?: unknown; focusCompanyId?: unknown; mode?: unknown; level?: unknown; modelProfileId?: unknown; model?: unknown };
+  const body = (await request.json().catch(() => ({}))) as { text?: unknown; focusCompanyId?: unknown; mode?: unknown; level?: unknown; modelProfileId?: unknown; model?: unknown; attachments?: unknown };
+  const attachments = parseAttachmentRefs(body.attachments, viewer.userId);
+  if (!Array.isArray(attachments)) return NextResponse.json({ error: attachments.error }, { status: 400 });
   try {
     const result = await askAssistant(viewer, {
       text: typeof body.text === 'string' ? body.text : '',
@@ -29,6 +32,7 @@ export async function POST(request: NextRequest) {
       level: isCostLevel(body.level) ? body.level : undefined,
       modelProfileId: typeof body.modelProfileId === 'string' ? body.modelProfileId : '',
       model: typeof body.model === 'string' ? body.model : '',
+      attachments,
       signal: request.signal,
     });
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });

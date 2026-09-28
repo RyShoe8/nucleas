@@ -384,3 +384,24 @@ describe('provider failures', () => {
     expect(answer.stages[0].note).toMatch(/Remote authentication was rejected/);
   });
 });
+
+describe('attached files', () => {
+  it('the planner gets a summary, the writer the content, and figures from files count as sourced', async () => {
+    const prompts: Record<string, string> = {};
+    chat.mockImplementation(async (input) => {
+      const stage = stageOf(input);
+      prompts[stage] = input.userText;
+      if (stage === 'plan') return reply('{"kind":"answer","scope":"general","outline":["Summarize the file"],"review":false}');
+      if (stage === 'review') return reply('{"verdict":"accept","notes":"ok"}');
+      return reply('The report shows revenue of 48,213 for the quarter.');
+    });
+    const context = await resolvePortfolioContext(admin, { message: 'summarize this' });
+    const attachments = '## File "q3.csv"\nquarter,revenue\nQ3,48213\n' + 'x'.repeat(9000);
+    const answer = await runAskOrchestrator(admin, { text: 'summarize this', context, projectId: new Types.ObjectId(), history: [], level: 'low', attachments });
+    expect(prompts.plan).toContain('# Attached files');
+    expect(prompts.plan.length).toBeLessThan(7000);
+    expect(prompts.work).toContain('# Files the user attached');
+    expect(prompts.work).toContain('Q3,48213');
+    expect(answer.stages.map((s) => s.stage)).not.toContain('review');
+  });
+});

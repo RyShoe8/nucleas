@@ -9,6 +9,8 @@ import { toInvocationView, type InvocationView } from '@/lib/capabilities/runtim
 import { buildAssistantTools } from './companyTools';
 import { runAskOrchestrator, type StageRecord } from '@/lib/ai/orchestrator/askOrchestrator';
 import { getBuild, linkAssistantTurn, type BuildView } from '@/lib/building/builds';
+import { processAttachments, type AttachmentRef, type ProcessedAttachment } from '@/lib/ai/attachments/uploads';
+import { renderAttachments } from '@/lib/ai/attachments/extract';
 import { readEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
 
 const HISTORY_TURNS = 12;
@@ -46,24 +48,49 @@ export type AssistantResult = { ok: true; reply: AssistantReply } | { ok: false;
 
 export async function askAssistant(
   viewer: CompanyViewer,
-  input: { text: string; focusCompanyId?: string; mode?: 'orchestrated' | 'direct'; level?: CostLevel; modelProfileId?: string; model?: string; signal?: AbortSignal }
+  input: { text: string; focusCompanyId?: string; mode?: 'orchestrated' | 'direct'; level?: CostLevel; modelProfileId?: string; model?: string; attachments?: AttachmentRef[]; signal?: AbortSignal }
 ): Promise<AssistantResult> {
   const mode = input.mode === 'direct' ? 'direct' : 'orchestrated';
-  const text = input.text.trim();
+  const refs = input.attachments ?? [];
+  const text = input.text.trim() || (refs.length ? 'Please look at the attached file(s).' : '');
   if (!text || text.length > 8000) return { ok: false, status: 400, error: 'Message must be 1–8000 characters.' };
   if (mode === 'direct' && (!input.modelProfileId || !input.model)) return { ok: false, status: 400, error: 'Choose a model for Direct mode.' };
 
   const context = await resolvePortfolioContext(viewer, { message: text, focusCompanyId: input.focusCompanyId });
   const focusedCompanies = context.focused.map((id) => context.companies.find((c) => c.id === id)!).filter(Boolean);
   const uid = new Types.ObjectId(viewer.userId);
-  const prior = await CompanyAssistantTurn.find({ organizationId: viewer.organizationId, userId: uid })
+  const priorRows = await CompanyAssistantTurn.find({ organizationId: viewer.organizationId, userId: uid })
     .sort({ createdAt: -1 })
     .limit(HISTORY_TURNS)
-    .select('role text')
-    .lean<{ role: 'user' | 'assistant' | 'status'; text: string }[]>();
+    .select('role text attachments')
+    .lean<{ role: 'user' | 'assistant' | 'status'; text: string; attachments?: ProcessedAttachment[] }[]>();
+  // Follow-up questions can still refer to files attached earlier in the conversation.
+  const prior = priorRows.map((r) => ({
+    role: r.role,
+    text: r.attachments?.length ? `${r.text}\n\n# Files attached to this message\n${renderAttachments(r.attachments, 8000)}` : r.text,
+  }));
+
+  const level = input.level ?? (await readEngineSettings(String(viewer.organizationId))).defaultCostLevel;
+  const files = refs.length
+    ? await processAttachments({
+        refs,
+        organizationId: String(viewer.organizationId),
+        projectId: assistantLedgerProjectId(String(viewer.organizationId)),
+        userId: viewer.userId,
+        level,
+        signal: input.signal,
+      })
+    : null;
 
   const companyIds = focusedCompanies.map((c) => new Types.ObjectId(c.id));
-  await CompanyAssistantTurn.create({ organizationId: viewer.organizationId, userId: uid, role: 'user', text, companyIds });
+  await CompanyAssistantTurn.create({
+    organizationId: viewer.organizationId,
+    userId: uid,
+    role: 'user',
+    text,
+    companyIds,
+    ...(files ? { attachments: files.items.map((a) => ({ ...a, text: a.text?.slice(0, 20_000) })) } : {}),
+  });
 
   if (mode === 'orchestrated') {
     const result = await runAskOrchestrator(viewer, {
@@ -71,9 +98,11 @@ export async function askAssistant(
       context,
       projectId: assistantLedgerProjectId(String(viewer.organizationId)),
       history: prior.slice().reverse(),
-      level: input.level ?? (await readEngineSettings(String(viewer.organizationId))).defaultCostLevel,
+      level,
+      attachments: files?.block,
       signal: input.signal,
     });
+    if (files) result.costMicros += files.costMicros;
     const saved = await CompanyAssistantTurn.create({
       organizationId: viewer.organizationId,
       userId: uid,
@@ -106,7 +135,7 @@ export async function askAssistant(
     organizationId: String(viewer.organizationId),
     projectId: assistantLedgerProjectId(String(viewer.organizationId)),
     userId: viewer.userId,
-    userText: text,
+    userText: files ? `${text}\n\n# Attached files\n${files.block}` : text,
     priorTurns: prior.reverse(),
     modelProfileId: input.modelProfileId!,
     model: input.model!,
@@ -142,7 +171,7 @@ export async function askAssistant(
   return {
     ok: true,
     reply: {
-      turn: { id: String(saved._id), role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: turn.costMicros, mode },
+      turn: { id: String(saved._id), role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: (turn.costMicros ?? 0) + (files?.costMicros ?? 0), mode },
       actions,
       focused: focusedCompanies.map((c) => ({ id: c.id, name: c.name })),
       contextSources: context.sources,
@@ -164,8 +193,8 @@ export async function listAssistantTurns(viewer: CompanyViewer, limit = 40) {
   const rows = await CompanyAssistantTurn.find({ organizationId: viewer.organizationId, userId: new Types.ObjectId(viewer.userId) })
     .sort({ createdAt: -1 })
     .limit(Math.min(limit, 100))
-    .select('role text createdAt invocationIds costMicros mode stages buildRequestId')
-    .lean<{ _id: Types.ObjectId; role: string; text: string; createdAt: Date; invocationIds?: Types.ObjectId[]; costMicros?: number; mode?: string; stages?: StageRecord[]; buildRequestId?: Types.ObjectId }[]>();
+    .select('role text createdAt invocationIds costMicros mode stages buildRequestId attachments.name attachments.kind attachments.size attachments.error')
+    .lean<{ _id: Types.ObjectId; role: string; text: string; createdAt: Date; invocationIds?: Types.ObjectId[]; costMicros?: number; mode?: string; stages?: StageRecord[]; buildRequestId?: Types.ObjectId; attachments?: { name: string; kind: string; size: number; error?: string }[] }[]>();
   // Proposed builds show their current state (approved, building, …) wherever they appear.
   const builds = new Map<string, BuildView | null>();
   for (const r of rows) {
@@ -181,5 +210,6 @@ export async function listAssistantTurns(viewer: CompanyViewer, limit = 40) {
     mode: r.mode ?? 'direct',
     stages: r.stages ?? [],
     build: r.buildRequestId ? builds.get(String(r.buildRequestId)) ?? null : null,
+    attachments: (r.attachments ?? []).map((a) => ({ name: a.name, kind: a.kind, size: a.size, error: a.error ?? null })),
   }));
 }

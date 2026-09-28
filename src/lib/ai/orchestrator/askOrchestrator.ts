@@ -225,6 +225,8 @@ export async function runAskOrchestrator(
     history: { role: 'user' | 'assistant' | 'status'; text: string }[];
     /** Cost level for this request: which models, whether paid retries are allowed, how often review runs. */
     level: CostLevel;
+    /** Attached files, already turned into text (images described by a vision model). */
+    attachments?: string;
     signal?: AbortSignal;
     fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
   }
@@ -265,7 +267,11 @@ export async function runAskOrchestrator(
       viewer,
       projectId: input.projectId,
       system: plannerPrompt(input.context, toolCatalog, today, codeCatalog),
-      user: correction ? `${input.text}\n\n${correction}` : input.text,
+      user: [
+        input.text,
+        input.attachments ? `\n# Attached files (the writer receives them in full)\n${input.attachments.slice(0, 6000)}${input.attachments.length > 6000 ? '\n[…]' : ''}` : '',
+        correction ? `\n${correction}` : '',
+      ].join('\n'),
       history: input.history.slice(-6),
       signal: input.signal,
       maxTokens: PLAN_MAX_TOKENS,
@@ -319,7 +325,10 @@ export async function runAskOrchestrator(
         runId: planTurn.runId,
       };
     }
-    const proposal = await proposeCodeChange(viewer, { companyId: company.id, request: plan.codeChange.request, level: input.level, signal: input.signal });
+    const request = input.attachments
+      ? `${plan.codeChange.request}\n\nAttached by the user:\n${input.attachments}`.slice(0, 6000)
+      : plan.codeChange.request;
+    const proposal = await proposeCodeChange(viewer, { companyId: company.id, request, level: input.level, signal: input.signal });
     costMicros += proposal.costMicros;
     stages.push({ stage: 'code', costMicros: proposal.costMicros, note: proposal.ok ? `planned against ${proposal.build.repository.fullName}` : proposal.message.slice(0, 120) });
     if (!proposal.ok) {
@@ -422,6 +431,7 @@ export async function runAskOrchestrator(
     '',
     ...(plan.scope !== 'general' || facts ? ['# Nucleas facts', facts || '(no company data was fetched)'] : []),
     research.length ? `\n# Web research\n${research.join('\n\n')}` : '',
+    input.attachments ? `\n# Files the user attached\n${input.attachments}` : '',
     plan.scope !== 'general' && detail ? `\n# Company detail\n${detail}` : '',
   ].join('\n');
 
@@ -443,7 +453,7 @@ export async function runAskOrchestrator(
   // 4. Deterministic number check.
   // Only check numbers where there is data to check against: company facts or web research.
   const checkable = plan.scope !== 'general' || research.length > 0;
-  const untraced = checkable ? untracedNumbers(answer, [facts, ...research, renderContext(input.context), input.text]) : [];
+  const untraced = checkable ? untracedNumbers(answer, [facts, ...research, renderContext(input.context), input.text, input.attachments ?? '']) : [];
   stages.push({
     stage: 'check',
     note: !checkable
@@ -462,7 +472,7 @@ export async function runAskOrchestrator(
       viewer,
       projectId: input.projectId,
       system: reviewerPrompt(),
-      user: [`Question: ${input.text}`, '', '# Facts', facts || '(none)', ...(research.length ? ['', '# Web research', research.join('\n\n')] : []), '', untraced.length ? `Numbers not found in the facts: ${untraced.join(', ')}` : '', '', '# Answer to review', answer].join('\n'),
+      user: [`Question: ${input.text}`, '', '# Facts', facts || '(none)', ...(research.length ? ['', '# Web research', research.join('\n\n')] : []), ...(input.attachments ? ['', '# Files the user attached', input.attachments] : []), '', untraced.length ? `Numbers not found in the facts: ${untraced.join(', ')}` : '', '', '# Answer to review', answer].join('\n'),
       signal: input.signal,
       maxTokens: REVIEW_MAX_TOKENS,
     });
