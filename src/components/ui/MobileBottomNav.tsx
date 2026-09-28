@@ -109,7 +109,7 @@ export default function MobileBottomNav() {
   const [actionOpen, setActionOpen] = useState(false);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const aiActive =
-    pathname?.startsWith('/workspace/ai-team') || pathname?.startsWith('/workspace/ai-attention');
+    pathname?.startsWith('/ide') || pathname?.startsWith('/workspace/ai-attention');
 
   useEffect(() => {
     registerReopenActionInbox(() => setActionOpen(true));
@@ -154,14 +154,14 @@ export default function MobileBottomNav() {
           </button>
 
           <Link
-            href="/workspace/ai-team"
+            href="/ide"
             className={`flex flex-col items-center justify-center flex-1 min-w-0 h-full touch-manipulation ${
               aiActive ? 'text-primary' : 'text-text-secondary hover:text-text-primary'
             }`}
-            aria-label="Open AI Team"
+            aria-label="Open the IDE"
           >
             <span className="text-xl mb-0.5">🤖</span>
-            <span className="text-[10px] font-medium">AI Team</span>
+            <span className="text-[10px] font-medium">IDE</span>
           </Link>
 
           <button

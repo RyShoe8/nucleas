@@ -1,15 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { formatIdeCostUsd } from '@/lib/ide/costDisplay';
-import {
-  employeeForIdeMode,
-  ideChatModes,
-  isIdeDirectMode,
-  isIdeWorkerMode,
-  type IdeChatMode,
-} from '@/lib/ide/modes';
+import { isIdeDirectMode, type IdeChatMode } from '@/lib/ide/modes';
 import {
   readStoredIdeDirectSelection,
   readStoredIdeDraft,
@@ -18,16 +11,19 @@ import {
   writeStoredIdeDraft,
   writeStoredIdeInteractionMode,
 } from '@/lib/ide/chatSelectionStorage';
+import { shortModelDisplayName } from '@/lib/ai/rolePipeline/providerCatalog';
 import {
-  companyDisplayName,
-  FLAGSHIP_MODEL_OPTION_STYLE,
-  modelOptionLabel,
-  shortModelDisplayName,
-} from '@/lib/ai/rolePipeline/providerCatalog';
-import { ModelMetaStrip } from '@/components/ai/ModelMetaStrip';
+  ChatModeSwitch,
+  CostSelect,
+  DirectModelPicker,
+  levelParam,
+  readCostChoice,
+  resolveDirectSelection,
+  useEngineProviders,
+  type CostChoice,
+} from '@/components/ai/EngineControls';
 import ImagePreviewModal from '@/components/shared/ImagePreviewModal';
 import IdeChatMarkdown from '@/components/ide/IdeChatMarkdown';
-import type { AiEmployeeKey } from '@/lib/ai/teamWorkspace';
 import type { IdeInteractionMode, IdePlanDocument, IdeRunActivity } from '@/lib/ide/idePlan';
 import { buildDioramaDesks, ideChatThreadCacheKey } from '@/lib/ide/ideChatThreadCache';
 import { runSceneFromState } from '@/lib/ide/runScenePhases';
@@ -109,44 +105,6 @@ async function readIdeChatNdjson(
   return { turn, error: streamError };
 }
 
-function idePipelineEndpoint(projectId: string): string {
-  return isIdeFreeChatScope(projectId)
-    ? '/api/ai/ide/free-chat/pipeline'
-    : `/api/projects/${encodeURIComponent(projectId)}/ai/pipeline`;
-}
-
-function ideDiscoverModelsEndpoint(projectId: string, profileId: string): string {
-  const query = `profileId=${encodeURIComponent(profileId)}`;
-  return isIdeFreeChatScope(projectId)
-    ? `/api/ai/ide/free-chat/models?${query}`
-    : `/api/projects/${encodeURIComponent(projectId)}/ai/pipeline/models?${query}`;
-}
-
-type CatalogModel = {
-  id: string;
-  label: string;
-  bestAt?: string;
-  strengths?: string[];
-  contextTokens?: number | null;
-  flagship?: boolean;
-  pricing?: { label: string };
-};
-
-type Profile = {
-  id: string;
-  label: string;
-  provider?: string;
-  tier: string;
-  enabled: boolean;
-};
-
-type Pipeline = {
-  employee: AiEmployeeKey;
-  planner: { modelProfileId: string; model: string };
-  worker: { modelProfileId: string; model: string };
-  reviewer: { modelProfileId: string; model: string };
-};
-
 type Props = {
   projectId: string | null;
   /** When false, defer history GET until project scope is restored (avoids free-chat ledger). */
@@ -164,7 +122,6 @@ type Props = {
 
 const CHAT_MIN_WIDTH = 280;
 const CHAT_MAX_WIDTH = 820;
-const field = 'w-full rounded border border-border bg-background p-2 text-sm text-text-primary';
 
 export default function IdeChatPane({
   projectId,
@@ -186,14 +143,10 @@ export default function IdeChatPane({
   const [error, setError] = useState('');
   const [historyPersistFailed, setHistoryPersistFailed] = useState(false);
   const [resizing, setResizing] = useState(false);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [catalog, setCatalog] = useState<{ id: string; label: string; models: CatalogModel[] }[]>([]);
-  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  const { providers, loaded: providersLoaded } = useEngineProviders();
+  const [cost, setCost] = useState<CostChoice>('default');
   const [directProfileId, setDirectProfileId] = useState('');
   const [directModel, setDirectModel] = useState('');
-  const [discovered, setDiscovered] = useState<CatalogModel[]>([]);
-  const [discoverLoading, setDiscoverLoading] = useState(false);
-  const [discoverError, setDiscoverError] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<{ src: string; title: string } | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [interactionMode, setInteractionMode] = useState<Exclude<IdeInteractionMode, 'build'>>('chat');
@@ -205,7 +158,6 @@ export default function IdeChatPane({
   const [lastToolsUsed, setLastToolsUsed] = useState<string[]>([]);
   const [planReadyFlag, setPlanReadyFlag] = useState(false);
   const [activityFailed, setActivityFailed] = useState(false);
-  const [directSelectorsExpanded, setDirectSelectorsExpanded] = useState(false);
   const [userFirstName, setUserFirstName] = useState('You');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
@@ -235,17 +187,6 @@ export default function IdeChatPane({
     writeStoredIdeDirectSelection(projectId, { profileId, model });
   }
 
-  const loadPipeline = useCallback(async (id: string) => {
-    const response = await fetch(idePipelineEndpoint(id), {
-      cache: 'no-store',
-    });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error ?? 'Unable to load models.');
-    setProfiles(body.profiles ?? []);
-    setCatalog(body.catalog ?? []);
-    setPipelines(body.pipelines ?? []);
-  }, []);
-
   useLayoutEffect(() => {
     if (!projectId) {
       setDirectProfileId('');
@@ -260,14 +201,20 @@ export default function IdeChatPane({
   }, [projectId]);
 
   useEffect(() => {
-    if (!projectId) {
-      setProfiles([]);
-      setCatalog([]);
-      setPipelines([]);
-      return;
+    setCost(readCostChoice());
+  }, []);
+
+  // Once providers load, replace a saved Direct choice that is no longer listed.
+  useEffect(() => {
+    if (!projectId || !providersLoaded) return;
+    const next = resolveDirectSelection(providers, directProfileId ? { profileId: directProfileId, model: directModel } : null);
+    if (next && (next.profileId !== directProfileId || next.model !== directModel)) {
+      setDirectProfileId(next.profileId);
+      setDirectModel(next.model);
+      persistDirectSelection(next.profileId, next.model);
     }
-    void loadPipeline(projectId).catch(() => undefined);
-  }, [projectId, loadPipeline]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the provider list or project changes
+  }, [projectId, providersLoaded, providers]);
 
   useEffect(() => {
     if (!projectId) {
@@ -301,7 +248,7 @@ export default function IdeChatPane({
     if (isIdeDirectMode(mode)) {
       return directModel ? shortModelDisplayName(directModel) : 'Direct model';
     }
-    return ideChatModes.find((item) => item.id === mode)?.label ?? mode;
+    return 'Orchestrated';
   }, [mode, directModel]);
 
   const historyScopeKey = useMemo(() => {
@@ -338,7 +285,6 @@ export default function IdeChatPane({
     setPlanReadyFlag(false);
     setActivityFailed(false);
     setLastToolsUsed([]);
-    setDirectSelectorsExpanded(false);
 
     const cacheKey = ideChatThreadCacheKey({
       projectId: projectId ?? '',
@@ -438,67 +384,6 @@ export default function IdeChatPane({
     bottomRef.current?.scrollIntoView({ block: 'end' });
   }, [turns]);
 
-  const directCredential = profiles.find((item) => item.id === directProfileId);
-  const isCustomDirect = (directCredential?.provider ?? 'custom') === 'custom';
-
-  const catalogModelsForDirect = useMemo(() => {
-    if (!directCredential || isCustomDirect) return [];
-    return catalog.find((item) => item.id === (directCredential.provider ?? ''))?.models ?? [];
-  }, [catalog, directCredential, isCustomDirect]);
-
-  const directModels = isCustomDirect ? discovered : catalogModelsForDirect;
-  const directMeta = directModels.find((item) => item.id === directModel) ?? null;
-
-  const loadDiscovered = useCallback(
-    async (id: string, profileId: string) => {
-      setDiscoverLoading(true);
-      setDiscoverError(null);
-      try {
-        const response = await fetch(ideDiscoverModelsEndpoint(id, profileId), {
-          cache: 'no-store',
-        });
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error ?? 'Unable to list models.');
-        const models = (body.models ?? []) as CatalogModel[];
-        setDiscovered(models);
-        setDiscoverError(body.error ?? null);
-        if (models[0] && !directModel.trim()) {
-          setDirectModel(models[0].id);
-          if (projectId) persistDirectSelection(profileId, models[0].id);
-        }
-      } catch (err) {
-        setDiscovered([]);
-        setDiscoverError(err instanceof Error ? err.message : 'Unable to list models.');
-      } finally {
-        setDiscoverLoading(false);
-      }
-    },
-    [directModel]
-  );
-
-  useEffect(() => {
-    if (!projectId || !isIdeDirectMode(mode) || !directProfileId || !isCustomDirect) {
-      if (!isCustomDirect) setDiscovered([]);
-      return;
-    }
-    void loadDiscovered(projectId, directProfileId);
-  }, [projectId, mode, directProfileId, isCustomDirect, loadDiscovered]);
-
-  useEffect(() => {
-    if (!isIdeDirectMode(mode) || !directProfileId || isCustomDirect) return;
-    const models = catalogModelsForDirect;
-    if (models[0] && !directModel.trim()) {
-      setDirectModel(models[0].id);
-      persistDirectSelection(directProfileId, models[0].id);
-    }
-  }, [mode, directProfileId, isCustomDirect, catalogModelsForDirect, directModel]);
-
-  const workerPipeline = useMemo(() => {
-    if (!isIdeWorkerMode(mode)) return null;
-    const employee = employeeForIdeMode(mode);
-    return pipelines.find((item) => item.employee === employee) ?? null;
-  }, [mode, pipelines]);
-
   const dioramaDesks = useMemo(() => {
     if (isIdeDirectMode(mode)) {
       return buildDioramaDesks({
@@ -511,23 +396,14 @@ export default function IdeChatPane({
     }
     const deskMode = busyRequestMode ?? interactionMode;
     const activeStage = liveStage ?? (busy ? fallbackStageForMode(deskMode) : null);
+    // Orchestrated: the engine picks each stage's model per request, so desks show roles only.
     return buildDioramaDesks({
-      stages: {
-        planner: workerPipeline?.planner?.model
-          ? shortModelDisplayName(workerPipeline.planner.model)
-          : undefined,
-        worker: workerPipeline?.worker?.model
-          ? shortModelDisplayName(workerPipeline.worker.model)
-          : undefined,
-        reviewer: workerPipeline?.reviewer?.model
-          ? shortModelDisplayName(workerPipeline.reviewer.model)
-          : undefined,
-      },
+      stages: {},
       busy,
       activeStage,
       doneStages,
     });
-  }, [mode, directModel, busy, workerPipeline, interactionMode, busyRequestMode, liveStage, doneStages]);
+  }, [mode, directModel, busy, interactionMode, busyRequestMode, liveStage, doneStages]);
 
   useEffect(() => {
     onRunActivity?.(
@@ -556,31 +432,6 @@ export default function IdeChatPane({
     dioramaDesks,
     onRunActivity,
   ]);
-
-  function stageMeta(binding: { modelProfileId: string; model: string } | undefined) {
-    if (!binding?.modelProfileId || !binding.model) return null;
-    const profile = profiles.find((item) => item.id === binding.modelProfileId);
-    if (!profile) {
-      return {
-        label: shortModelDisplayName(binding.model),
-        bestAt: undefined,
-        pricing: { label: '—' },
-      };
-    }
-    const free = profile.provider === 'custom' || profile.tier === 'local_remote';
-    const catalogModels =
-      profile.provider === 'custom'
-        ? []
-        : catalog.find((item) => item.id === profile.provider)?.models ?? [];
-    const hit = catalogModels.find((item) => item.id === binding.model);
-    return {
-      company: companyDisplayName({ label: profile.label, provider: profile.provider }),
-      label: shortModelDisplayName(hit?.label ?? binding.model),
-      bestAt: hit?.bestAt,
-      contextTokens: hit?.contextTokens ?? null,
-      pricing: free ? { label: 'Free' } : hit?.pricing ?? { label: 'Pricing unknown' },
-    };
-  }
 
   useEffect(() => {
     if (!resizing) return;
@@ -636,7 +487,7 @@ export default function IdeChatPane({
   }) {
     if (!projectId || !chatScopeReady || busy || historyLoading) return;
     if (isIdeDirectMode(mode) && (!directProfileId || !directModel.trim())) {
-      setError('Pick a company and model for Direct chat.');
+      setError('Pick a provider and model for Direct chat.');
       return;
     }
 
@@ -687,7 +538,7 @@ export default function IdeChatPane({
           stream: true,
           ...(isIdeDirectMode(mode)
             ? { modelProfileId: directProfileId, model: directModel }
-            : {}),
+            : levelParam(cost)),
         }),
         signal: controller.signal,
       });
@@ -899,23 +750,25 @@ export default function IdeChatPane({
         }}
       />
       <div className="flex flex-wrap items-center gap-1 border-b border-border px-2 py-2">
-        {(isIdeFreeChatScope(projectId)
-          ? ideChatModes.filter((item) => item.id === 'direct')
-          : ideChatModes
-        ).map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onModeChange(item.id)}
-            className={`rounded px-2 py-1 text-xs ${
-              mode === item.id
-                ? 'bg-primary text-white'
-                : 'border border-border text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            {item.label}
-          </button>
-        ))}
+        <ChatModeSwitch
+          mode={mode}
+          onChange={onModeChange}
+          allowOrchestrated={!isIdeFreeChatScope(projectId)}
+        />
+        {isIdeDirectMode(mode) ? (
+          <DirectModelPicker
+            providers={providers}
+            value={directProfileId && directModel ? { profileId: directProfileId, model: directModel } : null}
+            disabled={!projectId || busy}
+            onChange={(next) => {
+              setDirectProfileId(next.profileId);
+              setDirectModel(next.model);
+              persistDirectSelection(next.profileId, next.model);
+            }}
+          />
+        ) : (
+          <CostSelect value={cost} onChange={setCost} disabled={busy} />
+        )}
         {onOpenRules ? (
           <button
             type="button"
@@ -927,149 +780,12 @@ export default function IdeChatPane({
         ) : null}
       </div>
 
-      {isIdeDirectMode(mode) ? (
-        <div className="space-y-2 border-b border-border px-2 py-2">
-          {turns.length === 0 || directSelectorsExpanded ? (
-            <>
-              <label className="block text-xs text-text-secondary">
-                Company
-                <select
-                  className={`${field} mt-1`}
-                  value={directProfileId}
-                  disabled={!projectId || busy}
-                  onChange={(event) => {
-                    setDirectProfileId(event.target.value);
-                    setDirectModel('');
-                  }}
-                >
-                  <option value="">Select…</option>
-                  {profiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {companyDisplayName({ label: profile.label, provider: profile.provider })}
-                      {profile.tier === 'local_remote' ? ' (local)' : ''}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-xs text-text-secondary">
-                Model
-                <select
-                  className={`${field} mt-1`}
-                  value={directModels.some((item) => item.id === directModel) ? directModel : ''}
-                  disabled={!projectId || busy || !directProfileId || discoverLoading || directModels.length === 0}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    setDirectModel(next);
-                    persistDirectSelection(directProfileId, next);
-                  }}
-                >
-                  <option value="">{discoverLoading ? 'Loading…' : 'Select…'}</option>
-                  {directModels.map((item) => (
-                    <option
-                      key={item.id}
-                      value={item.id}
-                      style={item.flagship ? FLAGSHIP_MODEL_OPTION_STYLE : undefined}
-                    >
-                      {modelOptionLabel(item)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {turns.length === 0 ? (
-                <ModelMetaStrip
-                  meta={
-                    directModel
-                      ? isCustomDirect || directCredential?.tier === 'local_remote'
-                        ? { ...directMeta, pricing: { label: 'Free' } }
-                        : directMeta
-                      : null
-                  }
-                />
-              ) : (
-                <button
-                  type="button"
-                  className="text-[11px] text-text-secondary underline"
-                  onClick={() => setDirectSelectorsExpanded(false)}
-                >
-                  Done
-                </button>
-              )}
-              {isCustomDirect && directProfileId ? (
-                <button
-                  type="button"
-                  className="rounded border border-border px-2 py-1 text-xs disabled:opacity-50"
-                  disabled={busy || discoverLoading || !projectId}
-                  onClick={() => projectId && void loadDiscovered(projectId, directProfileId)}
-                >
-                  {discoverLoading ? 'Refreshing…' : 'Refresh models'}
-                </button>
-              ) : null}
-              {discoverError ? <p className="text-[11px] text-text-secondary">{discoverError}</p> : null}
-            </>
-          ) : (
-            <div className="flex items-center justify-between gap-2 text-xs text-text-secondary">
-              <p className="min-w-0 truncate text-text-primary">
-                <span className="text-text-secondary">Using </span>
-                {directCredential
-                  ? companyDisplayName({
-                      label: directCredential.label,
-                      provider: directCredential.provider,
-                    })
-                  : 'Company'}
-                <span className="text-text-secondary"> · </span>
-                {directModel ? shortModelDisplayName(directModel) : 'model'}
-              </p>
-              <button
-                type="button"
-                className="shrink-0 rounded border border-border px-2 py-0.5 text-[11px]"
-                disabled={busy}
-                onClick={() => setDirectSelectorsExpanded(true)}
-              >
-                Change
-              </button>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-1 border-b border-border px-2 py-2 text-[11px] text-text-secondary">
-          <div className="flex flex-wrap items-center justify-between gap-1">
-            <span className="font-medium text-text-primary">Models for this worker</span>
-            {projectId ? (
-              <Link
-                className="underline"
-                href={`/workspace/ai-team?projectId=${encodeURIComponent(projectId)}&employee=${encodeURIComponent(
-                  isIdeWorkerMode(mode) ? employeeForIdeMode(mode) : 'product'
-                )}`}
-              >
-                Edit on AI Team
-              </Link>
-            ) : null}
-          </div>
-          {!workerPipeline ? (
-            <p>No pipeline configured yet. Set Planner / Worker / Reviewer on AI Team.</p>
-          ) : (
-            (['planner', 'worker', 'reviewer'] as const).map((stage) => {
-              const meta = stageMeta(workerPipeline[stage]);
-              return (
-                <p key={stage}>
-                  <span className="capitalize text-text-primary">{stage}</span>
-                  {': '}
-                  {meta
-                    ? `${meta.company} · ${meta.label}${meta.bestAt ? ` — ${meta.bestAt}` : ''} · ${meta.pricing.label}`
-                    : 'Unassigned'}
-                </p>
-              );
-            })
-          )}
-        </div>
-      )}
-
       <div className="flex-1 space-y-3 overflow-auto p-3 text-sm">
         {turns.length === 0 && isIdeDirectMode(mode) ? (
           <p className="text-xs text-text-secondary">
             {isIdeFreeChatScope(projectId)
-              ? 'Free Chat is open Direct chat — pick a company model and ask about anything. Switch to a project when you need files or AI Team workers.'
-              : 'Direct mode chats with one company model (great for free/local low-level tasks).'}
+              ? 'Free Chat is Direct chat — pick a provider and model and ask about anything. Switch to a project for Orchestrated chat with its files.'
+              : 'Direct mode chats with one model you choose.'}
           </p>
         ) : null}
         {turns.map((turn) => {
@@ -1203,8 +919,10 @@ export default function IdeChatPane({
             !projectId
               ? 'Select a project first'
               : interactionMode === 'plan'
-                ? 'What should the team plan? (Planner → Worker → Reviewer)'
-                : 'Ask the team… (Planner plans, Worker checks the code, Reviewer answers)'
+                ? 'What should we plan?'
+                : isIdeDirectMode(mode)
+                  ? 'Ask the model…'
+                  : 'Ask anything about this project…'
           }
           value={draft}
           disabled={!projectId || busy || historyLoading}

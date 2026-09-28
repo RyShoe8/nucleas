@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('server-only', () => ({}));
-vi.mock('@/lib/models/AiRolePipeline', () => ({
+vi.mock('@/lib/models/AiModelProfile', () => ({
   AiModelProfile: {
     findById: (...args: unknown[]) => mocks.findById(...args),
   },

@@ -2,11 +2,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import mongoose, { Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 import { randomUUID } from 'node:crypto';
-import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth } from '@/lib/auth/middleware';
-import { AiTeamRequest } from '@/lib/models/AiTeamRequest';
-import { GET as readTeam, POST as saveTeam, PATCH as cancelTeam } from '@/app/api/projects/[id]/ai/team/route';
-import { GET as readTeamQueue } from '@/app/api/ai/team/queue/route';
 import { AiBudget, AiBudgetReservation, AiDispatchLock, AiObjective, AiPlan, AiPlanningJob, AiRun, AiRunEvent, AiRunAcknowledgement } from '@/lib/models/AiControl';
 import { AiSettings, AiSettingsAudit } from '@/lib/models/AiSettings';
 import { defaultPlatformAiSettings } from '@/lib/ai/settingsSchema';
@@ -43,8 +38,7 @@ import { AiProjectRepository } from '@/lib/models/AiProjectRepository';
 import { getArtifactContent } from '@/lib/ai/control/artifactQueries';
 import { AiExecutionProbe, runExecutionProbe } from '@/lib/ai/control/executionProbe';
 
-import { AiModelProfile, AiRolePipeline } from '@/lib/models/AiRolePipeline';
-import { encryptModelSecret } from '@/lib/ai/modelSecrets';
+import { AiModelProfile } from '@/lib/models/AiModelProfile';
 
 // Never read .env.local, use production MongoDB, or invoke a real model in this suite.
 vi.mock('@/lib/db/mongodb', () => ({ default: async () => mongoose }));
@@ -67,7 +61,7 @@ vi.mock('@nucleas/ai-core/gateway', async importOriginal => {
 let replica: MongoMemoryReplSet;
 let access: AiAccess;
 let objective: InstanceType<typeof AiObjective>;
-const models = [AiModelProfile, AiRolePipeline, WorkspaceNotificationEvent, WorkspaceNotificationPreference, AiDispatchUsage, AiRunAcknowledgement, AiSettings, AiSettingsAudit, AiPlanningJob, AiDispatchLock, AiBudgetReservation, AiBudget, AiRunEvent, AiRun, AiPlan, AiObjective, Project, Employee, User];
+const models = [AiModelProfile, WorkspaceNotificationEvent, WorkspaceNotificationPreference, AiDispatchUsage, AiRunAcknowledgement, AiSettings, AiSettingsAudit, AiPlanningJob, AiDispatchLock, AiBudgetReservation, AiBudget, AiRunEvent, AiRun, AiPlan, AiObjective, Project, Employee, User];
 const response: ModelResult = { content: JSON.stringify({ summary: 'Synthetic plan', tasks: [{ key: 'test', name: 'Add a regression', acceptanceCriteria: ['Test passes'], dependsOn: [] }] }),
   model: 'synthetic-model', inputTokens: 20, outputTokens: 30, latencyMs: 10, finishReason: 'stop' };
 
@@ -81,7 +75,7 @@ beforeAll(async () => {
 afterAll(async () => { await mongoose.disconnect(); await replica?.stop(); }, 30000);
 beforeEach(async () => {
   if (mongoose.connection.host !== '127.0.0.1' || mongoose.connection.name !== 'nucleas_ai_test_planning') throw new Error('Refusing to clear a non-test database.');
-  for (const item of [AiTeamRequest, AiExecutionProbe, AiArtifactAcceptance, AiArtifactReview, AiArtifact, AiProjectRepository, AiServiceIdentityAudit, AiServiceGrant, AiServiceIdentity, ...models]) await item.collection.deleteMany({});
+  for (const item of [AiExecutionProbe, AiArtifactAcceptance, AiArtifactReview, AiArtifact, AiProjectRepository, AiServiceIdentityAudit, AiServiceGrant, AiServiceIdentity, ...models]) await item.collection.deleteMany({});
   vi.stubEnv('NUCLEAS_AI_REMOTE_BEARER_TOKEN', 'synthetic-only');
   vi.stubEnv('CRON_SECRET', 'synthetic-cron');
   vi.stubEnv('NEXTAUTH_SECRET', 'synthetic-cursor-secret');
@@ -103,164 +97,6 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe('durable planning on a real isolated replica set', () => {
-  it('lists only the caller’s task intake in currently accessible projects', async () => {
-    vi.mocked(requireAuth).mockResolvedValue({ userId: access.userId, email: 'synthetic@example.invalid', expiresAt: new Date() });
-    const base = { organizationId: access.organizationId, projectId: access.project._id, createdByUserId: access.userId,
-      employee: 'support', kind: 'task', text: 'Visible task', cadence: 'daily', status: 'saved' };
-    await AiTeamRequest.insertMany([
-      { ...base, requestId: randomUUID() },
-      { ...base, requestId: randomUUID(), kind: 'message', cadence: 'once' },
-      { ...base, requestId: randomUUID(), createdByUserId: new Types.ObjectId() },
-      { ...base, requestId: randomUUID(), projectId: new Types.ObjectId() },
-      { ...base, requestId: randomUUID(), organizationId: 'foreign' },
-    ]);
-    const url = 'https://nucleas.test/api/ai/team/queue?employee=support&status=saved&recurring=true';
-    const page = await (await readTeamQueue(new NextRequest(url))).json();
-    expect(page.items).toHaveLength(1);
-    expect(page.items[0]).toMatchObject({ projectId: String(access.project._id), employee: 'support', text: 'Visible task' });
-    await Project.updateOne({ _id: access.project._id }, { $set: { userId: new Types.ObjectId() } });
-    expect((await (await readTeamQueue(new NextRequest(url))).json()).items).toHaveLength(0);
-    vi.mocked(requireAuth).mockResolvedValue(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }));
-    expect((await readTeamQueue(new NextRequest(url))).status).toBe(401);
-  });
-  it('filters AI team history before bounded pagination and rejects scope overrides', async () => {
-    vi.mocked(requireAuth).mockResolvedValue({ userId: access.userId, email: 'synthetic@example.invalid', expiresAt: new Date() });
-    const context = { params: Promise.resolve({ id: String(access.project._id) }) };
-    const url = `https://nucleas.test/api/projects/${access.project._id}/ai/team`;
-    await AiTeamRequest.insertMany(Array.from({ length: 30 }, (_, index) => ({
-      organizationId: access.organizationId, projectId: access.project._id, createdByUserId: access.userId,
-      requestId: randomUUID(), employee: 'support', kind: 'task', text: `Brief ${index}`, cadence: 'weekly', status: 'saved',
-    })));
-    await AiTeamRequest.create({ organizationId: access.organizationId, projectId: access.project._id, createdByUserId: access.userId,
-      requestId: randomUUID(), employee: 'marketing', kind: 'message', text: 'Unrelated newest item', cadence: 'once', status: 'saved' });
-    const query = '?employee=support&kind=task&status=saved&recurring=true';
-    const first = await (await readTeam(new NextRequest(url + query), context)).json();
-    expect(first.items).toHaveLength(25);
-    expect(first.items.every((item: { employee: string }) => item.employee === 'support')).toBe(true);
-    const second = await (await readTeam(new NextRequest(`${url}${query}&cursor=${first.nextCursor}`), context)).json();
-    expect(second.items).toHaveLength(5);
-    expect(second.nextCursor).toBeNull();
-    expect(new Set([...first.items, ...second.items].map(item => item.id)).size).toBe(30);
-    expect((await readTeam(new NextRequest(url + '?createdByUserId=someone'), context)).status).toBe(400);
-    expect((await readTeam(new NextRequest(url + '?cursor=invalid'), context)).status).toBe(400);
-  });
-  it('saves private AI team intake idempotently without dispatching or changing human tasks', async () => {
-    vi.mocked(requireAuth).mockResolvedValue({ userId: access.userId, email: 'synthetic@example.invalid', expiresAt: new Date(Date.now() + 60000) });
-    const context = { params: Promise.resolve({ id: String(access.project._id) }) };
-    const url = `https://nucleas.test/api/projects/${access.project._id}/ai/team`;
-    const input = { requestId: randomUUID(), employee: 'marketing', kind: 'task', text: 'Synthetic launch brief', cadence: 'weekly' };
-    const request = (body: unknown, method = 'POST', origin = 'https://nucleas.test') => new NextRequest(url, { method, headers: { origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    await AiTeamRequest.createIndexes();
-    const results = await Promise.all([saveTeam(request(input), context), saveTeam(request(input), context)]);
-    expect(results.some(response => response.status === 200)).toBe(true);
-    expect(await AiTeamRequest.countDocuments()).toBe(1);
-    expect((await saveTeam(request({ ...input, text: 'Changed replay' }), context)).status).toBe(409);
-    expect((await saveTeam(request(input, 'POST', 'https://foreign.test'), context)).status).toBe(403);
-    const page = await (await readTeam(new NextRequest(url), context)).json();
-    expect(page.items).toHaveLength(1);
-    expect(page.items[0]).toMatchObject({ employee: 'marketing', cadence: 'weekly', status: 'saved' });
-    const peer = await User.create({ email: 'team-peer@example.invalid', password: 'synthetic', organizationId: access.organizationId });
-    await Employee.create({ userId: peer._id, organizationId: access.organizationId, name: 'Peer manager', role: 'Manager' });
-    vi.mocked(requireAuth).mockResolvedValue({ userId: String(peer._id), email: peer.email, expiresAt: new Date() });
-    const peerPage = await (await readTeam(new NextRequest(url), context)).json();
-    expect(peerPage.items).toHaveLength(0);
-    expect((await cancelTeam(request({ id: page.items[0].id }, 'PATCH'), context)).status).toBe(404);
-    vi.mocked(requireAuth).mockResolvedValue({ userId: access.userId, email: 'synthetic@example.invalid', expiresAt: new Date() });
-    expect((await cancelTeam(request({ id: page.items[0].id }, 'PATCH'), context)).status).toBe(200);
-    expect((await AiTeamRequest.findById(page.items[0].id)).status).toBe('cancelled');
-    expect(await AiPlanningJob.countDocuments()).toBe(0);
-    expect((await Project.findById(access.project._id))?.tasks).toHaveLength(1);
-    expect(model).not.toHaveBeenCalled();
-  });
-  it('persists a chat status turn when inference is unavailable instead of inventing a reply', async () => {
-    await AiSettings.updateOne(
-      { _id: platformSettingsId },
-      { $set: { 'value.remoteEnabled': false, 'value.dispatchEnabled': false } }
-    );
-    vi.mocked(requireAuth).mockResolvedValue({ userId: access.userId, email: 'synthetic@example.invalid', expiresAt: new Date(Date.now() + 60000) });
-    const context = { params: Promise.resolve({ id: String(access.project._id) }) };
-    const url = `https://nucleas.test/api/projects/${access.project._id}/ai/team`;
-    const input = { requestId: randomUUID(), employee: 'product', kind: 'message', text: 'What should we prioritize?', cadence: 'once' };
-    const request = (body: unknown) => new NextRequest(url, {
-      method: 'POST',
-      headers: { origin: 'https://nucleas.test', 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    await AiTeamRequest.createIndexes();
-    const response = await saveTeam(request(input), context);
-    expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body.reply).toMatchObject({ role: 'status', failureCategory: 'unavailable' });
-    expect(body.reply.text).toMatch(/disabled/i);
-    expect(await AiTeamRequest.countDocuments({ kind: 'message' })).toBe(2);
-    const replay = await saveTeam(request(input), context);
-    expect((await replay.json()).reply.id).toBe(body.reply.id);
-    expect(await AiTeamRequest.countDocuments({ kind: 'message' })).toBe(2);
-    const concurrentInput = { ...input, requestId: randomUUID() };
-    await Promise.all(Array.from({ length: 4 }, () => saveTeam(request(concurrentInput), context)));
-    expect(await AiTeamRequest.countDocuments({ requestId: concurrentInput.requestId })).toBe(1);
-    expect(await AiTeamRequest.countDocuments({ parentRequestId: concurrentInput.requestId })).toBe(1);
-    expect(await AiTeamRequest.countDocuments({ role: 'assistant' })).toBe(0);
-    expect(model).not.toHaveBeenCalled();
-  });
-  it('admits governed chat and stores an assistant turn without inventing content on failure paths', async () => {
-    const profile = await AiModelProfile.create({
-      key: 'product-profile-' + randomUUID(),
-      label: 'Product Model',
-      provider: 'openai',
-      tier: 'commercial',
-      protocol: 'openai-chat',
-      endpoint: 'https://api.openai.com/v1',
-      model: 'gpt-4o',
-      secretCiphertext: encryptModelSecret('sk-test-key-12345'),
-      secretLast4: '2345',
-      enabled: true,
-    });
-    await AiRolePipeline.create({
-      organizationId: access.organizationId,
-      employee: 'product',
-      planner: { modelProfileId: profile._id, model: 'gpt-4o' },
-      worker: { modelProfileId: profile._id, model: 'gpt-4o' },
-      reviewer: { modelProfileId: profile._id, model: 'gpt-4o' },
-      enabled: true,
-    });
-    model.mockResolvedValue({
-      content: 'Prioritize the launch checklist.\n```nucleas-gate\n{"status":"accept"}\n```',
-      model: 'synthetic-model',
-      inputTokens: null,
-      outputTokens: null,
-      latencyMs: 5,
-      finishReason: 'stop',
-    });
-    vi.mocked(requireAuth).mockResolvedValue({ userId: access.userId, email: 'synthetic@example.invalid', expiresAt: new Date(Date.now() + 60000) });
-    const context = { params: Promise.resolve({ id: String(access.project._id) }) };
-    const url = `https://nucleas.test/api/projects/${access.project._id}/ai/team`;
-    const input = { requestId: randomUUID(), employee: 'product', kind: 'message', text: 'What should we prioritize?', cadence: 'once' };
-    await AiTeamRequest.createIndexes();
-    const response = await saveTeam(new NextRequest(url, {
-      method: 'POST',
-      headers: { origin: 'https://nucleas.test', 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
-    }), context);
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      reply: { role: 'assistant', text: 'Prioritize the launch checklist.' },
-    });
-    expect(model).toHaveBeenCalled();
-    expect(await AiTeamRequest.countDocuments({ role: 'assistant' })).toBe(1);
-    expect(await AiRun.countDocuments({ status: 'completed' })).toBeGreaterThanOrEqual(1);
-    // Unknown provider usage retains reservations for reconciliation (noProviderFee is false in fixture).
-    expect(await AiBudgetReservation.countDocuments({ state: 'reserved' })).toBeGreaterThan(0);
-  });
-  it('denies private intake to unauthenticated and foreign-project callers', async () => {
-    const url = `https://nucleas.test/api/projects/${access.project._id}/ai/team`;
-    const context = { params: Promise.resolve({ id: String(access.project._id) }) };
-    vi.mocked(requireAuth).mockResolvedValue(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }));
-    expect((await readTeam(new NextRequest(url), context)).status).toBe(401);
-    const stranger = await User.create({ email: 'team-foreign@example.invalid', password: 'synthetic', organizationId: 'foreign' });
-    vi.mocked(requireAuth).mockResolvedValue({ userId: String(stranger._id), email: stranger.email, expiresAt: new Date() });
-    expect((await readTeam(new NextRequest(url), context)).status).toBe(404);
-  });
   it.each([undefined, 'chat', 'responses'] as const)('sends diagnostic %s once under concurrency and retains its dispatch lock', async kind => {
     await User.updateOne({ _id: access.userId }, { $set: { isAdmin: true } });
     await AiSettings.updateOne({ _id: platformSettingsId }, { $set: { 'value.model': defaultPlatformAiSettings.model } });

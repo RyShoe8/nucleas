@@ -22,7 +22,7 @@ vi.mock('@/lib/ide/chatHistory', () => ({
   findExistingIdeAssistantTurn: vi.fn().mockResolvedValue(null),
   clearIdeChatTurnPlan: vi.fn(),
 }));
-vi.mock('@/lib/ai/teamChat', () => ({ attemptTeamChatReply: mocks.team }));
+vi.mock('@/lib/ai/teamChat', () => ({ attemptOrchestratedIdeReply: mocks.team }));
 vi.mock('@/lib/ai/ideDirectChat', () => ({ attemptDirectModelChat: mocks.direct }));
 vi.mock('@/lib/ide/loadTaskRules', () => ({ loadIdeTaskRuleTexts: mocks.rules }));
 
@@ -47,7 +47,7 @@ describe('GET /api/projects/[id]/ai/ide/chat', () => {
   it('fails closed when project access is denied', async () => {
     mocks.access.mockRejectedValue(new AiHttpError(404, 'Unavailable.'));
     const request = new NextRequest(
-      `https://nucleas.test/api/projects/${projectId}/ai/ide/chat?mode=product`
+      `https://nucleas.test/api/projects/${projectId}/ai/ide/chat?mode=orchestrated`
     );
     const response = await GET(request, { params: Promise.resolve({ id: projectId }) });
     expect(response.status).toBe(404);
@@ -86,11 +86,11 @@ describe('GET /api/projects/[id]/ai/ide/chat', () => {
   it('returns empty turns when history soft-fails', async () => {
     mocks.history.mockResolvedValue([]);
     const request = new NextRequest(
-      `https://nucleas.test/api/projects/${projectId}/ai/ide/chat?mode=product`
+      `https://nucleas.test/api/projects/${projectId}/ai/ide/chat?mode=orchestrated`
     );
     const response = await GET(request, { params: Promise.resolve({ id: projectId }) });
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ mode: 'product', turns: [] });
+    await expect(response.json()).resolves.toEqual({ mode: 'orchestrated', turns: [] });
   });
 });
 
@@ -109,7 +109,7 @@ describe('POST /api/projects/[id]/ai/ide/chat', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          mode: 'product',
+          mode: 'orchestrated',
           text: 'how does our rules system work?',
           history: [],
           interactionMode: 'chat',
@@ -130,7 +130,7 @@ describe('POST /api/projects/[id]/ai/ide/chat', () => {
     expect(body.historyPersisted).toBe(true);
   });
 
-  it('POST product mode then GET returns user and assistant turns', async () => {
+  it('POST orchestrated mode then GET returns user and assistant turns', async () => {
     const persisted: { requestId: string; role: string; text: string }[] = [];
     mocks.append.mockImplementation(async (args: { turns: typeof persisted }) => {
       persisted.push(...args.turns);
@@ -150,7 +150,7 @@ describe('POST /api/projects/[id]/ai/ide/chat', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          mode: 'product',
+          mode: 'orchestrated',
           text: 'how do we handle context in our IDE?',
           history: [],
           interactionMode: 'chat',
@@ -161,7 +161,7 @@ describe('POST /api/projects/[id]/ai/ide/chat', () => {
     expect(postResponse.status).toBe(200);
 
     const getRequest = new NextRequest(
-      `https://nucleas.test/api/projects/${projectId}/ai/ide/chat?mode=product`
+      `https://nucleas.test/api/projects/${projectId}/ai/ide/chat?mode=orchestrated`
     );
     const getResponse = await GET(getRequest, { params: Promise.resolve({ id: projectId }) });
     expect(getResponse.status).toBe(200);

@@ -55,16 +55,16 @@ describe('chatSelectionStorage', () => {
   it('persists and restores mode per project', () => {
     stubStorage();
     writeStoredIdeChatMode('proj-a', 'direct');
-    writeStoredIdeChatMode('proj-b', 'product');
+    writeStoredIdeChatMode('proj-b', 'orchestrated');
     expect(readStoredIdeChatMode('proj-a')).toBe('direct');
-    expect(readStoredIdeChatMode('proj-b')).toBe('product');
+    expect(readStoredIdeChatMode('proj-b')).toBe('orchestrated');
     expect(readStoredIdeChatMode('missing')).toBeNull();
   });
 
   it('normalizes legacy mode ids', () => {
     stubStorage();
     store.set('nucleas.ide.chatMode.proj', 'build');
-    expect(readStoredIdeChatMode('proj')).toBe('engineering');
+    expect(readStoredIdeChatMode('proj')).toBe('orchestrated');
   });
 
   it('persists Direct company and model', () => {

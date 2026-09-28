@@ -11,14 +11,13 @@ describe('ideChatThreadCacheKey', () => {
       ideChatThreadCacheKey({ projectId, mode: 'direct', modelProfileId: 'a', model: 'two' }),
     ]);
     expect(new Set(keys).size).toBe(keys.length);
-    expect(keys).not.toContain('projA:worker');
+    expect(keys).not.toContain('projA:direct');
   });
-  it('isolates each worker transcript per project', () => {
+  it('keeps one orchestrated transcript per project', () => {
     expect(
-      ideChatThreadCacheKey({ projectId: 'projA', mode: 'product', modelProfileId: 'x', model: 'y' })
-    ).toBe('projA:worker:product');
-    expect(ideChatThreadCacheKey({ projectId: 'projA', mode: 'engineering' })).toBe('projA:worker:engineering');
-    expect(ideChatThreadCacheKey({ projectId: 'projB', mode: 'product' })).toBe('projB:worker:product');
+      ideChatThreadCacheKey({ projectId: 'projA', mode: 'orchestrated', modelProfileId: 'x', model: 'y' })
+    ).toBe('projA:orchestrated');
+    expect(ideChatThreadCacheKey({ projectId: 'projB', mode: 'orchestrated' })).toBe('projB:orchestrated');
   });
 
   it('keys Direct by project, profile, and model', () => {

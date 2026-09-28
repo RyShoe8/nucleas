@@ -6,7 +6,7 @@ import {
 } from '@/lib/ai/rolePipeline/modelMeta';
 import { MODEL_PROVIDERS } from '@/lib/ai/rolePipeline/providerCatalog';
 import { mapOpenAiModelsResponse } from '@/lib/ai/rolePipeline/discoverModels';
-import { isIdeChatMode, isIdeDirectMode, isIdeWorkerMode, employeeForIdeMode } from '@/lib/ide/modes';
+import { isIdeChatMode, isIdeDirectMode, isIdeOrchestratedMode, normalizeIdeChatMode } from '@/lib/ide/modes';
 
 describe('catalog model metadata', () => {
   it('gives every catalog model bestAt and strengths', () => {
@@ -76,11 +76,12 @@ describe('local overlays and discovery mapping', () => {
 });
 
 describe('ide modes include Direct', () => {
-  it('treats direct as a chat mode without a worker employee', () => {
+  it('has exactly two modes, Orchestrated and Direct, and maps legacy tabs to Orchestrated', () => {
     expect(isIdeChatMode('direct')).toBe(true);
     expect(isIdeDirectMode('direct')).toBe(true);
-    expect(isIdeWorkerMode('direct')).toBe(false);
-    expect(isIdeWorkerMode('engineering')).toBe(true);
-    expect(employeeForIdeMode('engineering')).toBe('engineering');
+    expect(isIdeOrchestratedMode('direct')).toBe(false);
+    expect(isIdeOrchestratedMode('orchestrated')).toBe(true);
+    expect(isIdeChatMode('engineering')).toBe(false);
+    expect(normalizeIdeChatMode('engineering')).toBe('orchestrated');
   });
 });

@@ -15,7 +15,6 @@ export type IdeChatStreamTurnEvent = {
   type: 'turn';
   turn: Record<string, unknown>;
   mode: string;
-  employee?: string | null;
   modelProfileId?: string;
   model?: string;
   rulesApplied?: number;

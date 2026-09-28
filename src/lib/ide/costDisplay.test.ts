@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { formatIdeCostUsd } from '@/lib/ide/costDisplay';
-import { employeeForIdeMode, isIdeChatMode } from '@/lib/ide/modes';
+import { isIdeChatMode, normalizeIdeChatMode, taskRuleModeQueryValues } from '@/lib/ide/modes';
 
 describe('ide modes', () => {
-  it('uses AI Team employee ids as worker modes', () => {
-    expect(employeeForIdeMode('product')).toBe('product');
-    expect(employeeForIdeMode('engineering')).toBe('engineering');
-    expect(employeeForIdeMode('researcher')).toBe('researcher');
-    expect(employeeForIdeMode('marketing')).toBe('marketing');
-    expect(employeeForIdeMode('support')).toBe('support');
-    expect(isIdeChatMode('engineering')).toBe(true);
-    expect(isIdeChatMode('support')).toBe(true);
-    expect(isIdeChatMode('build')).toBe(false);
+  it('maps every legacy AI Team and Plan/Build/Research tab to Orchestrated', () => {
+    for (const legacy of ['product', 'engineering', 'researcher', 'marketing', 'support', 'plan', 'build', 'research']) {
+      expect(isIdeChatMode(legacy)).toBe(false);
+      expect(normalizeIdeChatMode(legacy)).toBe('orchestrated');
+    }
+    expect(normalizeIdeChatMode('nonsense')).toBeNull();
+  });
+
+  it('applies rules saved under legacy tabs to Orchestrated, never to Direct', () => {
+    expect(taskRuleModeQueryValues('orchestrated')).toEqual(expect.arrayContaining(['all', 'orchestrated', 'engineering', 'plan']));
+    expect(taskRuleModeQueryValues('direct')).toEqual(['all', 'direct']);
   });
 });
 

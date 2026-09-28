@@ -4,7 +4,7 @@ import { Types } from 'mongoose';
 const mocks = vi.hoisted(() => ({
   companyChat: vi.fn(),
   repoDig: vi.fn(),
-  findPipeline: vi.fn(),
+  selectModel: vi.fn(),
   findObjectives: vi.fn(),
   findRuns: vi.fn(),
   readSettings: vi.fn(),
@@ -15,10 +15,10 @@ vi.mock('server-only', () => ({}));
 vi.mock('@/lib/ai/companyChat', () => ({
   attemptCompanyCredentialChat: (...args: unknown[]) => mocks.companyChat(...args),
 }));
-vi.mock('@/lib/models/AiRolePipeline', () => ({
-  AiRolePipeline: {
-    findOne: (...args: unknown[]) => mocks.findPipeline(...args),
-  },
+vi.mock('@/lib/ai/engine/catalog', () => ({ listAvailableModels: async () => [] }));
+vi.mock('@/lib/ai/engine/select', () => ({
+  readEngineSettings: async () => ({ defaultCostLevel: 'low', priceCeilings: { low: 1.5, medium: 5, high: null }, pins: {} }),
+  selectModel: (...args: unknown[]) => mocks.selectModel(...args),
 }));
 vi.mock('@/lib/models/AiControl', () => ({
   AiBudget: {},
@@ -50,7 +50,7 @@ vi.mock('@/lib/ai/executionWorkerClient', () => ({
   executeInRemoteSandbox: (...args: unknown[]) => mocks.execute(...args),
 }));
 
-import { attemptTeamChatReply, distillPlannerBriefing, isTrivialTeamChatRequest } from '@/lib/ai/teamChat';
+import { attemptOrchestratedIdeReply, distillPlannerBriefing, isTrivialTeamChatRequest } from '@/lib/ai/teamChat';
 
 function leanChain(result: unknown) {
   return {
@@ -87,7 +87,7 @@ const readySettings = {
   freePoolRemainingMicros: 0,
 };
 
-describe('attemptTeamChatReply full orchestra', () => {
+describe('attemptOrchestratedIdeReply full orchestra', () => {
   const plannerId = 'a'.repeat(24);
   const workerId = 'b'.repeat(24);
   const reviewerId = 'c'.repeat(24);
@@ -106,13 +106,16 @@ describe('attemptTeamChatReply full orchestra', () => {
     mocks.execute.mockResolvedValue(null);
     mocks.findObjectives.mockReturnValue(leanChain([]));
     mocks.findRuns.mockReturnValue(leanChain([]));
-    mocks.findPipeline.mockReturnValue(
-      leanChain({
-        planner: { modelProfileId: plannerId, model: 'sol' },
-        worker: { modelProfileId: workerId, model: 'qwen' },
-        reviewer: { modelProfileId: reviewerId, model: 'sol-review' },
-      })
-    );
+    // The engine picks: planner for plan, reviewer for review, worker for the work itself.
+    mocks.selectModel.mockImplementation(async (_org: string, need: string) => ({
+      primary:
+        need === 'plan'
+          ? { profileId: plannerId, model: 'sol', free: false, label: 'paid' }
+          : need === 'review'
+            ? { profileId: reviewerId, model: 'sol-review', free: false, label: 'paid' }
+            : { profileId: workerId, model: 'qwen', free: true, label: 'Rogly' },
+      fallback: null,
+    }));
   });
 
   it.each(['worker', 'reviewer'] as const)('preserves an unverified draft when %s fails without making it approvable', async failedStage => {
@@ -120,7 +123,7 @@ describe('attemptTeamChatReply full orchestra', () => {
     mocks.companyChat.mockResolvedValueOnce({ requestId: 'p', role: 'assistant', text: draft, costMicros: 74000 });
     if (failedStage === 'reviewer') mocks.companyChat.mockResolvedValueOnce({ requestId: 'w', role: 'assistant', text: 'Verified routes.', costMicros: 0 });
     mocks.companyChat.mockResolvedValueOnce({ requestId: 'failed', role: 'status', text: 'Gateway returned HTTP 504.', failureCategory: 'unavailable', debugHint: 'httpStatus=504', costMicros: 0 });
-    const turn = await attemptTeamChatReply({ employee: 'product', projectName: 'Playbound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'u'.repeat(24), userText: 'plan a blog', priorTurns: [], interactionMode: 'plan' });
+    const turn = await attemptOrchestratedIdeReply({ projectName: 'Playbound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'u'.repeat(24), userText: 'plan a blog', priorTurns: [], interactionMode: 'plan' });
     expect(turn.role).toBe('status');
     expect(turn.plan).toBeUndefined();
     expect(turn.text).toContain('Planner draft preserved');
@@ -143,7 +146,7 @@ describe('attemptTeamChatReply full orchestra', () => {
           : accept ? 'Verified.\n```nucleas-gate\n{"status":"accept"}\n```'
             : 'Need evidence.\n```nucleas-gate\n{"status":"needs_more","jobs":["Read routes"]}\n```',
     }));
-    const turn = await attemptTeamChatReply({ employee: 'product', projectName: 'Playbound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'plan a blog', priorTurns: [], interactionMode: 'plan' });
+    const turn = await attemptOrchestratedIdeReply({ projectName: 'Playbound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'plan a blog', priorTurns: [], interactionMode: 'plan' });
     if (accept) expect(turn.plan?.status).toBe('ready_for_review');
     else expect(turn.plan).toBeUndefined();
     expect(mocks.companyChat).toHaveBeenCalledTimes(accept ? 3 : 5);
@@ -190,8 +193,7 @@ describe('attemptTeamChatReply full orchestra', () => {
       });
 
     const onStage = vi.fn();
-    const turn = await attemptTeamChatReply({
-      employee: 'product',
+    const turn = await attemptOrchestratedIdeReply({
       projectName: 'Nucleas',
       organizationId: 'org',
       projectId: new Types.ObjectId(),
@@ -289,8 +291,7 @@ describe('attemptTeamChatReply full orchestra', () => {
       };
     });
 
-    const turn = await attemptTeamChatReply({
-      employee: 'product',
+    const turn = await attemptOrchestratedIdeReply({
       projectName: 'Nucleas',
       organizationId: 'org',
       projectId: new Types.ObjectId(),
@@ -327,8 +328,7 @@ describe('attemptTeamChatReply full orchestra', () => {
       throw new Error('should not start later stages');
     });
 
-    const turn = await attemptTeamChatReply({
-      employee: 'product',
+    const turn = await attemptOrchestratedIdeReply({
       projectName: 'Nucleas',
       organizationId: 'org',
       projectId: new Types.ObjectId(),
@@ -357,7 +357,7 @@ describe('attemptTeamChatReply full orchestra', () => {
       .mockResolvedValueOnce({ requestId: 'p', role: 'assistant', text: 'Implement the feature.', costMicros: 10 })
       .mockResolvedValueOnce({ requestId: 'r', role: 'assistant', text: 'Accepted.\n```nucleas-gate\n{"status":"accept"}\n```', costMicros: 5 });
 
-    const turn = await attemptTeamChatReply({ employee: 'engineering', projectName: 'Nucleas', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'build the feature', priorTurns: [], interactionMode: 'build' });
+    const turn = await attemptOrchestratedIdeReply({ projectName: 'Nucleas', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'build the feature', priorTurns: [], interactionMode: 'build' });
 
     expect(mocks.execute).toHaveBeenCalledTimes(1);
     expect(mocks.companyChat.mock.calls.map((call) => call[0].systemPrompt.match(/Pipeline stage: (planner|worker|reviewer)/)?.[1] ?? 'unknown')).toEqual(['planner', 'reviewer']);

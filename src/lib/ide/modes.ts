@@ -1,65 +1,42 @@
-import { aiEmployees, type AiEmployeeKey } from '@/lib/ai/teamWorkspace';
-
-/** Legacy IDE tab ids → AI Team employee keys. */
-const legacyIdeModeToEmployee = {
-  plan: 'product',
-  build: 'engineering',
-  research: 'researcher',
-} as const;
-
-type LegacyIdeMode = keyof typeof legacyIdeModeToEmployee;
-
-const ideEmployeeShortLabels: Record<AiEmployeeKey, string> = {
-  marketing: 'Marketing',
-  product: 'Product Manager',
-  support: 'Support',
-  engineering: 'Engineering',
-  researcher: 'Researcher',
-};
-
-/** IDE chat modes: one tab per AI Team role + Direct single-model chat. */
+/**
+ * IDE chat works like Ask: Orchestrated (the AI engine picks every model at a cost level) or
+ * Direct (one chosen provider model).
+ */
 export const ideChatModes = [
-  ...aiEmployees.map((role) => ({
-    id: role.id,
-    label: ideEmployeeShortLabels[role.id],
-    employee: role.id as AiEmployeeKey,
-  })),
-  { id: 'direct' as const, label: 'Direct', employee: null },
+  { id: 'orchestrated' as const, label: 'Orchestrated' },
+  { id: 'direct' as const, label: 'Direct' },
 ] as const;
 
 export type IdeChatMode = (typeof ideChatModes)[number]['id'];
-export type IdeWorkerMode = Exclude<IdeChatMode, 'direct'>;
+
+/** Mode ids from before orchestration: AI Team roles and the older Plan/Build/Research tabs. */
+export const LEGACY_IDE_MODES = ['marketing', 'product', 'support', 'engineering', 'researcher', 'plan', 'build', 'research'] as const;
 
 export function isIdeChatMode(value: string): value is IdeChatMode {
   return ideChatModes.some((item) => item.id === value);
 }
 
-export function isIdeWorkerMode(value: string): value is IdeWorkerMode {
-  return isIdeChatMode(value) && value !== 'direct';
+export function isIdeOrchestratedMode(value: string): value is 'orchestrated' {
+  return value === 'orchestrated';
 }
 
 export function isIdeDirectMode(value: string): value is 'direct' {
   return value === 'direct';
 }
 
-/** Accept current employee ids and legacy Plan/Build/Research aliases. */
+/** Accepts current ids; every legacy id becomes Orchestrated. */
 export function normalizeIdeChatMode(value: string): IdeChatMode | null {
   if (isIdeChatMode(value)) return value;
-  if (value in legacyIdeModeToEmployee) {
-    return legacyIdeModeToEmployee[value as LegacyIdeMode];
-  }
+  if ((LEGACY_IDE_MODES as readonly string[]).includes(value)) return 'orchestrated';
   return null;
 }
 
-export function employeeForIdeMode(mode: IdeWorkerMode): AiEmployeeKey {
-  return mode;
+/** Stored mode values that belong to a mode (Orchestrated includes transcripts and rules from legacy tabs). */
+export function storedModeValues(mode: IdeChatMode): string[] {
+  return mode === 'direct' ? ['direct'] : ['orchestrated', ...LEGACY_IDE_MODES];
 }
 
-/** Modes to match when loading task rules (includes legacy aliases). */
+/** Modes to match when loading task rules. */
 export function taskRuleModeQueryValues(mode: IdeChatMode): string[] {
-  if (mode === 'direct') return ['all', 'direct'];
-  const legacy = (Object.entries(legacyIdeModeToEmployee) as [LegacyIdeMode, AiEmployeeKey][]).find(
-    ([, employee]) => employee === mode
-  )?.[0];
-  return legacy ? ['all', mode, legacy] : ['all', mode];
+  return ['all', ...storedModeValues(mode)];
 }

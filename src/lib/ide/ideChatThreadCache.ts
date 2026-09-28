@@ -10,7 +10,7 @@ export function ideChatThreadCacheKey(input: {
   model?: string;
 }): string {
   const project = input.projectId.trim() || '_none';
-  if (!isIdeDirectMode(input.mode)) return `${project}:worker:${input.mode}`;
+  if (!isIdeDirectMode(input.mode)) return `${project}:orchestrated`;
   return `${project}:direct:${input.modelProfileId?.trim() ?? ''}:${input.model?.trim() ?? ''}`;
 }
 

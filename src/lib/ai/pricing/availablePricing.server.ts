@@ -10,7 +10,7 @@ import {
 import { discoverOpenAiCompatibleModels } from '@/lib/ai/rolePipeline/discoverModels';
 import { isFreeCredential } from '@/lib/ai/rolePipeline/modelMeta';
 import { companyDisplayName } from '@/lib/ai/rolePipeline/providerCatalog';
-import { AiModelProfile } from '@/lib/models/AiRolePipeline';
+import { AiModelProfile } from '@/lib/models/AiModelProfile';
 
 export async function loadAvailableModelPricing(): Promise<AvailablePricingSnapshot> {
   await connectDB();

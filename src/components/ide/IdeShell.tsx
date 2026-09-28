@@ -51,16 +51,16 @@ function formatSpend(micros: number): string {
   return `$${microsToDollars(micros)}`;
 }
 
-/** Sync mode for a project scope — Free Chat is always Direct; projects default to Engineering. */
+/** Sync mode for a project scope — Free Chat is always Direct; projects default to Orchestrated. */
 function modeForProject(projectId: string): IdeChatMode {
   if (isIdeFreeChatScope(projectId)) return 'direct';
   if (typeof window !== 'undefined') {
     const stored = readStoredIdeChatMode(projectId);
     // Direct on a project is fine while using that tab, but do not restore it as the
-    // default after refresh — that opens an empty Direct thread while worker history exists.
+    // default after refresh — that opens an empty Direct thread while orchestrated history exists.
     if (stored && stored !== 'direct') return stored;
   }
-  return 'engineering';
+  return 'orchestrated';
 }
 
 export default function IdeShell({ initialProjectId }: { initialProjectId?: string }) {

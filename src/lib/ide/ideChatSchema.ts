@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { isIdeDirectMode, normalizeIdeChatMode } from '@/lib/ide/modes';
 import { teamMessageRoleSchema } from '@/lib/ai/teamWorkspace';
+import { COST_LEVELS } from '@/lib/ai/engine/select';
 
 /** Request body for IDE chat (worker modes + Direct). */
 export const ideChatSchema = z
@@ -31,6 +32,8 @@ export const ideChatSchema = z
       .optional(),
     model: z.string().trim().min(1).max(200).optional(),
     interactionMode: z.enum(['chat', 'plan', 'build']).default('chat'),
+    /** AI engine cost level; omitted = the organization default. */
+    level: z.enum(COST_LEVELS).optional(),
     clientRequestId: z.string().trim().max(80).optional(),
     /** When true, response is application/x-ndjson with stage + turn events. */
     stream: z.boolean().optional(),

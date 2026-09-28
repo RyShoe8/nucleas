@@ -16,7 +16,7 @@ vi.mock('@/lib/ai/tools/serverBrowseAssist', () => ({
 
 import Client from '@/lib/models/Client';
 import Project from '@/lib/models/Project';
-import { AiModelProfile } from '@/lib/models/AiRolePipeline';
+import { AiModelProfile } from '@/lib/models/AiModelProfile';
 import { MetricSnapshot } from '@/lib/models/Metric';
 import { CapabilityInvocation } from '@/lib/models/Capability';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';

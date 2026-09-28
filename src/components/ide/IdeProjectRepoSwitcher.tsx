@@ -46,7 +46,7 @@ export default function IdeProjectRepoSwitcher({ projectId, onProjectChange, onR
     let cancelled = false;
     void (async () => {
       try {
-        const response = await fetch('/api/ai/team/projects', { cache: 'no-store' });
+        const response = await fetch('/api/ai/ide/projects', { cache: 'no-store' });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error ?? 'Unable to load projects.');
         if (cancelled) return;

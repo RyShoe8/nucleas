@@ -23,7 +23,7 @@ describe('ideChatSchema', () => {
   it('normalizes legacy Plan/Build mode ids', () => {
     const ok = ideChatSchema.safeParse({ mode: 'build', text: 'ship it' });
     expect(ok.success).toBe(true);
-    if (ok.success) expect(ok.data.mode).toBe('engineering');
+    if (ok.success) expect(ok.data.mode).toBe('orchestrated');
   });
 
   it('ignores optional Direct fields on worker modes', () => {

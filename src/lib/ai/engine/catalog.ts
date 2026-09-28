@@ -1,5 +1,5 @@
 import mongoose, { Schema, Types, type InferSchemaType, type Model } from 'mongoose';
-import { AiModelProfile } from '@/lib/models/AiRolePipeline';
+import { AiModelProfile } from '@/lib/models/AiModelProfile';
 import { decryptModelSecret } from '@/lib/ai/modelSecrets';
 import { discoverOpenAiCompatibleModels } from '@/lib/ai/rolePipeline/discoverModels';
 import { buildModelMetaView, isFreeCredential } from '@/lib/ai/rolePipeline/modelMeta';

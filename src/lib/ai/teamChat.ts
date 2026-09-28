@@ -1,21 +1,9 @@
 import 'server-only';
 import { randomUUID } from 'crypto';
 import { Types } from 'mongoose';
-import { getChatInferencePolicy, getPipelineInferencePolicy } from '@/lib/ai/control/config';
-import { GatewayError, invokeModel } from '@nucleas/ai-core/gateway';
-import { digestValue } from '@nucleas/ai-core/planning';
-import { reserveRunBudget, settleRunBudget } from '@/lib/ai/control/budgets';
-import { decrementFreePoolRemaining } from '@/lib/ai/control/freePool';
-import { reserveDispatch } from '@/lib/ai/control/dispatchLimits';
-import {
-  assertDispatchLockClaimable,
-  claimDispatchLock,
-  releaseDispatchLock,
-} from '@/lib/ai/control/dispatchLock';
-import { aiTransaction } from '@/lib/ai/control/transaction';
+import { getPipelineInferencePolicy } from '@/lib/ai/control/config';
 import { readSettings, platformSettingsId } from '@/lib/ai/control/settings';
 import { defaultPlatformAiSettings, platformAiSettingsSchema } from '@/lib/ai/settingsSchema';
-import { classifyProbeFailure } from '@/lib/ai/probeDiagnostics';
 import { attemptCompanyCredentialChat } from '@/lib/ai/companyChat';
 import type { IdeInteractionMode, IdePlanDocument } from '@/lib/ide/idePlan';
 import type { IdeChatStageCallback } from '@/lib/ide/ideChatStream';
@@ -29,20 +17,14 @@ import { parseNucleasPlan } from '@/lib/ide/parseNucleasPlan';
 import { parseReviewerGate } from '@/lib/ide/parseReviewerGate';
 import { looksLikeProjectInternalQuery } from '@/lib/ai/tools/serverBrowseAssist';
 import { gatherRepoAssistContext } from '@/lib/ai/tools/serverRepoAssist';
-import { AiBudget, AiObjective, AiRun, AiRunEvent } from '@/lib/models/AiControl';
-import { AiRolePipeline } from '@/lib/models/AiRolePipeline';
+import { AiObjective, AiRun } from '@/lib/models/AiControl';
+import { listAvailableModels } from '@/lib/ai/engine/catalog';
+import { readEngineSettings, selectModel, type CostLevel, type Need } from '@/lib/ai/engine/select';
 import { executeInRemoteSandbox } from '@/lib/ai/executionWorkerClient';
 import {
-  aiEmployees,
-  type AiEmployeeKey,
   type TeamContextSummary,
   type TeamMessageRole,
 } from '@/lib/ai/teamWorkspace';
-
-type PipelineStageBinding = {
-  modelProfileId?: Types.ObjectId | string;
-  model?: string;
-};
 
 export type TeamChatTurn = {
   requestId: string;
@@ -62,15 +44,16 @@ export type TeamChatTurn = {
   plan?: IdePlanDocument;
 };
 
-function readStageBinding(
-  pipeline: { planner?: PipelineStageBinding; worker?: PipelineStageBinding; reviewer?: PipelineStageBinding } | null | undefined,
-  key: 'planner' | 'worker' | 'reviewer'
-): { profileId: string; model: string } | null {
-  const stage = pipeline?.[key];
-  const profileId = stage?.modelProfileId ? String(stage.modelProfileId) : '';
-  const model = stage?.model?.trim() ?? '';
-  if (!profileId || !model) return null;
-  return { profileId, model };
+type StageBinding = { profileId: string; model: string };
+
+/** What kind of work the request is: building, planning or repo questions are code; the rest is research. */
+function workNeedFor(interactionMode: IdeInteractionMode, userText: string): Need {
+  if (interactionMode !== 'chat' || looksLikeProjectInternalQuery(userText)) return 'code';
+  return 'research';
+}
+
+function binding(choice: { profileId: string; model: string } | null): StageBinding | null {
+  return choice ? { profileId: choice.profileId, model: choice.model } : null;
 }
 
 function mergeTurnCosts(turns: TeamChatTurn[]): {
@@ -100,8 +83,6 @@ function mergeTurnCosts(turns: TeamChatTurn[]): {
   return { costMicros, reservedMicros, noProviderFee, toolsUsed, artifacts };
 }
 
-const CHAT_LOCK_MS = 60000;
-
 async function recentActivityCounts(organizationId: string, projectId: Types.ObjectId) {
   const scope = { organizationId, projectId };
   const [objectives, runs] = await Promise.all([
@@ -128,8 +109,7 @@ function unavailableContext(
     unavailableReason: reason,
     included: [
       `Project name: ${projectName}`,
-      'Selected AI employee role preset',
-      'Recent private thread turns for this employee (when available)',
+      'Recent private thread turns (when available)',
       `Recent objectives in project: ${counts.recentObjectiveCount}${counts.recentObjectiveCount >= 25 ? '+' : ''}`,
       `Recent AI runs in project: ${counts.recentRunCount}${counts.recentRunCount >= 25 ? '+' : ''}`,
     ],
@@ -155,7 +135,7 @@ function statusTurn(
   };
 }
 
-export async function buildTeamContextSummary(
+async function buildTeamContextSummary(
   projectName: string,
   organizationId: string,
   projectId: Types.ObjectId
@@ -211,193 +191,13 @@ export async function buildTeamContextSummary(
     unavailableReason: null,
     included: [
       `Project name: ${projectName}`,
-      'Selected AI employee Worker model from AI Team',
-      'Recent private thread turns for this employee (when available)',
+      'Models chosen by the AI engine at the selected cost level',
+      'Recent private thread turns (when available)',
       `Recent objectives in project: ${counts.recentObjectiveCount}${counts.recentObjectiveCount >= 25 ? '+' : ''}`,
       `Recent AI runs in project: ${counts.recentRunCount}${counts.recentRunCount >= 25 ? '+' : ''}`,
       'Tools: web_search, image_search, web_fetch, optional browser_navigate, image_generate when supported',
     ],
     ...counts,
-  };
-}
-
-type AdmittedChat = {
-  runId: Types.ObjectId;
-  lockToken: string;
-  policy: Awaited<ReturnType<typeof getChatInferencePolicy>>;
-};
-
-async function admitTeamChat(input: {
-  organizationId: string;
-  projectId: Types.ObjectId;
-  userId: string;
-  userText: string;
-}): Promise<{ ok: true; admitted: AdmittedChat } | { ok: false; turn: TeamChatTurn }> {
-  const lockToken = randomUUID();
-  try {
-    return await aiTransaction(async (session) => {
-      const policy = await getChatInferencePolicy(input.organizationId, String(input.projectId), session);
-      const now = new Date();
-      await assertDispatchLockClaimable(now, session);
-      if (
-        !(await reserveDispatch(
-          {
-            dailyRequestLimit: policy.dailyRequestLimit,
-            minimumIntervalSeconds: policy.minimumIntervalSeconds,
-          },
-          now,
-          session
-        ))
-      ) {
-        return {
-          ok: false as const,
-          turn: statusTurn(
-            'Shared inference request limits were reached. No model call was sent. Wait for the next eligible window and try again.',
-            'rate_limit'
-          ),
-        };
-      }
-
-      const inputDigest = digestValue(input.userText.slice(0, 6000));
-      const [run] = await AiRun.create(
-        [
-          {
-            organizationId: input.organizationId,
-            projectId: input.projectId,
-            role: 'architect',
-            status: 'queued',
-            createdByUserId: new Types.ObjectId(input.userId),
-            inputDigest,
-            policyDigest: policy.digest,
-            model: policy.model,
-          },
-        ],
-        { session }
-      );
-
-      await claimDispatchLock({
-        token: lockToken,
-        expiresAt: new Date(now.getTime() + CHAT_LOCK_MS),
-        runId: run._id,
-        session,
-      });
-
-      const period = now.toISOString().slice(0, 7);
-      const budgetIds: Types.ObjectId[] = [];
-      for (const [scopeKey, limitMicros] of [
-        ['organization', policy.organizationLimitMicros],
-        [`project:${String(input.projectId)}`, policy.projectLimitMicros],
-      ] as const) {
-        const budget = await AiBudget.findOneAndUpdate(
-          { organizationId: input.organizationId, scopeKey, period },
-          { $set: { limitMicros }, $setOnInsert: { spentMicros: 0, reservedMicros: 0 } },
-          { session, upsert: true, new: true, runValidators: true }
-        );
-        budgetIds.push(budget._id);
-      }
-      await reserveRunBudget(input.organizationId, run._id, budgetIds, policy.reservationMicros, session);
-      await AiRun.updateOne(
-        { _id: run._id },
-        { $set: { status: 'running', startedAt: now }, $inc: { revision: 1 } },
-        { session }
-      );
-      await AiRunEvent.create(
-        [
-          {
-            organizationId: input.organizationId,
-            projectId: input.projectId,
-            runId: run._id,
-            sequence: 1,
-            type: 'run.running',
-            summary: 'Team chat admitted; budget reserved and shared dispatch claimed.',
-          },
-        ],
-        { session }
-      );
-      return { ok: true as const, admitted: { runId: run._id, lockToken, policy } };
-    });
-  } catch (error) {
-    await releaseDispatchLock(lockToken);
-    if (error instanceof GatewayError) {
-      const messages: Record<GatewayError['code'], string> = {
-        configuration:
-          'Chat inference needs remote connection, processing enabled, and a positive reservation within budget ceilings.',
-        credentials: 'Remote authentication was rejected before the model was called.',
-        rate_limit: 'Shared inference limits blocked this chat request.',
-        unavailable: 'Another AI run currently holds the shared dispatch lock. Retry shortly.',
-        invalid_response: 'Chat inference configuration is invalid.',
-        cancelled: 'Chat admission was cancelled.',
-      };
-      return { ok: false, turn: statusTurn(messages[error.code], error.code) };
-    }
-    return {
-      ok: false,
-      turn: statusTurn('Chat admission failed before a model call was sent.', 'unavailable'),
-    };
-  }
-}
-
-async function finishTeamChatRun(input: {
-  organizationId: string;
-  projectId: Types.ObjectId;
-  runId: Types.ObjectId;
-  lockToken: string;
-  actualMicros: number | null;
-  status: 'completed' | 'blocked';
-  summary: string;
-  failureCode?: string;
-  noProviderFee?: boolean;
-  reservationMicros?: number;
-  result?: { inputTokens?: number | null; outputTokens?: number | null; latencyMs?: number | null };
-}) {
-  try {
-    await aiTransaction(async (session) => {
-      await settleRunBudget(input.organizationId, input.runId, input.actualMicros, session);
-      if (input.noProviderFee && (input.reservationMicros ?? 0) > 0) {
-        await decrementFreePoolRemaining(input.reservationMicros!, session);
-      }
-      const run = await AiRun.findOneAndUpdate(
-        { _id: input.runId, organizationId: input.organizationId, projectId: input.projectId },
-        {
-          $set: {
-            status: input.status,
-            completedAt: new Date(),
-            ...(input.failureCode ? { failureCode: input.failureCode } : {}),
-            ...(input.result?.inputTokens != null ? { inputTokens: input.result.inputTokens } : {}),
-            ...(input.result?.outputTokens != null ? { outputTokens: input.result.outputTokens } : {}),
-            ...(input.result?.latencyMs != null ? { latencyMs: input.result.latencyMs } : {}),
-            ...(input.actualMicros !== null ? { costMicros: input.actualMicros } : {}),
-          },
-          $inc: { revision: 1 },
-        },
-        { session, new: true }
-      );
-      if (run) {
-        await AiRunEvent.create(
-          [
-            {
-              organizationId: input.organizationId,
-              projectId: input.projectId,
-              runId: run._id,
-              sequence: run.revision,
-              type: `run.${input.status}`,
-              summary: input.summary.slice(0, 2000),
-            },
-          ],
-          { session }
-        );
-      }
-    });
-  } finally {
-    await releaseDispatchLock(input.lockToken);
-  }
-}
-
-function costFields(policy: { reservationMicros: number; noProviderFee: boolean }, settled: number | null) {
-  return {
-    costMicros: settled,
-    reservedMicros: policy.reservationMicros,
-    noProviderFee: policy.noProviderFee,
   };
 }
 
@@ -443,9 +243,8 @@ export function isTrivialTeamChatRequest(text: string, mode: IdeInteractionMode)
   );
 }
 
-/** IDE / team role chat: direct cheap-worker replies for trivial turns; otherwise Planner → Worker → Reviewer. */
-export async function attemptTeamChatReply(input: {
-  employee: AiEmployeeKey;
+/** Orchestrated IDE chat: trivial turns answered directly; otherwise Planner → Worker → Reviewer on engine-chosen models. */
+export async function attemptOrchestratedIdeReply(input: {
   projectName: string;
   organizationId: string;
   projectId: Types.ObjectId;
@@ -455,6 +254,8 @@ export async function attemptTeamChatReply(input: {
   /** Optional project task rules injected into the system prompt (IDE). */
   ruleTexts?: string[];
   interactionMode?: IdeInteractionMode;
+  /** Cost level for model selection; defaults to the organization's default level. */
+  level?: CostLevel;
   /** When aborted (e.g. client Stop), cancels the gateway fetch and releases the dispatch lock. */
   signal?: AbortSignal;
   onStage?: IdeChatStageCallback;
@@ -464,40 +265,30 @@ export async function attemptTeamChatReply(input: {
     return statusTurn(context.unavailableReason ?? 'Inference is unavailable.', 'unavailable');
   }
 
-  const pipeline = await AiRolePipeline.findOne({
-    organizationId: input.organizationId,
-    employee: input.employee,
-    enabled: true,
-  })
-    .select('planner worker reviewer maxWorkerRetries')
-    .maxTimeMS(3000)
-    .lean();
-
+  // Models come from the AI engine: planner and reviewer by the level's price ceiling, the worker by
+  // what this tab does (code, research or writing).
   const interactionMode = input.interactionMode ?? 'chat';
-  const plannerBinding = readStageBinding(pipeline, 'planner');
-  const workerBinding = readStageBinding(pipeline, 'worker');
-  const reviewerBinding = readStageBinding(pipeline, 'reviewer');
+  const [models, settings] = await Promise.all([listAvailableModels(), readEngineSettings(input.organizationId)]);
+  const level = input.level ?? settings.defaultCostLevel;
+  const [plannerPick, workerPick, reviewerPick] = await Promise.all(
+    (['plan', workNeedFor(interactionMode, input.userText), 'review'] as Need[]).map((need) =>
+      selectModel(input.organizationId, need, level, { models, settings })
+    )
+  );
+  const plannerBinding = binding(plannerPick.primary);
+  const workerBinding = binding(workerPick.primary);
+  const workerFallback = binding(workerPick.fallback);
+  const reviewerBinding = binding(reviewerPick.primary);
 
-  if (!plannerBinding) {
-    return statusTurn(
-      `Configure a Planner company and model for ${input.employee} on AI Team before chatting.`,
-      'configuration'
-    );
-  }
-  if (!workerBinding) {
-    return statusTurn(
-      `Configure a Worker company and model for ${input.employee} on AI Team before chatting.`,
-      'configuration'
-    );
+  if (!plannerBinding || !workerBinding) {
+    return statusTurn('No AI model is available. Add an AI credential in Admin → AI, then retry.', 'configuration');
   }
 
   if (isTrivialTeamChatRequest(input.userText, interactionMode)) {
-    const role = aiEmployees.find((item) => item.id === input.employee)!;
     return withStage(input.onStage, 'worker', () =>
       attemptCompanyCredentialChat({
         systemPrompt: [
-          `You are the ${role.name} AI Team member for the Nucleas project "${input.projectName}".`,
-          role.description,
+          `You are the Nucleas assistant for the project "${input.projectName}".`,
           'Answer this simple conversational turn directly and briefly. Do not claim to have inspected repositories, used tools, or changed project data.',
         ].join(' '),
         organizationId: input.organizationId,
@@ -548,7 +339,6 @@ export async function attemptTeamChatReply(input: {
     }
   }
 
-  const role = aiEmployees.find((item) => item.id === input.employee)!;
   const ruleBlock =
     input.ruleTexts && input.ruleTexts.length > 0
       ? ['Project task rules you must follow:', ...input.ruleTexts.map((rule, index) => `${index + 1}. ${rule}`)].join(
@@ -557,8 +347,7 @@ export async function attemptTeamChatReply(input: {
       : null;
 
   const sharedContext = [
-    `You are on the ${role.name} AI Team for the Nucleas project "${input.projectName}".`,
-    role.description,
+    `You are the Nucleas assistant for the project "${input.projectName}": you plan, research, write and code for the team.`,
     `This project has about ${context.recentObjectiveCount} recent objectives and ${context.recentRunCount} recent AI runs recorded in Nucleas.`,
     'Do not claim to have changed project data or completed tasks outside this chat.',
     'If you lack information or tools, say what is missing instead of inventing project or web facts.',
@@ -657,11 +446,8 @@ export async function attemptTeamChatReply(input: {
     };
   }
 
-  /** Circuit breaker: one correction by default; additional retries must be explicitly configured. */
-  const maxWorkerRetries = typeof (pipeline as { maxWorkerRetries?: number } | null)?.maxWorkerRetries === 'number'
-    ? (pipeline as { maxWorkerRetries?: number })!.maxWorkerRetries!
-    : 1;
-  const maxCompletionPasses = Math.max(1, maxWorkerRetries + 1);
+  /** Circuit breaker: one correction pass. */
+  const maxCompletionPasses = 2;
 
   if (input.signal?.aborted) {
     return statusTurn('The chat request was cancelled before completion.', 'cancelled', plannerTurn.runId, {
@@ -712,6 +498,10 @@ export async function attemptTeamChatReply(input: {
     }
   } else {
     workerTurn = await runStage({ stage: 'worker', binding: workerBinding, userText: workerBrief, priorTurns: [] });
+    // Medium cost: when the free worker fails, one retry on the level's paid model.
+    if (workerTurn.role !== 'assistant' && workerFallback) {
+      workerTurn = await runStage({ stage: 'worker', binding: workerFallback, userText: workerBrief, priorTurns: [] });
+    }
   }
   if (workerTurn.role !== 'assistant') {
     return interruptedStage('Worker', workerTurn, [plannerTurn, workerTurn]);

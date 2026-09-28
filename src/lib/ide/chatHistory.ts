@@ -1,7 +1,7 @@
 import 'server-only';
 import { Types } from 'mongoose';
 import type { IdeChatMode } from '@/lib/ide/modes';
-import { isIdeDirectMode } from '@/lib/ide/modes';
+import { isIdeDirectMode, storedModeValues } from '@/lib/ide/modes';
 import type { IdePlanDocument } from '@/lib/ide/idePlan';
 import { AiIdeChatTurn } from '@/lib/models/AiIdeChatTurn';
 import { isMongoDuplicateKeyError } from '@/lib/utils/mongoErrors';
@@ -135,7 +135,7 @@ export async function loadIdeChatHistory(input: {
   }
   await ensureIdeChatIndexes();
   const limit = Math.min(Math.max(input.limit ?? HISTORY_LIMIT, 1), 100);
-  // Each worker owns its transcript. Direct additionally scopes by credential/model.
+  // Orchestrated includes transcripts from the old AI Team tabs. Direct scopes by credential/model.
   const filter = isIdeDirectMode(keys.mode)
     ? {
         organizationId: input.organizationId,
@@ -149,7 +149,7 @@ export async function loadIdeChatHistory(input: {
         organizationId: input.organizationId,
         projectId: input.projectId,
         createdByUserId: new Types.ObjectId(input.userId),
-        mode: keys.mode,
+        mode: { $in: storedModeValues(keys.mode) },
       };
   const rows = await AiIdeChatTurn.find(filter)
     .sort({ _id: -1 })

@@ -116,7 +116,7 @@ export default function ProjectAiPanel({ projectId, initialObjectiveId }: { proj
   return <main className="mx-auto max-w-5xl space-y-6 p-6 text-text-primary">
     <Link href={`/workspace?project=${encodeURIComponent(projectId)}`} className="text-sm underline">Back to workspace</Link>
     <Link href="/workspace/ai-attention" className="ml-4 text-sm underline">AI needs attention</Link>
-    <Link href={`/workspace/ai-team?projectId=${encodeURIComponent(projectId)}`} className="ml-4 text-sm underline">AI Team &amp; chat</Link>
+    <Link href={`/ide?projectId=${encodeURIComponent(projectId)}`} className="ml-4 text-sm underline">IDE</Link>
     <Link href={`/workspace/projects/${encodeURIComponent(projectId)}/ai/runs`} className="ml-4 text-sm underline">AI run history</Link>
     <Link href={`/workspace/projects/${encodeURIComponent(projectId)}/ai/library`} className="ml-4 text-sm underline">All objectives and plans</Link>
     <Link href={`/workspace/projects/${encodeURIComponent(projectId)}/ai/artifacts`} className="ml-4 text-sm underline">Artifacts and reviews</Link>

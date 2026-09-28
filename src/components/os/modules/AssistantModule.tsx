@@ -2,6 +2,20 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import IdeChatMarkdown from '@/components/ide/IdeChatMarkdown';
+import {
+    ChatModeSwitch,
+    CostSelect,
+    DirectModelPicker,
+    levelParam,
+    readCostChoice,
+    readDirectSelection,
+    resolveDirectSelection,
+    useEngineProviders,
+    writeDirectSelection,
+    type ChatMode,
+    type CostChoice,
+    type DirectSelection,
+} from '@/components/ai/EngineControls';
 import { getAssistantFocus, setAssistantFocus, subscribeAssistantFocus } from '@/lib/os/assistantFocus';
 
 interface Turn {
@@ -16,21 +30,9 @@ interface Turn {
     costMicros?: number | null;
 }
 
-type AskMode = 'orchestrated' | 'direct';
-type CostChoice = 'default' | 'low' | 'medium' | 'high';
-const COST_KEY = 'nucleas.os.assistant.cost';
-
-function readCost(): CostChoice {
-    try {
-        const v = window.localStorage.getItem(COST_KEY);
-        return v === 'low' || v === 'medium' || v === 'high' ? v : 'default';
-    } catch {
-        return 'default';
-    }
-}
 const MODE_KEY = 'nucleas.os.assistant.mode';
 
-function readMode(): AskMode {
+function readMode(): ChatMode {
     try {
         return window.localStorage.getItem(MODE_KEY) === 'direct' ? 'direct' : 'orchestrated';
     } catch {
@@ -65,104 +67,7 @@ function StageLine({ turn }: { turn: Turn }) {
     );
 }
 
-interface ProviderModel {
-    id: string;
-    label: string;
-    free: boolean;
-    price: number | null;
-    score: number | null;
-    /** On the short list shown by default. */
-    recommended: boolean;
-}
-
-interface Provider {
-    profileId: string;
-    label: string;
-    models: ProviderModel[];
-}
-
 const SELECTION_KEY = 'nucleas.os.assistant.model';
-
-function readSelection(): { profileId: string; model: string } | null {
-    try {
-        const raw = window.localStorage.getItem(SELECTION_KEY);
-        return raw ? (JSON.parse(raw) as { profileId: string; model: string }) : null;
-    } catch {
-        return null;
-    }
-}
-
-function writeSelection(value: { profileId: string; model: string }) {
-    try {
-        window.localStorage.setItem(SELECTION_KEY, JSON.stringify(value));
-    } catch {
-        // Per-browser convenience only.
-    }
-}
-
-function modelOptionLabel(m: ProviderModel): string {
-    const bits = [m.free ? 'free' : m.price !== null ? `$${m.price}/1M` : null, m.score !== null ? `score ${m.score.toFixed(0)}` : null].filter(Boolean);
-    return bits.length ? `${m.id} · ${bits.join(' · ')}` : m.id;
-}
-
-const SHOW_ALL = '__show_all__';
-
-/** Direct mode: choose a provider, then one of its strongest models (or any model it lists, on request). */
-function DirectModelPicker({
-    providers,
-    value,
-    onChange,
-}: {
-    providers: Provider[];
-    value: { profileId: string; model: string } | null;
-    onChange: (v: { profileId: string; model: string }) => void;
-}) {
-    const provider = providers.find((p) => p.profileId === value?.profileId) ?? null;
-    const [showAll, setShowAll] = useState(false);
-    const all = provider?.models ?? [];
-    // The short list, plus the current choice so it never disappears from the menu.
-    const shown = showAll ? all : all.filter((m) => m.recommended || m.id === value?.model);
-    const hidden = all.length - shown.length;
-    return (
-        <span className="inline-flex items-center gap-1">
-            <select
-                value={provider?.profileId ?? ''}
-                onChange={(e) => {
-                    const next = providers.find((x) => x.profileId === e.target.value);
-                    if (!next) return;
-                    setShowAll(false);
-                    onChange({ profileId: next.profileId, model: (next.models.find((m) => m.recommended) ?? next.models[0])?.id ?? '' });
-                }}
-                className="h-7 px-1 rounded border border-border bg-background-elevated text-xs max-w-[130px]"
-                aria-label="Provider"
-            >
-                {providers.length === 0 ? <option value="">No models available</option> : null}
-                {providers.map((p) => (
-                    <option key={p.profileId} value={p.profileId}>
-                        {p.label}
-                    </option>
-                ))}
-            </select>
-            <select
-                value={value?.model ?? ''}
-                onChange={(e) => {
-                    if (e.target.value === SHOW_ALL) return setShowAll(true);
-                    if (provider) onChange({ profileId: provider.profileId, model: e.target.value });
-                }}
-                disabled={!provider}
-                className="h-7 px-1 rounded border border-border bg-background-elevated text-xs max-w-[240px]"
-                aria-label="Model"
-            >
-                {shown.map((m) => (
-                    <option key={m.id} value={m.id}>
-                        {modelOptionLabel(m)}
-                    </option>
-                ))}
-                {hidden > 0 ? <option value={SHOW_ALL}>Show all {all.length} models…</option> : null}
-            </select>
-        </span>
-    );
-}
 
 const ACTION_TONE: Record<string, string> = {
     succeeded: 'text-emerald-400',
@@ -181,9 +86,9 @@ const ACTION_TONE: Record<string, string> = {
 export default function AssistantModule() {
     const focus = useSyncExternalStore(subscribeAssistantFocus, getAssistantFocus, () => null);
     const [turns, setTurns] = useState<Turn[] | null>(null);
-    const [providers, setProviders] = useState<Provider[]>([]);
-    const [selection, setSelection] = useState<{ profileId: string; model: string } | null>(null);
-    const [mode, setMode] = useState<AskMode>('orchestrated');
+    const { providers } = useEngineProviders();
+    const [storedSelection, setStoredSelection] = useState<DirectSelection | null>(null);
+    const [mode, setMode] = useState<ChatMode>('orchestrated');
     const [cost, setCost] = useState<CostChoice>('default');
     const [text, setText] = useState('');
     const [busy, setBusy] = useState(false);
@@ -193,31 +98,21 @@ export default function AssistantModule() {
     useEffect(() => {
         let cancelled = false;
         void (async () => {
-            const [historyRes, profilesRes] = await Promise.all([
-                fetch('/api/os/assistant'),
-                fetch('/api/os/ai-models', { cache: 'no-store' }),
-            ]);
+            const historyRes = await fetch('/api/os/assistant');
             const history = (await historyRes.json().catch(() => ({}))) as { turns?: Turn[] };
-            const catalog = (await profilesRes.json().catch(() => ({}))) as { providers?: Provider[] };
             if (cancelled) return;
             setMode(readMode());
-            setCost(readCost());
+            setCost(readCostChoice());
+            setStoredSelection(readDirectSelection(SELECTION_KEY));
             setTurns(history.turns ?? []);
-            const available = catalog.providers ?? [];
-            setProviders(available);
-            // Restore the saved choice only if that provider still lists the model.
-            const stored = readSelection();
-            const storedProvider = available.find((p) => p.profileId === stored?.profileId);
-            const chosen = storedProvider ?? available[0];
-            if (chosen) {
-                const keep = storedProvider && storedProvider.models.some((m) => m.id === stored?.model);
-                setSelection({ profileId: chosen.profileId, model: keep ? stored!.model : (chosen.models[0]?.id ?? '') });
-            }
         })();
         return () => {
             cancelled = true;
         };
     }, []);
+
+    // The saved Direct choice, if its provider still lists the model; otherwise the strongest available.
+    const selection = resolveDirectSelection(providers, storedSelection);
 
     useEffect(() => {
         endRef.current?.scrollIntoView({ block: 'end' });
@@ -239,7 +134,7 @@ export default function AssistantModule() {
                     text: trimmed,
                     focusCompanyId: focus?.companyId,
                     mode,
-                    ...(mode === 'orchestrated' && cost !== 'default' ? { level: cost } : {}),
+                    ...(mode === 'orchestrated' ? levelParam(cost) : {}),
                     ...(mode === 'direct' && selection ? { modelProfileId: selection.profileId, model: selection.model } : {}),
                 }),
             });
@@ -272,57 +167,25 @@ export default function AssistantModule() {
     return (
         <div className="h-full flex flex-col text-text-primary">
             <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-                <div role="radiogroup" aria-label="Ask mode" className="inline-flex rounded border border-border overflow-hidden text-xs">
-                    {(['orchestrated', 'direct'] as AskMode[]).map((m) => (
-                        <button
-                            key={m}
-                            type="button"
-                            role="radio"
-                            aria-checked={mode === m}
-                            title={m === 'orchestrated' ? 'Paid model plans, Rogly writes, paid model reviews when it matters' : 'One model you choose answers directly'}
-                            onClick={() => {
-                                setMode(m);
-                                try {
-                                    window.localStorage.setItem(MODE_KEY, m);
-                                } catch {
-                                    // Per-browser convenience only.
-                                }
-                            }}
-                            className={`px-2 h-7 ${mode === m ? 'bg-primary text-white' : 'hover:bg-background-card'}`}
-                        >
-                            {m === 'orchestrated' ? 'Orchestrated' : 'Direct'}
-                        </button>
-                    ))}
-                </div>
-                {mode === 'orchestrated' ? (
-                    <select
-                        value={cost}
-                        onChange={(e) => {
-                            const v = e.target.value as CostChoice;
-                            setCost(v);
-                            try {
-                                window.localStorage.setItem(COST_KEY, v);
-                            } catch {
-                                // Per-browser convenience only.
-                            }
-                        }}
-                        title="Low: 3rd most powerful paid model plans and reviews, Rogly works. Medium: 2nd most powerful, paid retries. High: the most powerful paid model plans and reviews, the #3 paid model for the task does the work."
-                        className="h-7 px-2 rounded border border-border bg-background-elevated text-xs"
-                        aria-label="Cost level"
-                    >
-                        <option value="default">Cost: default</option>
-                        <option value="low">Cost: low</option>
-                        <option value="medium">Cost: medium</option>
-                        <option value="high">Cost: high</option>
-                    </select>
-                ) : null}
+                <ChatModeSwitch
+                    mode={mode}
+                    onChange={(m) => {
+                        setMode(m);
+                        try {
+                            window.localStorage.setItem(MODE_KEY, m);
+                        } catch {
+                            // Per-browser convenience only.
+                        }
+                    }}
+                />
+                {mode === 'orchestrated' ? <CostSelect value={cost} onChange={setCost} /> : null}
                 {mode === 'direct' ? (
                     <DirectModelPicker
                         providers={providers}
                         value={selection}
                         onChange={(next) => {
-                            setSelection(next);
-                            writeSelection(next);
+                            setStoredSelection(next);
+                            writeDirectSelection(SELECTION_KEY, next);
                         }}
                     />
                 ) : null}

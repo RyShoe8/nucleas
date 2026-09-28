@@ -6,7 +6,7 @@ import { encryptModelSecret, secretLast4 } from '@/lib/ai/modelSecrets';
 import { modelProfileCreateSchema } from '@/lib/ai/rolePipeline/schemas';
 import { mapModelProfilePublic, normalizeLegacyCredentialLabels } from '@/lib/ai/rolePipeline/profiles';
 import { getModelProvider, slugifyModelKey } from '@/lib/ai/rolePipeline/providerCatalog';
-import { AiModelProfile } from '@/lib/models/AiRolePipeline';
+import { AiModelProfile } from '@/lib/models/AiModelProfile';
 import connectDB from '@/lib/db/mongodb';
 
 export const dynamic = 'force-dynamic';

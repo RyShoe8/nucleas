@@ -219,7 +219,6 @@ export async function POST(request: NextRequest) {
           type: 'turn',
           turn: payload,
           mode: input.mode,
-          employee: null,
           modelProfileId: input.modelProfileId,
           model: input.model,
           rulesApplied: 0,
@@ -248,7 +247,6 @@ export async function POST(request: NextRequest) {
     return aiResponse({
       turn: payload,
       mode: input.mode,
-      employee: null,
       modelProfileId: input.modelProfileId,
       model: input.model,
       rulesApplied: 0,

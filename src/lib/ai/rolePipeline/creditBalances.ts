@@ -11,7 +11,7 @@ import {
   setCachedProviderBalance,
   type ProviderBalanceResult,
 } from '@/lib/ai/rolePipeline/providerBalance';
-import { AiModelProfile } from '@/lib/models/AiRolePipeline';
+import { AiModelProfile } from '@/lib/models/AiModelProfile';
 
 export type CredentialBalanceRow = {
   profileId: string;

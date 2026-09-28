@@ -8,7 +8,7 @@ import {
   companyDisplayName,
   isModelAllowedForProvider,
 } from '@/lib/ai/rolePipeline/providerCatalog';
-import { AiModelProfile } from '@/lib/models/AiRolePipeline';
+import { AiModelProfile } from '@/lib/models/AiModelProfile';
 import { isModelListedForProfile } from '@/lib/ai/engine/catalog';
 import { Types } from 'mongoose';
 

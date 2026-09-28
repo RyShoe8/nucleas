@@ -1,7 +1,8 @@
 import mongoose, { Schema, type InferSchemaType, type Model } from 'mongoose';
 
-/** Current = AI Team role ids; plan/build/research kept for legacy stored rules. */
+/** Current = orchestrated/direct/all; the rest are legacy values kept for stored rules. */
 const modes = [
+  'orchestrated',
   'marketing',
   'product',
   'support',

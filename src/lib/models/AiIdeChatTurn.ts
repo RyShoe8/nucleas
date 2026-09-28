@@ -1,6 +1,7 @@
 import mongoose, { Schema, type InferSchemaType, type Model } from 'mongoose';
 
 const ideModes = [
+  'orchestrated',
   'marketing',
   'product',
   'support',

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { storedModeValues } from '@/lib/ide/modes';
 import { Types } from 'mongoose';
 
 const mocks = vi.hoisted(() => ({
@@ -28,9 +29,9 @@ beforeEach(() => {
 });
 
 describe('ideThreadKeys', () => {
-  it('clears Direct keys for worker modes', () => {
-    expect(ideThreadKeys({ mode: 'product', modelProfileId: 'p', model: 'm' })).toEqual({
-      mode: 'product',
+  it('clears Direct keys for orchestrated mode', () => {
+    expect(ideThreadKeys({ mode: 'orchestrated', modelProfileId: 'p', model: 'm' })).toEqual({
+      mode: 'orchestrated',
       directProfileId: '',
       directModel: '',
     });
@@ -100,20 +101,23 @@ describe('loadIdeChatHistory', () => {
       organizationId: 'org',
       projectId,
       userId,
-      mode: 'engineering',
+      mode: 'orchestrated',
     });
     expect(mocks.find).toHaveBeenCalledWith({
       organizationId: 'org',
       projectId,
       createdByUserId: new Types.ObjectId(userId),
-      mode: 'engineering',
+      mode: { $in: storedModeValues('orchestrated') },
     });
     expect(turns.map((item) => item.requestId)).toEqual(['r1', 'r2']);
     expect(turns[1].debugHint).toBe('code=unavailable kind=http httpStatus=400');
   });
 
-  it.each(['marketing', 'product', 'support', 'engineering', 'researcher', 'direct'] as const)('restricts %s history to its own thread', async (mode) => {
-    const rows = ['marketing', 'product', 'support', 'engineering', 'researcher', 'direct'].map((storedMode) => ({
+  it.each([
+    ['orchestrated', ['orchestrated', 'marketing', 'product', 'support', 'engineering', 'researcher']],
+    ['direct', ['direct']],
+  ] as const)('%s history includes only its own transcripts (orchestrated keeps old AI Team threads)', async (mode, expected) => {
+    const rows = ['orchestrated', 'marketing', 'product', 'support', 'engineering', 'researcher', 'direct'].map((storedMode) => ({
       requestId: storedMode, mode: storedMode, role: 'user', text: storedMode,
       directProfileId: 'profile-a', directModel: 'model-a',
     }));
@@ -123,7 +127,7 @@ describe('loadIdeChatHistory', () => {
         limit: () => ({
           maxTimeMS: () => ({
             lean: () =>
-              Promise.resolve(rows.filter((row) => row.mode === filter.mode &&
+              Promise.resolve(rows.filter((row) => (typeof filter.mode === 'string' ? row.mode === filter.mode : filter.mode.$in.includes(row.mode)) &&
                 (filter.directProfileId === undefined || row.directProfileId === filter.directProfileId) &&
                 (filter.directModel === undefined || row.directModel === filter.directModel))),
           }),
@@ -138,12 +142,7 @@ describe('loadIdeChatHistory', () => {
       modelProfileId: 'profile-a',
       model: 'model-a',
     });
-    expect(turns.map((turn) => turn.requestId)).toEqual([mode]);
-    expect(mocks.find).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mode,
-      })
-    );
+    expect(turns.map((turn) => turn.requestId).sort()).toEqual([...expected].sort());
   });
 
   it('propagates query failures so the client can keep cached turns', async () => {
@@ -161,7 +160,7 @@ describe('loadIdeChatHistory', () => {
         organizationId: 'org',
         projectId,
         userId,
-        mode: 'product',
+        mode: 'orchestrated',
       })
     ).rejects.toMatchObject({ name: 'MongoPoolClearedError' });
   });
@@ -230,7 +229,7 @@ describe('appendIdeChatTurns', () => {
         organizationId: 'org',
         projectId,
         userId,
-        mode: 'product',
+        mode: 'orchestrated',
         turns: [{ requestId: 'u1', role: 'user', text: 'hello' }],
       })
     ).resolves.toBe(true);
@@ -243,7 +242,7 @@ describe('appendIdeChatTurns', () => {
         organizationId: 'org',
         projectId,
         userId,
-        mode: 'product',
+        mode: 'orchestrated',
         turns: [{ requestId: 'u1', role: 'user', text: 'hello' }],
       })
     ).resolves.toBe(false);

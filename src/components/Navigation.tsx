@@ -226,10 +226,6 @@ export default function Navigation() {
 
   const dropdownItems = [
     {
-      label: 'AI Team',
-      onClick: () => window.location.assign('/workspace/ai-team'),
-    },
-    {
       label: 'AI needs attention',
       onClick: () => window.location.assign('/workspace/ai-attention'),
     },

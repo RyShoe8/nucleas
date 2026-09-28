@@ -3,13 +3,12 @@ import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { AiHttpError, requireAiProject } from '@/lib/ai/control/access';
 import { aiError, aiResponse, readAiBody } from '@/lib/ai/control/http';
-import { attemptTeamChatReply } from '@/lib/ai/teamChat';
+import { attemptOrchestratedIdeReply } from '@/lib/ai/teamChat';
 import { attemptDirectModelChat } from '@/lib/ai/ideDirectChat';
 import {
-  employeeForIdeMode,
   isIdeChatMode,
   isIdeDirectMode,
-  isIdeWorkerMode,
+  isIdeOrchestratedMode,
   normalizeIdeChatMode,
 } from '@/lib/ide/modes';
 import { ideChatSchema } from '@/lib/ide/ideChatSchema';
@@ -282,7 +281,6 @@ export async function POST(request: NextRequest, context: Context) {
           return {
             turn: payload,
             mode,
-            employee: null as string | null,
             modelProfileId: input.modelProfileId,
             model: input.model,
             rulesApplied: ruleTexts.length,
@@ -290,12 +288,10 @@ export async function POST(request: NextRequest, context: Context) {
           };
         }
 
-        if (!isIdeWorkerMode(mode)) {
-          throw new AiHttpError(400, 'Invalid IDE worker mode.');
+        if (!isIdeOrchestratedMode(mode)) {
+          throw new AiHttpError(400, 'Invalid IDE chat mode.');
         }
-        const employee = employeeForIdeMode(mode);
-        const turn = await attemptTeamChatReply({
-          employee,
+        const turn = await attemptOrchestratedIdeReply({
           projectName: access.project.name,
           organizationId: access.organizationId,
           projectId: access.project._id,
@@ -304,6 +300,7 @@ export async function POST(request: NextRequest, context: Context) {
           priorTurns: input.history,
           ruleTexts,
           interactionMode: input.interactionMode,
+          level: input.level,
           signal,
           onStage,
         });
@@ -312,7 +309,6 @@ export async function POST(request: NextRequest, context: Context) {
         return {
           turn: payload,
           mode,
-          employee,
           rulesApplied: ruleTexts.length,
           historyPersisted: userPersisted && assistantPersisted,
         };
@@ -325,7 +321,6 @@ export async function POST(request: NextRequest, context: Context) {
             type: 'turn',
             turn: result.turn,
             mode: result.mode,
-            employee: result.employee,
             modelProfileId: 'modelProfileId' in result ? result.modelProfileId : undefined,
             model: 'model' in result ? result.model : undefined,
             rulesApplied: result.rulesApplied,

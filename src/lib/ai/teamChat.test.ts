@@ -70,16 +70,10 @@ vi.mock('@/lib/ai/control/dispatchLimits', () => ({
   reserveDispatch: vi.fn(),
 }));
 
-vi.mock('@/lib/models/AiRolePipeline', () => ({
-  AiRolePipeline: {
-    findOne: vi.fn(() => ({
-      select: () => ({
-        maxTimeMS: () => ({
-          lean: async () => null,
-        }),
-      }),
-    })),
-  },
+vi.mock('@/lib/ai/engine/catalog', () => ({ listAvailableModels: async () => [] }));
+vi.mock('@/lib/ai/engine/select', () => ({
+  readEngineSettings: async () => ({ defaultCostLevel: 'low', priceCeilings: { low: 1.5, medium: 5, high: null }, pins: {} }),
+  selectModel: async (_org: string, need: string, level: string) => ({ need, level, primary: null, fallback: null, source: 'none' }),
 }));
 
 vi.mock('@nucleas/ai-core/gateway', async () => {
@@ -109,7 +103,7 @@ const platformValue = {
 const projectId = new Types.ObjectId();
 const userId = new Types.ObjectId().toString();
 
-describe('attemptTeamChatReply', () => {
+describe('attemptOrchestratedIdeReply', () => {
   beforeEach(() => {
     vi.unstubAllEnvs();
     vi.clearAllMocks();
@@ -120,9 +114,8 @@ describe('attemptTeamChatReply', () => {
     vi.mocked(readSettings).mockResolvedValue({ revision: 1, value: platformValue });
     vi.mocked(readPlatformSettings).mockResolvedValue({ revision: 1, value: platformValue } as never);
 
-    const { attemptTeamChatReply } = await import('./teamChat');
-    const turn = await attemptTeamChatReply({
-      employee: 'product',
+    const { attemptOrchestratedIdeReply } = await import('./teamChat');
+    const turn = await attemptOrchestratedIdeReply({
       projectName: 'Demo',
       organizationId: 'org-1',
       projectId,
@@ -145,9 +138,8 @@ describe('attemptTeamChatReply', () => {
     vi.mocked(readSettings).mockResolvedValue({ revision: 1, value: enabled });
     vi.mocked(readPlatformSettings).mockResolvedValue({ revision: 1, value: enabled } as never);
 
-    const { attemptTeamChatReply } = await import('./teamChat');
-    const turn = await attemptTeamChatReply({
-      employee: 'researcher',
+    const { attemptOrchestratedIdeReply } = await import('./teamChat');
+    const turn = await attemptOrchestratedIdeReply({
       projectName: 'Demo',
       organizationId: 'org-1',
       projectId,
@@ -177,9 +169,8 @@ describe('attemptTeamChatReply', () => {
     vi.mocked(readPlatformSettings).mockResolvedValue({ revision: 1, value: enabled } as never);
     vi.mocked(getPipelineInferencePolicy).mockRejectedValue(new GatewayError('configuration'));
 
-    const { attemptTeamChatReply } = await import('./teamChat');
-    const turn = await attemptTeamChatReply({
-      employee: 'support',
+    const { attemptOrchestratedIdeReply } = await import('./teamChat');
+    const turn = await attemptOrchestratedIdeReply({
       projectName: 'Demo',
       organizationId: 'org-1',
       projectId,
@@ -192,7 +183,7 @@ describe('attemptTeamChatReply', () => {
     expect(invokeModel).not.toHaveBeenCalled();
   });
 
-  it('asks to configure Worker binding when pipeline missing', async () => {
+  it('says no model is available when the engine has nothing to pick', async () => {
     const enabled = {
       ...platformValue,
       remoteEnabled: true,
@@ -217,9 +208,8 @@ describe('attemptTeamChatReply', () => {
       digest: 'd',
     } as never);
 
-    const { attemptTeamChatReply } = await import('./teamChat');
-    const turn = await attemptTeamChatReply({
-      employee: 'engineering',
+    const { attemptOrchestratedIdeReply } = await import('./teamChat');
+    const turn = await attemptOrchestratedIdeReply({
       projectName: 'Demo',
       organizationId: 'org-1',
       projectId,
@@ -228,6 +218,6 @@ describe('attemptTeamChatReply', () => {
       priorTurns: [],
     });
     expect(turn.role).toBe('status');
-    expect(turn.text).toMatch(/AI Team/i);
+    expect(turn.text).toMatch(/No AI model is available/i);
   });
 });

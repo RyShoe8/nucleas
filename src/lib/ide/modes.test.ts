@@ -1,24 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { companyChatAdmissionMessage } from '@/lib/ai/companyChatAdmission';
-import { aiEmployees } from '@/lib/ai/teamWorkspace';
 import { ideChatModes } from '@/lib/ide/modes';
 
 describe('IDE mode labels', () => {
-  it('omits AI from IDE tab labels while AI Team keeps full names', () => {
-    for (const role of aiEmployees) {
-      expect(role.name).toMatch(/AI/);
-    }
-    for (const mode of ideChatModes) {
-      expect(mode.label).not.toMatch(/\bAI\b/);
-    }
-    expect(ideChatModes.map((item) => item.label)).toEqual([
-      'Marketing',
-      'Product Manager',
-      'Support',
-      'Engineering',
-      'Researcher',
-      'Direct',
-    ]);
+  it('offers exactly the Ask controls: Orchestrated and Direct', () => {
+    expect(ideChatModes.map((item) => item.label)).toEqual(['Orchestrated', 'Direct']);
   });
 });
 

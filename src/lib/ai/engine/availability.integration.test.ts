@@ -4,7 +4,7 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 
 vi.mock('server-only', () => ({}));
 
-import { AiModelProfile } from '@/lib/models/AiRolePipeline';
+import { AiModelProfile } from '@/lib/models/AiModelProfile';
 import { encryptModelSecret } from '@/lib/ai/modelSecrets';
 import { gatewayFromModelProfile } from '@/lib/ai/rolePipeline/profiles';
 import { AiModelCatalogSnapshot, describeModel, isModelListedForProfile } from './catalog';
