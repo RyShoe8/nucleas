@@ -30,6 +30,8 @@ export interface BuildView {
         checks: { command: string; exitCode: number | null; timedOut: boolean }[];
         limitations: string[];
         model: string | null;
+        engineModel: boolean;
+        costMicros: number | null;
     } | null;
     error: string | null;
     pullRequest: { url: string; number: number; branch: string } | null;
@@ -162,7 +164,13 @@ export default function BuildCard({
                         </ul>
                     ) : null}
                     {r.limitations.length ? <p className="text-text-secondary">Limitations: {r.limitations.join('; ')}</p> : null}
-                    {r.model ? <p className="text-[10px] text-text-secondary">Built with {r.model}</p> : null}
+                    {r.model ? (
+                        <p className="text-[10px] text-text-secondary">
+                            Built with {r.model}
+                            {r.engineModel ? ' (chosen by the AI engine)' : ' (build service default)'}
+                            {r.costMicros !== null ? ` · ${(r.costMicros / 1_000_000).toFixed(r.costMicros < 10_000 ? 4 : 2)}` : ''}
+                        </p>
+                    ) : null}
                 </div>
             ) : null}
             {build.error ? <p className="text-xs text-red-400">{build.error}</p> : null}

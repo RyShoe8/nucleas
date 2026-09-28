@@ -7,7 +7,10 @@ import { getCompanyProfile, isCompanyManager, listCompanyProfiles, type CompanyV
 import { attemptOrchestratedIdeReply } from '@/lib/ai/teamChat';
 import { executeInRemoteSandbox } from '@/lib/ai/executionWorkerClient';
 import { createInstallationOctokit } from '@/lib/ai/githubAppClient';
-import type { CostLevel } from '@/lib/ai/engine/select';
+import { readEngineSettings, selectModel, type CostLevel, type ModelChoice } from '@/lib/ai/engine/select';
+import { listAvailableModels, priceTokens } from '@/lib/ai/engine/catalog';
+import { gatewayFromModelProfile } from '@/lib/ai/rolePipeline/profiles';
+import { AiRun } from '@/lib/models/AiControl';
 import { resolveCompanyRepository } from './companyCode';
 import { applyFilePatch, parsePatch, PatchError } from './applyPatch';
 
@@ -46,6 +49,8 @@ export interface BuildView {
     checks: { command: string; exitCode: number | null; timedOut: boolean }[];
     limitations: string[];
     model: string | null;
+    engineModel: boolean;
+    costMicros: number | null;
   } | null;
   error: string | null;
   pullRequest: { url: string; number: number; branch: string } | null;
@@ -82,6 +87,8 @@ type BuildDoc = {
     checks?: { command: string; exitCode: number | null; timedOut: boolean }[];
     limitations?: string[];
     model?: string;
+    engineModel?: boolean;
+    costMicros?: number;
   };
   error?: string;
   pullRequest?: { url?: string; number?: number; branch?: string };
@@ -115,6 +122,8 @@ function toView(doc: BuildDoc, companyName: string, canManage: boolean): BuildVi
           checks: r.checks ?? [],
           limitations: r.limitations ?? [],
           model: r.model ?? null,
+          engineModel: Boolean(r.engineModel),
+          costMicros: r.costMicros ?? null,
         }
       : null,
     error: doc.error ?? null,
@@ -282,6 +291,40 @@ export function buildTask(doc: Pick<BuildDoc, 'title' | 'planMarkdown'>): string
   return `${header}\n\n${plan}`;
 }
 
+/**
+ * The model a build uses: the AI engine's code pick at the plan's cost level (the organization
+ * default when unset). A rebuild at medium moves to the level's paid retry model, as medium does
+ * everywhere else when the free model fails.
+ */
+async function buildModel(doc: BuildDoc): Promise<{ choice: ModelChoice; provider?: string; inference: { endpoint: string; bearerToken: string; model: string } } | null> {
+  const org = String(doc.organizationId);
+  const [models, settings] = await Promise.all([listAvailableModels(), readEngineSettings(org)]);
+  const pick = await selectModel(org, 'code', doc.level ?? settings.defaultCostLevel, { models, settings });
+  const choice = (doc.attempts ?? 0) >= 2 && pick.fallback ? pick.fallback : pick.primary;
+  if (!choice) return null;
+  const { gateway } = await gatewayFromModelProfile(choice.profileId, choice.model);
+  const provider = models.find((m) => m.profileId === choice.profileId && m.model === choice.model)?.provider;
+  return { choice, provider, inference: { endpoint: gateway.endpoint, bearerToken: gateway.bearerToken ?? '', model: choice.model } };
+}
+
+/** Records a build in the AI run ledger so it counts in AI Spend (by project). */
+async function recordBuildRun(doc: BuildDoc, input: { model: string; ok: boolean; inputTokens?: number; outputTokens?: number; costMicros: number | null }) {
+  await AiRun.create({
+    organizationId: String(doc.organizationId),
+    projectId: doc.projectId,
+    role: 'worker',
+    status: input.ok ? 'completed' : 'failed',
+    model: input.model,
+    inputDigest: `build:${String(doc._id)}:${doc.attempts ?? 1}`,
+    policyDigest: 'building',
+    createdByUserId: doc.approvedByUserId ?? doc.createdByUserId,
+    startedAt: doc.startedAt,
+    completedAt: new Date(),
+    ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens, outputTokens: input.outputTokens } : {}),
+    ...(input.costMicros !== null ? { costMicros: input.costMicros } : {}),
+  }).catch(() => undefined);
+}
+
 /** Claims a queued build and runs it in the build service. Safe to call more than once. */
 export async function runBuild(id: string): Promise<void> {
   const doc = await BuildRequest.findOneAndUpdate(
@@ -296,17 +339,25 @@ export async function runBuild(id: string): Promise<void> {
       { $set: { status: 'failed', error: message.slice(0, 1000), finishedAt: new Date() }, $push: { events: event(null, 'failed', message) } }
     );
   try {
+    const model = await buildModel(doc).catch(() => null);
     const result = await executeInRemoteSandbox({
       organizationId: String(doc.organizationId),
       projectId: doc.projectId,
       userId: String(doc.approvedByUserId ?? doc.createdByUserId),
       task: buildTask(doc),
+      ...(model ? { inference: model.inference } : {}),
     });
     if (!result) {
       await fail('The build service is not configured on the server (execution worker URL and token).');
       return;
     }
     const succeeded = result.status === 'completed' && result.changedFiles.length > 0;
+    const engineModel = Boolean(result.usedEngineModel && model);
+    const costMicros =
+      engineModel && model && result.usage
+        ? await priceTokens({ model: model.choice.model, provider: model.provider, free: model.choice.free, ...result.usage })
+        : null;
+    await recordBuildRun(doc, { model: result.routing.requestedModel, ok: succeeded, ...(result.usage ?? {}), costMicros });
     await BuildRequest.updateOne(
       { _id: doc._id, status: 'building' },
       {
@@ -323,6 +374,9 @@ export async function runBuild(id: string): Promise<void> {
             checks: result.evidence.map((e) => ({ command: e.command.join(' ').slice(0, 300), exitCode: e.exitCode, timedOut: e.timedOut })),
             limitations: result.limitations,
             model: result.routing.requestedModel,
+            engineModel,
+            ...(result.usage ? { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens } : {}),
+            ...(costMicros !== null ? { costMicros } : {}),
           },
         },
         $push: { events: event(null, succeeded ? 'built' : 'failed') },

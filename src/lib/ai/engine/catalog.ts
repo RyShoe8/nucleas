@@ -188,6 +188,19 @@ export function describeModel(id: string, provider: string | undefined, free: bo
   };
 }
 
+/**
+ * Cost in micro-USD of a call's tokens, priced from the same registry the engine ranks with (falling
+ * back to the local rate table). Null when the price is unknown. Free credentials cost nothing.
+ */
+export async function priceTokens(input: { model: string; provider?: string; free: boolean; inputTokens: number; outputTokens: number }): Promise<number | null> {
+  if (input.free) return 0;
+  const row = findRegistryRow(input.model, input.provider, await registryRows());
+  if (row && row.input !== null && row.output !== null) return Math.round(input.inputTokens * row.input + input.outputTokens * row.output);
+  const rate = lookupModelTokenRate(normalizeModelId(input.model)) ?? lookupModelTokenRate(input.model);
+  if (!rate) return null;
+  return Math.round((input.inputTokens * rate.inputMicrosPer1M + input.outputTokens * rate.outputMicrosPer1M) / 1_000_000);
+}
+
 /** True when the provider's latest model list for this credential includes the model. */
 export async function isModelListedForProfile(profileId: string, model: string): Promise<boolean> {
   if (!Types.ObjectId.isValid(profileId)) return false;

@@ -3,7 +3,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdtemp, readdir, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { executionWorkerRequestSchema, executionWorkerResponseSchema, type ExecutionWorkerRequest } from '../../packages/ai-contracts/src/execution';
+import { EXECUTION_WORKER_FEATURES, executionWorkerRequestSchema, executionWorkerResponseSchema, type ExecutionWorkerRequest } from '../../packages/ai-contracts/src/execution';
 import { assertWorkspacePath, deleteWorkspaceFile, readWorkspaceFile, runCommand, setWorkspaceOwner, writeWorkspaceFile, type CommandEvidence } from './runtime';
 
 type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
@@ -58,22 +58,45 @@ const tools = [
   { type: 'function', function: { name: 'finish', description: 'Finish after implementation and verification.', parameters: { type: 'object', properties: { summary: { type: 'string' }, limitations: { type: 'array', items: { type: 'string' } }, status: { type: 'string', enum: ['completed', 'blocked'] } }, required: ['summary', 'limitations', 'status'], additionalProperties: false } } },
 ] as const;
 
-async function modelReply(messages: ChatMessage[], model: string): Promise<{ content: string; toolCalls: ToolCall[]; reportedModel: string | null }> {
-  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 120_000);
-  try {
-    const response = await fetch(required('NUCLEAS_AI_REMOTE_ENDPOINT'), {
-      method: 'POST', redirect: 'error', signal: controller.signal,
-      headers: { Authorization: `Bearer ${required('NUCLEAS_AI_REMOTE_BEARER_TOKEN')}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, tools, tool_choice: 'auto', temperature: 0.1, max_tokens: 4096 }),
-    });
-    if (!response.ok) throw new Error(`Inference failed with HTTP ${response.status}.`);
-    const payload = await response.json() as { model?: unknown; choices?: { message?: { content?: string | null; tool_calls?: ToolCall[] } }[] };
-    const message = payload.choices?.[0]?.message;
-    if (!message) throw new Error('Inference returned no message.');
-    const reportedModel = typeof payload.model === 'string' && payload.model.trim() && payload.model.trim().length <= 200
-      ? payload.model.trim() : null;
-    return { content: message.content ?? '', toolCalls: message.tool_calls ?? [], reportedModel };
-  } finally { clearTimeout(timer); }
+export type Inference = { endpoint: string; bearerToken: string; model: string };
+export type Usage = { inputTokens: number; outputTokens: number; reported: boolean };
+
+/** Request options a provider rejected once; later calls in the same build skip them. */
+export type Quirks = { noTemperature: boolean; completionTokens: boolean };
+
+export async function modelReply(messages: ChatMessage[], inference: Inference, usage: Usage, quirks: Quirks): Promise<{ content: string; toolCalls: ToolCall[]; reportedModel: string | null }> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 120_000);
+    try {
+      const response = await fetch(inference.endpoint, {
+        method: 'POST', redirect: 'error', signal: controller.signal,
+        headers: { Authorization: `Bearer ${inference.bearerToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: inference.model, messages, tools, tool_choice: 'auto',
+          ...(quirks.noTemperature ? {} : { temperature: 0.1 }),
+          ...(quirks.completionTokens ? { max_completion_tokens: 8192 } : { max_tokens: 4096 }),
+        }),
+      });
+      if (response.status === 400) {
+        // Newer reasoning models reject temperature or max_tokens; adapt once and retry.
+        const detail = (await response.text().catch(() => '')).slice(0, 2000);
+        if (!quirks.completionTokens && /max_tokens|max_completion_tokens/.test(detail)) { quirks.completionTokens = true; continue; }
+        if (!quirks.noTemperature && /temperature/.test(detail)) { quirks.noTemperature = true; continue; }
+        throw new Error('Inference failed with HTTP 400.');
+      }
+      if (!response.ok) throw new Error(`Inference failed with HTTP ${response.status}.`);
+      const payload = await response.json() as { model?: unknown; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown }; choices?: { message?: { content?: string | null; tool_calls?: ToolCall[] } }[] };
+      const message = payload.choices?.[0]?.message;
+      if (!message) throw new Error('Inference returned no message.');
+      if (typeof payload.usage?.prompt_tokens === 'number' && typeof payload.usage?.completion_tokens === 'number') {
+        usage.inputTokens += payload.usage.prompt_tokens; usage.outputTokens += payload.usage.completion_tokens; usage.reported = true;
+      }
+      const reportedModel = typeof payload.model === 'string' && payload.model.trim() && payload.model.trim().length <= 200
+        ? payload.model.trim() : null;
+      return { content: message.content ?? '', toolCalls: message.tool_calls ?? [], reportedModel };
+    } finally { clearTimeout(timer); }
+  }
+  throw new Error('Inference failed with HTTP 400.');
 }
 
 async function execute(request: ExecutionWorkerRequest) {
@@ -81,7 +104,15 @@ async function execute(request: ExecutionWorkerRequest) {
   const workspace = path.join(temp, 'repo');
   const allowed = new Set((process.env.NUCLEAS_EXECUTION_ALLOWED_BINARIES ?? 'node,npm,npx,git').split(',').map((v) => v.trim().toLowerCase()).filter(Boolean));
   const evidence: CommandEvidence[] = [];
-  const requestedModel = request.model?.trim() || required('NUCLEAS_AI_REMOTE_MODEL');
+  // The Nucleas AI engine chooses the model per build; otherwise use this worker's configured one.
+  const inference: Inference = request.inference ?? {
+    endpoint: required('NUCLEAS_AI_REMOTE_ENDPOINT'),
+    bearerToken: required('NUCLEAS_AI_REMOTE_BEARER_TOKEN'),
+    model: request.model?.trim() || required('NUCLEAS_AI_REMOTE_MODEL'),
+  };
+  const requestedModel = inference.model;
+  const usage: Usage = { inputTokens: 0, outputTokens: 0, reported: false };
+  const quirks: Quirks = { noTemperature: false, completionTokens: false };
   const providerReportedModels = new Set<string>();
   try {
     const basic = Buffer.from(`x-access-token:${request.repository.accessToken}`).toString('base64');
@@ -97,7 +128,7 @@ async function execute(request: ExecutionWorkerRequest) {
     ];
     let finish: { summary: string; limitations: string[]; status: 'completed' | 'blocked' } | null = null;
     for (let round = 0; round < request.maxRounds && !finish; round += 1) {
-      const reply = await modelReply(messages, requestedModel);
+      const reply = await modelReply(messages, inference, usage, quirks);
       if (reply.reportedModel) providerReportedModels.add(reply.reportedModel);
       messages.push({ role: 'assistant', content: reply.content, tool_calls: reply.toolCalls });
       if (!reply.toolCalls.length) throw new Error('Worker stopped without a finish tool call.');
@@ -126,14 +157,15 @@ async function execute(request: ExecutionWorkerRequest) {
     const limitations = status === 'blocked' && !diff.output.trim() ? [...finish.limitations, 'No repository changes were produced.'] : finish.limitations;
     return executionWorkerResponseSchema.parse({ protocolVersion: 1, requestId: request.requestId,
       routing: { requestedModel, providerReportedModels: [...providerReportedModels] },
-      status, summary: finish.summary, baseCommit, patch: diff.output, changedFiles: names.output.split(/\r?\n/).filter(Boolean).slice(0, 200), evidence: evidence.slice(0, 30), limitations });
+      status, summary: finish.summary, baseCommit, patch: diff.output, changedFiles: names.output.split(/\r?\n/).filter(Boolean).slice(0, 200), evidence: evidence.slice(0, 30), limitations,
+      ...(usage.reported ? { usage: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } } : {}) });
   } finally { await rm(temp, { recursive: true, force: true }); }
 }
 
 export const server = createServer(async (req, res) => {
   res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
   try {
-    if (req.method === 'GET' && req.url === '/health') { res.statusCode = 200; res.end(JSON.stringify({ ok: true, busy })); return; }
+    if (req.method === 'GET' && req.url === '/health') { res.statusCode = 200; res.end(JSON.stringify({ ok: true, busy, features: EXECUTION_WORKER_FEATURES })); return; }
     if (req.method !== 'POST' || req.url !== '/v1/execute') { res.statusCode = 404; res.end(JSON.stringify({ error: 'Not found.' })); return; }
     if (!authorized(req.headers.authorization)) { res.statusCode = 401; res.end(JSON.stringify({ error: 'Unauthorized.' })); return; }
     if (busy) { res.statusCode = 429; res.end(JSON.stringify({ error: 'Worker is busy.' })); return; }

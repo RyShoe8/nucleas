@@ -24,6 +24,10 @@ import Project from '@/lib/models/Project';
 import { AiProjectRepository } from '@/lib/models/AiProjectRepository';
 import { AiIdeExecutionArtifact } from '@/lib/models/AiIdeExecutionArtifact';
 import { BuildRequest } from '@/lib/models/BuildRequest';
+import { AiModelProfile } from '@/lib/models/AiModelProfile';
+import { AiRun } from '@/lib/models/AiControl';
+import { AiModelCatalogSnapshot, AiPricingRegistryCache } from '@/lib/ai/engine/catalog';
+import { encryptModelSecret } from '@/lib/ai/modelSecrets';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { getCompanyCode, setProjectRepository } from './companyCode';
 import { approveBuild, editPlan, getBuild, listBuilds, openPullRequest, proposeCodeChange, rejectBuild, runBuild, sweepBuilds } from './builds';
@@ -38,6 +42,7 @@ let projectId: Types.ObjectId;
 const PLAN = { title: 'Add a FAQ page', summary: 'A static FAQ page linked from the footer.', steps: ['Add route', 'Link footer'], markdown: '## Plan\n1. Add route\n2. Link footer', status: 'ready_for_review' };
 
 beforeAll(async () => {
+  process.env.AI_MODEL_SECRETS_KEY ??= 'test-secret';
   replica = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: 'wiredTiger', ip: '127.0.0.1' } });
   await mongoose.connect(replica.getUri('nucleas_building_test'));
 }, 120_000);
@@ -49,7 +54,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await Promise.all([Client.deleteMany({}), Project.deleteMany({}), AiProjectRepository.deleteMany({}), BuildRequest.deleteMany({}), AiIdeExecutionArtifact.deleteMany({})]);
+  await Promise.all([Client.deleteMany({}), Project.deleteMany({}), AiProjectRepository.deleteMany({}), BuildRequest.deleteMany({}), AiIdeExecutionArtifact.deleteMany({}), AiModelProfile.deleteMany({}), AiModelCatalogSnapshot.deleteMany({}), AiRun.deleteMany({})]);
   const project = await Project.create({ name: 'Playbound.club', projectType: 'internal', category: 'website', status: 'launched', color: '#222', userId: new Types.ObjectId() });
   const company = await Client.create({ organizationId: org, name: 'Playbound.club', color: '#222', relationship: 'owned', domain: 'playbound.club', hubProjectId: project._id });
   await Project.updateOne({ _id: project._id }, { $set: { clientId: company._id } });
@@ -240,5 +245,75 @@ index 0000000..3
     expect(result).toMatchObject({ ok: false, status: 502 });
     expect(result.ok ? '' : result.error).toMatch(/no longer applies/);
     expect((await getBuild(admin, id))?.status).toBe('ready');
+  });
+});
+
+describe('builds run on the AI engine', () => {
+  const CODER = 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ';
+  const PAID = 'anthropic/claude-sonnet-5';
+
+  async function seedEngine() {
+    const rogly = await AiModelProfile.create({ key: 'rogly', label: 'Rogly', provider: 'custom', tier: 'local_remote', protocol: 'openai-chat', endpoint: 'https://rogly.test/v1/chat/completions', secretCiphertext: encryptModelSecret('rogly-key'), secretLast4: 'key1', enabled: true });
+    const paid = await AiModelProfile.create({ key: 'openrouter', label: 'OpenRouter', provider: 'openrouter', tier: 'commercial', protocol: 'openai-chat', endpoint: 'https://openrouter.test/v1/chat/completions', secretCiphertext: encryptModelSecret('paid-key'), secretLast4: 'key2', enabled: true });
+    await AiModelCatalogSnapshot.create([
+      { profileId: rogly._id, modelIds: [CODER], fetchedAt: new Date() },
+      { profileId: paid._id, modelIds: [PAID], fetchedAt: new Date() },
+    ]);
+    // $3 in / $15 out per 1M tokens; fresh so no network fetch happens.
+    await AiPricingRegistryCache.updateOne(
+      { key: 'litellm' },
+      { $set: { rows: [{ id: PAID, provider: 'openrouter', mode: 'chat', input: 3, output: 15, cacheRead: null, variable: false, supportsTools: true }], fetchedAt: new Date() } },
+      { upsert: true }
+    );
+  }
+
+  function workerReply(input: { inference?: { model: string } }, usage = { inputTokens: 1000, outputTokens: 500 }) {
+    return {
+      status: 'completed', summary: 'Done.', baseCommit: 'a'.repeat(40), changedFiles: ['a.ts'], evidence: [], limitations: [],
+      routing: { requestedModel: input.inference?.model ?? 'service-default', providerReportedModels: [] },
+      artifactId: String(new Types.ObjectId()), usage, usedEngineModel: Boolean(input.inference),
+    };
+  }
+
+  async function queuedAt(level: 'low' | 'medium') {
+    await connectRepo();
+    const result = await proposeCodeChange(admin, { companyId, request: 'Add a FAQ page', level });
+    if (!result.ok) throw new Error(result.message);
+    await approveBuild(admin, result.build.id);
+    return result.build.id;
+  }
+
+  it('low: builds on the free coder with its credential, costs nothing, and is recorded for AI Spend', async () => {
+    await seedEngine();
+    mocks.execute.mockImplementation(async (input) => workerReply(input));
+    const id = await queuedAt('low');
+    await runBuild(id);
+    expect(mocks.execute.mock.calls[0][0].inference).toEqual({ endpoint: 'https://rogly.test/v1/chat/completions', bearerToken: 'rogly-key', model: CODER });
+    expect(await getBuild(admin, id)).toMatchObject({ status: 'ready', result: { model: CODER, engineModel: true, costMicros: 0 } });
+    expect(await AiRun.findOne({ projectId }).lean()).toMatchObject({ model: CODER, status: 'completed', inputTokens: 1000, outputTokens: 500, costMicros: 0 });
+  });
+
+  it('medium: a rebuild moves to the paid retry model, priced from its token usage', async () => {
+    await seedEngine();
+    mocks.execute.mockImplementation(async (input) => ({ ...workerReply(input), status: 'failed', changedFiles: [] }));
+    const id = await queuedAt('medium');
+    await runBuild(id);
+    expect(mocks.execute.mock.calls[0][0].inference.model).toBe(CODER);
+
+    mocks.execute.mockImplementation(async (input) => workerReply(input));
+    await BuildRequest.updateOne({ _id: id }, { $set: { status: 'queued' } });
+    await runBuild(id);
+    expect(mocks.execute.mock.calls[1][0].inference).toMatchObject({ endpoint: 'https://openrouter.test/v1/chat/completions', bearerToken: 'paid-key', model: PAID });
+    // 1000 × $3/1M + 500 × $15/1M = $0.0105
+    expect(await getBuild(admin, id)).toMatchObject({ status: 'ready', attempts: 2, result: { model: PAID, costMicros: 10_500 } });
+  });
+
+  it('a build service that has not been updated still builds on its own model, with no cost claimed', async () => {
+    await seedEngine();
+    mocks.execute.mockImplementation(async () => ({ ...workerReply({}), usage: undefined, usedEngineModel: false }));
+    const id = await queuedAt('low');
+    await runBuild(id);
+    const build = await getBuild(admin, id);
+    expect(build).toMatchObject({ status: 'ready', result: { model: 'service-default', engineModel: false, costMicros: null } });
   });
 });

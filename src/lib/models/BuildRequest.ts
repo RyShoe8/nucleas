@@ -55,6 +55,11 @@ const buildSchema = new Schema(
       checks: { type: [{ command: String, exitCode: Number, timedOut: Boolean, _id: false }], default: undefined },
       limitations: { type: [String], default: undefined },
       model: { type: String },
+      /** The AI engine chose the model (false = the build service's own configured model). */
+      engineModel: { type: Boolean },
+      inputTokens: { type: Number },
+      outputTokens: { type: Number },
+      costMicros: { type: Number },
     },
     error: { type: String, maxlength: 1000 },
     pullRequest: {

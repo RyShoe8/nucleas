@@ -14,8 +14,28 @@ export function executionWorkerConfigured(): boolean {
   return Boolean(process.env.NUCLEAS_EXECUTION_WORKER_URL?.trim() && process.env.NUCLEAS_EXECUTION_WORKER_TOKEN?.trim());
 }
 
+let featureCache: { at: number; features: string[] } | null = null;
+
+/** Features the build service advertises on /health (cached for a minute). Older services advertise none. */
+export async function executionWorkerFeatures(): Promise<string[]> {
+  if (!executionWorkerConfigured()) return [];
+  if (featureCache && Date.now() - featureCache.at < 60_000) return featureCache.features;
+  try {
+    const url = assertSafePublicHttpsUrl(`${process.env.NUCLEAS_EXECUTION_WORKER_URL!.replace(/\/+$/, '')}/health`);
+    const res = await fetch(url, { redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(5000) });
+    const body = (await res.json().catch(() => ({}))) as { features?: unknown };
+    const features = Array.isArray(body.features) ? body.features.filter((f): f is string => typeof f === 'string') : [];
+    featureCache = { at: Date.now(), features };
+    return features;
+  } catch {
+    return [];
+  }
+}
+
 export async function executeInRemoteSandbox(input: {
   organizationId: string; projectId: Types.ObjectId; userId: string; task: string; signal?: AbortSignal;
+  /** The model to build with (from the AI engine). Sent only when the build service supports it. */
+  inference?: { endpoint: string; bearerToken: string; model: string };
 }) {
   if (!executionWorkerConfigured()) return null;
   const repository = await AiProjectRepository.findOne({ organizationId: input.organizationId, projectId: input.projectId })
@@ -23,6 +43,7 @@ export async function executeInRemoteSandbox(input: {
   if (!repository?.installationId) throw new Error('Connect the GitHub App to this project before running sandbox execution.');
   const accessToken = await createInstallationAccessToken(repository.installationId);
   const { value: aiSettings } = await readPlatformSettings();
+  const inference = input.inference && (await executionWorkerFeatures()).includes('inference') ? input.inference : undefined;
   const endpoint = assertSafePublicHttpsUrl(`${process.env.NUCLEAS_EXECUTION_WORKER_URL!.replace(/\/+$/, '')}/v1/execute`);
   const requestId = randomUUID();
   const controller = new AbortController();
@@ -33,7 +54,7 @@ export async function executeInRemoteSandbox(input: {
     const response = await fetch(endpoint, {
       method: 'POST', redirect: 'error', signal: controller.signal,
       headers: { Authorization: `Bearer ${process.env.NUCLEAS_EXECUTION_WORKER_TOKEN!.trim()}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ protocolVersion: 1, requestId, repository: { owner: repository.owner, repo: repository.repo, ref: repository.defaultBranch, accessToken }, task: input.task.slice(0, 12_000), model: aiSettings.codingModel, maxRounds: 24, commandTimeoutMs: 120_000 }),
+      body: JSON.stringify({ protocolVersion: 1, requestId, repository: { owner: repository.owner, repo: repository.repo, ref: repository.defaultBranch, accessToken }, task: input.task.slice(0, 12_000), ...(inference ? { inference } : { model: aiSettings.codingModel }), maxRounds: 24, commandTimeoutMs: 120_000 }),
     });
     if (!response.ok) throw new Error(`Execution worker returned HTTP ${response.status}.`);
     const length = Number(response.headers.get('content-length') ?? 0);
@@ -51,7 +72,7 @@ export async function executeInRemoteSandbox(input: {
       patch: Buffer.from(result.patch, 'utf8'), changedFiles: result.changedFiles, evidence: result.evidence,
       limitations: result.limitations, expiresAt: new Date(Date.now() + 30 * 86400000),
     }]);
-    return { ...result, artifactId: String(artifact._id) };
+    return { ...result, artifactId: String(artifact._id), usedEngineModel: Boolean(inference) };
   } finally {
     clearTimeout(timer); input.signal?.removeEventListener('abort', abort);
   }

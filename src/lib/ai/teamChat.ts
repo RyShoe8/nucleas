@@ -21,6 +21,7 @@ import { AiObjective, AiRun } from '@/lib/models/AiControl';
 import { listAvailableModels } from '@/lib/ai/engine/catalog';
 import { readEngineSettings, selectModel, type CostLevel, type Need } from '@/lib/ai/engine/select';
 import { executeInRemoteSandbox } from '@/lib/ai/executionWorkerClient';
+import { gatewayFromModelProfile } from '@/lib/ai/rolePipeline/profiles';
 import {
   type TeamContextSummary,
   type TeamMessageRole,
@@ -467,7 +468,13 @@ export async function attemptOrchestratedIdeReply(input: {
   let workerTurn: TeamChatTurn;
   if (interactionMode === 'build') {
     const execution = await withStage(input.onStage, 'worker', () =>
-      executeInRemoteSandbox({ organizationId: input.organizationId, projectId: input.projectId, userId: input.userId, task: workerBrief, signal: input.signal })
+      // The build runs on the engine's code model for this cost level (the worker pick).
+      gatewayFromModelProfile(workerBinding.profileId, workerBinding.model)
+        .then(({ gateway }) => ({ endpoint: gateway.endpoint, bearerToken: gateway.bearerToken, model: workerBinding.model }))
+        .catch(() => undefined)
+        .then((inference) =>
+          executeInRemoteSandbox({ organizationId: input.organizationId, projectId: input.projectId, userId: input.userId, task: workerBrief, signal: input.signal, ...(inference ? { inference } : {}) })
+        )
     ).catch((error) => ({ error: error instanceof Error ? error.message : 'Sandbox execution failed.' }));
     if (execution && 'error' in execution) {
       workerTurn = statusTurn(execution.error, 'execution_unavailable');

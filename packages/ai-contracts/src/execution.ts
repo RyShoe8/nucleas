@@ -14,6 +14,15 @@ export const executionWorkerRequestSchema = z.object({
   }).strict(),
   task: z.string().trim().min(1).max(12_000),
   model: z.string().trim().min(1).max(200).optional(),
+  /**
+   * The model to build with, chosen by the Nucleas AI engine: an OpenAI-compatible chat-completions
+   * endpoint, its credential and the model id. Omitted = the worker's own configured model.
+   */
+  inference: z.object({
+    endpoint: z.string().url().max(2048).refine((u) => u.startsWith('https://'), 'Inference endpoint must use HTTPS.'),
+    bearerToken: z.string().min(1).max(4096),
+    model: z.string().trim().min(1).max(200),
+  }).strict().optional(),
   maxRounds: z.number().int().min(1).max(40).default(24),
   commandTimeoutMs: z.number().int().min(1_000).max(300_000).default(120_000),
 }).strict();
@@ -39,7 +48,12 @@ export const executionWorkerResponseSchema = z.object({
   changedFiles: z.array(z.string().min(1).max(500)).max(200),
   evidence: z.array(executionEvidenceSchema).max(30),
   limitations: z.array(z.string().min(1).max(1000)).max(20),
+  /** Tokens the build used, summed over every model call (when the provider reports usage). */
+  usage: z.object({ inputTokens: z.number().int().min(0), outputTokens: z.number().int().min(0) }).strict().optional(),
 }).strict();
+
+/** What a worker advertises on /health; "inference" = it accepts request.inference. */
+export const EXECUTION_WORKER_FEATURES = ['inference'] as const;
 
 export type ExecutionWorkerRequest = z.infer<typeof executionWorkerRequestSchema>;
 export type ExecutionWorkerResponse = z.infer<typeof executionWorkerResponseSchema>;

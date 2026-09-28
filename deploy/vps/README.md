@@ -86,6 +86,16 @@ curl --fail http://127.0.0.1:8788/health
 
 Changing models behind the LiteLLM alias does not require rebuilding or restarting this worker.
 
+Check that the health response lists the `inference` feature:
+
+```json
+{"ok":true,"busy":false,"features":["inference"]}
+```
+
+## Models
+
+Nucleas's AI engine chooses the model for each build (the code pick at the plan's cost level) and sends its endpoint, credential and model id with the request. The worker uses them for that build only and never stores them. `NUCLEAS_AI_REMOTE_*` is the fallback for requests without an engine choice. A worker without the `inference` feature keeps building on its own model until it is updated.
+
 ## Capacity for a 4-core, 8 GB VPS
 
 The execution worker is limited to 2 CPUs, 4 GB RAM, 128 processes, one active request, and 4 GB of disposable temporary storage. Leave the remaining capacity for the operating system, reverse proxy, and separate Playwright service.
@@ -95,7 +105,7 @@ Do not increase execution concurrency on this VPS. Move one worker to a separate
 ## Network and host requirements
 
 - Allow inbound HTTPS only through the reverse proxy.
-- Allow worker outbound traffic only to GitHub, LiteLLM, and approved package registries.
+- Allow worker outbound traffic only to GitHub, LiteLLM, the AI providers enabled in Nucleas (for example api.openai.com, openrouter.ai, generativelanguage.googleapis.com, api.deepseek.com), and approved package registries.
 - Block cloud metadata endpoints and private production networks.
 - Do not mount the Docker socket, host directories, credentials, or `/proc`.
 - Do not use host networking, privileged mode, or a shared PID namespace.

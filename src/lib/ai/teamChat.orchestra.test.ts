@@ -46,6 +46,12 @@ vi.mock('@/lib/ai/control/config', () => ({
 vi.mock('@/lib/ai/tools/serverRepoAssist', () => ({
   gatherRepoAssistContext: (...args: unknown[]) => mocks.repoDig(...args),
 }));
+vi.mock('@/lib/ai/rolePipeline/profiles', () => ({
+  gatewayFromModelProfile: async (profileId: string, model: string) => ({
+    gateway: { endpoint: `https://${profileId}.test/v1/chat/completions`, bearerToken: 'key', model, protocol: 'openai-chat' },
+    profile: { id: profileId },
+  }),
+}));
 vi.mock('@/lib/ai/executionWorkerClient', () => ({
   executeInRemoteSandbox: (...args: unknown[]) => mocks.execute(...args),
 }));
@@ -360,6 +366,8 @@ describe('attemptOrchestratedIdeReply full orchestra', () => {
     const turn = await attemptOrchestratedIdeReply({ projectName: 'Nucleas', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'build the feature', priorTurns: [], interactionMode: 'build' });
 
     expect(mocks.execute).toHaveBeenCalledTimes(1);
+    // The build runs on the engine's code pick (the worker model), not the build service default.
+    expect(mocks.execute.mock.calls[0][0].inference).toEqual({ endpoint: `https://${workerId}.test/v1/chat/completions`, bearerToken: 'key', model: 'qwen' });
     expect(mocks.companyChat.mock.calls.map((call) => call[0].systemPrompt.match(/Pipeline stage: (planner|worker|reviewer)/)?.[1] ?? 'unknown')).toEqual(['planner', 'reviewer']);
     expect(mocks.companyChat.mock.calls[1][0].userText).toContain('npm test: exit 0');
     expect(turn.toolsUsed).toContain('sandbox_edit');
