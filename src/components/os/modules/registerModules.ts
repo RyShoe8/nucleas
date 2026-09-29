@@ -16,6 +16,7 @@ import AiSpendModule from './AiSpendModule';
 import AiRoutingModule from './AiRoutingModule';
 import BuildingModule from './BuildingModule';
 import JobsModule from './JobsModule';
+import ToolsModule from './ToolsModule';
 
 let registered = false;
 
@@ -135,6 +136,16 @@ export function registerOsModules(): void {
             render: () => createElement(JobsModule, { categories: ['content'], title: 'Content' }),
         },
         {
+            id: 'tools',
+            title: 'Tools',
+            icon: '🧰',
+            defaultSize: { width: 680, height: 640 },
+            minSize: { width: 440, height: 420 },
+            canPopout: true,
+            permissions: 'member',
+            render: () => createElement(ToolsModule),
+        },
+        {
             id: 'integrations',
             title: 'Integrations',
             icon: '🔌',
@@ -142,6 +153,7 @@ export function registerOsModules(): void {
             minSize: { width: 480, height: 320 },
             canPopout: true,
             permissions: 'member',
+            launcherHidden: true,
             windowTitle: (payload) => (payload?.companyName ? `${payload.companyName} · Integrations` : undefined),
             render: (ctx) => createElement(IntegrationsModule, ctx),
         },
@@ -153,6 +165,7 @@ export function registerOsModules(): void {
             minSize: baseMin,
             canPopout: true,
             permissions: 'member',
+            launcherHidden: true,
             render: () => createElement(ProjectsModule),
         },
         {
@@ -173,6 +186,7 @@ export function registerOsModules(): void {
             minSize: { width: 640, height: 400 },
             canPopout: true,
             permissions: 'member',
+            launcherHidden: true,
             render: () => createElement(ScheduleModule),
         },
         {
@@ -195,24 +209,11 @@ export function registerOsModules(): void {
             minSize: baseMin,
             canPopout: true,
             permissions: 'member',
+            launcherHidden: true,
             render: () =>
                 createElement(PlaceholderModule, {
                     title: 'Tasks',
                     description: 'Cross-project task list will live here.',
-                }),
-        },
-        {
-            id: 'content',
-            title: 'Content',
-            icon: '📝',
-            defaultSize: baseSize,
-            minSize: baseMin,
-            canPopout: true,
-            permissions: 'member',
-            render: () =>
-                createElement(PlaceholderModule, {
-                    title: 'Content',
-                    description: 'Content calendar and channel filters.',
                 }),
         },
         {
@@ -278,6 +279,7 @@ export function registerOsModules(): void {
             minSize: baseMin,
             canPopout: true,
             permissions: 'member',
+            launcherHidden: true,
             render: () =>
                 createElement(PlaceholderModule, {
                     title: 'Smart Buttons',
