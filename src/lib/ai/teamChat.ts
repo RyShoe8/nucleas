@@ -526,7 +526,11 @@ export async function attemptOrchestratedIdeReply(input: {
     // their first occurrence, so explicitly remove this request's failed binding before re-picking.
     if (retryableProviderFailure(turn)) {
       const need: Need = args.stage === 'planner' ? 'plan' : args.stage === 'reviewer' ? 'review' : workNeedFor(interactionMode, input.userText);
-      const fresh = await listAvailableModels().catch(() => null);
+      // A LiteLLM/vLLM deployment update can replace model ids while our catalog is still inside
+      // its normal cache window. A 5xx is the one time it is worth paying for a live /v1/models
+      // refresh before rerouting; otherwise we can retry yesterday's stale id for six hours.
+      const refreshCatalog = /httpStatus=5\d\d\b/.test(turn.debugHint ?? '');
+      const fresh = await listAvailableModels({ force: refreshCatalog }).catch(() => null);
       const candidates = fresh?.filter((model) => model.profileId !== args.binding.profileId || model.model !== args.binding.model);
       const next = candidates ? binding((await selectModel(input.organizationId, need, level, { models: candidates, settings })).primary) : null;
       if (next && (next.profileId !== args.binding.profileId || next.model !== args.binding.model)) {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 type Level = 'free' | 'low' | 'medium' | 'high';
 type PaidLevel = Exclude<Level, 'free'>;
@@ -300,27 +300,55 @@ function FreeModelChecks({ rows, onRun }: { rows: CheckRow[]; onRun: () => Promi
 export default function AiRoutingModule() {
     const [data, setData] = useState<EngineData | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [refreshingModels, setRefreshingModels] = useState(false);
+    const [refreshResult, setRefreshResult] = useState<string | null>(null);
     const [pinning, setPinning] = useState<string | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
-    const [refresh, setRefresh] = useState(false);
+    const forceNextLoad = useRef(false);
+    const modelIds = useRef<Set<string>>(new Set());
     const reload = useCallback((force = false) => {
-        setRefresh(force);
+        if (force) forceNextLoad.current = true;
         setReloadKey((k) => k + 1);
     }, []);
 
     useEffect(() => {
         let cancelled = false;
+        const force = forceNextLoad.current;
+        forceNextLoad.current = false;
+        if (force) {
+            setRefreshingModels(true);
+            setRefreshResult(null);
+        }
         void (async () => {
-            const res = await fetch(`/api/os/ai-engine${refresh ? '?refresh=1' : ''}`, { cache: 'no-store' });
-            const body = (await res.json().catch(() => ({}))) as EngineData & { error?: string };
-            if (cancelled) return;
-            if (!res.ok) setError(body.error ?? `Failed (${res.status})`);
-            else setData(body);
+            try {
+                const res = await fetch(`/api/os/ai-engine${force ? '?refresh=1' : ''}`, { cache: 'no-store' });
+                const body = (await res.json().catch(() => ({}))) as EngineData & { error?: string };
+                if (cancelled) return;
+                if (!res.ok) throw new Error(body.error ?? `Failed (${res.status})`);
+
+                const nextIds = new Set(body.models.map((model) => `${model.profileId}:${model.model}`));
+                if (force) {
+                    const added = [...nextIds].filter((id) => !modelIds.current.has(id)).length;
+                    const removed = [...modelIds.current].filter((id) => !nextIds.has(id)).length;
+                    const changes = added || removed ? ` ${added} added, ${removed} removed.` : ' No model IDs changed.';
+                    setRefreshResult(`Model lists refreshed at ${new Date().toLocaleTimeString()}. ${nextIds.size} models available.${changes}`);
+                }
+                modelIds.current = nextIds;
+                setData(body);
+                setError(null);
+            } catch (cause) {
+                if (!cancelled) {
+                    setError(cause instanceof Error ? cause.message : 'Could not refresh model lists.');
+                    if (force) setRefreshResult(null);
+                }
+            } finally {
+                if (!cancelled && force) setRefreshingModels(false);
+            }
         })();
         return () => {
             cancelled = true;
         };
-    }, [reloadKey, refresh]);
+    }, [reloadKey]);
 
     const save = async (payload: Record<string, unknown>) => {
         const res = await fetch('/api/os/ai-engine', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
@@ -357,10 +385,11 @@ export default function AiRoutingModule() {
             <section className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                     <h2 className="text-sm font-semibold">Cost levels</h2>
-                    <button type="button" onClick={() => reload(true)} className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card">
-                        Refresh model lists
+                    <button type="button" disabled={refreshingModels} onClick={() => reload(true)} className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card disabled:opacity-50">
+                        {refreshingModels ? 'Refreshing models…' : 'Refresh model lists'}
                     </button>
                 </div>
+                {refreshResult ? <p role="status" className="text-[11px] text-emerald-400">{refreshResult}</p> : null}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                     {LEVELS.map((l) => (
                         <div key={l.key} className={`rounded-md border p-2 ${data.defaultCostLevel === l.key ? 'border-primary bg-primary/10' : 'border-border'}`}>

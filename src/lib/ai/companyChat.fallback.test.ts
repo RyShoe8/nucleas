@@ -87,6 +87,25 @@ describe('Direct local gateway diagnostics and project context', () => {
     expect(mocks.webSearch).not.toHaveBeenCalled();
   });
 
+  it('shows the sanitized local provider reason and identifies a context-window rejection', async () => {
+    const failure = new GatewayError('unavailable', {
+      kind: 'http',
+      httpStatus: 500,
+      providerMessage: 'Input exceeds maximum context length for this deployment',
+    });
+    mocks.toolLoop.mockRejectedValue(failure);
+    mocks.invokeModel.mockRejectedValue(failure);
+    const turn = await attemptCompanyCredentialChat({
+      systemPrompt: 'Assistant', organizationId: 'org', projectId: new Types.ObjectId(),
+      userId: 'a'.repeat(24), userText: 'Plan the change', priorTurns: [],
+      modelProfileId: 'b'.repeat(24), model: 'rogly/model', includeRepoTools: true,
+      stopOnUpstreamFailure: true,
+    });
+
+    expect(turn.text).toContain('exceeded that deployment’s context window');
+    expect(turn.text).toContain('Model provider returned HTTP 500: Input exceeds maximum context length');
+  });
+
   it('grounds a named-project feature question in repository context before asking the local model', async () => {
     mocks.repoAssist.mockResolvedValue({ contextBlock: 'Verified repository evidence', toolsUsed: ['repo_tree', 'repo_read'] });
     mocks.invokeModel.mockResolvedValue({ content: 'A grounded suggestion', inputTokens: 3, outputTokens: 4, latencyMs: 5 });

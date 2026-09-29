@@ -169,6 +169,12 @@ function gatewayDebugParts(error: unknown): Record<string, string | number | boo
   };
 }
 
+function isContextWindowFailure(error: GatewayError): boolean {
+  return /(?:context (?:length|window)|maximum context|context.*exceed|too many (?:input )?tokens|token limit.*(?:prompt|input))/i.test(
+    error.details?.providerMessage ?? ''
+  );
+}
+
 import { companyChatAdmissionMessage } from '@/lib/ai/companyChatAdmission';
 import { recordModelFailure, recordModelSuccess } from '@/lib/ai/engine/health';
 import type { RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
@@ -1051,11 +1057,14 @@ export async function attemptCompanyCredentialChat(input: {
           }
         );
       }
+      const contextWindowFailure = isContextWindowFailure(error);
       const messagesByCode: Record<GatewayError['code'], string> = {
         configuration: 'Inference is not configured for this chat.',
         credentials: 'Remote authentication was rejected.',
         rate_limit: 'The remote provider rate-limited this request.',
-        unavailable: error.details?.kind === 'timeout'
+        unavailable: contextWindowFailure
+          ? 'The model rejected the request because it exceeded that deployment’s context window. Nucleas will refresh the live model catalog and route the retry to another eligible model.'
+          : error.details?.kind === 'timeout'
           ? `${gateway.model.split('/').pop()} took longer than ${Math.round((gateway.timeoutMs ?? 60000) / 1000)} seconds to answer and was stopped.`
           : freeCredential
           ? error.details?.httpStatus
@@ -1072,8 +1081,8 @@ export async function attemptCompanyCredentialChat(input: {
         cancelled: 'The chat request was cancelled before completion.',
       };
       // Say what the provider said (HTTP status and its own message) so failures are actionable.
-      const providerNote = !freeCredential && error.details?.httpStatus
-        ? ` ${profile.label} returned HTTP ${error.details.httpStatus}${error.details.providerMessage ? `: ${error.details.providerMessage}` : ''}.`
+      const providerNote = error.details?.httpStatus
+        ? ` ${profile.label || 'Model provider'} returned HTTP ${error.details.httpStatus}${error.details.providerMessage ? `: ${error.details.providerMessage}` : ''}.`
         : '';
       return statusTurn(`${messagesByCode[error.code]}${providerNote}`, error.code, String(runId), {
         costMicros: errorCost,

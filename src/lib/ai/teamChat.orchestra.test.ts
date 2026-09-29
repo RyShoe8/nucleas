@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   findRuns: vi.fn(),
   readSettings: vi.fn(),
   execute: vi.fn(),
+  listModels: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -16,7 +17,7 @@ vi.mock('@/lib/ai/companyChat', () => ({
   attemptCompanyCredentialChat: (...args: unknown[]) => mocks.companyChat(...args),
 }));
 vi.mock('@/lib/ai/engine/catalog', () => ({
-  listAvailableModels: async () => [],
+  listAvailableModels: (...args: unknown[]) => mocks.listModels(...args),
   outputBudgetTokens: (_context: number, requested: number) => requested,
   contextBudgetChars: () => 48_000,
 }));
@@ -114,6 +115,7 @@ describe('attemptOrchestratedIdeReply full orchestra', () => {
     });
     mocks.readSettings.mockResolvedValue({ value: readySettings });
     mocks.execute.mockResolvedValue(null);
+    mocks.listModels.mockResolvedValue([]);
     mocks.findObjectives.mockReturnValue(leanChain([]));
     mocks.findRuns.mockReturnValue(leanChain([]));
     // The engine picks: planner for plan, reviewer for review, worker for the work itself.
@@ -518,5 +520,36 @@ describe('provider refusals during code planning', () => {
     await attemptOrchestratedIdeReply({ projectName: 'PlayBound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'Remove OpenHV from the OpenRA listing.', priorTurns: [], interactionMode: 'plan', level: 'free', onProgress: (text) => progress.push(text) });
     expect(planners).toEqual(['Qwen/Qwen3-VL-8B-Thinking-FP8', 'google/gemma-4-12B-it-qat-w4a16-ct']);
     expect(progress).toContain('Qwen3-VL-8B-Thinking-FP8 did not complete; switching to gemma-4-12B-it-qat-w4a16-ct');
+    expect(mocks.listModels).toHaveBeenCalledWith({ force: true });
+  });
+
+  it('refreshes the live catalog and replaces a stale model id after a gateway 500', async () => {
+    const stale = { profileId: 'a'.repeat(24), model: 'Rogly/retired-model', free: true, label: 'Rogly' };
+    const current = { profileId: 'a'.repeat(24), model: 'Rogly/current-model', free: true, label: 'Rogly' };
+    mocks.listModels
+      .mockResolvedValueOnce([stale])
+      .mockResolvedValueOnce([current]);
+    mocks.selectModel.mockImplementation(async (_org: string, need: string, _level: string, options?: { models?: { model: string }[] }) => ({
+      primary:
+        need === 'plan'
+          ? options?.models?.some((model) => model.model === current.model) ? current : stale
+          : { profileId: 'b'.repeat(24), model: 'worker', free: true, label: 'Rogly' },
+      fallback: null,
+    }));
+    const planners: string[] = [];
+    mocks.companyChat.mockImplementation(async (input: { model: string; systemPrompt: string }) => {
+      if (/Pipeline stage: planner/.test(input.systemPrompt)) {
+        planners.push(input.model);
+        if (input.model === stale.model) {
+          return { requestId: 'failed', role: 'status', text: 'Local model gateway returned HTTP 500.', failureCategory: 'unavailable', debugHint: 'code=unavailable kind=http httpStatus=500 providerMessage=model not found' };
+        }
+      }
+      return { requestId: 'ok', role: 'assistant', text: 'Grounded plan.', costMicros: 0, noProviderFee: true };
+    });
+
+    await attemptOrchestratedIdeReply({ projectName: 'PlayBound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'Remove OpenHV from OpenRA.', priorTurns: [], interactionMode: 'plan', level: 'free' });
+
+    expect(planners).toEqual([stale.model, current.model]);
+    expect(mocks.listModels).toHaveBeenCalledWith({ force: true });
   });
 });
