@@ -564,7 +564,7 @@ describe('provider refusals during code planning', () => {
         if (plannerCalls === 1) return { requestId: 'failed', role: 'status', text: 'Rogly returned HTTP 500: Internal Server Error.', failureCategory: 'unavailable', debugHint: 'code=unavailable kind=http httpStatus=500' };
         expect(input.toolProfile).toBe('none');
         expect(input.forcePlain).toBe(true);
-        expect(input.repoContextBlock?.length).toBeLessThanOrEqual(6_000);
+        expect(input.repoContextBlock?.length).toBeLessThanOrEqual(3_500);
         return { requestId: 'plan', role: 'assistant', text: 'Recovered plan.', costMicros: 0 };
       }
       return { requestId: 'ok', role: 'assistant', text: 'Verified.', costMicros: 0 };

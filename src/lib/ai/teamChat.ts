@@ -517,12 +517,14 @@ export async function attemptOrchestratedIdeReply(input: {
         // Planner saw them but the Worker only received the Planner's prose, which could collapse
         // real code evidence back into speculative path lists.
         repoContextBlock: args.stage !== 'reviewer'
-          ? compact ? repoContextBlock?.slice(0, 6_000) : repoContextBlock
+          ? compact ? repoContextBlock?.slice(0, 3_500) : repoContextBlock
           : undefined,
         maxOutputTokensOverride:
-          args.stage === 'planner'
+          compact
+            ? 1536
+            : args.stage === 'planner'
             ? interactionMode === 'plan' || interactionMode === 'build'
-              ? compact ? 4096 : 8192
+              ? 8192
               : undefined
             : interactionMode === 'plan'
               ? 2048
@@ -533,20 +535,23 @@ export async function attemptOrchestratedIdeReply(input: {
       })
     );
 
-    announce(args.binding);
-    let turn = await exec(args.binding);
-    if (shouldTryCompactRecovery(turn)) {
-      input.onProgress?.(`${shortModel(args.binding.model)} returned an internal error; retrying with compact context and no tools`);
-      const compactTurn = await exec(args.binding, true);
-      if (compactTurn.role === 'assistant') {
-        turn = compactTurn;
-      } else {
-        turn = {
-          ...compactTurn,
-          text: `${compactTurn.text}\n\nThe same deployment also failed with compact context and no tool schemas, so this is an upstream model/deployment failure rather than an oversized repository or tool request.`,
-        };
+    const attemptBinding = async (candidate: StageBinding) => {
+      let candidateTurn = await exec(candidate);
+      if (shouldTryCompactRecovery(candidateTurn)) {
+        input.onProgress?.(`${shortModel(candidate.model)} returned an internal error; retrying with compact context and no tools`);
+        const compactTurn = await exec(candidate, true);
+        candidateTurn = compactTurn.role === 'assistant'
+          ? compactTurn
+          : {
+              ...compactTurn,
+              text: `${compactTurn.text}\n\nThe same deployment also failed with a minimal 1,536-token response budget, compact repository evidence, and no tool schemas. This is an upstream model/deployment failure rather than an oversized Nucleas request.`,
+            };
       }
-    }
+      return candidateTurn;
+    };
+
+    announce(args.binding);
+    const turn = await attemptBinding(args.binding);
     if (turn.role === 'assistant' && args.stage !== 'reviewer' && repoEvidenceReceipts.length) {
       turn.evidenceReceipts = dedupeEvidenceReceipts([...(turn.evidenceReceipts ?? []), ...repoEvidenceReceipts]);
     }
@@ -564,7 +569,7 @@ export async function attemptOrchestratedIdeReply(input: {
       if (next && (next.profileId !== args.binding.profileId || next.model !== args.binding.model)) {
         input.onProgress?.(`${shortModel(args.binding.model)} did not complete; switching to ${shortModel(next.model)}`);
         announce(next);
-        return exec(next);
+        return attemptBinding(next);
       }
     }
     return turn;
