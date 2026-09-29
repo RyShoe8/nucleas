@@ -549,7 +549,31 @@ describe('provider refusals during code planning', () => {
 
     await attemptOrchestratedIdeReply({ projectName: 'PlayBound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'Remove OpenHV from OpenRA.', priorTurns: [], interactionMode: 'plan', level: 'free' });
 
+    // Explicit model-not-found errors skip the same-model compact retry and refresh immediately.
     expect(planners).toEqual([stale.model, current.model]);
     expect(mocks.listModels).toHaveBeenCalledWith({ force: true });
+  });
+
+  it('distinguishes a payload-sensitive 500 by retrying the same model with compact context and no tools', async () => {
+    mocks.listModels.mockResolvedValue([{ profileId: 'a'.repeat(24), model: 'Rogly/qwen', free: true, label: 'Rogly' }]);
+    mocks.selectModel.mockResolvedValue({ primary: { profileId: 'a'.repeat(24), model: 'Rogly/qwen', free: true, label: 'Rogly' }, fallback: null });
+    let plannerCalls = 0;
+    mocks.companyChat.mockImplementation(async (input: { systemPrompt: string; toolProfile: string; forcePlain: boolean; repoContextBlock?: string }) => {
+      if (/Pipeline stage: planner/.test(input.systemPrompt)) {
+        plannerCalls += 1;
+        if (plannerCalls === 1) return { requestId: 'failed', role: 'status', text: 'Rogly returned HTTP 500: Internal Server Error.', failureCategory: 'unavailable', debugHint: 'code=unavailable kind=http httpStatus=500' };
+        expect(input.toolProfile).toBe('none');
+        expect(input.forcePlain).toBe(true);
+        expect(input.repoContextBlock?.length).toBeLessThanOrEqual(6_000);
+        return { requestId: 'plan', role: 'assistant', text: 'Recovered plan.', costMicros: 0 };
+      }
+      return { requestId: 'ok', role: 'assistant', text: 'Verified.', costMicros: 0 };
+    });
+    const progress: string[] = [];
+
+    await attemptOrchestratedIdeReply({ projectName: 'PlayBound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'Remove OpenHV from OpenRA.', priorTurns: [], interactionMode: 'plan', level: 'free', onProgress: (text) => progress.push(text) });
+
+    expect(plannerCalls).toBe(2);
+    expect(progress.some((line) => line.includes('compact context and no tools'))).toBe(true);
   });
 });

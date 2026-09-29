@@ -77,6 +77,15 @@ function retryableProviderFailure(turn: TeamChatTurn): boolean {
   );
 }
 
+/** A bare LiteLLM 500 can be caused by context/tool payloads or by the deployment itself. */
+function shouldTryCompactRecovery(turn: TeamChatTurn): boolean {
+  if (turn.role !== 'status' || !/httpStatus=500\b/.test(turn.debugHint ?? '')) return false;
+  // A known routing/configuration rejection cannot be repaired by shrinking the request.
+  return !/(model (?:not found|not loaded|does not exist)|unknown model|invalid model)/i.test(
+    `${turn.text} ${turn.debugHint ?? ''}`
+  );
+}
+
 /** What kind of work the request is: building, planning or repo questions are code; the rest is research. */
 function workNeedFor(interactionMode: IdeInteractionMode, userText: string): Need {
   if (interactionMode !== 'chat' || looksLikeProjectInternalQuery(userText)) return 'code';
@@ -378,7 +387,10 @@ export async function attemptOrchestratedIdeReply(input: {
 
   let repoContextBlock: string | undefined;
   let repoEvidenceReceipts: RepositoryEvidenceReceipt[] = [];
-  if (looksLikeProjectInternalQuery(input.userText)) {
+  // Plan and Build are repository workflows even when the user's wording does not explicitly say
+  // "codebase" or "repository" (for example, "remove OpenHV from the OpenRA listing"). Always
+  // prepare bounded evidence so tool-free recovery can remain grounded.
+  if (interactionMode !== 'chat' || looksLikeProjectInternalQuery(input.userText)) {
     try {
       const plannerModel = models.find((model) => model.profileId === plannerBinding.profileId && model.model === plannerBinding.model);
       const plannerContextTokens = plannerModel?.contextTokens ?? (plannerPick.primary?.free ? 16_000 : 64_000);
@@ -481,32 +493,36 @@ export async function attemptOrchestratedIdeReply(input: {
             : `Reviewing with ${model}`
       );
     };
-    const exec = (binding: StageBinding) =>
+    const exec = (binding: StageBinding, compact = false) =>
       withStage(input.onStage, args.stage, () =>
       attemptCompanyCredentialChat({
         onProgress: input.onProgress,
-        systemPrompt,
+        systemPrompt: compact
+          ? `${systemPrompt} Compact recovery: answer from the supplied repository evidence without calling tools. Keep the response concise while preserving the required plan or review format.`
+          : systemPrompt,
         organizationId: input.organizationId,
         projectId: input.projectId,
         userId: input.userId,
         userText: args.userText,
-        priorTurns: args.priorTurns,
+        priorTurns: compact ? [] : args.priorTurns,
         modelProfileId: binding.profileId,
         model: binding.model,
-        includeImageTool: toolProfile === 'full',
-        includeRepoTools: toolProfile !== 'none',
-        toolProfile,
-        forcePlain: toolProfile === 'none' || shouldForcePlainChat(interactionMode),
-        forceToolLoop: toolProfile !== 'none',
+        includeImageTool: !compact && toolProfile === 'full',
+        includeRepoTools: !compact && toolProfile !== 'none',
+        toolProfile: compact ? 'none' : toolProfile,
+        forcePlain: compact || toolProfile === 'none' || shouldForcePlainChat(interactionMode),
+        forceToolLoop: !compact && toolProfile !== 'none',
         stopOnUpstreamFailure: true,
         // Give the deterministic server-side excerpts to both investigation stages. Previously the
         // Planner saw them but the Worker only received the Planner's prose, which could collapse
         // real code evidence back into speculative path lists.
-        repoContextBlock: args.stage !== 'reviewer' ? repoContextBlock : undefined,
+        repoContextBlock: args.stage !== 'reviewer'
+          ? compact ? repoContextBlock?.slice(0, 6_000) : repoContextBlock
+          : undefined,
         maxOutputTokensOverride:
           args.stage === 'planner'
             ? interactionMode === 'plan' || interactionMode === 'build'
-              ? 8192
+              ? compact ? 4096 : 8192
               : undefined
             : interactionMode === 'plan'
               ? 2048
@@ -518,7 +534,19 @@ export async function attemptOrchestratedIdeReply(input: {
     );
 
     announce(args.binding);
-    const turn = await exec(args.binding);
+    let turn = await exec(args.binding);
+    if (shouldTryCompactRecovery(turn)) {
+      input.onProgress?.(`${shortModel(args.binding.model)} returned an internal error; retrying with compact context and no tools`);
+      const compactTurn = await exec(args.binding, true);
+      if (compactTurn.role === 'assistant') {
+        turn = compactTurn;
+      } else {
+        turn = {
+          ...compactTurn,
+          text: `${compactTurn.text}\n\nThe same deployment also failed with compact context and no tool schemas, so this is an upstream model/deployment failure rather than an oversized repository or tool request.`,
+        };
+      }
+    }
     if (turn.role === 'assistant' && args.stage !== 'reviewer' && repoEvidenceReceipts.length) {
       turn.evidenceReceipts = dedupeEvidenceReceipts([...(turn.evidenceReceipts ?? []), ...repoEvidenceReceipts]);
     }
