@@ -10,7 +10,7 @@
  *  - places where the path reads from a database or external service, whose contents are not in the repo;
  *  - who else reads the files that are likely to change.
  */
-import { identifierTerms, snapshotCandidates } from './digSelect';
+import { displayedNames, identifierTerms, snapshotCandidates } from './digSelect';
 import { contextAround, describeEntry } from './entryFacts';
 import { connectingLine, findReferences, reachableFrom, routeFileFor, shortestPaths } from './references';
 
@@ -35,6 +35,10 @@ export interface EvidencePack {
   scope: Set<string>;
   /** Files worth reading first: targets, then the assemblers between the page and them. */
   focus: { file: string; line?: number }[];
+  /** Files on the path that mention the names only as lowercase keys, never as displayed text: usually lookups, not the listing. */
+  lookupOnly?: string[];
+  /** Path files that hold the names as displayed (the likely definition of the listing). */
+  displayFiles?: string[];
   /** What object each of the lines above belongs to, so the structure around them is not guessed. */
   entries?: { file: string; line: number; text: string; snippet: string }[];
   /** The pack as a block of text for a model. */
@@ -125,11 +129,22 @@ export function buildEvidencePack(files: Map<string, string>, userText: string, 
 
   // Targets: files (on the page's path when one is named) that mention the request's names.
   const idHits = (file: string) => terms.filter((t) => (files.get(file) ?? '').toLowerCase().includes(t)).length;
+  // A listing on screen comes from code (or data) that holds the name as displayed. A file that has only the
+  // lowercase key ("openhv": "openra-master") is a lookup, so files with the displayed spelling rank first.
+  const shown = displayedNames(userText);
+  const displayCount = (file: string) => {
+    const content = files.get(file) ?? '';
+    let n = 0;
+    for (const word of shown) n += content.split(word).length - 1;
+    return n;
+  };
   const pool = scope.size ? [...scope] : snapshotCandidates({ files }, userText, 12);
   const targets = pool
     .filter((f) => !isTestFile(f) && !/\.(?:md|mdx)$/.test(f) && idHits(f) > 0)
-    .sort((a, b) => idHits(b) - idHits(a) || a.localeCompare(b))
+    .sort((a, b) => idHits(b) - idHits(a) || Math.min(displayCount(b), 40) - Math.min(displayCount(a), 40) || a.localeCompare(b))
     .slice(0, options.maxTargets ?? 3);
+  const displayFiles = shown.length ? pool.filter((f) => !isTestFile(f) && !/\.(?:md|mdx)$/.test(f) && displayCount(f) > 0).slice(0, 6) : [];
+  const lookupOnly = pool.filter((f) => !isTestFile(f) && !/\.(?:md|mdx)$/.test(f) && idHits(f) > 0 && shown.length > 0 && displayCount(f) === 0).slice(0, 4);
   if (!page && !targets.length) return null;
 
   const chains: EvidencePack['chains'] = [];
@@ -182,7 +197,7 @@ export function buildEvidencePack(files: Map<string, string>, userText: string, 
     const text = content ? describeEntry(l.file, l.line, content) : null;
     if (content && text && !entries.some((e) => e.text === text)) entries.push({ file: l.file, line: l.line, text, snippet: contextAround(content, l.line, 4) });
   }
-  const pack: EvidencePack = { page, terms, chains, termLines, unverified, readers, scope, focus, entries, text: '' };
+  const pack: EvidencePack = { page, terms, chains, termLines, unverified, readers, scope, focus, entries, lookupOnly, displayFiles, text: '' };
   pack.text = renderEvidencePack(pack);
   return pack;
 }
@@ -202,6 +217,9 @@ export function renderEvidencePack(pack: Omit<EvidencePack, 'text'> | EvidencePa
   if (pack.termLines.length) {
     out.push(`Lines mentioning ${pack.terms.join(', ')}:`);
     for (const l of pack.termLines) out.push(`  ${l.file}:${l.line}: \`${l.text}\``);
+  }
+  if (pack.lookupOnly?.length) {
+    out.push(`These files mention the names only as lowercase keys, never as the text a person sees: ${pack.lookupOnly.join(', ')}. They are usually lookups (how to query, group or route something), not where a listing is defined; do not change one unless you show that the listing is built from it.`);
   }
   if (pack.entries?.length) {
     out.push('Structure around those lines (computed from the brackets in the file; do not assume any structure that is not shown here):');

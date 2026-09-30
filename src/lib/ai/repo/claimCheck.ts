@@ -223,6 +223,22 @@ export function dataStoreIssues(reads: { file: string; line: number; model?: str
   return [`unverified: the code path reads ${missing.slice(0, 4).map((r) => `${r.model} (${r.file}:${r.line})`).join(', ')} from a database. For each, say whether stored rows could keep the symptom alive after your change, and how to check.`];
 }
 
+/**
+ * A plan that changes only a lookup table (a file that has the names as lowercase keys and never as the text
+ * on screen) while other files on the page's path hold the displayed names, and that quotes nothing from the
+ * files that hold them, has not shown that the listing is built from what it changes.
+ */
+export function lookupTargetIssues(pack: { lookupOnly?: string[]; displayFiles?: string[] } | undefined, plan: { steps: string[]; structured?: StructuredPlan }): string[] {
+  if (!pack?.lookupOnly?.length || !pack.displayFiles?.length) return [];
+  const planned = plannedFiles(plan);
+  const lookup = planned.filter((f) => pack.lookupOnly!.includes(f));
+  if (!lookup.length) return [];
+  const display = new Set(pack.displayFiles);
+  const evidenceFiles = (plan.structured?.rootCause?.evidence ?? []).map((e) => e.file);
+  if (planned.some((f) => display.has(f)) || evidenceFiles.some((f) => display.has(f))) return [];
+  return [`Contradiction: filesToChange ${lookup.slice(0, 2).join(', ')} holds the names only as lowercase lookup keys, never as text a person sees, while ${pack.displayFiles.slice(0, 3).join(', ')} hold${pack.displayFiles.length === 1 ? 's' : ''} the names as displayed. Show the line where a value from ${lookup[0]} becomes a row on the page (quote it), or change the code that holds the displayed names.`];
+}
+
 const KEY_VALUE = /^\s*["']?([\w.-]+)["']?\s*:\s*(["'][^"'\n]{3,80}["']|[A-Za-z][\w.-]{3,80})\s*,?\s*(?:\/\/.*)?$/;
 
 /**

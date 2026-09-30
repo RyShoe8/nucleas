@@ -24,6 +24,12 @@ export function identifierTerms(query: string): string[] {
   return [...new Set(terms.map((t) => t.toLowerCase()))].slice(0, 8);
 }
 
+/** The distinctive names as the user wrote them (OpenHV, ConnectManager): the spelling people see on screen, not the lowercase key a program looks up. */
+export function displayedNames(query: string): string[] {
+  const words = (query.match(/[A-Za-z][A-Za-z0-9]*/g) ?? []).filter((word) => word.length >= 4 && /[a-z][A-Z]|[A-Z]{2}|[0-9]/.test(word.slice(1)));
+  return [...new Set(words)].slice(0, 8);
+}
+
 const TEST_FILE = /(?:\.|\/)(?:test|spec)\.[a-z]+$|(?:^|\/)__tests__\//i;
 const DOC_FILE = /(?:^|\/)docs?\/|\.mdx?$/i;
 

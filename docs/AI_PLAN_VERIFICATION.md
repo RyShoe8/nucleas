@@ -90,3 +90,9 @@ The browser worker runs from a fixed server, not from the Next app (Vercel's cha
 - **Counterexample check:** if a quoted `key: value` line shares its value with other entries in the same object that the plan never mentions, the plan is asked why those do not show the symptom.
 - **Guesses are flagged:** "likely", "probably", "might", "appears to" in the root cause, walkthrough or expected result are sent back (quote code, or move to unverified).
 - **No approval after skipped corrections:** if a correction round was skipped for time while problems were open, the plan is shown as not approvable, with the draft.
+
+## Which file is the listing? (ranking fix)
+
+Targets used to be ranked by how many of the request's names a file contains, with ties broken alphabetically. A lookup table (`openhv: "openra-master"`) then outranked the file that defines what is listed (`name: "OpenHV"`) purely by its path. Files are now ranked by how often they hold the names as the user spelled them (what is displayed), and the pack lists files that hold only the lowercase keys as "usually lookups, not where a listing is defined". A plan that changes only such a lookup file, while other files on the page's path hold the displayed names and it quotes nothing from them, is blocked as a contradiction.
+
+When the request names a page on the company's site but the live page could not be checked, the plan now says why (no session connected, worker not configured, session expired, not signed in).

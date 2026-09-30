@@ -254,24 +254,37 @@ export function pageInRequest(text: string, baseUrl: string): string | null {
   return `${new URL(baseUrl).origin}${path}`;
 }
 
-/** Open the page the request names, if the company has a session for that site. Best effort: null on any failure. */
+/**
+ * Open the page the request names. Null only when the request names no page on the company's site; every other
+ * case says why the live page was not checked, so a missing section in a plan is never a mystery.
+ */
 export async function observePageForRequest(
   viewer: CompanyViewer,
   companyId: string,
   requestText: string,
   options: { signal?: AbortSignal; onProgress?: (text: string) => void } = {}
 ): Promise<{ url: string; title: string | null; text: string } | { failure: string } | null> {
-  if (!isBrowserWorkerConfigured()) return null;
-  const account = await session(viewer, companyId);
-  if (!account) return null;
-  const url = pageInRequest(requestText, account.baseUrl);
+  const row = await CompanyAdminAccount.findOne(scope(viewer, companyId)).lean<Row>().catch(() => null);
+  const profile = await getCompanyProfile(viewer, companyId).catch(() => null);
+  const siteUrl = row?.baseUrl ?? (profile?.domain ? `https://${profile.domain}` : null);
+  if (!siteUrl) return null;
+  let url: string | null;
+  try {
+    url = pageInRequest(requestText, siteUrl);
+  } catch {
+    return null;
+  }
   if (!url) return null;
+  if (!isBrowserWorkerConfigured()) return { failure: 'the browser worker is not configured on the server, so the live page was not checked' };
+  if (!row?.sessionSealed) return { failure: 'no admin account session is connected for this company (Company → Admin account), so the live page was not checked' };
+  const account = await session(viewer, companyId);
+  if (!account) return { failure: 'the saved admin session has expired or cannot be read; connect it again (Company → Admin account)' };
   options.onProgress?.(`Opening ${new URL(url).host}${new URL(url).pathname} with the admin account`);
   try {
     const seen = await browserObserve({ ...account, url }, { signal: options.signal, timeoutMs: 30000 });
-    if (!seen.loggedIn) return { failure: seen.note || 'The admin session is no longer signed in.' };
+    if (!seen.loggedIn) return { failure: seen.note || 'the admin session is no longer signed in' };
     return { url: seen.url, title: seen.title, text: seen.text };
   } catch (error) {
-    return { failure: error instanceof Error ? error.message.slice(0, 200) : 'The page could not be opened.' };
+    return { failure: error instanceof Error ? error.message.slice(0, 200) : 'the page could not be opened' };
   }
 }

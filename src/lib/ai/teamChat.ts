@@ -15,7 +15,7 @@ import {
 } from '@/lib/ide/planModePrompt';
 import { parseNucleasPlan, recomposePlan } from '@/lib/ide/parseNucleasPlan';
 import { plannedFiles, validatePlanStructure } from '@/lib/ide/planStructure';
-import { automaticPlanSections, checkLineClaims, checkPlanClaims, counterexampleIssues, dataStoreIssues, driftedFromVerified, findContradictions, groupReaders, quoteContexts, readerCoverageIssues, readersOfPlannedFiles, renderQuoteContexts, unaddressedReaders, withoutNoneClaims, type ClaimCheck, type ReaderGroup } from '@/lib/ai/repo/claimCheck';
+import { automaticPlanSections, checkLineClaims, checkPlanClaims, counterexampleIssues, dataStoreIssues, driftedFromVerified, findContradictions, groupReaders, lookupTargetIssues, quoteContexts, readerCoverageIssues, readersOfPlannedFiles, renderQuoteContexts, unaddressedReaders, withoutNoneClaims, type ClaimCheck, type ReaderGroup } from '@/lib/ai/repo/claimCheck';
 import type { EvidencePack } from '@/lib/ai/repo/evidencePack';
 import { parseReviewerGate } from '@/lib/ide/parseReviewerGate';
 import { looksLikeProjectInternalQuery } from '@/lib/ai/tools/serverBrowseAssist';
@@ -689,6 +689,7 @@ export async function attemptOrchestratedIdeReply(input: {
     const hard = [
       ...(planFiles ? safely(() => checkLineClaims(planFiles, parsed.plan), [] as string[]) : []),
       ...(planFiles ? safely(() => findContradictions(planFiles, parsed.plan), [] as string[]) : []),
+      ...safely(() => lookupTargetIssues(evidencePack, parsed.plan), [] as string[]),
     ];
     const extra = [
       ...hard,
