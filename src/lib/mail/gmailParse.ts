@@ -41,6 +41,11 @@ export interface ParsedMessage {
   sent: boolean;
   trashed: boolean;
   attachments: ParsedAttachment[];
+  /** What the receiving server concluded about who really sent it. */
+  auth: { spf: string; dkim: string; dmarc: string };
+  /** Sent to many people: a List-Unsubscribe header, bulk/list precedence, or an automatic sender. */
+  bulk: boolean;
+  returnPath?: string;
 }
 
 export const decodeBase64Url = (data: string) => Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
@@ -135,6 +140,12 @@ function walk(part: GmailPart | undefined, out: { text: string[]; html: string[]
   for (const child of part.parts ?? []) walk(child, out);
 }
 
+function authResults(p: GmailPart | undefined): ParsedMessage['auth'] {
+  const raw = [header(p, 'Authentication-Results'), header(p, 'Received-SPF')].filter(Boolean).join(' ').toLowerCase();
+  const pick = (name: string) => new RegExp(`\\b${name}=([a-z]+)`).exec(raw)?.[1] ?? (name === 'spf' ? /^\s*(pass|fail|softfail|neutral|none)\b/.exec(header(p, 'Received-SPF')?.toLowerCase() ?? '')?.[1] : undefined) ?? '';
+  return { spf: pick('spf'), dkim: pick('dkim'), dmarc: pick('dmarc') };
+}
+
 export function parseGmailMessage(message: GmailMessage): ParsedMessage {
   const collected = { text: [] as string[], html: [] as string[], attachments: [] as ParsedAttachment[] };
   walk(message.payload, collected);
@@ -165,5 +176,8 @@ export function parseGmailMessage(message: GmailMessage): ParsedMessage {
     sent: labels.includes('SENT'),
     trashed: labels.includes('TRASH'),
     attachments: collected.attachments.slice(0, 40),
+    auth: authResults(p),
+    bulk: Boolean(header(p, 'List-Unsubscribe')) || /^(?:bulk|list|junk)$/i.test(header(p, 'Precedence')?.trim() ?? '') || /^auto-(?:generated|replied)/i.test(header(p, 'Auto-Submitted')?.trim() ?? ''),
+    returnPath: header(p, 'Return-Path')?.replace(/[<>]/g, '').trim().toLowerCase() || undefined,
   };
 }

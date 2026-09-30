@@ -86,3 +86,19 @@ describe('buildRawMessage', () => {
     expect(encodeHeaderWord('plain')).toBe('plain');
   });
 });
+
+describe('authentication and bulk headers', () => {
+  it('reads SPF/DKIM/DMARC results, the return path and bulk markers', () => {
+    const m = parseGmailMessage({
+      id: 'a', threadId: 'b', payload: { mimeType: 'text/plain', body: { data: Buffer.from('x').toString('base64url') }, headers: [
+        { name: 'Authentication-Results', value: 'mx.google.com; dkim=pass header.i=@x.com; spf=fail (sender not permitted) smtp.mailfrom=y.com; dmarc=fail (p=REJECT sp=REJECT dis=NONE) header.from=x.com' },
+        { name: 'Return-Path', value: '<bounce@y.com>' },
+        { name: 'List-Unsubscribe', value: '<mailto:u@x.com>' },
+      ] },
+    });
+    expect(m.auth).toEqual({ spf: 'fail', dkim: 'pass', dmarc: 'fail' });
+    expect(m.returnPath).toBe('bounce@y.com');
+    expect(m.bulk).toBe(true);
+    expect(parseGmailMessage({ id: 'c', threadId: 'd', payload: { mimeType: 'text/plain', headers: [], body: { data: Buffer.from('x').toString('base64url') } } }).bulk).toBe(false);
+  });
+});

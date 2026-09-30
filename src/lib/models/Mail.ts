@@ -17,6 +17,8 @@ const accountSchema = new Schema(
     scopes: { type: [String], default: [] },
     /** Gmail's history cursor: changes since this point are fetched next time. */
     historyId: { type: String, maxlength: 40 },
+    /** Set while a sync runs, so two runs never overlap (expires on its own if one dies). */
+    syncingUntil: { type: Date },
     lastSyncAt: { type: Date },
     lastSyncOk: { type: Boolean },
     lastSyncError: { type: String, maxlength: 300 },
@@ -60,6 +62,18 @@ const messageSchema = new Schema(
     sent: { type: Boolean, default: false },
     trashed: { type: Boolean, default: false },
     attachments: { type: [attachmentSchema], default: [] },
+    auth: { spf: { type: String, default: '' }, dkim: { type: String, default: '' }, dmarc: { type: String, default: '' } },
+    bulk: { type: Boolean, default: false },
+    returnPath: { type: String, maxlength: 320 },
+    /** Where it belongs: the main box shows 'important' and 'normal'. `by` says who decided. */
+    triage: {
+      bucket: { type: String, enum: ['important', 'normal', 'updates', 'promotions', 'suspicious'] as const, default: 'normal' },
+      risk: { type: Number, default: 0 },
+      reasons: { type: [String], default: [] },
+      by: { type: String, enum: ['rules', 'ai', 'user'] as const, default: 'rules' },
+      /** The rules could not tell: the AI second opinion looks at it next. */
+      uncertain: { type: Boolean, default: false },
+    },
     /** AI summary of the message, cached after the first request. */
     aiSummary: { type: String, maxlength: 1500 },
   },
@@ -67,8 +81,23 @@ const messageSchema = new Schema(
 );
 messageSchema.index({ organizationId: 1, accountId: 1, gmailId: 1 }, { unique: true });
 messageSchema.index({ organizationId: 1, inInbox: 1, internalDate: -1 });
+messageSchema.index({ organizationId: 1, 'triage.bucket': 1, internalDate: -1 });
+messageSchema.index({ organizationId: 1, 'triage.uncertain': 1, 'triage.by': 1 });
 messageSchema.index({ organizationId: 1, accountId: 1, threadId: 1, internalDate: 1 });
 messageSchema.index({ subject: 'text', snippet: 'text', bodyText: 'text', 'from.email': 'text', 'from.name': 'text' }, { name: 'mail_text' });
+
+/** What a person taught the filter: always allow, or always block, a sender or a whole domain. */
+const ruleSchema = new Schema(
+  {
+    organizationId: { type: Schema.Types.ObjectId, required: true, immutable: true },
+    kind: { type: String, enum: ['allow', 'block'] as const, required: true },
+    type: { type: String, enum: ['sender', 'domain'] as const, required: true },
+    value: { type: String, required: true, lowercase: true, maxlength: 320 },
+    createdByUserId: { type: Schema.Types.ObjectId },
+  },
+  { timestamps: true }
+);
+ruleSchema.index({ organizationId: 1, type: 1, value: 1 }, { unique: true });
 
 function modelFor<T>(name: string, definition: Schema<T>): Model<T> {
   return (mongoose.models[name] as Model<T> | undefined) ?? mongoose.model<T>(name, definition);
@@ -78,3 +107,5 @@ export type MailAccountDoc = InferSchemaType<typeof accountSchema>;
 export type MailMessageDoc = InferSchemaType<typeof messageSchema>;
 export const MailAccount = modelFor<MailAccountDoc>('MailAccount', accountSchema);
 export const MailMessage = modelFor<MailMessageDoc>('MailMessage', messageSchema);
+export type MailRuleDoc = InferSchemaType<typeof ruleSchema>;
+export const MailRule = modelFor<MailRuleDoc>('MailRule', ruleSchema);
