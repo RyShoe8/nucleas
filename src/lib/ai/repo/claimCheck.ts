@@ -7,7 +7,8 @@
 import type { PlanEvidence, StructuredPlan } from '@/lib/ide/planStructure';
 import { plannedFiles } from '@/lib/ide/planStructure';
 import { contextAround, describeEntry, enclosingEntry } from './entryFacts';
-import { findReferences } from './references';
+import { usageLine } from './evidencePack';
+import { connectingLine, findReferences } from './references';
 
 export { contextAround };
 
@@ -214,13 +215,51 @@ export function findContradictions(files: Map<string, string>, plan: { steps: st
   return [...new Set(issues)].slice(0, 3);
 }
 
-/** The database models the code path reads that the plan never mentions: stored rows could keep the symptom alive. */
-export function dataStoreIssues(reads: { file: string; line: number; model?: string; note: string }[], plan: { structured?: StructuredPlan }): string[] {
+const stem = (word: string) => word.toLowerCase().replace(/[^a-z0-9]/g, '').replace(/(?:ies)$/, 'y').replace(/s$/, '');
+
+/**
+ * The database models the code path reads that the plan never mentions: stored rows could keep the symptom
+ * alive. A model that holds the same kind of data as a file the plan changes (Edition, read by the route,
+ * beside editions.ts) is named first, by its role, since that is where the change is most likely to be undone.
+ */
+export function dataStoreIssues(reads: { file: string; line: number; model?: string; note: string }[], plan: { steps?: string[]; structured?: StructuredPlan }): string[] {
   const s = plan.structured;
   const text = [...(s?.unverified ?? []), ...(s?.sideEffects ?? []), s?.rootCause?.explanation ?? '', s?.expectedResult ?? '', s?.walkthrough ?? ''].join('\n').toLowerCase();
+  const changed = plan.steps ? plannedFiles({ steps: plan.steps, structured: s }) : (s?.filesToChange ?? []);
+  const stems = changed.map((f) => stem((f.split('/').pop() ?? f).replace(/\.[^.]+$/, '')));
   const missing = [...new Map(reads.filter((r) => r.model && /database/.test(r.note)).map((r) => [r.model!, r])).values()].filter((r) => !text.includes(r.model!.toLowerCase()));
   if (!missing.length) return [];
-  return [`unverified: the code path reads ${missing.slice(0, 4).map((r) => `${r.model} (${r.file}:${r.line})`).join(', ')} from a database. For each, say whether stored rows could keep the symptom alive after your change, and how to check.`];
+  const related = missing.filter((r) => stems.some((st) => st.length >= 4 && (st.includes(stem(r.model!)) || stem(r.model!).includes(st))));
+  const issues: string[] = [];
+  if (related.length) {
+    const r = related[0];
+    issues.push(`unverified: ${r.file}:${r.line} reads ${r.model} from the database, the same kind of data as the file you change (${changed.find((f) => stems.some((st) => stem(r.model!).includes(st) || st.includes(stem(r.model!)))) ?? changed[0]}). Stored ${r.model} rows can keep the symptom alive after your change. Say how to check them and what to do if a matching row exists.`);
+  }
+  const others = missing.filter((r) => !related.includes(r)).slice(0, 3);
+  if (others.length) issues.push(`unverified: the code path also reads ${others.map((r) => `${r.model} (${r.file}:${r.line})`).join(', ')} from a database. Say whether stored rows in these could keep the symptom alive, or that they do not hold this data.`);
+  return issues;
+}
+
+/**
+ * A changed file that a script reads and turns into another file (a generator, a seeder): the script must be
+ * re-run, or its output goes stale. Flags scripts that read a changed file, write a file, and are not in the plan.
+ */
+export function generatorIssues(files: Map<string, string>, plan: { steps: string[]; structured?: StructuredPlan }): string[] {
+  const planned = plannedFiles(plan).filter((f) => files.has(f));
+  const said = [...plan.steps, ...(plan.structured?.sideEffects ?? [])].join('\n').toLowerCase();
+  const issues: string[] = [];
+  for (const target of planned) {
+    const base = (target.split('/').pop() ?? target).replace(/\.[^.]+$/, '');
+    for (const [path, content] of files) {
+      if (path === target || !/(?:^|\/)(?:scripts?|tools|bin|tasks?)\/[^/]+\.(?:[cm]?[jt]sx?|py|rb|sh)$/i.test(path)) continue;
+      if (!new RegExp(`(?<![\\w-])${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`).test(content)) continue;
+      const writes = [...content.matchAll(/(?:writeFileSync|writeFile|write_text|open\()\s*\(?[^,)]*?['"`]([^'"`]+\.(?:[cm]?[jt]sx?|json|ya?ml|md))['"`]/g)].map((m) => m[1]);
+      const scriptName = (path.split('/').pop() ?? path).toLowerCase();
+      if (!writes.length || said.includes(scriptName.replace(/\.[^.]+$/, ''))) continue;
+      issues.push(`steps: ${path} reads ${target} and writes ${writes.slice(0, 2).join(', ')}. Add a step to re-run it (and commit its output), or say why it is not needed; otherwise that file goes stale.`);
+    }
+  }
+  return [...new Set(issues)].slice(0, 2);
 }
 
 /**
@@ -295,15 +334,23 @@ export function withoutNoneClaims(sideEffects: string[]): string[] {
 }
 
 /** Other consumers of the files a plan changes: a change there reaches them too. Excludes the page's own path. */
-export function readersOfPlannedFiles(files: Map<string, string>, planned: string[], options: { scope?: Set<string>; pageFile?: string; pageRoute?: string } = {}): { file: string; usedBy: string[]; routes: string[] }[] {
-  const out: { file: string; usedBy: string[]; routes: string[] }[] = [];
+export function readersOfPlannedFiles(files: Map<string, string>, planned: string[], options: { scope?: Set<string>; pageFile?: string; pageRoute?: string } = {}): { file: string; usedBy: string[]; routes: string[]; usage?: { file: string; line: number; text: string }[] }[] {
+  const out: { file: string; usedBy: string[]; routes: string[]; usage?: { file: string; line: number; text: string }[] }[] = [];
   for (const file of planned.filter((f) => files.has(f)).slice(0, 6)) {
     const refs = findReferences(files, file, { maxDepth: 3, limit: 80 });
     if ('error' in refs) continue;
     const others = refs.references.filter((r) => !isTestOrDoc(r.path) && !options.scope?.has(r.path) && r.path !== options.pageFile);
     const routes = [...new Set(others.map((r) => r.route).filter((r): r is string => Boolean(r) && r !== options.pageRoute))];
     const usedBy = others.filter((r) => r.depth === 1).map((r) => r.path);
-    if (usedBy.length || routes.length) out.push({ file, usedBy: usedBy.slice(0, 6), routes: routes.slice(0, 8) });
+    // The line in each direct reader that uses the file: what a reader actually does with it, not just that it exists.
+    const usage = usedBy.slice(0, 6).flatMap((reader) => {
+      const via = connectingLine(files, reader, file);
+      if (!via) return [];
+      const line = usageLine(files, reader, via);
+      const text = (files.get(reader)?.split('\n')[line - 1] ?? via.text).trim().replace(/\s+/g, ' ').slice(0, 140);
+      return [{ file: reader, line, text }];
+    });
+    if (usedBy.length || routes.length) out.push({ file, usedBy: usedBy.slice(0, 6), routes: routes.slice(0, 8), usage });
   }
   return out;
 }
@@ -313,6 +360,8 @@ export interface ReaderGroup {
   label: string;
   files: string[];
   routes: string[];
+  /** How the readers use the changed file (their own lines). */
+  examples?: { file: string; line: number; text: string }[];
 }
 
 /** A route's prefix for grouping: up to three real segments, skipping :params (/admin/games/:slug/editions → /admin/games/editions). */
@@ -325,7 +374,12 @@ export function groupReaders(readers: ReturnType<typeof readersOfPlannedFiles>):
   const groups = new Map<string, ReaderGroup>();
   const group = (label: string) => groups.get(label) ?? groups.set(label, { label, files: [], routes: [] }).get(label)!;
   for (const r of readers) {
-    for (const file of r.usedBy) group(file.split('/').slice(0, -1).slice(0, 4).join('/') || '(root)').files.push(file);
+    for (const file of r.usedBy) {
+      const g = group(file.split('/').slice(0, -1).slice(0, 4).join('/') || '(root)');
+      g.files.push(file);
+      const use = r.usage?.find((u) => u.file === file);
+      if (use && (g.examples ??= []).length < 2) g.examples.push(use);
+    }
     for (const route of r.routes) group(`route ${routePrefix(route)}`).routes.push(route);
   }
   for (const g of groups.values()) { g.files = [...new Set(g.files)]; g.routes = [...new Set(g.routes)]; }
@@ -357,7 +411,8 @@ export function unaddressedReaders(groups: ReaderGroup[], plan: { structured?: S
 export function readerCoverageIssues(unaddressed: ReaderGroup[]): string[] {
   if (!unaddressed.length) return [];
   const list = unaddressed.map((g) => `${g.label}${g.files.length ? ` (${g.files.slice(0, 3).map((f) => f.split('/').pop()).join(', ')}${g.files.length > 3 ? ', ...' : ''})` : ''}`).join('; ');
-  return [`sideEffects: other code reads the files you change. For each of these, say whether your change affects it, or why not (readers in one folder can be answered together): ${list}.`];
+  const examples = unaddressed.flatMap((g) => g.examples ?? []).slice(0, 4);
+  return [`sideEffects: other code reads the files you change. For each of these, say whether your change affects it, or why not (readers in one folder can be answered together): ${list}.${examples.length ? ` How they use it: ${examples.map((e) => `${e.file}:${e.line} \`${e.text}\``).join('; ')}.` : ''}`];
 }
 
 /**
@@ -391,7 +446,10 @@ export function automaticPlanSections(input: {
   }
   if (check.offPath.length) lines.push(`- Edits outside the page's data path: ${check.offPath.join(', ')}.`);
   if (check.newOrUnknown.length) lines.push(`- Not found in the repository (new files, or a wrong path): ${check.newOrUnknown.join(', ')}.`);
-  for (const r of input.readers) lines.push(`- ${r.file} is also used by ${[...r.usedBy, ...r.routes.map((x) => `route ${x}`)].join(', ')}; a change there reaches them too.`);
+  for (const r of input.readers) {
+    lines.push(`- ${r.file} is also used by ${[...r.usedBy, ...r.routes.map((x) => `route ${x}`)].join(', ')}; a change there reaches them too.`);
+    for (const u of (r.usage ?? []).slice(0, 4)) lines.push(`  - ${u.file}:${u.line} \`${u.text}\``);
+  }
   for (const g of input.unaddressed ?? []) lines.push(`- The plan does not say how the change affects: ${g.label} (${[...g.files.slice(0, 4).map((f) => f.split('/').pop()), ...g.routes.slice(0, 2)].join(', ')}).`);
   for (const n of input.dataStoreNotes) lines.push(`- Not verifiable from the repository: ${n.file}:${n.line} ${n.note} (\`${n.text}\`). Stored data may differ from the code.`);
   for (const note of input.notes ?? []) lines.push(`- ${note}`);

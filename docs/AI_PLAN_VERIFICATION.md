@@ -104,3 +104,9 @@ Free Worker models often make no tool calls, so what they say about the reposito
 - The Critic is told when the Worker read no files and to rely on the automated checks and lookups instead.
 - When the Critic asks for a check ("does games.ts contain …?"), Nucleas runs it against the repository (`src/lib/ai/repo/jobLookups.ts`, case-insensitive, quote-style-insensitive) and hands back the lines or their absence; the toolless Worker is not called again.
 - If the Critic is still not satisfied, the reply shows the plan draft and the Critic's reason, not the Worker's report repeated twice.
+
+## Readers, stored data, generated files
+
+- **What readers do:** each direct reader of a changed file is shown with the line that uses it (`api/launcher/catalog/route.ts:3 editions.filter(...)`), in the automatic checks and in the correction request, so "no effect" is hard to write next to a line that plainly lists the data.
+- **Stored data by role:** a database model that holds the same kind of data as a changed file (`Edition`, read by the route, beside `editions.ts`) is named first, ahead of unrelated models: stored rows can undo the change.
+- **Generated files:** a script under `scripts/`/`tools/`/`bin/` that reads a changed file and writes another must be re-run in the plan (or the plan must say why not).

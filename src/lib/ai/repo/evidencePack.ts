@@ -61,7 +61,7 @@ const isTestFile = (p: string) => /(?:\.|\/)(?:test|spec)\.[a-z]+$|(?:^|\/)__tes
  * Where an assembler file actually uses what it takes from the next hop. The import line only says it is
  * imported; the first use of the imported name is where the list or view is built.
  */
-function usageLine(files: Map<string, string>, from: string, via: { line: number; text: string }): number {
+export function usageLine(files: Map<string, string>, from: string, via: { line: number; text: string }): number {
   const names = new Set<string>();
   for (const m of via.text.matchAll(/\bimport\s+(?:type\s+)?(\w+)/g)) names.add(m[1]);
   for (const m of via.text.matchAll(/[{,]\s*(?:\w+\s+as\s+)?(\w+)\s*(?=[,}])/g)) names.add(m[1]);

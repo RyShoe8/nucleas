@@ -15,7 +15,7 @@ import {
 } from '@/lib/ide/planModePrompt';
 import { parseNucleasPlan, recomposePlan } from '@/lib/ide/parseNucleasPlan';
 import { plannedFiles, validatePlanStructure } from '@/lib/ide/planStructure';
-import { automaticPlanSections, checkLineClaims, checkPlanClaims, counterexampleIssues, dataStoreIssues, driftedFromVerified, findContradictions, groupReaders, lookupTargetIssues, quoteContexts, readerCoverageIssues, readersOfPlannedFiles, renderQuoteContexts, unaddressedReaders, withoutNoneClaims, type ClaimCheck, type ReaderGroup } from '@/lib/ai/repo/claimCheck';
+import { automaticPlanSections, checkLineClaims, checkPlanClaims, counterexampleIssues, dataStoreIssues, driftedFromVerified, findContradictions, generatorIssues, groupReaders, lookupTargetIssues, quoteContexts, readerCoverageIssues, readersOfPlannedFiles, renderQuoteContexts, unaddressedReaders, withoutNoneClaims, type ClaimCheck, type ReaderGroup } from '@/lib/ai/repo/claimCheck';
 import type { EvidencePack } from '@/lib/ai/repo/evidencePack';
 import { parseReviewerGate } from '@/lib/ide/parseReviewerGate';
 import { looksLikeProjectInternalQuery } from '@/lib/ai/tools/serverBrowseAssist';
@@ -696,6 +696,7 @@ export async function attemptOrchestratedIdeReply(input: {
       ...hard,
       ...(planFiles && claim ? safely(() => counterexampleIssues(planFiles, claim, parsed.plan), [] as string[]) : []),
       ...safely(() => dataStoreIssues(evidencePack?.unverified ?? [], parsed.plan), [] as string[]),
+      ...(planFiles ? safely(() => generatorIssues(planFiles, parsed.plan), [] as string[]) : []),
     ];
     const contexts = planFiles && claim ? safely(() => quoteContexts(planFiles, claim), [] as ReturnType<typeof quoteContexts>) : [];
     return { parsed, structure, unaddressed, extra, hard, contexts, issues: [...structure, ...(claim?.issues ?? []), ...extra, ...readerCoverageIssues(unaddressed)], claim };

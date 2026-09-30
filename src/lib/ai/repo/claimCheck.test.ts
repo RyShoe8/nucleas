@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { counterexampleIssues, driftedFromVerified, automaticPlanSections, checkLineClaims, checkPlanClaims, contextAround, dataStoreIssues, findContradictions, quoteContexts, withoutNoneClaims, groupReaders, readerCoverageIssues, readersOfPlannedFiles, unaddressedReaders } from './claimCheck';
+import { generatorIssues, counterexampleIssues, driftedFromVerified, automaticPlanSections, checkLineClaims, checkPlanClaims, contextAround, dataStoreIssues, findContradictions, quoteContexts, withoutNoneClaims, groupReaders, readerCoverageIssues, readersOfPlannedFiles, unaddressedReaders } from './claimCheck';
 import { buildEvidencePack } from './evidencePack';
 
 const files = new Map<string, string>(Object.entries({
@@ -179,7 +179,7 @@ describe('automatic sections', () => {
     ] } } };
     const check = checkPlanClaims(files, plan, opts);
     const readers = readersOfPlannedFiles(files, ['lib/data/variants.ts'], { ...opts, pageRoute: pack.page!.route });
-    expect(readers).toEqual([{ file: 'lib/data/variants.ts', usedBy: ['app/shop/[slug]/page.tsx'], routes: ['/shop/:slug'] }]);
+    expect(readers).toEqual([{ file: 'lib/data/variants.ts', usedBy: ['app/shop/[slug]/page.tsx'], routes: ['/shop/:slug'], usage: [{ file: 'app/shop/[slug]/page.tsx', line: 1, text: "import { seedVariants } from '@/lib/data/variants';" }] }]);
     const text = automaticPlanSections({ check, readers, dataStoreNotes: [{ file: 'a/route.ts', line: 10, text: 'Variant.find({})', note: 'reads from a database' }] });
     expect(text).toContain('## Automatic checks (from the repository)');
     expect(text).toContain('1 of 2 quoted lines were found');
@@ -281,5 +281,41 @@ describe('counterexamples and drift', () => {
     expect(driftedFromVerified(before, { plan: { steps: ['Edit b.ts'], structured: { filesToChange: ['b.ts'], rootCause: { explanation: 'e', evidence: [{ file: 'a.ts', quote: 'x' }] } } } })).toBe(false);
     // The earlier plan was itself off the page's path: switching is welcome.
     expect(driftedFromVerified({ ...before, claim: { ...claim, evidenceOffPath: true } }, { plan: { steps: ['Edit b.ts'], structured: { filesToChange: ['b.ts'] } } })).toBe(false);
+  });
+});
+
+describe('what readers do with the file, stored data of the same kind, generated files', () => {
+  const repo = new Map<string, string>(Object.entries({
+    'lib/data/editions.ts': 'export const editions = [\n  { gameSlug: "openra", slug: "openhv" },\n];',
+    'app/api/launcher/catalog/route.ts': "import { editions } from '@/lib/data/editions';\nexport async function GET() {\n  return Response.json(editions.filter((e) => e.gameSlug === 'openra'));\n}",
+    'scripts/gen-edition-chips.ts': "import { editions } from '../lib/data/editions';\nimport fs from 'fs';\nfs.writeFileSync('lib/data/editionChipsData.ts', JSON.stringify(editions));",
+    'scripts/notes.ts': "// mentions editions but writes nothing\nconsole.log('editions');",
+  }));
+
+  it('shows the line in each reader that uses the changed file', () => {
+    const readers = readersOfPlannedFiles(repo, ['lib/data/editions.ts']);
+    expect(readers[0].usage?.map((u) => `${u.file}:${u.line}`)).toContain('app/api/launcher/catalog/route.ts:3');
+    expect(readers[0].usage?.find((u) => u.file === 'app/api/launcher/catalog/route.ts')?.text).toContain('editions.filter');
+    const text = automaticPlanSections({ check: { verified: [], unverified: [], missingPathFiles: [], offPath: [], newOrUnknown: [], evidenceOffPath: false, issues: [] }, readers, dataStoreNotes: [] });
+    expect(text).toContain('app/api/launcher/catalog/route.ts:3');
+  });
+
+  it('names the stored model that holds the same kind of data as the changed file first, by its role', () => {
+    const reads = [
+      { file: 'route.ts', line: 27, model: 'CommunityHostingConfig', note: 'reads from a database' },
+      { file: 'route.ts', line: 93, model: 'Edition', note: 'reads from a database' },
+      { file: 'route.ts', line: 28, model: 'CommunityServerProfile', note: 'reads from a database' },
+    ];
+    const issues = dataStoreIssues(reads, { steps: ['Edit lib/data/editions.ts'], structured: { filesToChange: ['lib/data/editions.ts'] } });
+    expect(issues[0]).toContain('route.ts:93 reads Edition from the database, the same kind of data as the file you change (lib/data/editions.ts)');
+    expect(issues[1]).toContain('CommunityHostingConfig');
+    expect(issues[1]).toContain('CommunityServerProfile');
+  });
+
+  it('asks for the generator to be re-run when a script reads the changed file and writes another', () => {
+    const issues = generatorIssues(repo, { steps: ['Edit lib/data/editions.ts to drop the entry'], structured: { filesToChange: ['lib/data/editions.ts'] } });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('scripts/gen-edition-chips.ts reads lib/data/editions.ts and writes lib/data/editionChipsData.ts');
+    expect(generatorIssues(repo, { steps: ['Edit lib/data/editions.ts', 'Re-run scripts/gen-edition-chips.ts and commit its output'], structured: { filesToChange: ['lib/data/editions.ts'] } })).toEqual([]);
   });
 });
