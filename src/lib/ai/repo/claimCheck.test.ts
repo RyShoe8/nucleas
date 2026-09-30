@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { automaticPlanSections, checkPlanClaims, groupReaders, readerCoverageIssues, readersOfPlannedFiles, unaddressedReaders } from './claimCheck';
+import { automaticPlanSections, checkLineClaims, checkPlanClaims, contextAround, dataStoreIssues, findContradictions, quoteContexts, withoutNoneClaims, groupReaders, readerCoverageIssues, readersOfPlannedFiles, unaddressedReaders } from './claimCheck';
 import { buildEvidencePack } from './evidencePack';
 
 const files = new Map<string, string>(Object.entries({
@@ -99,7 +99,7 @@ describe('quotes that repeat in a file', () => {
 
   it('does not misreport the line when the cited line is one of the occurrences', () => {
     const check = checkPlanClaims(entries, plan([{ file: 'data/entries.ts', line: 11, quote: 'group: "core",' }]));
-    expect(check.verified).toEqual([{ evidence: expect.anything(), occurrences: 4, ambiguous: false }]);
+    expect(check.verified).toEqual([{ evidence: expect.anything(), foundLine: 11, occurrences: 4, ambiguous: false }]);
     expect(check.issues).toEqual([]);
     expect(automaticPlanSections({ check, readers: [], dataStoreNotes: [] })).not.toContain('not 11');
   });
@@ -186,5 +186,63 @@ describe('automatic sections', () => {
     expect(text).toContain('lib/data/variants.ts is also used by app/shop/[slug]/page.tsx, route /shop/:slug');
     expect(text).toContain('Not verifiable from the repository: a/route.ts:10 reads from a database');
     expect(automaticPlanSections({ check: checkPlanClaims(files, { steps: [] }), readers: [], dataStoreNotes: [] })).toBe('');
+  });
+});
+
+describe('checks on what the plan says about the code', () => {
+  // A flat list of edition objects, each pointing at its game: there is no nested array.
+  const editions = new Map<string, string>([['data/editions.ts', [
+    'export const editions = [',
+    '  {',
+    '    gameSlug: "tiberian",',
+    '    slug: "hd",',
+    '    github: "https://example.com/hd",',
+    '  },',
+    '  {',
+    '    gameSlug: "openra",',
+    '    slug: "openhv",',
+    '    name: "OpenHV",',
+    '  },',
+    '];',
+  ].join('\n')]]);
+  const plan = (steps: string[], structured: Record<string, unknown> = {}) => ({ steps, structured: { filesToChange: ['data/editions.ts'], ...structured } });
+
+  it('shows the lines around a quote, with the quoted line marked', () => {
+    const text = contextAround(editions.get('data/editions.ts')!, 9, 2);
+    expect(text).toContain('8  ');
+    expect(text).toContain('9>     slug: "openhv",');
+    const contexts = quoteContexts(editions, { verified: [{ evidence: { file: 'data/editions.ts', line: 9, quote: 'slug: "openhv",' }, foundLine: 9, occurrences: 1, ambiguous: false }] });
+    expect(contexts[0].snippet).toContain('gameSlug: "openra"');
+  });
+
+  it('flags a cited line that does not show what the plan says it shows', () => {
+    const issues = checkLineClaims(editions, plan(['Remove the entry.'], { path: [{ file: 'data/editions.ts', line: 4, note: "contains the 'openra' game definition" }] }));
+    expect(issues[0]).toContain("data/editions.ts:4 is about 'openra'");
+    expect(issues[0]).toContain('slug: "hd"');
+    expect(checkLineClaims(editions, plan(['Remove it.'], { path: [{ file: 'data/editions.ts', line: 9, note: "the 'openhv' edition" }] }))).toEqual([]);
+  });
+
+  it('flags a step that removes code another step says stays unchanged', () => {
+    const issues = findContradictions(editions, plan([
+      "Remove the edition object that has slug 'openhv'.",
+      "Verify the standalone 'openhv' game entry (around line 9) remains unchanged.",
+    ]));
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('Contradiction: step 1 changes');
+    expect(issues[0]).toContain('step 2');
+    // Keeping something elsewhere is fine.
+    expect(findContradictions(editions, plan(["Remove the edition object that has slug 'openhv'.", 'The tiberian entry at line 3 stays unchanged.']))).toEqual([]);
+  });
+
+  it('asks about database models on the path that the plan never mentions', () => {
+    const reads = [{ file: 'route.ts', line: 93, model: 'Edition', note: 'reads from a database' }, { file: 'route.ts', line: 27, model: 'CommunityHostingConfig', note: 'reads from a database' }];
+    const issues = dataStoreIssues(reads, { structured: { unverified: ['Whether stored Edition rows exist for openhv.'] } });
+    expect(issues[0]).toContain('CommunityHostingConfig (route.ts:27)');
+    expect(issues[0]).not.toContain('Edition (');
+    expect(dataStoreIssues(reads, { structured: { unverified: ['Edition and CommunityHostingConfig rows.'] } })).toEqual([]);
+  });
+
+  it('drops "none found" claims so they cannot stand next to unassessed readers', () => {
+    expect(withoutNoneClaims(['None found.', 'No other readers.', 'The launcher reads it too.'])).toEqual(['The launcher reads it too.']);
   });
 });

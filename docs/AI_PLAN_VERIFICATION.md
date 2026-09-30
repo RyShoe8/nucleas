@@ -49,3 +49,11 @@ the script reports how often the dig shows those files first, for the old keywor
 dig. Files are read as they are at HEAD, and commit messages often name what they change, so absolute numbers
 are optimistic; compare methods, not repositories. `scorePlanTargets` in `src/lib/ai/eval/replay.ts` scores a
 plan's files against a real change for evaluating full model runs.
+
+## Checks on what a plan says about the code
+
+- **Context around quotes:** each quoted line is shown with ~5 lines around it (in the correction round, to the Worker and Critic, and in the plan's "Code around the quoted lines"), so the plan's description of what a line belongs to can be checked.
+- **Line claims:** a cited `file:line` (or "line N" for the single file being changed) must show the named thing within a few lines, or the plan is sent back.
+- **Contradictions:** a step that changes code that another step says stays unchanged (same line, or the named thing sits on that line) is flagged.
+- **Readers:** up to two correction rounds; if readers of the changed files are still unassessed, "None found" claims are removed and a `NOT ASSESSED` line is added, so the plan never says "none" beside the warnings.
+- **Stored data:** every database model the data path reads must be mentioned by the plan (could stored rows keep the symptom alive?).

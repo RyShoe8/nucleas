@@ -15,7 +15,7 @@ import {
 } from '@/lib/ide/planModePrompt';
 import { parseNucleasPlan, recomposePlan } from '@/lib/ide/parseNucleasPlan';
 import { plannedFiles, validatePlanStructure } from '@/lib/ide/planStructure';
-import { automaticPlanSections, checkPlanClaims, groupReaders, readerCoverageIssues, readersOfPlannedFiles, unaddressedReaders, type ClaimCheck, type ReaderGroup } from '@/lib/ai/repo/claimCheck';
+import { automaticPlanSections, checkLineClaims, checkPlanClaims, dataStoreIssues, findContradictions, groupReaders, quoteContexts, readerCoverageIssues, readersOfPlannedFiles, renderQuoteContexts, unaddressedReaders, withoutNoneClaims, type ClaimCheck, type ReaderGroup } from '@/lib/ai/repo/claimCheck';
 import type { EvidencePack } from '@/lib/ai/repo/evidencePack';
 import { parseReviewerGate } from '@/lib/ide/parseReviewerGate';
 import { looksLikeProjectInternalQuery } from '@/lib/ai/tools/serverBrowseAssist';
@@ -656,7 +656,8 @@ export async function attemptOrchestratedIdeReply(input: {
   const planScope = { scope: evidencePack?.scope, pageFile: evidencePack?.page?.file };
   const assessPlan = (text: string) => {
     const parsed = parseNucleasPlan(text);
-    if (!parsed) return { parsed: null, structure: [] as string[], unaddressed: [] as ReaderGroup[], issues: ['The response did not contain a valid nucleas-plan JSON block. Return the complete plan as one fenced JSON block tagged nucleas-plan.'], claim: null as ClaimCheck | null };
+    const none = { structure: [] as string[], unaddressed: [] as ReaderGroup[], extra: [] as string[], contexts: [] as ReturnType<typeof quoteContexts>, claim: null as ClaimCheck | null };
+    if (!parsed) return { parsed: null, ...none, issues: ['The response did not contain a valid nucleas-plan JSON block. Return the complete plan as one fenced JSON block tagged nucleas-plan.'] };
     const structure = safely(() => validatePlanStructure(parsed.plan, { hasKnownPath: Boolean(evidencePack?.chains.length) }), [] as string[]);
     // Text left over from the fill-in form is not a plan.
     const prose = [parsed.plan.title, parsed.plan.summary, ...parsed.plan.steps, parsed.plan.structured?.symptom, parsed.plan.structured?.walkthrough, parsed.plan.structured?.expectedResult].filter(Boolean).join('\n');
@@ -666,17 +667,25 @@ export async function attemptOrchestratedIdeReply(input: {
     const unaddressed = planFiles
       ? safely(() => unaddressedReaders(groupReaders(readersOfPlannedFiles(planFiles, plannedFiles(parsed.plan), { ...planScope, pageRoute: evidencePack?.page?.route })), parsed.plan), [] as ReaderGroup[])
       : [];
-    return { parsed, structure, unaddressed, issues: [...structure, ...(claim?.issues ?? []), ...readerCoverageIssues(unaddressed)], claim };
+    // Claims the plan makes about the code that the code contradicts: wrong line numbers, steps that undo each
+    // other, and stored data it never considered.
+    const extra = [
+      ...(planFiles ? safely(() => checkLineClaims(planFiles, parsed.plan), [] as string[]) : []),
+      ...(planFiles ? safely(() => findContradictions(planFiles, parsed.plan), [] as string[]) : []),
+      ...safely(() => dataStoreIssues(evidencePack?.unverified ?? [], parsed.plan), [] as string[]),
+    ];
+    const contexts = planFiles && claim ? safely(() => quoteContexts(planFiles, claim), [] as ReturnType<typeof quoteContexts>) : [];
+    return { parsed, structure, unaddressed, extra, contexts, issues: [...structure, ...(claim?.issues ?? []), ...extra, ...readerCoverageIssues(unaddressed)], claim };
   };
   const plannerAttempts: TeamChatTurn[] = [];
   let planAssessment: ReturnType<typeof assessPlan> | null = null;
   if (interactionMode === 'plan') {
     planAssessment = assessPlan(plannerTurn.text);
-    // One targeted correction round, only for problems the code can prove; then whatever remains is reported.
-    if (planAssessment.issues.length && !input.signal?.aborted && remaining() > 100_000) {
-      input.onProgress?.(`Checked the plan against the repository: sending ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} back to the planner`);
+    // Up to two targeted correction rounds, only for problems the code can prove; whatever remains is reported.
+    for (let round = 0; round < 2 && planAssessment.issues.length && !input.signal?.aborted && remaining() > 100_000; round += 1) {
+      input.onProgress?.(`Checked the plan against the repository: sending ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} back to the planner${round ? ' (second round)' : ''}`);
       // A reply with no plan at all gets a fill-in-the-blanks form with the traced facts pre-filled;
-      // a plan with specific problems gets those problems back.
+      // a plan with specific problems gets those problems back, with the code around what it quoted.
       const retry = await runStage({
         stage: 'planner',
         binding: plannerBinding,
@@ -684,17 +693,17 @@ export async function attemptOrchestratedIdeReply(input: {
           input.userText, '',
           'Your previous plan was rejected by automatic checks against the repository. Return the complete plan again as one nucleas-plan JSON block, fixing exactly these problems:',
           ...planAssessment.issues.map((issue) => `- ${issue}`),
+          ...(planAssessment.contexts.length ? ['', 'The code around each line you quoted. Say which entry, function or list each quote belongs to, and correct any claim these lines contradict:', renderQuoteContexts(planAssessment.contexts.slice(0, 3))] : []),
           '', 'Previous plan:', plannerTurn.text.slice(0, 5000),
         ].join('\n'),
         priorTurns: [],
         maxOutputTokens: 4096,
       });
-      if (retry.role === 'assistant') {
-        plannerAttempts.push(plannerTurn);
-        plannerTurn = retry;
-        logStage('planner', retry, plannerBinding.model);
-        planAssessment = assessPlan(retry.text);
-      }
+      if (retry.role !== 'assistant') break;
+      plannerAttempts.push(plannerTurn);
+      plannerTurn = retry;
+      logStage('planner', retry, plannerBinding.model);
+      planAssessment = assessPlan(retry.text);
     }
   }
 
@@ -760,9 +769,13 @@ export async function attemptOrchestratedIdeReply(input: {
     if (c.evidenceOffPath) lines.push('FAILED: none of the quoted evidence is in a file the named page uses.');
     for (const issue of planAssessment.structure.slice(0, 4)) lines.push(`INCOMPLETE: ${issue}`);
     for (const issue of readerCoverageIssues(planAssessment.unaddressed)) lines.push(`INCOMPLETE: ${issue}`);
-    return lines.length
+    for (const issue of planAssessment.extra.slice(0, 4)) lines.push(`${/^Contradiction/.test(issue) ? 'FAILED' : 'INCOMPLETE'}: ${issue}`);
+    const context = planAssessment.contexts.length
+      ? ['', 'The code around each quoted line. Check that the plan describes what each line belongs to correctly (which entry, function or list):', renderQuoteContexts(planAssessment.contexts.slice(0, 3))].join('\n')
+      : '';
+    return (lines.length
       ? ['Automated checks on the plan (run by Nucleas against the repository):', ...lines.map((l) => `- ${l}`)].join('\n')
-      : 'Automated checks on the plan (run by Nucleas against the repository): every quoted line was found and the edits are on the named page\u2019s data path.';
+      : 'Automated checks on the plan (run by Nucleas against the repository): every quoted line was found and the edits are on the named page\u2019s data path.') + context;
   })();
 
   // Preserve paid planning work without exposing an unverified, approvable plan.
@@ -790,16 +803,22 @@ export async function attemptOrchestratedIdeReply(input: {
     if (interactionMode !== 'plan') return undefined;
     const parsed = parseNucleasPlan(plannerTurn.text);
     if (!parsed) return undefined;
-    const planned = parsed.plan;
+    let planned = parsed.plan;
     if (!planFiles || !planAssessment?.claim) return planned;
     const verified = planAssessment.claim;
     const unaddressed = planAssessment.unaddressed;
+    // "None found" cannot stand beside readers nobody assessed.
+    if (unaddressed.length && planned.structured?.sideEffects) planned = { ...planned, structured: { ...planned.structured, sideEffects: [...withoutNoneClaims(planned.structured.sideEffects), 'NOT ASSESSED: the planner did not say how this change affects the other readers listed under Automatic checks.'] } };
+    const open = planAssessment.extra;
+    const contexts = planAssessment.contexts;
     return safely(() => recomposePlan(planned, {
       extraSections: automaticPlanSections({
         check: verified,
         readers: readersOfPlannedFiles(planFiles, plannedFiles(planned), { ...planScope, pageRoute: evidencePack?.page?.route }),
         dataStoreNotes: evidencePack?.unverified ?? [],
         unaddressed,
+        contexts,
+        remaining: open,
       }),
       notFound: new Set(verified.unverified.map((u) => u.evidence.quote)),
     }), planned);

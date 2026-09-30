@@ -27,7 +27,7 @@ export interface EvidencePack {
   /** Lines that mention the request's names, in the target files. */
   termLines: { file: string; line: number; text: string; term: string }[];
   /** Data the path reads that is not in the repository. */
-  unverified: { file: string; line: number; text: string; note: string }[];
+  unverified: { file: string; line: number; text: string; note: string; /** The model or table read, when the code names it. */ model?: string }[];
   /** Other consumers of the target files: a change there reaches these too. */
   readers: { file: string; usedBy: string[]; routes: string[] }[];
   /** Every file the named page depends on (empty when the request names no page). */
@@ -92,12 +92,27 @@ function termLinesIn(files: Map<string, string>, file: string, terms: string[], 
   return ordered.slice(0, perFile).sort((a, b) => a.index - b.index).map((h) => ({ file, line: h.index + 1, text: clip(lines[h.index]), term: h.term }));
 }
 
+const MODEL_NAMES: RegExp[] = [
+  /\b([A-Z]\w*)\.(?:find|findOne|findById|findMany|findAll|aggregate|countDocuments|distinct)\s*\(/,
+  /\bprisma\.(\w+)\./,
+  /\b(\w+)\.objects\./,
+];
+
+/** Data the file reads that the repository cannot show: each distinct model or service once, so a later read is not hidden behind the first. */
 function unverifiedIn(files: Map<string, string>, file: string): EvidencePack['unverified'] {
   const lines = (files.get(file) ?? '').split('\n');
-  for (let i = 0; i < lines.length; i += 1) {
-    for (const [re, note] of DATA_STORE_READS) if (re.test(lines[i])) return [{ file, line: i + 1, text: clip(lines[i]), note }];
+  const out: EvidencePack['unverified'] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < lines.length && out.length < 6; i += 1) {
+    for (const [re, note] of DATA_STORE_READS) {
+      if (!re.test(lines[i])) continue;
+      const model = MODEL_NAMES.map((m) => m.exec(lines[i])?.[1]).find(Boolean);
+      const key = model ?? note;
+      if (!seen.has(key)) { seen.add(key); out.push({ file, line: i + 1, text: clip(lines[i]), note, ...(model ? { model } : {}) }); }
+      break;
+    }
   }
-  return [];
+  return out;
 }
 
 export function buildEvidencePack(files: Map<string, string>, userText: string, options: { maxTargets?: number } = {}): EvidencePack | null {
@@ -133,7 +148,7 @@ export function buildEvidencePack(files: Map<string, string>, userText: string, 
 
   const termLines = targets.flatMap((t) => termLinesIn(files, t, terms));
   const pathFiles = [...new Set(chains.flatMap((c) => c.hops.map((h) => h.file)))].filter((f) => f !== page?.file);
-  const unverified = pathFiles.flatMap((f) => unverifiedIn(files, f)).slice(0, 4);
+  const unverified = pathFiles.flatMap((f) => unverifiedIn(files, f)).slice(0, 10);
   const readers = targets.slice(0, 3).flatMap((file) => {
     const refs = findReferences(files, file, { maxDepth: 3, limit: 80 });
     if ('error' in refs) return [];

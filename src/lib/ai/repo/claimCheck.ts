@@ -14,7 +14,7 @@ export interface ClaimCheck {
    * `occurrences` is how many times the quote appears; `ambiguous` means it appears in several places and
    * the cited line does not single one out, so it proves little on its own.
    */
-  verified: { evidence: PlanEvidence; actualLine?: number; occurrences: number; ambiguous: boolean }[];
+  verified: { evidence: PlanEvidence; actualLine?: number; /** The line the quote was found on (the cited line when it was right). */ foundLine: number; occurrences: number; ambiguous: boolean }[];
   unverified: { evidence: PlanEvidence; reason: 'file_missing' | 'quote_not_found' }[];
   /** Path hops that name a file that is not in the repository. */
   missingPathFiles: string[];
@@ -76,6 +76,7 @@ export function checkPlanClaims(
     const cited = Boolean(evidence.line) && Math.abs(nearest - evidence.line!) <= 1;
     verified.push({
       evidence,
+      foundLine: nearest,
       occurrences: lines.length,
       ambiguous: lines.length > 1 && !cited,
       ...(evidence.line && !cited ? { actualLine: nearest } : {}),
@@ -107,6 +108,129 @@ export function checkPlanClaims(
   if (evidenceOffPath) issues.push('rootCause.evidence: none of the quoted code is in a file the named page uses. Trace how the page gets its data and quote the code on that path.');
   if (offPath.length) issues.push(`filesToChange: ${offPath.slice(0, 4).join(', ')} is not used by the page the request names, so editing it would not change what the page shows. Edit code on the page's data path, or explain what else reads it.`);
   return { verified, unverified, missingPathFiles, offPath, newOrUnknown, evidenceOffPath, issues };
+}
+
+/** Numbered lines around `line` (the line itself marked with >), so a quote can be read in the entry it belongs to. */
+export function contextAround(content: string, line: number, radius = 5): string {
+  const lines = content.split('\n');
+  const from = Math.max(1, line - radius);
+  const to = Math.min(lines.length, line + radius);
+  return lines.slice(from - 1, to).map((text, i) => `${from + i}${from + i === line ? '>' : ' '} ${text.length > 140 ? `${text.slice(0, 140)}\u2026` : text}`).join('\n');
+}
+
+/** The code around each quoted line that was found, for the planner to reread, the Worker and Critic to check, and the reviewer to see. */
+export function quoteContexts(files: Map<string, string>, check: Pick<ClaimCheck, 'verified'>, max = 4, radius = 5): { file: string; line: number; snippet: string }[] {
+  const seen = new Set<string>();
+  const out: { file: string; line: number; snippet: string }[] = [];
+  for (const v of check.verified) {
+    const key = `${v.evidence.file}:${v.foundLine}`;
+    const content = files.get(v.evidence.file);
+    if (!content || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ file: v.evidence.file, line: v.foundLine, snippet: contextAround(content, v.foundLine, radius) });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+export function renderQuoteContexts(contexts: { file: string; line: number; snippet: string }[]): string {
+  return contexts.map((c) => `${c.file}:${c.line}\n${c.snippet}`).join('\n\n');
+}
+
+const SENTENCE_SPLIT = /\n+|;\s+|\.\s+(?=[A-Z])/;
+const FILE_LINE = /((?:[\w@.~-]+\/)*[\w@.~-]+\.[A-Za-z0-9]{1,6}):(\d{1,6})\b/g;
+const QUOTED = /'([^'\n]{3,60})'|"([^"\n]{3,60})"|`([^`\n]{3,60})`/g;
+const looksLikePath = (t: string) => /\/|\.[a-z]{1,5}$/i.test(t);
+
+function quotedTokens(text: string): string[] {
+  return [...text.matchAll(QUOTED)].map((m) => (m[1] ?? m[2] ?? m[3]).trim()).filter((t) => t && !looksLikePath(t));
+}
+
+function planSentences(plan: { steps: string[]; structured?: StructuredPlan }): { where: string; text: string }[] {
+  const s = plan.structured;
+  const out: { where: string; text: string }[] = [];
+  plan.steps.forEach((step, i) => step.split(SENTENCE_SPLIT).forEach((text) => out.push({ where: `step ${i + 1}`, text })));
+  for (const [where, text] of [['walkthrough', s?.walkthrough], ['expectedResult', s?.expectedResult], ['rootCause', s?.rootCause?.explanation]] as const) {
+    if (text) text.split(SENTENCE_SPLIT).forEach((t) => out.push({ where, text: t }));
+  }
+  return out.filter((x) => x.text.trim());
+}
+
+/** The one file the plan is about, when it names just one to change. */
+const soleFile = (plan: { structured?: StructuredPlan }, files: Map<string, string>) => {
+  const list = (plan.structured?.filesToChange ?? []).filter((f) => files.has(f));
+  return list.length === 1 ? list[0] : undefined;
+};
+
+/**
+ * Lines the plan cites for a named thing that do not show it. A plan that says "line 4414 contains the
+ * 'openra' entry" is checked: 'openra' must be near line 4414 of that file.
+ */
+export function checkLineClaims(files: Map<string, string>, plan: { steps: string[]; structured?: StructuredPlan }): string[] {
+  const issues: string[] = [];
+  const only = soleFile(plan, files);
+  const check = (where: string, file: string | undefined, line: number, text: string) => {
+    const content = file ? files.get(file) : undefined;
+    const tokens = quotedTokens(text);
+    if (!content || !tokens.length) return;
+    const lines = content.split('\n');
+    const window = lines.slice(Math.max(0, line - 4), line + 3).join('\n').toLowerCase();
+    if (tokens.some((t) => window.includes(t.toLowerCase()))) return;
+    issues.push(`${where}: it says ${file}:${line} is about ${tokens.slice(0, 2).map((t) => `'${t}'`).join(' / ')}, but line ${line} is \`${(lines[line - 1] ?? '').trim().slice(0, 80)}\`. Reread the file and correct the line number or the claim.`);
+  };
+  for (const { where, text } of planSentences(plan)) {
+    for (const m of text.matchAll(FILE_LINE)) check(where, m[1], Number(m[2]), text);
+    for (const m of text.matchAll(/\blines?\s+(\d{1,6})\b/gi)) check(where, only, Number(m[1]), text);
+  }
+  for (const hop of plan.structured?.path ?? []) if (hop.line && hop.note) check('path', hop.file, hop.line, hop.note);
+  return issues.slice(0, 4);
+}
+
+const KEEP = /\b(?:unchanged|untouched|remains?|stays?|left as[- ]is|not (?:be )?(?:changed|modified|touched|removed|deleted)|do not (?:change|modify|touch|remove|delete)|must not)\b/i;
+const CHANGE = /\b(?:remove|delete|drop|replace|change|edit|rename|move|update)\b/i;
+
+/** A step that changes the code another step says must stay as it is (same line, or the named thing sits on that line). */
+export function findContradictions(files: Map<string, string>, plan: { steps: string[]; structured?: StructuredPlan }): string[] {
+  const only = soleFile(plan, files);
+  const sentences = planSentences(plan).filter((x) => x.where.startsWith('step') || x.where === 'walkthrough');
+  const issues: string[] = [];
+  const keepers = sentences.filter((x) => KEEP.test(x.text));
+  const changers = sentences.filter((x) => !KEEP.test(x.text) && CHANGE.test(x.text));
+  for (const keep of keepers) {
+    const refs: { file?: string; line: number }[] = [
+      ...[...keep.text.matchAll(FILE_LINE)].map((m) => ({ file: m[1], line: Number(m[2]) })),
+      ...[...keep.text.matchAll(/\blines?\s+(\d{1,6})\b/gi)].map((m) => ({ file: only, line: Number(m[1]) })),
+    ];
+    for (const ref of refs) {
+      const content = ref.file ? files.get(ref.file) : undefined;
+      if (!content) continue;
+      const window = content.split('\n').slice(Math.max(0, ref.line - 3), ref.line + 2).join('\n').toLowerCase();
+      for (const change of changers) {
+        if (change.where === keep.where && change.text === keep.text) continue;
+        const hit = quotedTokens(change.text).find((t) => window.includes(t.toLowerCase()));
+        const sameLine = [...change.text.matchAll(FILE_LINE)].some((m) => m[1] === ref.file && Math.abs(Number(m[2]) - ref.line) <= 1);
+        if (hit || sameLine) {
+          issues.push(`Contradiction: ${change.where} changes '${hit ?? `${ref.file}:${ref.line}`}', but ${keep.where} says the code at ${ref.file}:${ref.line} stays unchanged, and '${hit ?? 'it'}' is at that line. Decide which is meant and make the steps agree.`);
+          break;
+        }
+      }
+    }
+  }
+  return [...new Set(issues)].slice(0, 3);
+}
+
+/** The database models the code path reads that the plan never mentions: stored rows could keep the symptom alive. */
+export function dataStoreIssues(reads: { file: string; line: number; model?: string; note: string }[], plan: { structured?: StructuredPlan }): string[] {
+  const s = plan.structured;
+  const text = [...(s?.unverified ?? []), ...(s?.sideEffects ?? []), s?.rootCause?.explanation ?? '', s?.expectedResult ?? '', s?.walkthrough ?? ''].join('\n').toLowerCase();
+  const missing = [...new Map(reads.filter((r) => r.model && /database/.test(r.note)).map((r) => [r.model!, r])).values()].filter((r) => !text.includes(r.model!.toLowerCase()));
+  if (!missing.length) return [];
+  return [`unverified: the code path reads ${missing.slice(0, 4).map((r) => `${r.model} (${r.file}:${r.line})`).join(', ')} from a database. For each, say whether stored rows could keep the symptom alive after your change, and how to check.`];
+}
+
+/** "None found" and similar cannot stand next to readers that were never assessed. */
+export function withoutNoneClaims(sideEffects: string[]): string[] {
+  return sideEffects.filter((x) => !/^\W*(?:none|nothing|no (?:other |further )?(?:side effects?|readers?|impact|effects?))\b/i.test(x));
 }
 
 /** Other consumers of the files a plan changes: a change there reaches them too. Excludes the page's own path. */
@@ -185,6 +309,10 @@ export function automaticPlanSections(input: {
   dataStoreNotes: { file: string; line: number; text: string; note: string }[];
   /** Reader groups the plan never answered for. */
   unaddressed?: ReaderGroup[];
+  /** Code around each quoted line, shown so a reader can see what each quote belongs to. */
+  contexts?: { file: string; line: number; snippet: string }[];
+  /** Problems the checks still found in the final plan (contradictions, wrong line claims). */
+  remaining?: string[];
 }): string {
   const out: string[] = [];
   const { check } = input;
@@ -201,6 +329,8 @@ export function automaticPlanSections(input: {
   for (const r of input.readers) lines.push(`- ${r.file} is also used by ${[...r.usedBy, ...r.routes.map((x) => `route ${x}`)].join(', ')}; a change there reaches them too.`);
   for (const g of input.unaddressed ?? []) lines.push(`- The plan does not say how the change affects: ${g.label} (${[...g.files.slice(0, 4).map((f) => f.split('/').pop()), ...g.routes.slice(0, 2)].join(', ')}).`);
   for (const n of input.dataStoreNotes) lines.push(`- Not verifiable from the repository: ${n.file}:${n.line} ${n.note} (\`${n.text}\`). Stored data may differ from the code.`);
+  for (const issue of input.remaining ?? []) lines.push(`- Still open: ${issue}`);
   if (lines.length) out.push(`## Automatic checks (from the repository)\n\n${lines.join('\n')}`);
+  if (input.contexts?.length) out.push(`## Code around the quoted lines\n\n${input.contexts.slice(0, 3).map((c) => `\`${c.file}:${c.line}\`\n\`\`\`\n${c.snippet}\n\`\`\``).join('\n\n')}`);
   return out.join('\n\n');
 }

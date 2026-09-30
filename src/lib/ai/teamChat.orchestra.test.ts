@@ -268,7 +268,7 @@ describe('attemptOrchestratedIdeReply full orchestra', () => {
     });
     const request = 'On playbound.club/admin/connect/game-servers, remove the OpenHV listing under OpenRA.';
     const turn = await attemptOrchestratedIdeReply({ projectName: 'PlayBound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: request, priorTurns: [], interactionMode: 'plan' });
-    expect(stages).toEqual(['planner', 'planner']);
+    expect(stages).toEqual(['planner', 'planner', 'planner']);
     expect(planners[1]).toContain('```nucleas-plan');
     expect(planners[1]).toContain('<what the user sees>');
     expect(turn.role).toBe('status');
@@ -597,8 +597,8 @@ describe('plans are checked against the repository', () => {
     const invented = plan({ rootCause: { explanation: '1. a 2. b', evidence: [{ file: 'lib/data/variants.ts', line: 2, quote: "export const gadgetPro = { parent: 'top-level' };" }] } });
     accepting(calls, invented);
     const turn = await run();
-    // One correction round, then it is not spent on a Worker and Critic.
-    expect(calls.map((c) => c.stage)).toEqual(['planner', 'planner']);
+    // Two correction rounds, then it is not spent on a Worker and Critic.
+    expect(calls.map((c) => c.stage)).toEqual(['planner', 'planner', 'planner']);
     expect(calls[1].userText).toContain('was not found in lib/data/variants.ts');
     expect(turn.plan).toBeUndefined();
     expect(turn.text).toContain('could not verify it, so it is not ready for review');
@@ -635,9 +635,13 @@ describe('plans are checked against the repository', () => {
     const calls: { stage: string; userText: string }[] = [];
     accepting(calls, plan({ sideEffects: ['Nothing else is affected.'] }));
     const turn = await run();
-    expect(calls.map((c) => c.stage)).toEqual(['planner', 'planner', 'worker', 'reviewer']);
+    expect(calls.map((c) => c.stage)).toEqual(['planner', 'planner', 'planner', 'worker', 'reviewer']);
     expect(turn.plan?.markdown).toContain('The plan does not say how the change affects');
-    expect(calls[2].userText).toContain('INCOMPLETE: sideEffects');
+    // "Nothing else is affected" cannot stand next to readers nobody assessed.
+    expect(turn.plan?.markdown).not.toContain('Nothing else is affected');
+    expect(turn.plan?.markdown).toContain('NOT ASSESSED');
+    expect(calls[3].userText).toContain('INCOMPLETE: sideEffects');
+    expect(calls[3].userText).toContain('The code around each quoted line');
   });
 
   it('skips the correction round when time is short, and publishes a checked plan as not reviewed', async () => {
