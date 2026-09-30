@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "eval:replay": "tsx scripts/eval-replay.ts",
     "worker:build": "tsc -p tsconfig.worker.json",
     "worker:start": "tsx services/execution-worker/server.ts",
     "seed:insights": "tsx scripts/seed-insight-vendors.ts",

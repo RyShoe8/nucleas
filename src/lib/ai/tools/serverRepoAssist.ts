@@ -3,9 +3,9 @@ import { listIdeTree, readIdeFile } from '@/lib/ai/ideCommitPush';
 import { extractChatHeuristicText } from '@/lib/ai/tools/serverBrowseAssist';
 import { getRepoSnapshot, type LoadedSnapshot } from '@/lib/ai/repo/snapshot';
 import { repositoryEvidenceReceipt, type RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
-import { identifierTerms, relevantExcerptStart, snapshotCandidates } from '@/lib/ai/repo/digSelect';
-import { buildEvidencePack, type EvidencePack } from '@/lib/ai/repo/evidencePack';
-import { reachableFrom, routeFileFor } from '@/lib/ai/repo/references';
+import { relevantExcerptStart, snapshotCandidates } from '@/lib/ai/repo/digSelect';
+import type { EvidencePack } from '@/lib/ai/repo/evidencePack';
+import { selectDigFiles } from '@/lib/ai/repo/digFiles';
 
 export { snapshotCandidates };
 
@@ -214,14 +214,9 @@ export async function gatherRepoAssistContext(input: {
   if (local?.ok) {
     toolsUsed.push('repo_search');
     // Trace how the code connects (page → components → routes → data), so the files shown first are the
-    // ones the change must go through. Tracing is an aid: if it fails, the ranking below still runs.
-    let pack: EvidencePack | null = null;
-    try { pack = buildEvidencePack(local.snapshot.files, input.userText); } catch { pack = null; }
+    // ones the change must go through (see selectDigFiles).
+    const { paths, pack, focus } = selectDigFiles(local.snapshot.files, input.userText, query, maxFiles);
     const page = pack?.page ?? null;
-    const scope = pack?.scope.size ? pack.scope : undefined;
-    const ranked = snapshotCandidates(local.snapshot, query, maxFiles, { scope });
-    const focus = new Map((pack?.focus ?? []).map((f) => [f.file, f.line] as const));
-    const paths = [...new Set([...focus.keys(), ...ranked])].slice(0, maxFiles);
     const excerpts = paths.map(path => snapshotExcerpt(local.snapshot, path, query, maxCharsPerFile, focus.get(path))).filter((item): item is NonNullable<typeof item> => Boolean(item));
     const fileBlocks = excerpts.map(item => item.block);
     if (fileBlocks.length) {
