@@ -38,8 +38,9 @@ export interface MailAccountView {
 type AccountRow = MailAccountDoc & { _id: Types.ObjectId };
 
 function credentials() {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  // Mail can have its own Google client (for example an Internal Workspace app), separate from Analytics sign-in.
+  const clientId = process.env.GOOGLE_MAIL_CLIENT_ID?.trim() || process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_MAIL_CLIENT_SECRET?.trim() || process.env.GOOGLE_CLIENT_SECRET;
   if (!clientId || !clientSecret) throw new Error('Google sign-in is not configured.');
   return { clientId, clientSecret };
 }

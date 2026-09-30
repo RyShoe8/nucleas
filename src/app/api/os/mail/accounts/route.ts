@@ -11,5 +11,5 @@ export async function GET(request: NextRequest) {
   if (viewer instanceof NextResponse) return viewer;
   if (!canUseMail(viewer)) return NextResponse.json({ error: MAIL_FORBIDDEN }, { status: 403 });
   const [accounts, counts] = await Promise.all([listAccounts(viewer), mailCounts(viewer)]);
-  return NextResponse.json({ accounts, counts, googleConfigured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) }, { headers: { 'Cache-Control': 'no-store' } });
+  return NextResponse.json({ accounts, counts, googleConfigured: Boolean((process.env.GOOGLE_MAIL_CLIENT_ID || process.env.GOOGLE_CLIENT_ID) && (process.env.GOOGLE_MAIL_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET)) }, { headers: { 'Cache-Control': 'no-store' } });
 }

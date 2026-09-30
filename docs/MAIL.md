@@ -2,7 +2,19 @@
 
 All connected Gmail mailboxes in one inbox (Mail window). Managers and administrators only. A synced copy of each mailbox is kept in Nucleas's database (the last 30 days on first connect, then incremental via Gmail's history API every 5 minutes and on "Sync now"). Disconnecting a mailbox deletes its copy; Gmail itself is never changed by disconnecting.
 
-## Google setup (once)
+## Google setup for your own Workspace (recommended first step)
+
+For mailboxes in your own Google Workspace (for example ryanschumacher@themediashop.co and platform addresses in the same organization), use an **Internal** app: no verification, no warning, no account limit, no security assessment.
+
+1. In the Google Cloud console, create (or pick) a project **inside your Workspace organization** and enable the **Gmail API**.
+2. OAuth consent screen → user type **Internal**; add scopes `gmail.modify` and `gmail.send`.
+3. Credentials → create an OAuth client (Web application) with the redirect URI `https://os.nucleas.app/api/os/mail/google/callback`.
+4. Set `GOOGLE_MAIL_CLIENT_ID` and `GOOGLE_MAIL_CLIENT_SECRET` on the server (Mail falls back to `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` when they are not set, so the Analytics sign-in can stay a separate, External app).
+5. Mail → Connect a Gmail mailbox, sign in as each mailbox. Only accounts inside that Workspace can connect.
+
+Mailboxes outside the organization need the options below.
+
+## Google setup, other cases
 
 Scopes: `gmail.modify` (read, label, archive) is a **restricted** scope; `gmail.send` is a *sensitive* scope. Every Gmail scope that can read message bodies (`gmail.readonly`, `gmail.metadata`, `gmail.modify`, `mail.google.com`) is restricted, so this cannot be done with lighter permissions.
 
