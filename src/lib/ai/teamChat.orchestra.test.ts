@@ -73,7 +73,8 @@ const structuredPlan = (overrides: Record<string, unknown> = {}) => JSON.stringi
   title: 'Blog', summary: 'Add blog', symptom: 'The site has no blog.',
   path: [{ file: 'app/routes.ts', line: 1, note: 'declares the routes' }],
   rootCause: { explanation: '1. Routes are declared in one file. 2. There is no blog route.', evidence: [{ file: 'app/routes.ts', line: 1, quote: 'export const routes = []' }] },
-  filesToChange: ['app/routes.ts'], expectedResult: 'A /blog page appears because app/routes.ts:1 now lists it.',
+  filesToChange: ['app/routes.ts'], walkthrough: 'app/routes.ts routes: with the change the array now includes a blog route, so it outputs it.',
+  expectedResult: 'A /blog page appears because app/routes.ts:1 now lists it.',
   sideEffects: [], unverified: [], outOfScope: [], steps: ['Add routes in app/routes.ts'], ...overrides,
 });
 const PLAN_FENCE = `\`\`\`nucleas-plan\n${structuredPlan()}\n\`\`\``;
@@ -523,7 +524,8 @@ describe('plans are checked against the repository', () => {
     title: 'Hide duplicate variant', summary: 'gadgetPro is listed twice', symptom: 'gadgetPro shows on its own and under widget.',
     path: [{ file: 'app/admin/catalog/page.tsx', line: 1 }, { file: 'app/api/admin/catalog/items/route.ts', line: 5, note: 'builds the rows' }],
     rootCause: { explanation: '1. The route lists variants. 2. gadgetPro is a variant of widget. 3. It is also top level.', evidence: goodEvidence },
-    filesToChange: ['lib/data/variants.ts'], expectedResult: 'One gadgetPro row remains because lib/data/variants.ts:2 no longer lists it under widget.',
+    filesToChange: ['lib/data/variants.ts'], walkthrough: 'app/api/admin/catalog/items/route.ts GET(): with the entry removed, the loop over seedVariants no longer emits widget:gadgetPro.', expectedResult: 'One gadgetPro row remains because lib/data/variants.ts:2 no longer lists it under widget.',
+    sideEffects: ['app/shop/[slug]/page.tsx also imports lib/data/variants.ts: the public /shop/:slug page will also stop listing gadgetPro under widget, which is intended.'],
     steps: ['Edit lib/data/variants.ts to remove the gadgetPro entry under widget'], ...o,
   })}\n\`\`\``;
   const run = (over: Partial<Parameters<typeof attemptOrchestratedIdeReply>[0]> = {}) => attemptOrchestratedIdeReply({ projectName: 'X', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'u'.repeat(24), userText: request, priorTurns: [], interactionMode: 'plan', ...over });
@@ -606,12 +608,33 @@ describe('plans are checked against the repository', () => {
     accepting(calls, plan({
       filesToChange: ['lib/settings.ts'], steps: ['Edit lib/settings.ts to drop the slug'],
       rootCause: { explanation: '1. a 2. b', evidence: [{ file: 'lib/settings.ts', line: 1, quote: 'slug: "gadgetPro"' }] },
-      expectedResult: 'gadgetPro disappears because lib/settings.ts:1 no longer sets it.',
+      walkthrough: 'lib/settings.ts OPTIONS: with the change slug is unset, so it outputs no gadgetPro.', expectedResult: 'gadgetPro disappears because lib/settings.ts:1 no longer sets it.',
     }));
     const turn = await run();
     expect(turn.plan).toBeUndefined();
     expect(turn.text).toContain('are in files the named page does not use');
     expect(turn.text).toContain('lib/settings.ts');
+  });
+
+  it('sends a plan back once when it does not say how the change affects the other readers of the file', async () => {
+    const calls: { stage: string; userText: string }[] = [];
+    let planners = 0;
+    accepting(calls, () => (++planners === 1 ? plan({ sideEffects: [] }) : plan()));
+    const turn = await run();
+    expect(calls.map((c) => c.stage)).toEqual(['planner', 'planner', 'worker', 'reviewer']);
+    expect(calls[1].userText).toContain('other code reads the files you change');
+    expect(calls[1].userText).toContain('app/shop/[slug]');
+    expect(turn.plan?.status).toBe('ready_for_review');
+    expect(turn.plan?.markdown).not.toContain('does not say how the change affects');
+  });
+
+  it('publishes but says so when the plan still ignores a reader after the correction round', async () => {
+    const calls: { stage: string; userText: string }[] = [];
+    accepting(calls, plan({ sideEffects: ['Nothing else is affected.'] }));
+    const turn = await run();
+    expect(calls.map((c) => c.stage)).toEqual(['planner', 'planner', 'worker', 'reviewer']);
+    expect(turn.plan?.markdown).toContain('The plan does not say how the change affects');
+    expect(calls[2].userText).toContain('INCOMPLETE: sideEffects');
   });
 
   it('asks the Critic to be a different model from the Planner when the engine picked the same one', async () => {

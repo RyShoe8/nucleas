@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { automaticPlanSections, checkPlanClaims, readersOfPlannedFiles } from './claimCheck';
+import { automaticPlanSections, checkPlanClaims, groupReaders, readerCoverageIssues, readersOfPlannedFiles, unaddressedReaders } from './claimCheck';
 import { buildEvidencePack } from './evidencePack';
 
 const files = new Map<string, string>(Object.entries({
@@ -67,6 +67,108 @@ describe('checkPlanClaims', () => {
     expect(check.offPath).toEqual([]);
     expect(check.newOrUnknown).toEqual(['app/api/admin/catalog/items/route.test.ts', 'app/api/admin/catalog/items/helpers.ts']);
     expect(checkPlanClaims(files, { steps: [], structured: { filesToChange: ['lib/settings.ts'] } }).offPath).toEqual([]);
+  });
+});
+
+describe('quotes that repeat in a file', () => {
+  // Several entries share a field value; only one is the entry the plan means.
+  const entries = new Map<string, string>([[
+    'data/entries.ts',
+    [
+      'export const entries = [',
+      '  {',
+      '    group: "core",', 
+      '    slug: "official",',
+      '  },',
+      '  {',
+      '    group: "core",', 
+      '    slug: "variant-one",',
+      '  },',
+      '  {',
+      '    group: "core",', 
+      '    slug: "variant-two",',
+      '  },',
+      '  {',
+      '    group: "core",', 
+      '    slug: "variant-three",',
+      '  },',
+      '];',
+    ].join('\n'),
+  ]]);
+  const plan = (evidence: { file: string; line?: number; quote: string }[]) => ({ steps: [], structured: { rootCause: { explanation: 'x', evidence } } });
+
+  it('does not misreport the line when the cited line is one of the occurrences', () => {
+    const check = checkPlanClaims(entries, plan([{ file: 'data/entries.ts', line: 11, quote: 'group: "core",' }]));
+    expect(check.verified).toEqual([{ evidence: expect.anything(), occurrences: 4, ambiguous: false }]);
+    expect(check.issues).toEqual([]);
+    expect(automaticPlanSections({ check, readers: [], dataStoreNotes: [] })).not.toContain('not 11');
+  });
+
+  it('when the cited line is off, reports the nearest occurrence, not the first', () => {
+    const check = checkPlanClaims(entries, plan([{ file: 'data/entries.ts', line: 12, quote: 'group: "core",' }]));
+    expect(check.verified[0]).toMatchObject({ occurrences: 4, ambiguous: false });
+    const off = checkPlanClaims(entries, plan([{ file: 'data/entries.ts', line: 30, quote: 'group: "core",' }]));
+    expect(off.verified[0]).toMatchObject({ actualLine: 15, ambiguous: true });
+    expect(automaticPlanSections({ check: off, readers: [], dataStoreNotes: [] })).toContain('nearest to the cited line 30 is line 15');
+  });
+
+  it('asks for a line number or a distinguishing neighbour when a repeated quote has no usable line', () => {
+    const check = checkPlanClaims(entries, plan([{ file: 'data/entries.ts', quote: 'group: "core",' }]));
+    expect(check.verified[0]).toMatchObject({ occurrences: 4, ambiguous: true });
+    expect(check.issues[0]).toContain('appears 4 times in data/entries.ts');
+    expect(check.issues[0]).toContain('two lines that include one only this entry has');
+  });
+
+  it('accepts a multi-line quote that pins down one entry', () => {
+    const check = checkPlanClaims(entries, plan([{ file: 'data/entries.ts', quote: 'group: "core",\n    slug: "variant-two",' }]));
+    expect(check.verified[0]).toMatchObject({ occurrences: 1, ambiguous: false });
+    expect(check.issues).toEqual([]);
+    expect(checkPlanClaims(entries, plan([{ file: 'data/entries.ts', quote: 'group: "core",\n    slug: "missing",' }])).unverified).toHaveLength(1);
+  });
+});
+
+describe('reader coverage', () => {
+  // Readers shaped like a real shared data file: scripts, admin API routes, a launcher route, admin pages.
+  const readers = [{
+    file: 'lib/data/editions.ts',
+    usedBy: ['scripts/gen-chips.ts', 'scripts/seed-editions.ts', 'scripts/sync-install.ts', 'app/api/admin/editions/materialize/route.ts', 'app/api/admin/editions/reorder/route.ts'],
+    routes: ['/api/admin/editions/materialize', '/api/admin/editions/reorder', '/api/launcher/catalog', '/admin/games/:slug/editions'],
+  }];
+  const groups = groupReaders(readers);
+
+  it('groups many readers by folder and route prefix so a plan can answer for them together', () => {
+    expect(groups.map((g) => g.label)).toEqual(['scripts', 'app/api/admin/editions', 'route /api/admin/editions', 'route /api/launcher/catalog', 'route /admin/games/editions']);
+    expect(groups[0].files).toHaveLength(3);
+  });
+
+  it('finds readers a plan never mentions, and words the fix as an instruction', () => {
+    const plan = { structured: { sideEffects: ['Nothing else is affected.'] } };
+    const missing = unaddressedReaders(groups, plan);
+    expect(missing).toHaveLength(groups.length);
+    const issue = readerCoverageIssues(missing)[0];
+    expect(issue).toContain('other code reads the files you change');
+    expect(issue).toContain('scripts (gen-chips.ts, seed-editions.ts, sync-install.ts)');
+    expect(readerCoverageIssues([])).toEqual([]);
+  });
+
+  it('counts a reader as answered when the plan names its file, folder, base name or route', () => {
+    const plan = { structured: { sideEffects: [
+      'scripts/gen-chips.ts must be re-run to regenerate the chips.',
+      'The admin editions API routes under /api/admin/editions read the seed and are unaffected.',
+      'The launcher catalog route /api/launcher/catalog will stop listing the edition (intended).',
+      'The /admin/games/editions pages show the edition list and are unaffected.',
+      'app/api/admin/editions routes (materialize and reorder) are unaffected.',
+    ] } };
+    expect(unaddressedReaders(groups, plan).map((g) => g.label)).toEqual([]);
+    const partial = { structured: { sideEffects: ['The launcher catalog route /api/launcher/catalog is affected.'] } };
+    expect(unaddressedReaders(groups, partial).map((g) => g.label)).not.toContain('route /api/launcher/catalog');
+    expect(unaddressedReaders(groups, partial).map((g) => g.label)).toContain('scripts');
+  });
+
+  it('shows what the plan left unanswered in the automatic section', () => {
+    const missing = unaddressedReaders(groups, { structured: { sideEffects: [] } });
+    const text = automaticPlanSections({ check: checkPlanClaims(new Map(), { steps: [] }), readers: [], dataStoreNotes: [], unaddressed: missing.slice(0, 1) });
+    expect(text).toContain('The plan does not say how the change affects: scripts (gen-chips.ts, seed-editions.ts, sync-install.ts).');
   });
 });
 

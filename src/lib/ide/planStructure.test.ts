@@ -14,6 +14,7 @@ const full = {
     evidence: [{ file: 'lib/data/variants.ts', line: 2, quote: "{ parent: 'widget', slug: 'gadgetPro' }," }, "app/api/admin/catalog/items/route.ts:8 `rows.push({ key: `${item.slug}:${v.slug}` })`"],
   },
   filesToChange: ['app/api/admin/catalog/items/route.ts'],
+  walkthrough: 'app/api/admin/catalog/items/route.ts GET(): with the change the loop over variants skips gadgetPro, so it pushes one row for it instead of two.',
   expectedResult: 'Only one gadgetPro row remains because the variant loop at route.ts:8 skips it.',
   sideEffects: ['lib/data/variants.ts also feeds /shop/:slug; it is not edited.'],
   unverified: ['Stored variants in the database may still contain widget:gadgetPro.'],
@@ -57,6 +58,7 @@ describe('validatePlanStructure', () => {
     expect(partial.join('\n')).toMatch(/path: .*Data path/);
     expect(partial.join('\n')).toMatch(/rootCause\.evidence: quote the code/);
     expect(partial.join('\n')).toContain('filesToChange');
+    expect(partial.join('\n')).toContain('walkthrough');
     expect(partial.join('\n')).toContain('expectedResult');
     expect(partial.join('\n')).toContain('sideEffects');
     expect(partial.join('\n')).toContain('unverified');
@@ -100,15 +102,38 @@ describe('plan documents', () => {
 describe('recomposing a plan', () => {
   it('adds Nucleas\'s own sections and marks quotes that were not found, keeping the model\'s details', async () => {
     const { recomposePlan } = await import('@/lib/ide/parseNucleasPlan');
-    const raw = `Some explanation the model wrote.\n\`\`\`nucleas-plan\n${JSON.stringify(full)}\n\`\`\``;
+    const raw = `Some explanation the model wrote about a tradeoff that the JSON fields do not cover.\n\`\`\`nucleas-plan\n${JSON.stringify(full)}\n\`\`\``;
     const { plan } = parseNucleasPlan(raw)!;
     const next = recomposePlan(plan, { extraSections: '## Automatic checks (from the repository)\n\n- 1 of 2 quoted lines were found.', notFound: new Set(["{ parent: 'widget', slug: 'gadgetPro' },"]) });
     expect(next.markdown).toContain("`lib/data/variants.ts:2`: `{ parent: 'widget', slug: 'gadgetPro' },` — ⚠ not found in the repository");
     expect(next.markdown).toContain('## Automatic checks (from the repository)');
-    expect(next.markdown).toContain('## Details & Architecture\n\nSome explanation the model wrote.');
+    expect(next.markdown).toContain('## Details & Architecture\n\nSome explanation the model wrote about a tradeoff');
     // The automatic section sits after the structured ones and before the free text.
     expect(next.markdown.indexOf('## Unverified')).toBeLessThan(next.markdown.indexOf('## Automatic checks'));
     expect(next.markdown.indexOf('## Automatic checks')).toBeLessThan(next.markdown.indexOf('## Details & Architecture'));
     expect(plan.markdown).not.toContain('not found in the repository');
+  });
+});
+
+describe('walkthrough', () => {
+  it('is required, must name code, and renders as its own section', () => {
+    const base = { steps: ['Edit src/a.ts'], structured: { ...(parseStructuredPlan(full)!), walkthrough: undefined } };
+    expect(validatePlanStructure(base, { hasKnownPath: true }).join('\n')).toContain('walkthrough: step through the code');
+    const vague = { ...base, structured: { ...base.structured, walkthrough: 'It should work fine after the edit is applied here.' } };
+    expect(validatePlanStructure(vague, { hasKnownPath: true }).join('\n')).toContain('name the file and function');
+    const good = { ...base, structured: { ...base.structured, walkthrough: 'src/list.ts buildRows(): with the change the loop skips X, so it outputs one row.' } };
+    expect(validatePlanStructure(good, { hasKnownPath: true })).toEqual([]);
+    expect(renderStructuredSections(good.structured)).toContain('## Walkthrough with the change applied\n\nsrc/list.ts buildRows()');
+  });
+});
+
+describe('prose that only repeats the plan', () => {
+  it('is not kept as Details, while genuinely new prose and wireframes are', async () => {
+    const { proseBeyondThePlan } = await import('@/lib/ide/parseNucleasPlan');
+    const plan = { title: 'Hide duplicate variant row', summary: 'gadgetPro is listed twice', steps: ['Edit lib/data/variants.ts to remove the gadgetPro entry under widget'] };
+    const repeated = 'Plan\nHide duplicate variant row\n1. Edit lib/data/variants.ts to remove the gadgetPro entry under widget\nExpected Result';
+    expect(proseBeyondThePlan(repeated, plan)).toBe('');
+    expect(proseBeyondThePlan(`${repeated}\nThe seed file is shared, so the public shop page is affected as well.`, plan)).toBe('The seed file is shared, so the public shop page is affected as well.');
+    expect(proseBeyondThePlan('+---------+\n|  Header |\n+---------+', plan)).toContain('| Header |'.replace('| H', '|  H'));
   });
 });

@@ -9,8 +9,12 @@ import { plannedFiles } from '@/lib/ide/planStructure';
 import { findReferences } from './references';
 
 export interface ClaimCheck {
-  /** Quotes found in the cited file. `line` is the line where the quote really is when the cited line was off. */
-  verified: { evidence: PlanEvidence; actualLine?: number }[];
+  /**
+   * Quotes found in the cited file. `actualLine` is the nearest occurrence when the cited line was off.
+   * `occurrences` is how many times the quote appears; `ambiguous` means it appears in several places and
+   * the cited line does not single one out, so it proves little on its own.
+   */
+  verified: { evidence: PlanEvidence; actualLine?: number; occurrences: number; ambiguous: boolean }[];
   unverified: { evidence: PlanEvidence; reason: 'file_missing' | 'quote_not_found' }[];
   /** Path hops that name a file that is not in the repository. */
   missingPathFiles: string[];
@@ -34,16 +38,22 @@ function quoteFragments(quote: string): string[] {
   return quote.split(/\.{3}|…/).map(squash).filter((f) => f.length >= 6);
 }
 
-/** Line number (1-based) where the fragment starts, or -1. */
-function lineOf(content: string, fragment: string): number {
-  const lines = content.split('\n');
-  const target = squash(fragment);
-  for (let i = 0; i < lines.length; i += 1) if (squash(lines[i]).includes(target)) return i + 1;
-  // A quote that spans lines: find it in the squashed whole and count newlines before it.
-  const whole = squash(content);
-  const at = whole.indexOf(target);
-  if (at < 0) return -1;
-  return 1 + (content.slice(0, Math.min(content.length, at)).match(/\n/g)?.length ?? 0);
+/**
+ * Every line (1-based) where the fragment starts, ignoring whitespace and quote style, and matching across
+ * line breaks so a multi-line quote works. Empty when it does not appear.
+ */
+function occurrencesOf(content: string, fragment: string): number[] {
+  const tokens = fragment.trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return [];
+  const pattern = tokens
+    .map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/['"`\u2018\u2019\u201C\u201D]/g, `['"\`\u2018\u2019\u201C\u201D]`))
+    .join('\\s+');
+  const lines: number[] = [];
+  for (const m of content.matchAll(new RegExp(pattern, 'g'))) {
+    lines.push(1 + (content.slice(0, m.index).match(/\n/g)?.length ?? 0));
+    if (lines.length >= 200) break;
+  }
+  return lines;
 }
 
 export function checkPlanClaims(
@@ -58,10 +68,18 @@ export function checkPlanClaims(
     const content = files.get(evidence.file);
     if (content === undefined) { unverified.push({ evidence, reason: 'file_missing' }); continue; }
     const fragments = quoteFragments(evidence.quote);
-    const positions = fragments.map((f) => lineOf(content, f));
-    if (!fragments.length || positions.some((p) => p < 0)) { unverified.push({ evidence, reason: 'quote_not_found' }); continue; }
-    const actual = positions[0];
-    verified.push({ evidence, ...(evidence.line && Math.abs(evidence.line - actual) > 3 ? { actualLine: actual } : {}) });
+    const found = fragments.map((f) => occurrencesOf(content, f));
+    if (!fragments.length || found.some((lines) => lines.length === 0)) { unverified.push({ evidence, reason: 'quote_not_found' }); continue; }
+    // A quote may appear in many places (gameSlug: "x" on several entries). The cited line picks the one meant.
+    const lines = found[0];
+    const nearest = evidence.line ? lines.reduce((best, l) => (Math.abs(l - evidence.line!) < Math.abs(best - evidence.line!) ? l : best), lines[0]) : lines[0];
+    const cited = Boolean(evidence.line) && Math.abs(nearest - evidence.line!) <= 1;
+    verified.push({
+      evidence,
+      occurrences: lines.length,
+      ambiguous: lines.length > 1 && !cited,
+      ...(evidence.line && !cited ? { actualLine: nearest } : {}),
+    });
   }
 
   const missingPathFiles = (s?.path ?? []).map((h) => h.file).filter((f) => !files.has(f));
@@ -79,6 +97,11 @@ export function checkPlanClaims(
     issues.push(u.reason === 'file_missing'
       ? `rootCause.evidence: ${u.evidence.file} does not exist in the repository. Cite a real file.`
       : `rootCause.evidence: the quote \`${u.evidence.quote.slice(0, 80)}\` was not found in ${u.evidence.file}. Copy the line exactly as it appears, or remove the claim.`);
+  }
+  for (const v of verified) {
+    if (v.ambiguous && v.occurrences >= 3) {
+      issues.push(`rootCause.evidence: \`${v.evidence.quote.slice(0, 60)}\` appears ${v.occurrences} times in ${v.evidence.file}, so it does not show which entry you mean. Give the exact line number, or quote two lines that include one only this entry has.`);
+    }
   }
   if (missingPathFiles.length) issues.push(`path: ${missingPathFiles.slice(0, 4).join(', ')} not found in the repository. List only files that exist.`);
   if (evidenceOffPath) issues.push('rootCause.evidence: none of the quoted code is in a file the named page uses. Trace how the page gets its data and quote the code on that path.');
@@ -100,6 +123,58 @@ export function readersOfPlannedFiles(files: Map<string, string>, planned: strin
   return out;
 }
 
+export interface ReaderGroup {
+  /** The folder (or route prefix) these readers share. */
+  label: string;
+  files: string[];
+  routes: string[];
+}
+
+/** A route's prefix for grouping: up to three real segments, skipping :params (/admin/games/:slug/editions → /admin/games/editions). */
+function routePrefix(route: string): string {
+  return `/${route.split('/').filter((seg) => seg && !seg.startsWith(':')).slice(0, 3).join('/')}`;
+}
+
+/** Readers grouped by folder (and routes by prefix), so a plan can answer for many readers in one line. */
+export function groupReaders(readers: ReturnType<typeof readersOfPlannedFiles>): ReaderGroup[] {
+  const groups = new Map<string, ReaderGroup>();
+  const group = (label: string) => groups.get(label) ?? groups.set(label, { label, files: [], routes: [] }).get(label)!;
+  for (const r of readers) {
+    for (const file of r.usedBy) group(file.split('/').slice(0, -1).slice(0, 4).join('/') || '(root)').files.push(file);
+    for (const route of r.routes) group(`route ${routePrefix(route)}`).routes.push(route);
+  }
+  for (const g of groups.values()) { g.files = [...new Set(g.files)]; g.routes = [...new Set(g.routes)]; }
+  return [...groups.values()].filter((g) => g.files.length || g.routes.length).slice(0, 8);
+}
+
+/** Text a plan uses to answer for its readers: the side-effects list. */
+function sideEffectText(plan: { structured?: StructuredPlan }): string {
+  return (plan.structured?.sideEffects ?? []).join('\n').toLowerCase();
+}
+
+/**
+ * The reader groups a plan's side-effects never mention. A group counts as answered if the text names one
+ * of its files, a file's base name, the folder, or one of its routes.
+ */
+export function unaddressedReaders(groups: ReaderGroup[], plan: { structured?: StructuredPlan }): ReaderGroup[] {
+  const text = sideEffectText(plan);
+  return groups.filter((g) => {
+    const names = [
+      ...g.files.flatMap((f) => [f.toLowerCase(), (f.split('/').pop() ?? f).toLowerCase().replace(/\.[^.]+$/, '')]).filter((n) => n.length >= 4),
+      ...g.routes.flatMap((r) => [r.toLowerCase(), routePrefix(r).toLowerCase()]).filter((n) => n.length >= 4),
+      g.label.replace(/^route /, '').toLowerCase(),
+    ].filter((n) => n.length >= 4);
+    return !names.some((n) => text.includes(n));
+  });
+}
+
+/** Issues, as instructions, for readers of the changed files that the plan does not answer for. */
+export function readerCoverageIssues(unaddressed: ReaderGroup[]): string[] {
+  if (!unaddressed.length) return [];
+  const list = unaddressed.map((g) => `${g.label}${g.files.length ? ` (${g.files.slice(0, 3).map((f) => f.split('/').pop()).join(', ')}${g.files.length > 3 ? ', ...' : ''})` : ''}`).join('; ');
+  return [`sideEffects: other code reads the files you change. For each of these, say whether your change affects it, or why not (readers in one folder can be answered together): ${list}.`];
+}
+
 /**
  * Markdown appended to a plan by Nucleas itself: what was verified, what was not, and what else the
  * change reaches. These are facts from the repository, not the model's claims.
@@ -108,16 +183,23 @@ export function automaticPlanSections(input: {
   check: ClaimCheck;
   readers: ReturnType<typeof readersOfPlannedFiles>;
   dataStoreNotes: { file: string; line: number; text: string; note: string }[];
+  /** Reader groups the plan never answered for. */
+  unaddressed?: ReaderGroup[];
 }): string {
   const out: string[] = [];
   const { check } = input;
   const lines: string[] = [];
   const total = check.verified.length + check.unverified.length;
   if (total) lines.push(`- ${check.verified.length} of ${total} quoted lines were found in the repository${check.unverified.length ? ` (not found: ${check.unverified.map((u) => `${u.evidence.file}`).join(', ')})` : ''}.`);
-  for (const v of check.verified) if (v.actualLine) lines.push(`- ${v.evidence.file}: the quote is at line ${v.actualLine}, not ${v.evidence.line}.`);
+  for (const v of check.verified) {
+    if (v.actualLine && v.occurrences === 1) lines.push(`- ${v.evidence.file}: the quote is at line ${v.actualLine}, not ${v.evidence.line}.`);
+    else if (v.actualLine) lines.push(`- ${v.evidence.file}: the quote appears ${v.occurrences} times; the nearest to the cited line ${v.evidence.line} is line ${v.actualLine}.`);
+    else if (v.ambiguous) lines.push(`- ${v.evidence.file}: the quote appears ${v.occurrences} times, so it does not by itself show which entry is meant.`);
+  }
   if (check.offPath.length) lines.push(`- Edits outside the page's data path: ${check.offPath.join(', ')}.`);
   if (check.newOrUnknown.length) lines.push(`- Not found in the repository (new files, or a wrong path): ${check.newOrUnknown.join(', ')}.`);
   for (const r of input.readers) lines.push(`- ${r.file} is also used by ${[...r.usedBy, ...r.routes.map((x) => `route ${x}`)].join(', ')}; a change there reaches them too.`);
+  for (const g of input.unaddressed ?? []) lines.push(`- The plan does not say how the change affects: ${g.label} (${[...g.files.slice(0, 4).map((f) => f.split('/').pop()), ...g.routes.slice(0, 2)].join(', ')}).`);
   for (const n of input.dataStoreNotes) lines.push(`- Not verifiable from the repository: ${n.file}:${n.line} ${n.note} (\`${n.text}\`). Stored data may differ from the code.`);
   if (lines.length) out.push(`## Automatic checks (from the repository)\n\n${lines.join('\n')}`);
   return out.join('\n\n');

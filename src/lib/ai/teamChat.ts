@@ -15,7 +15,7 @@ import {
 } from '@/lib/ide/planModePrompt';
 import { parseNucleasPlan, recomposePlan } from '@/lib/ide/parseNucleasPlan';
 import { plannedFiles, validatePlanStructure } from '@/lib/ide/planStructure';
-import { automaticPlanSections, checkPlanClaims, readersOfPlannedFiles, type ClaimCheck } from '@/lib/ai/repo/claimCheck';
+import { automaticPlanSections, checkPlanClaims, groupReaders, readerCoverageIssues, readersOfPlannedFiles, unaddressedReaders, type ClaimCheck, type ReaderGroup } from '@/lib/ai/repo/claimCheck';
 import type { EvidencePack } from '@/lib/ai/repo/evidencePack';
 import { parseReviewerGate } from '@/lib/ide/parseReviewerGate';
 import { looksLikeProjectInternalQuery } from '@/lib/ai/tools/serverBrowseAssist';
@@ -631,10 +631,14 @@ export async function attemptOrchestratedIdeReply(input: {
   const planScope = { scope: evidencePack?.scope, pageFile: evidencePack?.page?.file };
   const assessPlan = (text: string) => {
     const parsed = parseNucleasPlan(text);
-    if (!parsed) return { parsed: null, structure: [] as string[], issues: ['The response did not contain a valid nucleas-plan JSON block. Return the complete plan as one fenced JSON block tagged nucleas-plan.'], claim: null as ClaimCheck | null };
+    if (!parsed) return { parsed: null, structure: [] as string[], unaddressed: [] as ReaderGroup[], issues: ['The response did not contain a valid nucleas-plan JSON block. Return the complete plan as one fenced JSON block tagged nucleas-plan.'], claim: null as ClaimCheck | null };
     const structure = safely(() => validatePlanStructure(parsed.plan, { hasKnownPath: Boolean(evidencePack?.chains.length) }), [] as string[]);
     const claim = planFiles ? safely(() => checkPlanClaims(planFiles, parsed.plan, planScope), null as ClaimCheck | null) : null;
-    return { parsed, structure, issues: [...structure, ...(claim?.issues ?? [])], claim };
+    // Every other reader of the files to be changed must be answered for, not waved away.
+    const unaddressed = planFiles
+      ? safely(() => unaddressedReaders(groupReaders(readersOfPlannedFiles(planFiles, plannedFiles(parsed.plan), { ...planScope, pageRoute: evidencePack?.page?.route })), parsed.plan), [] as ReaderGroup[])
+      : [];
+    return { parsed, structure, unaddressed, issues: [...structure, ...(claim?.issues ?? []), ...readerCoverageIssues(unaddressed)], claim };
   };
   const plannerAttempts: TeamChatTurn[] = [];
   let planAssessment: ReturnType<typeof assessPlan> | null = null;
@@ -703,6 +707,7 @@ export async function attemptOrchestratedIdeReply(input: {
     if (c.offPath.length) lines.push(`FAILED: planned edits outside the named page's data path: ${c.offPath.slice(0, 4).join(', ')}`);
     if (c.evidenceOffPath) lines.push('FAILED: none of the quoted evidence is in a file the named page uses.');
     for (const issue of planAssessment.structure.slice(0, 4)) lines.push(`INCOMPLETE: ${issue}`);
+    for (const issue of readerCoverageIssues(planAssessment.unaddressed)) lines.push(`INCOMPLETE: ${issue}`);
     return lines.length
       ? ['Automated checks on the plan (run by Nucleas against the repository):', ...lines.map((l) => `- ${l}`)].join('\n')
       : 'Automated checks on the plan (run by Nucleas against the repository): every quoted line was found and the edits are on the named page\u2019s data path.';
@@ -819,6 +824,7 @@ export async function attemptOrchestratedIdeReply(input: {
             check: verified,
             readers: readersOfPlannedFiles(planFiles, plannedFiles(planned), { ...planScope, pageRoute: evidencePack?.page?.route }),
             dataStoreNotes: evidencePack?.unverified ?? [],
+            unaddressed: planAssessment.unaddressed,
           }),
           notFound: new Set(verified.unverified.map((u) => u.evidence.quote)),
         }), planned);

@@ -14,10 +14,16 @@ or framework.
    and the data, where lists are assembled, are read first. It is part of the dig context every stage sees.
 2. **Planner** writes a structured plan (`src/lib/ide/planStructure.ts`): symptom, code path, root cause with
    quoted evidence, files to change, expected result, side effects, unverified, out of scope, steps.
-3. **Checks** (`src/lib/ai/repo/claimCheck.ts`). Every quote is looked up in the cited file; edits are compared
-   with the code the named page uses. Problems go back to the Planner once, worded as corrections. A plan
-   with no verifiable evidence, or whose edits are on code the page does not use, is not published as ready:
-   the reasons and the draft are shown instead.
+3. **Checks** (`src/lib/ai/repo/claimCheck.ts`). Every quote is looked up in the cited file (whitespace and
+   quote style ignored, multi-line quotes supported). A quote that repeats is resolved by the cited line, and
+   flagged as ambiguous when nothing singles one occurrence out. Edits are compared with the code the named
+   page uses. The plan must also give a **walkthrough** (the code that builds the symptom, stepped through with
+   the change applied, and what it outputs) and must **answer for each reader** of the changed files: readers
+   are grouped by folder and route prefix, and a group counts as answered only if the side effects name a
+   file, folder or route in it. Problems go back to the Planner once, worded as corrections. A plan with no
+   verifiable evidence, or whose edits are on code the page does not use, is not published as ready: the
+   reasons and the draft are shown instead. Readers still unanswered after the correction round are listed in
+   the plan's automatic section and passed to the Worker and Critic.
 4. **Worker** verifies the plan's claims with tools and quoted lines. It receives the automated findings.
 5. **Critic** (the Reviewer stage, a different model from the Planner when one is available) tries to break
    the plan and receives the same findings. A `needs_more` gate sends work back.

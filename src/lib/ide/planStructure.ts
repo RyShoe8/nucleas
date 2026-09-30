@@ -14,6 +14,8 @@ export type StructuredPlan = {
   path?: PlanPathHop[];
   rootCause?: { explanation: string; evidence: PlanEvidence[] };
   filesToChange?: string[];
+  /** The code that produced the symptom, stepped through with the change applied: what it now outputs. */
+  walkthrough?: string;
   expectedResult?: string;
   sideEffects?: string[];
   unverified?: string[];
@@ -87,6 +89,8 @@ export function parseStructuredPlan(record: Record<string, unknown>): Structured
     .map((f) => LOCATION.exec(f)?.[1] ?? f)
     .filter(Boolean);
   if (files.length) out.filesToChange = [...new Set(files)];
+  const walkthrough = str(record.walkthrough ?? record.walk_through ?? record.dryRun ?? record.dry_run ?? record.trace, 1200);
+  if (walkthrough) out.walkthrough = walkthrough;
   const expected = str(record.expectedResult ?? record.expected_result ?? record.prediction, 800);
   if (expected) out.expectedResult = expected;
   for (const [key, aliases] of [['sideEffects', ['side_effects', 'otherReaders']], ['unverified', ['unverifiedAssumptions', 'unknowns']], ['outOfScope', ['out_of_scope', 'notChanging']]] as const) {
@@ -120,6 +124,8 @@ export function validatePlanStructure(plan: { steps: string[]; structured?: Stru
   else if (!s.rootCause.evidence.length) issues.push('rootCause.evidence: quote the code that produces the symptom as {file, line, quote}. Claims without a quote are not accepted.');
   else if (s.rootCause.evidence.some((e) => e.quote.replace(/\s+/g, '').length < 6)) issues.push('rootCause.evidence: each quote must be an actual line of code (at least a few characters), copied exactly.');
   if (!s.filesToChange?.length) issues.push('filesToChange: list the files the change edits.');
+  if (!s.walkthrough) issues.push('walkthrough: step through the code that builds the symptom (the loop or function) with your change applied, name it (file and function) and say what it outputs now. If it would still output the symptom, the plan is wrong.');
+  else if (!FILE_CITATION.test(s.walkthrough) || s.walkthrough.length < 40) issues.push('walkthrough: name the file and function you stepped through, and what it outputs with the change applied.');
   if (!s.expectedResult) issues.push('expectedResult: say what the user will see after the change and why, pointing to the code that renders it.');
   else if (!FILE_CITATION.test(s.expectedResult)) issues.push('expectedResult: name the file (and line) of the code that produces the result, not just the outcome.');
   if (!s.sideEffects) issues.push('sideEffects: list other places that read the code or data you change, or [] if none.');
@@ -144,6 +150,7 @@ export function renderStructuredSections(s: StructuredPlan | undefined, options:
     out.push([`## Root cause`, s.rootCause.explanation, s.rootCause.evidence.length ? `Evidence:\n${s.rootCause.evidence.map((e) => `- \`${loc(e.file, e.line)}\`: \`${e.quote}\`${options.notFound?.has(e.quote) ? ' — ⚠ not found in the repository' : ''}`).join('\n')}` : ''].filter(Boolean).join('\n\n'));
   }
   if (s.filesToChange?.length) out.push(`## Files to change\n\n${s.filesToChange.map((f) => `- \`${f}\``).join('\n')}`);
+  if (s.walkthrough) out.push(`## Walkthrough with the change applied\n\n${s.walkthrough}`);
   if (s.expectedResult) out.push(`## Expected result\n\n${s.expectedResult}`);
   if (s.sideEffects) out.push(`## Side effects and other readers\n\n${s.sideEffects.length ? s.sideEffects.map((x) => `- ${x}`).join('\n') : 'None found.'}`);
   if (s.unverified) out.push(`## Unverified\n\n${s.unverified.length ? s.unverified.map((x) => `- ${x}`).join('\n') : 'Nothing outstanding.'}`);

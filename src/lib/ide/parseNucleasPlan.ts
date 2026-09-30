@@ -13,6 +13,26 @@ export function composePlanMarkdown(parts: { title: string; summary: string; ste
   ].filter(Boolean).join('\n\n').slice(0, 24000);
 }
 
+const norm = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const HEADINGS = new Set(['plan', 'symptom', 'code path', 'root cause', 'expected result', 'files to change', 'summary', 'steps', 'side effects and other readers', 'unverified', 'out of scope', 'evidence']);
+
+/**
+ * The model's free text often repeats the plan it just wrote as JSON (title, steps, section headings).
+ * Only the part that adds something is kept as "Details"; empty when nothing is left.
+ */
+export function proseBeyondThePlan(text: string, plan: { title: string; summary: string; steps: string[] }): string {
+  const repeated = [plan.title, plan.summary, ...plan.steps].map((t) => norm(t).slice(0, 40)).filter((t) => t.length >= 12);
+  const kept = text.split('\n').filter((line) => {
+    const n = norm(line);
+    // Blank lines and lines with no letters (ASCII wireframes, rules) are content, not repeats.
+    if (!n) return true;
+    return !HEADINGS.has(n) && !repeated.some((r) => n.includes(r));
+  });
+  const out = kept.join('\n').trim();
+  // What is left must say something; a stray fragment is not worth a section.
+  return out.replace(/\s+/g, ' ').length >= 25 ? out : '';
+}
+
 /** Adds Nucleas's own sections to a plan and marks quotes that were not found, keeping everything else. */
 export function recomposePlan(plan: IdePlanDocument, options: { extraSections?: string; notFound?: Set<string> }): IdePlanDocument {
   return { ...plan, markdown: composePlanMarkdown({ title: plan.title, summary: plan.summary === plan.title ? '' : plan.summary, steps: plan.steps, structured: plan.structured, details: plan.details, ...options }) };
@@ -73,10 +93,10 @@ export function parseNucleasPlan(raw: string): {
       title: title.slice(0, 200),
       summary: (summary || title).slice(0, 2000),
       steps: steps.map((step) => step.slice(0, 500)),
-      markdown: composePlanMarkdown({ title, summary, steps, structured, details: withoutFence }),
+      markdown: composePlanMarkdown({ title, summary, steps, structured, details: proseBeyondThePlan(withoutFence, { title, summary: summary || title, steps }) }),
       status: 'ready_for_review',
       ...(structured ? { structured } : {}),
-      ...(withoutFence ? { details: withoutFence } : {}),
+      ...(proseBeyondThePlan(withoutFence, { title, summary: summary || title, steps }) ? { details: proseBeyondThePlan(withoutFence, { title, summary: summary || title, steps }) } : {}),
     },
     displayText: displayText.slice(0, 24000),
   };
