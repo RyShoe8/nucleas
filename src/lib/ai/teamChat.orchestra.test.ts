@@ -161,7 +161,7 @@ describe('attemptOrchestratedIdeReply full orchestra', () => {
     const turn = await attemptOrchestratedIdeReply({ projectName: 'Playbound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'plan a blog', priorTurns: [], interactionMode: 'plan' });
     if (accept) expect(turn.plan?.status).toBe('ready_for_review');
     else expect(turn.plan).toBeUndefined();
-    expect(mocks.companyChat).toHaveBeenCalledTimes(accept ? 3 : 5);
+    expect(mocks.companyChat).toHaveBeenCalledTimes(accept ? 3 : 7);
   });
 
   it('runs planner → worker → reviewer on chat and returns the reviewer reply', async () => {
