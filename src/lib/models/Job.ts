@@ -28,7 +28,7 @@ const jobSchema = new Schema(
     answers: { type: Schema.Types.Mixed, default: {} },
     /** Review each run's result, or complete automatically when every check passes. */
     completion: { type: String, enum: ['review', 'automatic'] },
-    level: { type: String, enum: ['low', 'medium', 'high'] },
+    level: { type: String, enum: ['free', 'low', 'medium', 'high'] },
     /** Hard cap on AI spend per calendar month (micro-USD). */
     monthlyBudgetMicros: { type: Number, default: 2_000_000 },
     designCostMicros: { type: Number, default: 0 },

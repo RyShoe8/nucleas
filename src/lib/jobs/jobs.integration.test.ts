@@ -99,6 +99,14 @@ async function proposed(design: JobDesign = DESIGN) {
 }
 
 describe('designing', () => {
+  it('persists Free Orchestrated jobs', async () => {
+    mocks.design.mockResolvedValue({ ok: true, design: DESIGN, costMicros: 0, model: 'Rogly/model' });
+    const created = await createJob(admin, { companyId, request: 'Research Deadlock and update the catalog', level: 'free' });
+
+    expect(created).toMatchObject({ ok: true, job: { status: 'proposed', level: 'free' } });
+    expect(await Job.findById(created.ok ? created.job.id : null).lean()).toMatchObject({ level: 'free' });
+  });
+
   it('asks its questions, then finishes the design with the answers', async () => {
     mocks.design.mockResolvedValueOnce({ ok: true, design: { ...DESIGN, questions: [QUESTION] }, costMicros: 1000, model: 'm' });
     const created = await createJob(admin, { companyId, request: 'Research Deadlock and add it to the PlayBound catalog' });

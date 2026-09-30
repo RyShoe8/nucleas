@@ -38,7 +38,7 @@ const buildSchema = new Schema(
       repo: { type: String, required: true },
       defaultBranch: { type: String, required: true },
     },
-    level: { type: String, enum: ['low', 'medium', 'high'] },
+    level: { type: String, enum: ['free', 'low', 'medium', 'high'] },
     planCostMicros: { type: Number, default: 0 },
     assistantTurnId: { type: Schema.Types.ObjectId },
     approvedByUserId: { type: Schema.Types.ObjectId },

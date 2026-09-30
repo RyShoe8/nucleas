@@ -97,6 +97,14 @@ describe('proposing and deciding', () => {
     expect(mocks.plan).toHaveBeenCalledWith(expect.objectContaining({ interactionMode: 'plan', projectId, level: 'low' }));
   });
 
+  it('persists a Free Orchestrated proposal after the planner succeeds', async () => {
+    await connectRepo();
+    const result = await proposeCodeChange(admin, { companyId, request: 'Remove a duplicate game listing', level: 'free' });
+
+    expect(result).toMatchObject({ ok: true, build: { status: 'proposed', level: 'free' } });
+    expect(await BuildRequest.findById(result.ok ? result.build.id : null).lean()).toMatchObject({ level: 'free' });
+  });
+
   it('reports planner failures instead of creating a build', async () => {
     await connectRepo();
     mocks.plan.mockResolvedValue({ requestId: 'p', role: 'status', text: 'Repository is unavailable.', costMicros: 0 });
