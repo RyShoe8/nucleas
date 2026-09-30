@@ -19,6 +19,11 @@ function site() {
       res.end('<form method="post" action="/login"><input name="password" type="password"></form>');
       return;
     }
+    if (req.url === '/who' ) {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<body><script>document.body.textContent = "ua=" + navigator.userAgent + " webdriver=" + navigator.webdriver + " tz=" + Intl.DateTimeFormat().resolvedOptions().timeZone;</script></body>');
+      return;
+    }
     if (req.url === '/admin/games' && authed) {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end('<h1>Game servers</h1><h2>OpenRA</h2><ul><li>Editions</li><li>OpenHV</li></ul><h2>Standalone</h2><ul><li>OpenHV</li></ul><script>fetch("/admin/delete",{method:"POST"});</script>');
@@ -59,6 +64,21 @@ describe.skipIf(!chrome || !playwrightAvailable)('observeAuthenticated (real bro
     expect(result.loggedIn).toBe(false);
     expect(result.note).toContain('no longer signed in');
     expect(result.text).toBe('');
+  }, 60_000);
+
+  it('presents itself as ordinary Chrome, not as headless automation', async () => {
+    const { server } = site();
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const { text } = await observeAuthenticated({ baseUrl: base, url: `${base}/who`, cookies: [] }, { allowInsecure: true, executablePath: chrome });
+      expect(text).toMatch(/ua=Mozilla\/5\.0 \(X11; Linux x86_64\) AppleWebKit\/537\.36 \(KHTML, like Gecko\) Chrome\/\d+\.0\.0\.0 Safari\/537\.36 /);
+      expect(text).not.toContain('Headless');
+      expect(text).toContain('webdriver=undefined');
+      expect(text).toContain('tz=America/New_York');
+    } finally {
+      server.close();
+    }
   }, 60_000);
 
   it('drops cookies that belong to other sites and refuses pages outside the site', async () => {

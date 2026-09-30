@@ -35,6 +35,7 @@ function readBody(req: http.IncomingMessage, maxBytes: number): Promise<string> 
 }
 
 import { isSafePublicHttpsUrl } from '../../src/lib/ai/tools/ssrf';
+import { contextIdentity, HIDE_AUTOMATION_SCRIPT, IGNORE_DEFAULT_ARGS, LAUNCH_ARGS } from './browserIdentity';
 import { cancelLogin, finishLogin, loginFrame, loginInput, startLogin, type LoginInput } from './loginSessions';
 
 
@@ -181,8 +182,10 @@ export async function observeAuthenticated(input: ObserveInput, options: { allow
   const playwright = (await import(/* webpackIgnore: true */ 'playwright' as string)) as {
     chromium: {
       launch: (opts: Record<string, unknown>) => Promise<{
-        newContext: () => Promise<{
+        version: () => string;
+        newContext: (o: Record<string, unknown>) => Promise<{
           newPage: () => Promise<ObservePage>;
+          addInitScript: (script: string) => Promise<void>;
           addCookies: (cookies: unknown[]) => Promise<void>;
           route: (glob: string, handler: (route: { request: () => { method: () => string }; abort: () => Promise<void>; continue: () => Promise<void> }) => Promise<void>) => Promise<void>;
         }>;
@@ -192,11 +195,13 @@ export async function observeAuthenticated(input: ObserveInput, options: { allow
   };
   const browser = await playwright.chromium.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    args: LAUNCH_ARGS,
+    ignoreDefaultArgs: IGNORE_DEFAULT_ARGS,
     ...(options.executablePath ? { executablePath: options.executablePath } : {}),
   });
   try {
-    const context = await browser.newContext();
+    const context = await browser.newContext(contextIdentity(browser.version()));
+    await context.addInitScript(HIDE_AUTOMATION_SCRIPT);
     // Nothing can be changed: only reads go out, including from scripts on the page.
     await context.route('**/*', async (route) => {
       const method = route.request().method();

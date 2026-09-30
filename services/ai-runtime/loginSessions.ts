@@ -6,6 +6,7 @@
  */
 import crypto from 'crypto';
 import { isSafePublicHttpsUrl } from '../../src/lib/ai/tools/ssrf';
+import { contextIdentity, HIDE_AUTOMATION_SCRIPT, IGNORE_DEFAULT_ARGS, LAUNCH_ARGS } from './browserIdentity';
 
 export const VIEWPORT = { width: 1000, height: 640 };
 const MAX_SESSIONS = 2;
@@ -21,10 +22,11 @@ type Page = {
 };
 type Context = {
   newPage: () => Promise<Page>;
+  addInitScript: (script: string) => Promise<void>;
   cookies: () => Promise<{ name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean; sameSite: string }[]>;
   route: (glob: string, handler: (route: { request: () => { url: () => string }; abort: () => Promise<void>; continue: () => Promise<void> }) => Promise<void>) => Promise<void>;
 };
-type Browser = { newContext: (o: { viewport: { width: number; height: number } }) => Promise<Context>; close: () => Promise<void> };
+type Browser = { version: () => string; newContext: (o: Record<string, unknown>) => Promise<Context>; close: () => Promise<void> };
 
 interface Session {
   id: string;
@@ -58,11 +60,13 @@ export async function startLogin(input: { baseUrl: string }, options: LoginOptio
   };
   const browser = await playwright.chromium.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    args: LAUNCH_ARGS,
+    ignoreDefaultArgs: IGNORE_DEFAULT_ARGS,
     ...(options.executablePath ? { executablePath: options.executablePath } : {}),
   });
   try {
-    const context = await browser.newContext({ viewport: VIEWPORT });
+    const context = await browser.newContext({ viewport: VIEWPORT, ...contextIdentity(browser.version()) });
+    await context.addInitScript(HIDE_AUTOMATION_SCRIPT);
     // Logins often bounce through an identity provider, so other public https sites are allowed; private hosts are not.
     await context.route('**/*', async (route) => {
       const url = route.request().url();
