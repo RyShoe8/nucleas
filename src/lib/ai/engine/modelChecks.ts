@@ -403,8 +403,9 @@ export async function runQueuedModelChecks(options: { budgetMs?: number; caller?
           // Keep finished stages and retry this one on the next run rather than discarding the check.
           progress.transientRetries = retries + 1;
           await AiModelCheck.updateOne({ _id: claimed._id }, { $set: { status: 'queued', progress } });
+          // Not `failed`: the run ends here so the retry waits for the next run instead of
+          // re-claiming this model at once and waiting out another gateway timeout.
           stopped = true;
-          failed = true;
           break;
         }
         await AiModelCheck.updateOne({ _id: claimed._id }, { $set: { status: 'failed', error: failureMessage(error).slice(0, 300) }, $unset: { progress: '' } });
