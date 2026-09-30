@@ -29,6 +29,7 @@ import { getRepoSnapshot } from '@/lib/ai/repo/snapshot';
 import { projectGuide } from '@/lib/ai/repo/projectGuide';
 import { shortModel, type ProgressFn } from '@/lib/ai/progress';
 import { checkNoChangeClaim, claimsNothingFound } from '@/lib/ai/repo/noChangeGuard';
+import { planTemplateRequest } from '@/lib/ai/repo/planTemplate';
 import { evaluateDefinitionOfDone, formatDefinitionOfDone, type DodResult } from '@/lib/ai/definitionOfDone';
 import { summarizeStageTools, type PipelineStage, type StageToolRecord } from '@/lib/ai/stageTools';
 import { dedupeEvidenceReceipts, type RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
@@ -657,6 +658,9 @@ export async function attemptOrchestratedIdeReply(input: {
     const parsed = parseNucleasPlan(text);
     if (!parsed) return { parsed: null, structure: [] as string[], unaddressed: [] as ReaderGroup[], issues: ['The response did not contain a valid nucleas-plan JSON block. Return the complete plan as one fenced JSON block tagged nucleas-plan.'], claim: null as ClaimCheck | null };
     const structure = safely(() => validatePlanStructure(parsed.plan, { hasKnownPath: Boolean(evidencePack?.chains.length) }), [] as string[]);
+    // Text left over from the fill-in form is not a plan.
+    const prose = [parsed.plan.title, parsed.plan.summary, ...parsed.plan.steps, parsed.plan.structured?.symptom, parsed.plan.structured?.walkthrough, parsed.plan.structured?.expectedResult].filter(Boolean).join('\n');
+    if (/<[a-z][a-z ,'/-]{4,}>/.test(prose)) structure.push('The plan still contains unfilled <...> placeholders from the form; replace every one with real content from the code.');
     const claim = planFiles ? safely(() => checkPlanClaims(planFiles, parsed.plan, planScope), null as ClaimCheck | null) : null;
     // Every other reader of the files to be changed must be answered for, not waved away.
     const unaddressed = planFiles
@@ -671,10 +675,12 @@ export async function attemptOrchestratedIdeReply(input: {
     // One targeted correction round, only for problems the code can prove; then whatever remains is reported.
     if (planAssessment.issues.length && !input.signal?.aborted && remaining() > 100_000) {
       input.onProgress?.(`Checked the plan against the repository: sending ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} back to the planner`);
+      // A reply with no plan at all gets a fill-in-the-blanks form with the traced facts pre-filled;
+      // a plan with specific problems gets those problems back.
       const retry = await runStage({
         stage: 'planner',
         binding: plannerBinding,
-        userText: [
+        userText: !planAssessment.parsed ? planTemplateRequest(input.userText, evidencePack ?? null) : [
           input.userText, '',
           'Your previous plan was rejected by automatic checks against the repository. Return the complete plan again as one nucleas-plan JSON block, fixing exactly these problems:',
           ...planAssessment.issues.map((issue) => `- ${issue}`),
@@ -690,6 +696,27 @@ export async function attemptOrchestratedIdeReply(input: {
         planAssessment = assessPlan(retry.text);
       }
     }
+  }
+
+  // No usable plan after the correction: the Worker and Critic would only be verifying prose, so stop here.
+  if (interactionMode === 'plan' && planAssessment && !planAssessment.parsed && !input.signal?.aborted && !outOfTime()) {
+    const costs = mergeTurnCosts([...plannerAttempts, plannerTurn]);
+    const tools = summarizeStageTools(stageLog);
+    return {
+      ...plannerTurn,
+      role: 'status',
+      failureCategory: 'plan_format',
+      text: [
+        `The planner (${shortModel(plannerBinding.model)}) did not return a usable plan, even after being given a fill-in form with what Nucleas had already traced, so no plan was published and nothing was reviewed.`,
+        'A larger model at a higher cost level handles this format reliably.',
+        '', '---', 'What the planner returned (unverified):', plannerTurn.text.slice(0, 4000),
+        ...(tools.markdown ? ['', '---', tools.markdown] : []),
+      ].join('\n').slice(0, 24_000),
+      plan: undefined,
+      stageTools: tools.records,
+      toolsUsed: costs.toolsUsed, artifacts: costs.artifacts, evidenceReceipts: costs.evidenceReceipts,
+      costMicros: costs.costMicros, reservedMicros: costs.reservedMicros, noProviderFee: costs.noProviderFee,
+    };
   }
 
   // A plan whose evidence cannot be found in the repository, or whose edits are on code the named page
