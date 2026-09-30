@@ -81,12 +81,13 @@ export function ideChatToolDefinitions(options: {
         function: {
           name: 'repo_references',
           description:
-            'Find which files import a given file, following imports up to the pages/routes that render it. Use after repo_search finds where data or a component is defined, to learn where it shows up in the product.',
+            'Trace how files connect, across JS/TS, Vue/Svelte/Astro, Python, PHP (WordPress, Laravel), Go and Shopify Liquid. direction "used_by" (default): which files import/include the file, up to the pages and routes that serve it, to learn where data or a component shows up. direction "uses": everything a page or file depends on (imports, includes, templates, calls to the app\u2019s own routes); you may pass a URL path such as /admin/users instead of a file to start from the page that serves it.',
           parameters: {
             type: 'object',
             properties: {
-              path: { type: 'string', description: 'Repository path of the file to trace, e.g. "src/games/openra.ts"' },
-              maxDepth: { type: 'integer', description: 'How many import hops to follow (default 3, max 6)' },
+              path: { type: 'string', description: 'Repository path of the file to trace, e.g. "src/lib/data/items.ts"; for direction "uses" this may also be a URL path such as "/admin/users"' },
+              direction: { type: 'string', enum: ['used_by', 'uses'], description: 'used_by: who uses this file (default). uses: what this file/page depends on.' },
+              maxDepth: { type: 'integer', description: 'How many hops to follow (default 3 for used_by, 6 for uses; max 6)' },
             },
             required: ['path'],
           },

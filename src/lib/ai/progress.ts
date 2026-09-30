@@ -47,7 +47,7 @@ export function describeToolCall(name: string, argumentsJson: string): string {
     case 'repo_search':
       return `Searching the code for “${str(a.query)}”${str(a.path) ? ` in ${str(a.path)}` : str(a.glob) ? ` in ${str(a.glob)}` : ''}`;
     case 'repo_references':
-      return `Tracing where ${str(a.path, 120) || 'a file'} is used`;
+      return a.direction === 'uses' ? `Tracing what ${str(a.path, 120) || 'a page'} uses` : `Tracing where ${str(a.path, 120) || 'a file'} is used`;
     case 'repo_read':
       return `Reading ${str(a.path, 120) || 'a file'}`;
     case 'repo_tree':

@@ -12,7 +12,7 @@ const USER_OBSERVATION_RULE = [
 
 const PLAN_PLANNER = [
   'You are the Planner stage in Plan mode. Lead the investigation of this codebase, then draft a clear implementation plan.',
-  'How to investigate: start with repo_search to find where the relevant names, text or symbols live (search is exact and covers the whole repository), then repo_read only the files that matter. Once you know where data or a component is defined, call repo_references on that file to see which pages render it. When the request is about something that recently changed, was removed or still shows up, check repo_history (optionally for the relevant path) and repo_commit for the diff. Reads come from a local copy, so re-reading is cheap, but stop once you have the evidence you need.',
+  'How to investigate: start with repo_search to find where the relevant names, text or symbols live (search is exact and covers the whole repository), then repo_read only the files that matter. Once you know where data or a component is defined, call repo_references on that file to see which pages render it, or call it with direction "uses" on the page the request names (a file or a URL path) to list what that page depends on. When the request is about something that recently changed, was removed or still shows up, check repo_history (optionally for the relevant path) and repo_commit for the diff. Reads come from a local copy, so re-reading is cheap, but stop once you have the evidence you need.',
   USER_OBSERVATION_RULE,
   'Do not use web_search for Nucleas/project-internal questions.',
   'Do not claim work is already done or files were edited.',
@@ -69,7 +69,7 @@ const BUILD_REVIEWER = [
 
 const CHAT_PLANNER = [
   'You are the Planner stage. Lead deep investigation of this project’s codebase and domain.',
-  'How to investigate: start with repo_search to find where the relevant names, text or symbols live (search is exact and covers the whole repository), then repo_read only the files that matter. Once you know where data or a component is defined, call repo_references on that file to see which pages render it. When the request is about something that recently changed, was removed or still shows up, check repo_history (optionally for the relevant path) and repo_commit for the diff. Reads come from a local copy, so re-reading is cheap, but stop once you have the evidence you need.',
+  'How to investigate: start with repo_search to find where the relevant names, text or symbols live (search is exact and covers the whole repository), then repo_read only the files that matter. Once you know where data or a component is defined, call repo_references on that file to see which pages render it, or call it with direction "uses" on the page the request names (a file or a URL path) to list what that page depends on. When the request is about something that recently changed, was removed or still shows up, check repo_history (optionally for the relevant path) and repo_commit for the diff. Reads come from a local copy, so re-reading is cheap, but stop once you have the evidence you need.',
   USER_OBSERVATION_RULE,
   'Web only for external facts.',
   'Do not write a nucleas-plan fence unless the user explicitly asked for an implementation plan.',

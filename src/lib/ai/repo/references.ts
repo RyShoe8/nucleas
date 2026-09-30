@@ -1,68 +1,71 @@
 /**
- * Who uses this file? Follows import/export/require edges backwards through a repository snapshot so
- * a planner can go from "where is the data defined" to "which page renders it" without guessing.
+ * Who uses this file, and what does this page use? Follows references between files backwards
+ * (importers) and forwards (dependencies, plus calls to the app's own HTTP routes) through a repository
+ * snapshot, so a planner can go from "where is this data defined" to "which page shows it" and back.
+ * Languages and platforms are handled in imports.ts; URL-to-file mapping in routes.ts.
  */
+import { buildRepoIndex, dependenciesOf, normalizePath } from './imports';
+import { collectRoutes, routeFileFor as findRouteFile, routeForFile, type RouteEntry } from './routes';
 
-const EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json'];
-const SPEC = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)(['"])([^'"\n]+)\1/g;
+export { routeForFile };
 
-function dirname(path: string): string {
-  const i = path.lastIndexOf('/');
-  return i < 0 ? '' : path.slice(0, i);
+/** Everything derived from a snapshot that tracing needs, computed once per snapshot. */
+interface Analysis {
+  routes: RouteEntry[];
+  /** file → files it depends on. */
+  uses: Map<string, Set<string>>;
+  /** file → files that depend on it. */
+  usedBy: Map<string, Set<string>>;
+  /** file → routes it serves (by location or registration). */
+  routesByFile: Map<string, string[]>;
 }
 
-function normalize(path: string): string {
-  const out: string[] = [];
-  for (const part of path.split('/')) {
-    if (!part || part === '.') continue;
-    if (part === '..') out.pop();
-    else out.push(part);
+const cache = new WeakMap<Map<string, string>, Analysis>();
+
+function analyze(files: Map<string, string>): Analysis {
+  const cached = cache.get(files);
+  if (cached) return cached;
+  const index = buildRepoIndex(files);
+  const uses = new Map<string, Set<string>>();
+  const usedBy = new Map<string, Set<string>>();
+  for (const [path, content] of files) {
+    if (content.length > 400_000) continue;
+    for (const dependency of dependenciesOf(path, content, index)) {
+      (uses.get(path) ?? uses.set(path, new Set()).get(path)!).add(dependency);
+      (usedBy.get(dependency) ?? usedBy.set(dependency, new Set()).get(dependency)!).add(path);
+    }
   }
-  return out.join('/');
+  const routes = collectRoutes(files, index);
+  const routesByFile = new Map<string, string[]>();
+  for (const entry of routes) (routesByFile.get(entry.file) ?? routesByFile.set(entry.file, []).get(entry.file)!).push(entry.route);
+  const analysis: Analysis = { routes, uses, usedBy, routesByFile };
+  cache.set(files, analysis);
+  return analysis;
 }
 
-/**
- * The `src/` folder an `@/` alias points into, taken from the importing file's own path, so a project in
- * a subfolder (platform/src/...) resolves to platform/src/ and not to a top-level src/.
- */
-function srcRoot(importer: string): string {
-  if (importer.startsWith('src/')) return 'src/';
-  const at = importer.indexOf('/src/');
-  return at >= 0 ? importer.slice(0, at + 5) : 'src/';
+/** Reverse import graph: target path → files that import it. */
+export function buildImporters(files: Map<string, string>): Map<string, Set<string>> {
+  return analyze(files).usedBy;
 }
 
-/** Files a specifier could mean, or [] for packages. `@/` is the src alias used across the codebase. */
-function candidates(importer: string, spec: string): string[] {
-  let base: string;
-  if (spec.startsWith('.')) base = normalize(`${dirname(importer)}/${spec}`);
-  else if (spec.startsWith('@/')) base = normalize(`${srcRoot(importer)}${spec.slice(2)}`);
-  else return [];
-  return [base, ...EXTENSIONS.map((e) => base + e), ...EXTENSIONS.map((e) => `${base}/index${e}`)];
-}
-
-/**
- * Route for a Next.js page or API route file. Handles the App Router (page and route files under app/)
- * and the Pages Router (files under pages/, with index files and _app/_document ignored). Other
- * frameworks return null.
- */
-export function routeForFile(path: string): string | null {
-  const app = /(?:^|\/)app\/(.*?)\/?(?:page|route)\.(?:[jt]sx?|mdx)$/.exec(path);
-  if (app) {
-    const segments = app[1].split('/').filter((s) => s && !/^\(.*\)$/.test(s) && !s.startsWith('@'));
-    return `/${segments.join('/')}`;
+/** Files that call the app's own HTTP routes, through path literals such as '/api/users' or `/api/users/${id}`. */
+function routeCalls(content: string, handlers: RouteEntry[]): string[] {
+  const found = new Set<string>();
+  for (const m of content.matchAll(/['"`](?:https?:\/\/[^/'"`\s]+)?(\/[^'"`?\s#]*)/g)) {
+    const literal = m[1].replace(/\$\{[^}]*\}/g, 'x').replace(/\/+$/, '');
+    if (literal.length < 2) continue;
+    for (const handler of handlers) if (handler.pattern.test(literal)) found.add(handler.file);
   }
-  const pages = /(?:^|\/)pages\/(.*)\.(?:[jt]sx?|mdx)$/.exec(path);
-  if (pages && !/(?:^|\/)_(?:app|document|error)$/.test(pages[1]) && !/\.(?:test|spec)$/.test(pages[1])) {
-    const segments = pages[1].split('/').filter(Boolean);
-    if (segments[segments.length - 1] === 'index') segments.pop();
-    return `/${segments.join('/')}`;
+  // WordPress: a script posting { action: 'save_thing' } reaches the wp_ajax_save_thing handler.
+  for (const m of content.matchAll(/\baction\b['"]?\s*[:=]\s*['"](\w+)['"]/g)) {
+    for (const handler of handlers) if (handler.route.endsWith(`admin-ajax.php?action=${m[1].toLowerCase()}`) || handler.route.endsWith(`admin-ajax.php?action=${m[1]}`)) found.add(handler.file);
   }
-  return null;
+  return [...found];
 }
 
 export interface ReferenceNode {
   path: string;
-  /** How many imports away from the target (1 = imports it directly). */
+  /** How many hops away from the target (1 = uses it directly). */
   depth: number;
   route: string | null;
 }
@@ -74,31 +77,19 @@ export interface ReferenceResult {
   truncated: boolean;
 }
 
-/** Reverse import graph: target path → files that import it. */
-export function buildImporters(files: Map<string, string>): Map<string, Set<string>> {
-  const importers = new Map<string, Set<string>>();
-  for (const [path, content] of files) {
-    if (!/\.(?:[cm]?[jt]sx?)$/.test(path)) continue;
-    for (const match of content.matchAll(SPEC)) {
-      for (const candidate of candidates(path, match[2])) {
-        if (candidate !== path && files.has(candidate)) {
-          let set = importers.get(candidate);
-          if (!set) importers.set(candidate, (set = new Set()));
-          set.add(path);
-          break;
-        }
-      }
-    }
-  }
-  return importers;
+/** Routes a file serves, but not for files that register a great many (a central router is not one page). */
+function routesOf(analysis: Analysis, file: string): string[] {
+  const routes = analysis.routesByFile.get(file) ?? [];
+  return routes.length <= 6 ? routes : [];
 }
 
+/** Who depends on `target`, hop by hop, and the routes those files serve. */
 export function findReferences(files: Map<string, string>, target: string, options: { maxDepth?: number; limit?: number } = {}): ReferenceResult | { error: string } {
-  const path = normalize(target);
+  const path = normalizePath(target);
   if (!files.has(path)) return { error: `No file at "${path}". Use repo_search or repo_tree to find the right path.` };
   const maxDepth = Math.min(Math.max(options.maxDepth ?? 3, 1), 6);
   const limit = Math.min(Math.max(options.limit ?? 60, 1), 200);
-  const importers = buildImporters(files);
+  const analysis = analyze(files);
   const seen = new Set([path]);
   const references: ReferenceNode[] = [];
   let frontier = [path];
@@ -106,59 +97,24 @@ export function findReferences(files: Map<string, string>, target: string, optio
   for (let depth = 1; depth <= maxDepth && frontier.length; depth += 1) {
     const next: string[] = [];
     for (const current of frontier) {
-      for (const importer of [...(importers.get(current) ?? [])].sort()) {
+      for (const importer of [...(analysis.usedBy.get(current) ?? [])].sort()) {
         if (seen.has(importer)) continue;
         seen.add(importer);
         if (references.length >= limit) { truncated = true; continue; }
-        references.push({ path: importer, depth, route: routeForFile(importer) });
+        references.push({ path: importer, depth, route: routesOf(analysis, importer)[0] ?? null });
         next.push(importer);
       }
     }
     frontier = next;
   }
-  const routes = [...new Set(references.map((r) => r.route).filter((r): r is string => Boolean(r)))].sort();
+  const routes = [...new Set(references.flatMap((r) => routesOf(analysis, r.path)))].sort();
   return { target: path, references, routes, truncated };
 }
 
-// ---------- Forward tracing: what does this page use? ----------
-
-/** `/api/x/[id]/y` route files as patterns a fetched path can be matched against. */
-function apiRoutePatterns(files: Map<string, string>): { file: string; pattern: RegExp }[] {
-  const out: { file: string; pattern: RegExp }[] = [];
-  for (const file of files.keys()) {
-    const m = /(?:^|\/)app(\/api\/.*)\/route\.[jt]sx?$/.exec(file) ?? /(?:^|\/)pages(\/api\/.*?)(?:\/index)?\.[jt]sx?$/.exec(file);
-    if (!m) continue;
-    const source = m[1]
-      .replace(/[.+?^${}()|\\]/g, '\\$&')
-      .replace(/\/\[\[?\.\.\.[^\]]+\]\]?/g, '(?:/.+)?')
-      .replace(/\[[^\]]+\]/g, '[^/]+');
-    out.push({ file, pattern: new RegExp(`^${source}$`) });
-  }
-  return out;
-}
-
-/** Route files a source file calls through fetch/axios-style string literals like '/api/admin/x' or `/api/x/${id}`. */
-function apiCalls(content: string, routes: { file: string; pattern: RegExp }[]): string[] {
-  const found = new Set<string>();
-  for (const m of content.matchAll(/['"`](\/api\/[^'"`?\s]*)/g)) {
-    const literal = m[1].replace(/\$\{[^}]*\}/g, 'x').replace(/\/+$/, '');
-    for (const route of routes) if (route.pattern.test(literal)) found.add(route.file);
-  }
-  return [...found];
-}
-
-/** Everything a file depends on, following imports and calls to the app's own /api routes. */
+/** Everything a file depends on: what it imports or includes, and the app's own routes it calls. */
 export function reachableFrom(files: Map<string, string>, start: string, options: { maxDepth?: number; limit?: number } = {}): string[] {
-  const importers = buildImporters(files);
-  const uses = new Map<string, Set<string>>();
-  for (const [dependency, from] of importers) {
-    for (const path of from) {
-      let set = uses.get(path);
-      if (!set) uses.set(path, (set = new Set()));
-      set.add(dependency);
-    }
-  }
-  const routes = apiRoutePatterns(files);
+  const analysis = analyze(files);
+  const handlers = analysis.routes.filter((r) => r.kind === 'handler' && r.route.length > 1);
   const maxDepth = Math.min(Math.max(options.maxDepth ?? 6, 1), 10);
   const limit = Math.min(Math.max(options.limit ?? 400, 1), 2000);
   const seen = new Set([start]);
@@ -167,7 +123,7 @@ export function reachableFrom(files: Map<string, string>, start: string, options
   for (let depth = 1; depth <= maxDepth && frontier.length; depth += 1) {
     const next: string[] = [];
     for (const current of frontier) {
-      for (const dependency of [...(uses.get(current) ?? []), ...apiCalls(files.get(current) ?? '', routes)]) {
+      for (const dependency of [...(analysis.uses.get(current) ?? []), ...routeCalls(files.get(current) ?? '', handlers)]) {
         if (seen.has(dependency) || order.length >= limit) continue;
         seen.add(dependency);
         order.push(dependency);
@@ -179,18 +135,7 @@ export function reachableFrom(files: Map<string, string>, start: string, options
   return order;
 }
 
-/**
- * The page or route file a request is talking about, from a URL path in the text
- * ("example.com/admin/users/settings" → .../app/admin/users/settings/page.tsx, or pages/admin/users/settings.tsx).
- */
+/** The file that serves a URL named in the request (see routes.ts). */
 export function routeFileFor(files: Map<string, string>, text: string): { file: string; route: string } | null {
-  const wanted = [...text.matchAll(/(?:^|[\s(])(?:[a-z0-9-]+(?:\.[a-z0-9-]+)+)?(\/[a-z0-9_-]+(?:\/[a-z0-9_[\]-]+)+)/gi)].map((m) => m[1].toLowerCase());
-  if (!wanted.length) return null;
-  const candidates: { file: string; route: string }[] = [];
-  for (const file of files.keys()) {
-    const route = routeForFile(file);
-    if (route && wanted.includes(route.toLowerCase())) candidates.push({ file, route });
-  }
-  // Prefer a page over an API route of the same path.
-  return candidates.sort((a, b) => Number(/\/route\./.test(a.file)) - Number(/\/route\./.test(b.file)) || a.file.localeCompare(b.file))[0] ?? null;
+  return findRouteFile(files, text, analyze(files).routes);
 }

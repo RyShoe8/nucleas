@@ -5,7 +5,7 @@ import Asset from '@/lib/models/Asset';
 import { browserNavigate } from '@/lib/ai/tools/browserClient';
 import { chooseBrowseTool, isBrowserWorkerConfigured } from '@/lib/ai/tools/browseRouter';
 import { webFetch } from '@/lib/ai/tools/webFetch';
-import { findReferences } from '@/lib/ai/repo/references';
+import { findReferences, reachableFrom, routeFileFor } from '@/lib/ai/repo/references';
 import { imageHitsToArtifacts } from '@/lib/ai/tools/imageSearchArtifacts';
 import { imageSearch, webSearch } from '@/lib/ai/tools/webSearch';
 import { listIdeTree, readIdeFile } from '@/lib/ai/ideCommitPush';
@@ -102,9 +102,18 @@ export async function executeIdeTool(input: {
   if (input.name === 'repo_references') {
     const snap = await getRepoSnapshot(input.organizationId, input.projectId);
     if (!snap.ok) return { content: JSON.stringify({ ok: false, error: snap.reason }), artifacts };
-    const found = findReferences(snap.snapshot.files, typeof args.path === 'string' ? args.path : '', {
-      maxDepth: typeof args.maxDepth === 'number' ? args.maxDepth : undefined,
-    });
+    const files = snap.snapshot.files;
+    const wanted = typeof args.path === 'string' ? args.path.trim() : '';
+    const maxDepth = typeof args.maxDepth === 'number' ? args.maxDepth : undefined;
+    if (args.direction === 'uses') {
+      // A URL such as /admin/users starts from the page that serves it.
+      const page = files.has(wanted) ? null : routeFileFor(files, wanted.startsWith('/') ? wanted : `/${wanted}`);
+      const start = page?.file ?? wanted;
+      if (!files.has(start)) return { content: JSON.stringify({ ok: false, error: `No file or page at "${wanted}". Use repo_search or repo_tree to find the right path.` }), artifacts };
+      const uses = reachableFrom(files, start, { maxDepth });
+      return { content: JSON.stringify({ ok: true, commit: snap.snapshot.commit.slice(0, 12), start, ...(page ? { route: page.route } : {}), uses, truncated: uses.length >= 400 }), artifacts };
+    }
+    const found = findReferences(files, wanted, { maxDepth });
     if ('error' in found) return { content: JSON.stringify({ ok: false, error: found.error }), artifacts };
     return { content: JSON.stringify({ ok: true, commit: snap.snapshot.commit.slice(0, 12), ...found }), artifacts };
   }
