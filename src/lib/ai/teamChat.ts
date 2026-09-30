@@ -59,6 +59,8 @@ export type TeamChatTurn = {
   toolsUsed?: string[];
   /** The model that actually served this stage (after any automatic switch). */
   model?: string;
+  /** This answer came from the tool-less compact retry after an upstream error. */
+  compactRecovery?: boolean;
   /** Tools each stage called during the whole run, for spotting a model that never looked at the code. */
   stageTools?: StageToolRecord[];
   /** Exact repository excerpts used to ground this answer, identified by revision and digest. */
@@ -548,7 +550,7 @@ export async function attemptOrchestratedIdeReply(input: {
         input.onProgress?.(`${shortModel(candidate.model)} returned an internal error; retrying with compact context and no tools`);
         const compactTurn = await exec(candidate, true);
         candidateTurn = compactTurn.role === 'assistant'
-          ? compactTurn
+          ? Object.assign(compactTurn, { compactRecovery: true })
           : {
               ...compactTurn,
               text: `${compactTurn.text}\n\nThe same deployment also failed with a minimal 1,536-token response budget, compact repository evidence, and no tool schemas. This is an upstream model/deployment failure rather than an oversized Nucleas request.`,
@@ -598,7 +600,7 @@ export async function attemptOrchestratedIdeReply(input: {
   const stageLog: StageToolRecord[] = [];
   const logStage = (stage: PipelineStage, turn: TeamChatTurn, fallbackModel?: string) => {
     if (turn.role !== 'assistant') return;
-    stageLog.push({ stage, model: shortModel(turn.model ?? fallbackModel ?? 'unknown'), toolsUsed: [...(turn.toolsUsed ?? [])] });
+    stageLog.push({ stage, model: shortModel(turn.model ?? fallbackModel ?? 'unknown'), toolsUsed: [...(turn.toolsUsed ?? [])], ...(turn.compactRecovery ? { compact: true } : {}) });
   };
   logStage('planner', plannerTurn, plannerBinding?.model);
 

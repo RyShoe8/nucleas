@@ -114,7 +114,7 @@ function toInsertDocs(
       ? { evidenceReceipts: turn.evidenceReceipts.slice(0, 50) }
       : {}),
     ...(turn.stageTools?.length
-      ? { stageTools: turn.stageTools.slice(0, 12).map((item) => ({ stage: item.stage, model: item.model.slice(0, 200), toolsUsed: item.toolsUsed.slice(0, 20) })) }
+      ? { stageTools: turn.stageTools.slice(0, 12).map((item) => ({ stage: item.stage, model: item.model.slice(0, 200), toolsUsed: item.toolsUsed.slice(0, 20), ...(item.compact ? { compact: true } : {}) })) }
       : {}),
     ...(options.includePlan && turn.plan
       ? {

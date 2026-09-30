@@ -3,6 +3,10 @@ import { listIdeTree, readIdeFile } from '@/lib/ai/ideCommitPush';
 import { extractChatHeuristicText } from '@/lib/ai/tools/serverBrowseAssist';
 import { getRepoSnapshot, type LoadedSnapshot } from '@/lib/ai/repo/snapshot';
 import { repositoryEvidenceReceipt, type RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
+import { identifierTerms, relevantExcerptStart, snapshotCandidates } from '@/lib/ai/repo/digSelect';
+import { reachableFrom, routeFileFor } from '@/lib/ai/repo/references';
+
+export { snapshotCandidates };
 
 const PATH_HINT =
   /\b(rule|rules|task.?rule|taskRule|AiProjectTaskRule|IdeTaskRules|planMode|ideChat|prompt|\.cursor|nucleas|architecture|companyChat|teamChat)\b/i;
@@ -67,11 +71,6 @@ const TREE_CHARS_WITH_READS = 2000;
 const TREE_CHARS_TREE_ONLY = 8000;
 const FILES_CHARS = 40_000;
 const CONTEXT_CHARS = 48_000;
-const QUERY_STOP_WORDS = new Set([
-  'about', 'after', 'also', 'been', 'before', 'could', 'does', 'from', 'have', 'into', 'listed',
-  'listing', 'make', 'need', 'only', 'page', 'remove', 'should', 'that', 'their', 'there', 'these',
-  'thing', 'this', 'under', 'want', 'what', 'when', 'where', 'which', 'with', 'would',
-]);
 
 export type RepoAssistResult = {
   ok: boolean;
@@ -128,53 +127,6 @@ function fileCharBudget(path: string, ceiling = PRIORITY_FILE_CHARS): number {
   return Math.min(PRIORITY_PATH_SET.has(path) ? PRIORITY_FILE_CHARS : PER_FILE_CHARS, ceiling);
 }
 
-function queryTokens(query: string): string[] {
-  return [...new Set((query.match(/[A-Za-z0-9_-]{4,}/g) ?? []).map(token => token.toLowerCase()))]
-    .filter(token => !QUERY_STOP_WORDS.has(token))
-    .slice(0, 16);
-}
-
-/** Whole-repository candidate selection that makes no assumptions about src/platform/app layout. */
-export function snapshotCandidates(snapshot: LoadedSnapshot, query: string, limit = BATCH_SIZE): string[] {
-  const tokens = queryTokens(query);
-  if (!tokens.length) return [];
-  const scored: { path: string; score: number }[] = [];
-  for (const [path, content] of snapshot.files) {
-    const pathLower = path.toLowerCase();
-    const contentLower = content.toLowerCase();
-    let score = /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|json|ya?ml)$/i.test(path) ? 2 : 0;
-    let hits = 0;
-    for (const token of tokens) {
-      if (pathLower.includes(token)) { score += 12; hits += 1; }
-      if (contentLower.includes(token)) { score += 4; hits += 1; }
-    }
-    if (hits) scored.push({ path, score: score + hits * hits });
-  }
-  return scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path)).slice(0, limit).map(row => row.path);
-}
-
-/** Center an excerpt on the densest cluster of query terms, not merely the first incidental hit. */
-function relevantExcerptStart(content: string, query: string, excerptChars: number): number {
-  const lower = content.toLowerCase();
-  const positions: number[] = [];
-  for (const token of queryTokens(query)) {
-    let from = 0;
-    for (let count = 0; count < 12; count += 1) {
-      const position = lower.indexOf(token, from);
-      if (position < 0) break;
-      positions.push(position);
-      from = position + token.length;
-    }
-  }
-  if (!positions.length) return 0;
-  const radius = Math.max(400, Math.floor(excerptChars / 2));
-  const center = positions.reduce((best, candidate) => {
-    const density = positions.filter((position) => Math.abs(position - candidate) <= radius).length;
-    const bestDensity = positions.filter((position) => Math.abs(position - best) <= radius).length;
-    return density > bestDensity ? candidate : best;
-  }, positions[0]!);
-  return Math.max(0, center - Math.floor(excerptChars / 2));
-}
 
 function snapshotExcerpt(snapshot: LoadedSnapshot, path: string, query: string, maxChars: number): { block: string; receipt: RepositoryEvidenceReceipt } | null {
   const content = snapshot.files.get(path);
@@ -253,7 +205,16 @@ export async function gatherRepoAssistContext(input: {
   const local = await getRepoSnapshot(input.organizationId, input.projectId).catch(() => null);
   if (local?.ok) {
     toolsUsed.push('repo_search');
-    const paths = snapshotCandidates(local.snapshot, query, maxFiles);
+    // When the request names a page ("/admin/users/settings"), find it and what it uses, so the
+    // files shown first are the ones that can actually change what that page displays.
+    const page = routeFileFor(local.snapshot.files, input.userText);
+    const scope = page ? new Set(reachableFrom(local.snapshot.files, page.file)) : undefined;
+    const paths = snapshotCandidates(local.snapshot, query, maxFiles, { scope });
+    const ids = identifierTerms(query);
+    const pageNote = page
+      ? [`The request names the page ${page.route}, which is ${page.file}.`,
+        ...(scope && ids.length ? [`Files that page uses (imports and API calls) mentioning ${ids.join(' and ')}: ${paths.filter((p) => scope.has(p)).slice(0, 8).join(', ') || 'none found'}.`] : [])].join(' ')
+      : '';
     const excerpts = paths.map(path => snapshotExcerpt(local.snapshot, path, query, maxCharsPerFile)).filter((item): item is NonNullable<typeof item> => Boolean(item));
     const fileBlocks = excerpts.map(item => item.block);
     if (fileBlocks.length) {
@@ -269,6 +230,7 @@ export async function gatherRepoAssistContext(input: {
         contextBlock: [
           'Repository dig results (deterministic whole-repository search; use these excerpts before calling more tools):',
           `Query focus: ${query}`,
+          ...(pageNote ? [pageNote] : []),
           fileBlocks.join('\n\n').slice(0, Math.min(FILES_CHARS, maxContextChars)),
           'If anything is still missing, use repo_search/repo_read for another range. Do not stop at path lists.',
         ].join('\n\n').slice(0, maxContextChars),

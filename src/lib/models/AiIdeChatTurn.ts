@@ -40,6 +40,7 @@ const stageToolSchema = new Schema(
     stage: { type: String, enum: ['planner', 'worker', 'reviewer'] as const, required: true },
     model: { type: String, required: true, maxlength: 200 },
     toolsUsed: { type: [String], default: [] },
+    compact: { type: Boolean },
   },
   { _id: false }
 );

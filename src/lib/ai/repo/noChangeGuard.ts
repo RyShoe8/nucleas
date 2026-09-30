@@ -9,6 +9,9 @@ const NO_CHANGE_CLAIMS: RegExp[] = [
   /\b(?:could not|couldn'?t|did not|didn'?t|unable to)\s+(?:find|locate|identify)\b/i,
   /\bno\s+(?:change|changes|modification|modifications|removal|action|edits?)\b[^.\n]{0,30}\b(?:needed|necessary|required)\b/i,
   /\balready\s+(?:removed|fixed|resolved|handled)\b/i,
+  /\bdid(?:n'?t| not)\s+(?:reveal|show|contain|include|surface)\b/i,
+  /\bno\s+(?:indication|evidence|sign|trace|record|mention)\b/i,
+  /\bnot\s+(?:present|listed|defined|contained|mentioned)\b/i,
   /\bdoes(?:n'?t| not)\s+(?:exist|appear)\b/i,
 ];
 

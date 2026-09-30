@@ -41,6 +41,7 @@ export default function StageToolsPanel({ stageTools }: { stageTools: StageToolR
                 <span className="text-amber-400">none</span>
               )}
               {gap && record.toolsUsed.length ? <span className="text-amber-400">no repository tools</span> : null}
+              {record.compact ? <span className="text-amber-400" title="Retried without tools after an upstream error">compact mode</span> : null}
             </li>
           );
         })}

@@ -1,20 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { checkNoChangeClaim, claimsNothingFound, keyTerms } from './noChangeGuard';
 
-const request = "On playbound.club/admin/connect/game-servers, OpenHV is listed on its own and also under OpenRA. Remove the listing under OpenRA.";
-const report = "1. **Search for 'OpenHV'**: No explicit nested 'OpenHV' entry under 'OpenRA' found in the provided files.\n2. Inspect `platform/src/lib/data/games.ts`: defines OpenRA and OpenHV, no nested structure identified.\nNo such nested entry was found, so no removal was necessary.";
+const request = "On example.com/admin/connect/user-settings, AcmeSync is listed on its own and also under AcmeCore. Remove the listing under AcmeCore.";
+const report = "1. **Search for 'AcmeSync'**: No explicit nested 'AcmeSync' entry under 'AcmeCore' found in the provided files.\n2. Inspect `platform/src/lib/data/games.ts`: defines AcmeCore and AcmeSync, no nested structure identified.\nNo such nested entry was found, so no removal was necessary.";
 
 const files = new Map<string, string>([
-  ['platform/src/lib/data/games.ts', "export const games = [{ id: 'openra' }, { id: 'openhv' }]; // OpenRA OpenHV"],
-  ['platform/src/lib/gameHost/mods.ts', "export const openra = { name: 'OpenRA', mods: ['ra', 'OpenHV'] };"],
-  ['platform/src/lib/gameHost/mods.test.ts', "OpenRA OpenHV"],
-  ['README.md', 'OpenRA OpenHV'],
-  ['platform/src/app/other.ts', 'OpenRA only'],
+  ['platform/src/lib/data/games.ts', "export const games = [{ id: 'acmecore' }, { id: 'acmesync' }]; // AcmeCore AcmeSync"],
+  ['platform/src/lib/gameHost/mods.ts', "export const acmecore = { name: 'AcmeCore', mods: ['ra', 'AcmeSync'] };"],
+  ['platform/src/lib/gameHost/mods.test.ts', "AcmeCore AcmeSync"],
+  ['README.md', 'AcmeCore AcmeSync'],
+  ['platform/src/app/other.ts', 'AcmeCore only'],
 ]);
 
 describe('key terms and claims', () => {
   it('extracts the distinctive names, not sentence words', () => {
-    expect(keyTerms(request)).toEqual(expect.arrayContaining(['OpenHV', 'OpenRA', 'game-servers']));
+    expect(keyTerms(request)).toEqual(expect.arrayContaining(['AcmeSync', 'AcmeCore', 'user-settings']));
     expect(keyTerms(request)).not.toContain('Remove');
   });
 
@@ -33,7 +33,16 @@ describe('checkNoChangeClaim', () => {
   });
 
   it('stays quiet when the report makes no such claim or every matching file is covered', () => {
-    expect(checkNoChangeClaim({ userText: request, workerText: 'Remove OpenHV from mods.ts.', files })).toBeNull();
+    expect(checkNoChangeClaim({ userText: request, workerText: 'Remove AcmeSync from mods.ts.', files })).toBeNull();
     expect(checkNoChangeClaim({ userText: request, workerText: `${report}\nAlso read platform/src/lib/gameHost/mods.ts.`, files })).toBeNull();
+  });
+});
+
+describe('wording seen from real small-model reports', () => {
+  it('catches "did not reveal" and "no indication" style conclusions', () => {
+    expect(claimsNothingFound('Searching for AcmeSync in the repository did not reveal any specific definition.')).toBe(true);
+    expect(claimsNothingFound('Based on the available evidence, there is no indication that AcmeSync is listed under AcmeCore.')).toBe(true);
+    expect(claimsNothingFound('AcmeSync is not present under the AcmeCore editions array.')).toBe(true);
+    expect(claimsNothingFound('The array lists AcmeSync twice; remove the second entry.')).toBe(false);
   });
 });

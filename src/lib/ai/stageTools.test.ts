@@ -23,6 +23,18 @@ describe('summarizeStageTools', () => {
     expect(summary.warnings).toEqual([]);
   });
 
+  it('says when a stage was retried without tools after an upstream error', () => {
+    const summary = summarizeStageTools([{ stage: 'worker', model: 'qwen', toolsUsed: [], compact: true }]);
+    expect(summary.markdown).toContain('none ⚠ no repository tools (compact mode)');
+    expect(summary.warnings[0]).toContain('retried in compact mode with tools switched off after an upstream error');
+  });
+
+  it('says when a stage was retried without tools after an upstream error', () => {
+    const summary = summarizeStageTools([{ stage: 'worker', model: 'qwen', toolsUsed: [], compact: true }]);
+    expect(summary.markdown).toContain('none ⚠ no repository tools (compact mode)');
+    expect(summary.warnings[0]).toContain('retried in compact mode with tools switched off after an upstream error');
+  });
+
   it('is empty when there is nothing to report', () => {
     expect(summarizeStageTools([]).markdown).toBe('');
   });

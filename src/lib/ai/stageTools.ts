@@ -9,6 +9,8 @@ export interface StageToolRecord {
   stage: PipelineStage;
   model: string;
   toolsUsed: string[];
+  /** The stage was retried without tools ("compact" recovery) after an upstream error. */
+  compact?: boolean;
 }
 
 const LABEL: Record<PipelineStage, string> = { planner: 'Planner', worker: 'Worker', reviewer: 'Reviewer' };
@@ -22,6 +24,7 @@ export function mergeStageTools(records: StageToolRecord[]): StageToolRecord[] {
     const existing = merged.get(key);
     if (existing) {
       for (const tool of record.toolsUsed) if (!existing.toolsUsed.includes(tool)) existing.toolsUsed.push(tool);
+      if (record.compact) existing.compact = true;
     } else {
       merged.set(key, { ...record, toolsUsed: [...new Set(record.toolsUsed)] });
     }
@@ -53,8 +56,8 @@ export function summarizeStageTools(input: StageToolRecord[], options: { buildMo
     const label = `${LABEL[record.stage]} (${record.model})`;
     if (record.stage === 'reviewer') return `- ${label}: no tools (by design)`;
     if (stageLackedRepoTools(record, options.buildMode)) {
-      warnings.push(`${LABEL[record.stage]} (${record.model}) never called a repository tool, so its findings are not grounded in a search or read.`);
-      return `- ${label}: ${record.toolsUsed.length ? record.toolsUsed.join(', ') : 'none'} ⚠ no repository tools`;
+      warnings.push(`${LABEL[record.stage]} (${record.model}) never called a repository tool, so its findings are not grounded in a search or read${record.compact ? ' (it was retried in compact mode with tools switched off after an upstream error)' : ''}.`);
+      return `- ${label}: ${record.toolsUsed.length ? record.toolsUsed.join(', ') : 'none'} ⚠ no repository tools${record.compact ? ' (compact mode)' : ''}`;
     }
     return `- ${label}: ${record.toolsUsed.join(', ')}`;
   });
