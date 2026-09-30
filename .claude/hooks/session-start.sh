@@ -7,4 +7,5 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
 fi
 
 cd "$CLAUDE_PROJECT_DIR"
-npm install --no-audit --no-fund
+# --no-save: install what the lockfile says without rewriting package.json or package-lock.json.
+npm install --no-save --no-audit --no-fund
