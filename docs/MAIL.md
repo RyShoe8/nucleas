@@ -4,12 +4,18 @@ All connected Gmail mailboxes in one inbox (Mail window). Managers and administr
 
 ## Google setup (once)
 
-1. Google Cloud console → the project behind `GOOGLE_CLIENT_ID`: enable the **Gmail API**.
-2. OAuth consent screen → add scopes `https://www.googleapis.com/auth/gmail.modify` and `https://www.googleapis.com/auth/gmail.send`.
-3. Credentials → the OAuth client → add the authorized redirect URI `https://os.nucleas.app/api/os/mail/google/callback` (and `https://nucleas.app/...` if used).
-4. **Publishing status matters.** In *Testing*, Google expires refresh tokens after 7 days (mailboxes keep needing to be reconnected). Set the app to **In production**. Without Google's verification, sign-in shows an "unverified app" warning (Advanced → continue) and is limited to 100 users: fine for your own and your clients' mailboxes. Google requires a security assessment only to lift that limit. Workspace admins can also allow the app for their domain. Each client mailbox must approve the permissions when you connect it.
+Scopes: `gmail.modify` (read, label, archive) is a **restricted** scope; `gmail.send` is a *sensitive* scope. Every Gmail scope that can read message bodies (`gmail.readonly`, `gmail.metadata`, `gmail.modify`, `mail.google.com`) is restricted, so this cannot be done with lighter permissions.
 
-`CRON_SECRET` protects `/api/cron/mail-sync` (already in `vercel.json`, every 5 minutes).
+1. Google Cloud console → the project behind `GOOGLE_CLIENT_ID`: enable the **Gmail API**.
+2. OAuth consent screen → add `https://www.googleapis.com/auth/gmail.modify` and `https://www.googleapis.com/auth/gmail.send`.
+3. Credentials → the OAuth client → add the authorized redirect URI `https://os.nucleas.app/api/os/mail/google/callback` (and `https://nucleas.app/...` if used).
+4. Choose how the consent screen is published (what restricted scopes mean for you):
+   - **In production, unverified (recommended to start).** No review needed. Each person connecting a mailbox sees an "unverified app" warning (Advanced → continue). Limit: **100 different Google accounts over the app's lifetime** (an account counts once it has authorized, even if later disconnected). Plenty for your platform and client mailboxes; don't connect and disconnect test accounts freely. Do not leave the app in *Testing*: Google expires refresh tokens after 7 days.
+   - **Internal** (Workspace only): no warning and no limit, but only mailboxes inside your own Google Workspace organization can connect, not client domains or personal Gmail.
+   - **Verified.** Needed only to go beyond 100 accounts or remove the warning. For restricted scopes Google requires app verification **and an annual third-party security assessment (CASA)**, which takes weeks and costs money. Not needed for this private use.
+   - A client's Workspace admin can also mark the app as trusted for their domain, which helps with their own admin policies but does not lift the 100-account limit.
+
+Each client mailbox owner must approve the permissions when you connect it. `CRON_SECRET` protects `/api/cron/mail-sync` (already in `vercel.json`, every 5 minutes).
 
 ## Spam: what keeps the main box clean
 

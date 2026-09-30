@@ -2,8 +2,9 @@ import { SignJWT, jwtVerify } from 'jose';
 import { randomUUID } from 'crypto';
 
 /**
- * Gmail access: read, label and archive (gmail.modify) and send (gmail.send). These are "restricted" scopes
- * in Google's terms; for your own mailboxes the app can stay unverified (see docs/MAIL.md).
+ * Gmail access: read, label and archive (gmail.modify, a RESTRICTED scope) and send (gmail.send, a sensitive
+ * scope). Any scope that can read message bodies is restricted, so there is no lighter way to read mail through
+ * the Gmail API. For your own and your clients' mailboxes the app can stay unverified (see docs/MAIL.md).
  */
 export const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
