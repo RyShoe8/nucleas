@@ -223,6 +223,20 @@ describe('streamed responses', () => {
     expect(result.toolCalls).toEqual([{ id: 'call_1', type: 'function', function: { name: 'repo_search', arguments: '{"query":"OpenHV"}' } }]);
   });
 
+  it('bounds the assembled text, not the event framing: a long thinking stream is fine', async () => {
+    // ~8000 events of framing (about 1 MB) carrying only ~24 KB of text.
+    const events = Array.from({ length: 8000 }, () => ({ id: 'chatcmpl-'.padEnd(120, 'x'), object: 'chat.completion.chunk', model: 'test-model', choices: [{ index: 0, delta: { reasoning_content: 'abc' } }] }));
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => sse([...events, { choices: [{ delta: { content: 'done' }, finish_reason: 'stop' }] }, '[DONE]'], 65536));
+    const result = await invokeModel(streamConfig, request, { fetcher });
+    expect(result.content).toBe('done');
+  });
+
+  it('rejects a stream whose assembled text is over the limit, and says why', async () => {
+    const big = 'x'.repeat(300_000);
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => sse([{ choices: [{ delta: { content: big } }] }, { choices: [{ delta: { content: big } }] }]));
+    await expect(invokeModel(streamConfig, request, { fetcher })).rejects.toMatchObject({ code: 'invalid_response', details: { kind: 'too_large' } });
+  });
+
   it('turns an error event mid-stream into an unavailable error', async () => {
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => sse([{ choices: [{ delta: { content: 'x' } }] }, { error: { message: 'boom' } }]));
     await expect(invokeModel(streamConfig, request, { fetcher })).rejects.toMatchObject({ code: 'unavailable', details: { kind: 'stream_error' } });

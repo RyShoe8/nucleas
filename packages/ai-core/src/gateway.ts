@@ -268,11 +268,15 @@ async function readBoundedJson(response: Response, maxBytes: number): Promise<un
   }
 }
 
+/** Raw event bytes we will read from one stream. Each token is a ~250-byte JSON event, so this is far above the text limit. */
+const STREAM_MAX_RAW_BYTES = 16 * 1024 * 1024;
+
 /**
  * Reads an OpenAI-compatible chat-completions event stream and returns the same object a non-streaming
- * call would have, so the normal response parsing applies unchanged.
+ * call would have, so the normal response parsing applies unchanged. `maxTextChars` bounds the assembled
+ * answer (content + reasoning + tool arguments), not the event framing around it.
  */
-export async function readStreamedCompletion(response: Response, maxBytes: number, onActivity: () => void = () => {}): Promise<unknown> {
+export async function readStreamedCompletion(response: Response, maxTextChars: number, onActivity: () => void = () => {}): Promise<unknown> {
   const reader = response.body?.getReader();
   if (!reader) throw new GatewayError('invalid_response');
   const decoder = new TextDecoder();
@@ -300,6 +304,7 @@ export async function readStreamedCompletion(response: Response, maxBytes: numbe
       if (delta?.content) content += delta.content;
       const thought = delta?.reasoning_content ?? delta?.reasoning;
       if (thought) reasoning += thought;
+      if (content.length + reasoning.length > maxTextChars) throw new GatewayError('invalid_response', { kind: 'too_large' });
       for (const part of delta?.tool_calls ?? []) {
         const index = part.index ?? 0;
         const call = (calls[index] ??= { name: '', args: '' });
@@ -319,9 +324,9 @@ export async function readStreamedCompletion(response: Response, maxBytes: numbe
       if (done) break;
       onActivity();
       size += value.byteLength;
-      if (size > maxBytes) {
+      if (size > STREAM_MAX_RAW_BYTES) {
         await reader.cancel();
-        throw new GatewayError('invalid_response');
+        throw new GatewayError('invalid_response', { kind: 'too_large' });
       }
       pending += decoder.decode(value, { stream: true });
       let newline: number;
@@ -332,6 +337,9 @@ export async function readStreamedCompletion(response: Response, maxBytes: numbe
       }
     }
     if (!finished && pending.startsWith('data:')) handle(pending.slice(5).trim());
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
   } finally {
     reader.releaseLock();
   }

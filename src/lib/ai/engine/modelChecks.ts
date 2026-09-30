@@ -347,7 +347,11 @@ function isTransientGatewayError(error: unknown): boolean {
 }
 
 function failureMessage(error: unknown): string {
-  return error instanceof GatewayError ? `${error.code}${error.details?.httpStatus ? ` (${error.details.httpStatus})` : ''}${error.details?.providerMessage ? `: ${error.details.providerMessage}` : ''}` : 'Check failed.';
+  if (!(error instanceof GatewayError)) return 'Check failed.';
+  const d = error.details;
+  // Without an HTTP status, say what kind of failure it was (empty reply, too large, timeout...).
+  const why = d?.httpStatus ? ` (${d.httpStatus})` : d?.kind ? ` (${[d.kind, d.finishReason ? `finish: ${d.finishReason}` : ''].filter(Boolean).join(', ')})` : '';
+  return `${error.code}${why}${d?.providerMessage ? `: ${d.providerMessage}` : ''}`;
 }
 
 /**
