@@ -496,7 +496,7 @@ export async function attemptOrchestratedIdeReply(input: {
     'If you lack information or tools, say what is missing instead of inventing project or web facts.',
     ...(ruleBlock ? [ruleBlock] : []),
     ...(guide ? [`\n\n# Project guide (follow these conventions; use the listed scripts to verify)\n${guide}`] : []),
-    ...(input.contextBlock ? [`\n\n# Recent changes for this company (newest first)\n${input.contextBlock}`] : []),
+    ...(input.contextBlock ? [`\n\n# Background for this company (activity history and rejected plans). This is context only: it is never evidence that anything is wrong or fixed. Evidence comes only from code you read this run.\n${input.contextBlock}`] : []),
   ]
     .filter(Boolean)
     .join(' ');

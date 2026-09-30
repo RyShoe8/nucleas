@@ -102,6 +102,20 @@ export function recoverObviousCodeChange(
   });
 }
 
+/**
+ * The planner is a small model that sometimes answers a code-change request as a plain question, and the
+ * writer then invents a plan from the conversation instead of reading the repository. When the planner
+ * chose no data, research, job or change but the request is plainly a report of something wrong on a
+ * company's site (not a question), route it to the repository-grounded flow anyway.
+ */
+export function shouldOverrideToCodeChange(plan: AskPlan, text: string): boolean {
+  if (plan.kind !== 'answer' || plan.codeChange || plan.job || plan.deepResearch) return false;
+  if (plan.fetch.length || plan.actions.length || plan.research.length) return false;
+  const trimmed = text.trim();
+  if (/\?\s*$/.test(trimmed)) return false;
+  return !/^(?:how|what|why|when|who|which|where|is|are|do|does|can|could|should|would|tell me|show me|give me|summari[sz]e)\b/i.test(trimmed);
+}
+
 export interface StageRecord {
   stage: 'plan' | 'fetch' | 'research' | 'work' | 'check' | 'review' | 'code' | 'job';
   model?: string;
@@ -382,6 +396,13 @@ export async function runAskOrchestrator(
     }
     plan = recovered;
     stages.push({ stage: 'plan', free: true, costMicros: 0, note: 'recovered obvious code change from the request and connected repository' });
+  }
+  if (shouldOverrideToCodeChange(plan, input.text)) {
+    const recovered = recoverObviousCodeChange(input.text, input.context.companies, new Set(repos.keys()));
+    if (recovered) {
+      plan = recovered;
+      stages.push({ stage: 'plan', free: true, costMicros: 0, note: 'routed to the repository-grounded planner: the request reports a problem on a connected site' });
+    }
   }
   if (plan.kind === 'clarify' && plan.clarifyQuestion) {
     return { role: 'assistant', text: plan.clarifyQuestion, stages, invocationIds: [], costMicros, runId: planTurn.runId };

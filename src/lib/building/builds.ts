@@ -71,6 +71,7 @@ type BuildDoc = {
   title: string;
   summary?: string;
   steps?: string[];
+  events?: { at: Date; action: string; note?: string }[];
   planMarkdown: string;
   repository: { owner: string; repo: string; defaultBranch: string };
   level?: CostLevel;
@@ -166,6 +167,16 @@ export async function getBuild(viewer: CompanyViewer, id: string): Promise<Build
 
 // ---------- Proposing (from Ask) ----------
 
+/** Earlier plans people turned down, with why, so the next plan does not simply repeat them. */
+export function renderRejectedPlans(rows: Pick<BuildDoc, 'title' | 'summary' | 'request' | 'events'>[]): string {
+  if (!rows.length) return '';
+  const lines = rows.map((row) => {
+    const reason = [...(row.events ?? [])].reverse().find((e) => e.action === 'rejected' && e.note)?.note;
+    return `- "${row.title}" (${(row.summary || row.request).replace(/\s+/g, ' ').slice(0, 200)})${reason ? ` — rejected because: ${reason}` : ' — rejected, no reason recorded'}`;
+  });
+  return ['Plans already rejected for this company. Do not propose the same fix again unless your plan says what is different and why it now works:', ...lines].join('\n');
+}
+
 export type ProposeResult =
   | { ok: true; build: BuildView; costMicros: number }
   | { ok: false; reason: 'no_repository' | 'no_plan'; message: string; costMicros: number };
@@ -185,9 +196,17 @@ export async function proposeCodeChange(
   // The planner also sees what changed recently for the company (commits, builds, actions).
   const { companyTimeline, renderTimeline } = await import('@/lib/companies/activityLog');
   const recent = await companyTimeline(viewer, input.companyId, { limit: 15 }).catch(() => null);
+  const rejected = renderRejectedPlans(
+    await BuildRequest.find({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(input.companyId), status: { $in: ['rejected', 'discarded'] } })
+      .sort({ updatedAt: -1 })
+      .limit(5)
+      .lean<BuildDoc[]>()
+      .catch(() => [] as BuildDoc[])
+  );
+  const background = [recent?.length ? renderTimeline(recent) : '', rejected].filter(Boolean).join('\n\n');
   const turn = await attemptOrchestratedIdeReply({
     projectName: target.projectName,
-    ...(recent?.length ? { contextBlock: renderTimeline(recent) } : {}),
+    ...(background ? { contextBlock: background } : {}),
     onProgress: input.onProgress,
     organizationId: String(viewer.organizationId),
     projectId: target.projectId,
