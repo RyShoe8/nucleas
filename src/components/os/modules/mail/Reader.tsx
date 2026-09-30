@@ -5,6 +5,16 @@ import Composer, { type ComposerInit } from './Composer';
 import MessageBody from './MessageBody';
 import { accountColor, api, displayName, post, type Account, type Bucket, type ThreadMessage, type ThreadSummary } from './types';
 
+export interface AiToolsContext {
+    thread: ThreadSummary;
+    messages: ThreadMessage[];
+    draftInto: (text: string) => void;
+    /** Show a note under the header (a summary, a result, an error). */
+    note: (n: { kind: 'info' | 'error'; text: string } | null) => void;
+    /** Only the drafting button (inside the reply box). */
+    compact?: boolean;
+}
+
 const MOVE_TARGETS: { bucket: Bucket; label: string }[] = [
     { bucket: 'normal', label: 'Inbox' },
     { bucket: 'updates', label: 'Updates' },
@@ -26,12 +36,13 @@ export default function Reader({
     onChanged: (opts?: { removed?: boolean }) => void;
     onClose: () => void;
     /** AI help for this conversation (summary, draft). */
-    aiTools?: (ctx: { thread: ThreadSummary; messages: ThreadMessage[]; draftInto: (text: string) => void }) => React.ReactNode;
+    aiTools?: (ctx: AiToolsContext) => React.ReactNode;
 }) {
     const [messages, setMessages] = useState<ThreadMessage[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [open, setOpen] = useState<Set<string>>(new Set());
     const [replying, setReplying] = useState<ComposerInit | null>(null);
+    const [note, setNote] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
     const account = accounts.find((a) => a.id === thread.accountId);
     const triage = messages?.at(-1)?.triage ?? thread.triage;
     const filtered = triage && !['important', 'normal'].includes(triage.bucket);
@@ -102,7 +113,7 @@ export default function Reader({
                             </option>
                         ))}
                     </select>
-                    {messages ? aiTools?.({ thread, messages, draftInto: (text) => { startReply(); setReplying((r) => (r ? { ...r, text } : r)); } }) : null}
+                    {messages ? aiTools?.({ thread, messages, note: setNote, draftInto: (text) => { startReply(); setReplying((r) => (r ? { ...r, text } : r)); } }) : null}
                 </div>
                 {filtered && triage ? (
                     <div className={`rounded border px-2 py-1.5 text-[12px] flex flex-wrap items-center gap-2 ${triage.bucket === 'suspicious' ? 'border-amber-400/50 bg-amber-400/10 text-amber-200' : 'border-border bg-background-elevated text-text-secondary'}`}>
@@ -115,6 +126,12 @@ export default function Reader({
                         <button type="button" className={btn} onClick={() => void act('move', { bucket: 'normal' }, true)}>
                             Move to inbox
                         </button>
+                    </div>
+                ) : null}
+                {note ? (
+                    <div className={`rounded border px-2 py-1.5 text-[12px] flex gap-2 ${note.kind === 'error' ? 'border-red-400/40 text-red-300' : 'border-primary/30 bg-primary/5 text-text-primary'}`}>
+                        <span className="flex-1 whitespace-pre-wrap">{note.text}</span>
+                        <button type="button" onClick={() => setNote(null)} aria-label="Dismiss" className="text-text-secondary">×</button>
                     </div>
                 ) : null}
                 {error ? <p className="text-xs text-red-400">{error}</p> : null}
@@ -162,7 +179,7 @@ export default function Reader({
                             init={replying}
                             onCancel={() => setReplying(null)}
                             onSent={() => { setReplying(null); void load(); onChanged(); }}
-                            tools={(set) => aiTools?.({ thread, messages, draftInto: (text) => set({ text }) }) ?? null}
+                            tools={(set) => aiTools?.({ thread, messages, note: setNote, compact: true, draftInto: (text) => set({ text }) }) ?? null}
                         />
                     ) : (
                         <div className="flex gap-2">

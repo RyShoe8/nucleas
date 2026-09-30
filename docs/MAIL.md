@@ -19,3 +19,9 @@ Every incoming message is triaged into **Important / Normal** (the main box), **
 - Signals: SPF/DKIM/DMARC results, look-alike domains (`playb0und.club`), display-name spoofing, mismatched reply-to/return-path, urgent account/payment wording with links, link shorteners, executable attachments; bulk headers and Gmail's own categories for newsletters and notifications; cold sales outreach from strangers.
 - You teach it: **Spam** files the conversation as spam in Gmail and blocks the sender or domain; **Not spam** brings everything from that sender back and allows them from now on; **Move to** puts one conversation where you want it. Your decisions always beat the rules.
 - Uncertain mail gets an AI second opinion (see below).
+
+## AI help
+
+- **Summarize** (2-4 sentences, cached and shown in the list), **Draft reply** (written into the reply box; optionally with your instruction; never sent automatically) and **Make a job** (the conversation becomes a request that the normal job designer takes over; needs a company, defaulting to the mailbox's) use the AI engine's normal models and cost level.
+- **Second opinion on spam:** messages the rules flag as uncertain are looked at by a free model right after each sync. It must be 85% sure to call something suspicious and 60% sure to move anything else; a decision you made is never overwritten. Real customers asking genuine questions are never suspicious.
+- Email is untrusted text written by strangers: every prompt says it is data and to ignore instructions inside it, and model output is only ever shown to a person or used to file a message.

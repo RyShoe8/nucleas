@@ -1,21 +1,22 @@
 import 'server-only';
 import { Types } from 'mongoose';
 import { MailAccount, MailMessage, type MailAccountDoc } from '@/lib/models/Mail';
-import { getCompanyProfile, isCompanyManager, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
+import { getCompanyProfile, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { openSecret, sealSecret } from '@/lib/security/secretBox';
 import { GmailApi, GmailAuthError, refreshAccessToken } from './gmailClient';
 import { GMAIL_SCOPES } from './gmailOAuth';
 import type { ParsedMessage } from './gmailParse';
 import { syncMailbox, type MailStore } from './syncEngine';
 import { loadOrgTriageData, triagingStore } from './triageContext';
+import { aiTriageUncertain } from './ai';
 
 /**
  * Connected Gmail mailboxes: connecting (OAuth), listing, tagging with a company, removing, and keeping each
  * one synced. Mail is for managers and administrators only.
  */
 
-export const MAIL_FORBIDDEN = 'Mail is available to managers and administrators.';
-export const canUseMail = (viewer: CompanyViewer) => isCompanyManager(viewer);
+import { canUseMail, MAIL_FORBIDDEN } from './access';
+export { canUseMail, MAIL_FORBIDDEN };
 
 const purposeFor = (email: string) => `mail-gmail:${email.toLowerCase()}`;
 const SYNC_LOCK_MS = 4 * 60_000;
@@ -89,6 +90,8 @@ export async function syncAccount(accountId: Types.ObjectId | string, fetchImpl:
       { _id: id },
       { $set: { lastSyncAt: new Date(), lastSyncOk: true, needsReauth: false, ...(result.historyId ? { historyId: result.historyId } : {}) }, $unset: { lastSyncError: 1, syncingUntil: 1 } }
     );
+    // New mail the rules could not place gets a free AI second opinion. Never blocks or fails the sync.
+    if (result.fetched > 0 && account.createdByUserId) await aiTriageUncertain(account.organizationId, { userId: String(account.createdByUserId), limit: 6 }).catch(() => undefined);
     return { ok: true, fetched: result.fetched, removed: result.removed };
   } catch (error) {
     const reauth = error instanceof GmailAuthError;
