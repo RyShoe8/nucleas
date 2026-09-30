@@ -220,8 +220,8 @@ export async function proposeCodeChange(
     interactionMode: 'plan',
     level: input.level,
     signal: input.signal,
-    // The Ask route is cut off at 300 s; leave time for classifying the request and saving the result.
-    budgetMs: 225_000 - (Date.now() - startedAt),
+    // The Ask route is cut off at 800 s (Vercel Pro, Fluid Compute); this leaves room for the Ask planner that runs before this and for saving the result.
+    budgetMs: 600_000 - (Date.now() - startedAt),
     ...(observedPage ? { observedPage } : {}),
   });
   const costMicros = turn.costMicros ?? 0;

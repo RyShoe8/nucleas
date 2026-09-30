@@ -30,7 +30,7 @@ import type { RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 import type { StageToolRecord } from '@/lib/ai/stageTools';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
+export const maxDuration = 800; // Vercel Pro with Fluid Compute allows up to 800 s; the plan budgets below are sized to it.
 type Context = { params: Promise<{ id: string }> };
 
 function turnPayload(turn: {
@@ -313,7 +313,7 @@ export async function POST(request: NextRequest, context: Context) {
           level: input.level,
           signal,
           onStage,
-          ...(input.interactionMode === 'plan' ? { budgetMs: 230_000 } : {}),
+          ...(input.interactionMode === 'plan' ? { budgetMs: 700_000 } : {}),
         });
         const payload = turnPayload(turn);
         const assistantPersisted = await persistAssistantTurn(payload);

@@ -80,7 +80,7 @@ describe('Ask long-running streams', () => {
     try {
       const res = await POST(request('application/x-ndjson'));
       const text = res.text();
-      await vi.advanceTimersByTimeAsync(290_000);
+      await vi.advanceTimersByTimeAsync(790_000);
       const events = (await text).trim().split('\n').map((l) => JSON.parse(l));
       expect(events.filter((e) => e.type === 'ping').length).toBeGreaterThan(10);
       expect(events.at(-1)).toMatchObject({ type: 'error', status: 504 });

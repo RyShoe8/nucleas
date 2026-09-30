@@ -6,10 +6,10 @@ import { enforceRateLimit, rateLimitKey } from '@/lib/security/rateLimit';
 import { parseAttachmentRefs } from '@/lib/ai/attachments/uploads';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
+export const maxDuration = 800; // Vercel Pro with Fluid Compute allows up to 800 s; the plan budgets below are sized to it.
 
 const HEARTBEAT_MS = 15_000;
-const LAST_RESORT_MS = 285_000;
+const LAST_RESORT_MS = 785_000;
 
 /** The viewer's private Nucleas assistant thread. */
 export async function GET(request: NextRequest) {
