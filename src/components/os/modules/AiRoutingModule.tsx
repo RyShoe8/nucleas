@@ -46,7 +46,11 @@ interface RankRow {
     profileLabel: string;
     model: string;
     price: number | null;
+    /** Local (free) model, shown beside the paid ones. */
+    free: boolean;
     benchmark: Benchmark | null;
+    /** Nucleas check score for this kind of work (0-1); local models only. */
+    check: number | null;
 }
 
 interface BenchmarkStatus {
@@ -151,18 +155,31 @@ function score(b: Benchmark | null, kind: 'intelligence' | 'coding'): string {
 }
 
 function Ranking({ title, kind, rows }: { title: string; kind: 'intelligence' | 'coding'; rows: RankRow[] }) {
+    const firstUnscored = rows.findIndex((r) => !r.benchmark);
     return (
         <div className="min-w-0">
             <h3 className="text-xs font-medium mb-1">{title}</h3>
+            <div className="flex items-baseline gap-2 text-[10px] text-text-secondary">
+                <span className="w-4" />
+                <span className="flex-1">Model</span>
+                <span title="Artificial Analysis index (public benchmark)">Index</span>
+                <span className="w-12 text-right" title="Nucleas's own checks, local models only. A different scale from the index, so not comparable with it.">Checks</span>
+                <span className="w-14 text-right">$/1M</span>
+            </div>
             <ol className="space-y-0.5">
                 {rows.map((r, i) => (
-                    <li key={`${r.profileLabel}:${r.model}`} className="flex items-baseline gap-2 text-[11px]">
-                        <span className="w-4 text-right text-text-secondary">{i + 1}</span>
-                        <span className="truncate flex-1" title={r.benchmark ? `Artificial Analysis: ${r.benchmark.source}` : 'Not on the leaderboard; ranked by price after scored models'}>
-                            {short(r.model)} <span className="text-text-secondary">· {r.profileLabel}</span>
-                        </span>
-                        <span className={r.benchmark ? '' : 'text-text-secondary'}>{score(r.benchmark, kind)}</span>
-                        <span className="w-14 text-right text-text-secondary">{r.price !== null ? `${r.price}` : ''}</span>
+                    <li key={`${r.profileLabel}:${r.model}`} className={i === firstUnscored && i > 0 && r.free ? 'border-t border-border pt-0.5' : ''}>
+                        {i === firstUnscored && i > 0 && r.free ? <div className="text-[10px] text-text-secondary">Not on the leaderboard: ranked by Nucleas checks only</div> : null}
+                        <div className="flex items-baseline gap-2 text-[11px]">
+                            <span className="w-4 text-right text-text-secondary">{i + 1}</span>
+                            <span className="truncate flex-1" title={r.benchmark ? `Artificial Analysis: ${r.benchmark.source}` : r.free ? 'Not on the Artificial Analysis leaderboard' : 'Not on the leaderboard; ranked by price after scored models'}>
+                                {short(r.model)} <span className="text-text-secondary">· {r.profileLabel}</span>
+                                {r.free ? <span className="ml-1 text-[10px] text-emerald-400">free</span> : null}
+                            </span>
+                            <span className={r.benchmark ? '' : 'text-text-secondary'}>{score(r.benchmark, kind)}</span>
+                            <span className="w-12 text-right text-text-secondary">{r.free ? (r.check === null ? 'unchecked' : `${Math.round(r.check * 100)}%`) : ''}</span>
+                            <span className="w-14 text-right text-text-secondary">{r.price !== null ? `${r.price}` : r.free ? 'free' : ''}</span>
+                        </div>
                     </li>
                 ))}
             </ol>

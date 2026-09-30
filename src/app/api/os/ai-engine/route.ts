@@ -4,7 +4,8 @@ import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { listAvailableModels, shortlistModels } from '@/lib/ai/engine/catalog';
 import { activeHealthIssues } from '@/lib/ai/engine/health';
 import { listModelChecks, queueModelChecks, runQueuedModelChecks } from '@/lib/ai/engine/modelChecks';
-import { BENCHMARK_SOURCE, benchmarkStatus, saveBenchmarkKey } from '@/lib/ai/engine/benchmarks';
+import { BENCHMARK_SOURCE, benchmarkRows, benchmarkStatus, saveBenchmarkKey } from '@/lib/ai/engine/benchmarks';
+import { buildRanking } from '@/lib/ai/engine/rankings';
 import { COST_LEVELS, NEED_LABELS, NEEDS, isCostLevel, isPriceCeiling, rankPaid, readEngineSettings, saveEngineSettings, selectModel, type Need } from '@/lib/ai/engine/select';
 
 export const dynamic = 'force-dynamic';
@@ -28,6 +29,7 @@ export async function GET(request: NextRequest) {
   const org = String(viewer.organizationId);
   const models = await listAvailableModels({ force: request.nextUrl.searchParams.get('refresh') === '1' });
   const settings = await readEngineSettings(org);
+  const leaderboard = await benchmarkRows(false).catch(() => []);
   const needs = await Promise.all(
     NEEDS.map(async (need) => ({
       need,
@@ -50,7 +52,12 @@ export async function GET(request: NextRequest) {
       needs,
       checks: (await listModelChecks()).map((c) => ({ ...c, profileLabel: models.find((m) => m.profileId === c.profileId)?.profileLabel ?? 'Credential' })),
       rankings: Object.fromEntries(
-        (['plan', 'code'] as const).map((need) => [need, rankPaid(models, need).filter((m) => m.autoEligible).slice(0, 12).map((m) => ({ profileLabel: m.profileLabel, model: m.model, price: m.blendedPricePer1M, benchmark: m.benchmark }))])
+        (['plan', 'code'] as const).map((need) => [need, buildRanking({
+          paid: rankPaid(models, need).filter((m) => m.autoEligible),
+          local: models.filter((m) => m.free),
+          scores: leaderboard,
+          need,
+        })])
       ),
       models: shortlistModels(models).map((m) => ({ profileId: m.profileId, profileLabel: m.profileLabel, model: m.model, free: m.free, strengths: m.strengths, price: m.blendedPricePer1M, benchmark: m.benchmark })),
     },
