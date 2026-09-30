@@ -357,7 +357,21 @@ export async function attemptOrchestratedIdeReply(input: {
   /** When aborted (e.g. client Stop), cancels the gateway fetch and releases the dispatch lock. */
   signal?: AbortSignal;
   onStage?: IdeChatStageCallback;
+  /**
+   * Wall-clock budget for the whole pipeline. Slow free models can make a plan take longer than the
+   * hosting function is allowed to run, which the person sees as a dropped connection. With a budget,
+   * optional rounds are skipped when time is short and a checked-but-unreviewed plan is published
+   * instead of nothing.
+   */
+  budgetMs?: number;
 }): Promise<TeamChatTurn> {
+  const startedAt = Date.now();
+  const budgetMs = input.budgetMs ?? Infinity;
+  const remaining = () => budgetMs - (Date.now() - startedAt);
+  const deadline = Number.isFinite(budgetMs) ? new AbortController() : null;
+  if (deadline) setTimeout(() => deadline.abort(), Math.max(0, budgetMs)).unref?.();
+  const stageSignal = deadline ? (input.signal ? AbortSignal.any([input.signal, deadline.signal]) : deadline.signal) : input.signal;
+  const outOfTime = () => Boolean(deadline?.signal.aborted && !input.signal?.aborted);
   const context = await buildTeamContextSummary(input.projectName, input.organizationId, input.projectId);
   if (!context.inferenceReady) {
     return statusTurn(context.unavailableReason ?? 'Inference is unavailable.', 'unavailable');
@@ -487,15 +501,23 @@ export async function attemptOrchestratedIdeReply(input: {
     .filter(Boolean)
     .join(' ');
 
-  async function runStage(args: {
+  const TIMEOUT_TEXT = 'Nucleas ran out of time before this stage finished (the free models were slow). Try again, or use a faster cost level.';
+  async function runStage(args: Parameters<typeof runStageOnce>[0]): Promise<TeamChatTurn> {
+    const turn = await runStageOnce(args);
+    return turn.role !== 'assistant' && outOfTime() ? statusTurn(TIMEOUT_TEXT, 'timeout') : turn;
+  }
+
+  async function runStageOnce(args: {
     stage: 'planner' | 'worker' | 'reviewer';
     binding: { profileId: string; model: string };
     userText: string;
     priorTurns: { role: TeamMessageRole; text: string }[];
+    maxOutputTokens?: number;
   }): Promise<TeamChatTurn> {
     if (input.signal?.aborted) {
       return statusTurn('The chat request was cancelled before completion.', 'cancelled');
     }
+    if (outOfTime()) return statusTurn(TIMEOUT_TEXT, 'timeout');
     const toolProfile = toolProfileForOrchestraStage(args.stage, interactionMode);
     const allowTools = toolProfile !== 'none';
     const systemPrompt = [
@@ -551,7 +573,9 @@ export async function attemptOrchestratedIdeReply(input: {
           ? compact ? repoContextBlock?.slice(0, 3_500) : repoContextBlock
           : undefined,
         maxOutputTokensOverride:
-          compact
+          args.maxOutputTokens
+            ? args.maxOutputTokens
+            : compact
             ? 1536
             : args.stage === 'planner'
             ? interactionMode === 'plan' || interactionMode === 'build'
@@ -562,7 +586,7 @@ export async function attemptOrchestratedIdeReply(input: {
               : interactionMode === 'build'
                 ? 4096
                 : undefined,
-        signal: input.signal,
+        signal: stageSignal,
       })
     );
 
@@ -589,7 +613,7 @@ export async function attemptOrchestratedIdeReply(input: {
     }
     // Retry once on another eligible model. Transient failures do not open the shared circuit on
     // their first occurrence, so explicitly remove this request's failed binding before re-picking.
-    if (retryableProviderFailure(turn)) {
+    if (retryableProviderFailure(turn) && !outOfTime()) {
       const need: Need = args.stage === 'planner' ? 'plan' : args.stage === 'reviewer' ? 'review' : workNeedFor(interactionMode, input.userText);
       // A LiteLLM/vLLM deployment update can replace model ids while our catalog is still inside
       // its normal cache window. A 5xx is the one time it is worth paying for a live /v1/models
@@ -645,7 +669,7 @@ export async function attemptOrchestratedIdeReply(input: {
   if (interactionMode === 'plan') {
     planAssessment = assessPlan(plannerTurn.text);
     // One targeted correction round, only for problems the code can prove; then whatever remains is reported.
-    if (planAssessment.issues.length && !input.signal?.aborted) {
+    if (planAssessment.issues.length && !input.signal?.aborted && remaining() > 100_000) {
       input.onProgress?.(`Checked the plan against the repository: sending ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} back to the planner`);
       const retry = await runStage({
         stage: 'planner',
@@ -657,6 +681,7 @@ export async function attemptOrchestratedIdeReply(input: {
           '', 'Previous plan:', plannerTurn.text.slice(0, 5000),
         ].join('\n'),
         priorTurns: [],
+        maxOutputTokens: 4096,
       });
       if (retry.role === 'assistant') {
         plannerAttempts.push(plannerTurn);
@@ -715,6 +740,7 @@ export async function attemptOrchestratedIdeReply(input: {
 
   // Preserve paid planning work without exposing an unverified, approvable plan.
   function interruptedStage(stage: 'Worker' | 'Reviewer', failed: TeamChatTurn, turns: TeamChatTurn[]): TeamChatTurn {
+    if (interactionMode === 'plan' && outOfTime()) return publishUnreviewed(turns);
     const costs = mergeTurnCosts(turns);
     const draft = interactionMode === 'plan'
       ? parseNucleasPlan(plannerTurn.text)?.displayText ?? plannerTurn.text.replace(/```nucleas-plan\s*[\s\S]*?```/gi, '').trim()
@@ -730,6 +756,52 @@ export async function attemptOrchestratedIdeReply(input: {
       ].join('\n\n'),
       ...costs,
     };
+  }
+
+  /** The plan document with Nucleas's own sections: what was verified, other readers of the changed files, unverifiable data. */
+  function buildPlan(): IdePlanDocument | undefined {
+    if (interactionMode !== 'plan') return undefined;
+    const parsed = parseNucleasPlan(plannerTurn.text);
+    if (!parsed) return undefined;
+    const planned = parsed.plan;
+    if (!planFiles || !planAssessment?.claim) return planned;
+    const verified = planAssessment.claim;
+    const unaddressed = planAssessment.unaddressed;
+    return safely(() => recomposePlan(planned, {
+      extraSections: automaticPlanSections({
+        check: verified,
+        readers: readersOfPlannedFiles(planFiles, plannedFiles(planned), { ...planScope, pageRoute: evidencePack?.page?.route }),
+        dataStoreNotes: evidencePack?.unverified ?? [],
+        unaddressed,
+      }),
+      notFound: new Set(verified.unverified.map((u) => u.evidence.quote)),
+    }), planned);
+  }
+
+  /** Out of time before the Worker/Critic finished: the plan already passed Nucleas's own checks, so publish it, clearly marked as not reviewed. */
+  function publishUnreviewed(turns: TeamChatTurn[]): TeamChatTurn {
+    const costs = mergeTurnCosts(turns.filter((t) => t.role === 'assistant'));
+    const tools = summarizeStageTools(stageLog);
+    const built = buildPlan();
+    const display = parseNucleasPlan(plannerTurn.text)?.displayText ?? plannerTurn.text.trim();
+    const open = planAssessment?.issues.length ?? 0;
+    const note = [
+      '**Review status: not reviewed (time budget).** Nucleas ran out of time before the Worker and Critic could check this plan, so only the automatic checks against the repository ran.',
+      open ? `${open} problem${open === 1 ? ' was' : 's were'} still open after those checks; read the plan critically before building.` : 'Those checks found no open problems.',
+    ].join(' ');
+    return {
+      ...plannerTurn,
+      text: [display, '', '---', note, ...(tools.markdown ? ['', tools.markdown] : [])].join('\n').slice(0, 24_000),
+      stageTools: tools.records,
+      toolsUsed: costs.toolsUsed, artifacts: costs.artifacts, evidenceReceipts: costs.evidenceReceipts,
+      costMicros: costs.costMicros, reservedMicros: costs.reservedMicros, noProviderFee: costs.noProviderFee,
+      ...(built ? { plan: built } : {}),
+    };
+  }
+
+  if (interactionMode === 'plan' && remaining() < 45_000 && !input.signal?.aborted) {
+    input.onProgress?.('Short on time: publishing the checked plan without the Worker and Critic review');
+    return publishUnreviewed([...plannerAttempts, plannerTurn]);
   }
 
   /** Circuit breaker: one correction pass. */
@@ -810,27 +882,7 @@ export async function attemptOrchestratedIdeReply(input: {
   }
   logStage('worker', workerTurn, workerBinding.model);
 
-  let plan: IdePlanDocument | undefined;
-  if (interactionMode === 'plan') {
-    const parsed = parseNucleasPlan(plannerTurn.text);
-    if (parsed) {
-      plan = parsed.plan;
-      if (planFiles && planAssessment?.claim) {
-        // Nucleas's own sections: what was verified, other readers of the changed files, unverifiable data.
-        const verified = planAssessment.claim;
-        const planned = plan;
-        plan = safely(() => recomposePlan(planned, {
-          extraSections: automaticPlanSections({
-            check: verified,
-            readers: readersOfPlannedFiles(planFiles, plannedFiles(planned), { ...planScope, pageRoute: evidencePack?.page?.route }),
-            dataStoreNotes: evidencePack?.unverified ?? [],
-            unaddressed: planAssessment.unaddressed,
-          }),
-          notFound: new Set(verified.unverified.map((u) => u.evidence.quote)),
-        }), planned);
-      }
-    }
-  }
+  let plan: IdePlanDocument | undefined = buildPlan();
 
   const assistantStages: TeamChatTurn[] = [...plannerAttempts, plannerTurn, workerTurn];
   let reviewerTurn: TeamChatTurn | null = null;
@@ -900,7 +952,7 @@ export async function attemptOrchestratedIdeReply(input: {
         break;
       }
 
-      if (pass >= maxCompletionPasses - 1) {
+      if (pass >= maxCompletionPasses - 1 || remaining() < 70_000) {
         plan = undefined; // A needs_more gate must never publish a ready-for-review plan.
         // Circuit breaker: return best effort from last Worker + Reviewer prose.
         finalChatAnswer =

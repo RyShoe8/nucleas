@@ -8,6 +8,9 @@ import { parseAttachmentRefs } from '@/lib/ai/attachments/uploads';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
+const HEARTBEAT_MS = 15_000;
+const LAST_RESORT_MS = 285_000;
+
 /** The viewer's private Nucleas assistant thread. */
 export async function GET(request: NextRequest) {
   const viewer = await requireCompanyViewer(request);
@@ -59,6 +62,20 @@ export async function POST(request: NextRequest) {
           }
         };
         let last = '';
+        let finished = false;
+        // Keep bytes flowing so idle proxies do not cut the connection during a long model call.
+        const heartbeat = setInterval(() => send({ type: 'ping' }), HEARTBEAT_MS);
+        // The hosting platform kills the function silently at maxDuration; say so before that happens.
+        const lastResort = setTimeout(() => {
+          if (finished) return;
+          finished = true;
+          send({ type: 'error', status: 504, error: 'This took longer than Nucleas is allowed to run, so it was stopped before finishing. Try again, or use a faster cost level.' });
+          try {
+            controller.close();
+          } catch {
+            // Already closed.
+          }
+        }, LAST_RESORT_MS);
         try {
           const result = await askAssistant(viewer, {
             ...input,
@@ -66,12 +83,17 @@ export async function POST(request: NextRequest) {
               if (text && text !== last) send({ type: 'progress', text: (last = text).slice(0, 300), at: new Date().toISOString() });
             },
           });
-          if (!result.ok) send({ type: 'error', status: result.status, error: result.error });
-          else send({ type: 'reply', ...result.reply });
+          if (!finished) {
+            if (!result.ok) send({ type: 'error', status: result.status, error: result.error });
+            else send({ type: 'reply', ...result.reply });
+          }
         } catch (error) {
           console.error('[os/assistant] failed', error instanceof Error ? `${error.name}: ${error.message}` : 'unknown');
-          send({ type: 'error', status: 500, error: failureMessage(error, viewer) });
+          if (!finished) send({ type: 'error', status: 500, error: failureMessage(error, viewer) });
         } finally {
+          finished = true;
+          clearInterval(heartbeat);
+          clearTimeout(lastResort);
           try {
             controller.close();
           } catch {

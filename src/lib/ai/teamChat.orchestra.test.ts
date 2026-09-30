@@ -637,6 +637,39 @@ describe('plans are checked against the repository', () => {
     expect(calls[2].userText).toContain('INCOMPLETE: sideEffects');
   });
 
+  it('skips the correction round when time is short, and publishes a checked plan as not reviewed', async () => {
+    const calls: { stage: string; userText: string }[] = [];
+    accepting(calls, plan());
+    const turn = await run({ budgetMs: 30_000 });
+    expect(calls.map((c) => c.stage)).toEqual(['planner']);
+    expect(turn.plan).toBeTruthy();
+    expect(turn.text).toContain('Review status: not reviewed (time budget)');
+  });
+
+  it('publishes the checked plan as not reviewed when the budget runs out during the Worker', async () => {
+    const calls: { stage: string; userText: string }[] = [];
+    mocks.companyChat.mockImplementation(async (args: { systemPrompt: string; userText: string; signal?: AbortSignal }) => {
+      const stage = stageOf(args);
+      calls.push({ stage, userText: args.userText });
+      if (stage === 'planner') return { requestId: 'p', role: 'assistant', costMicros: 0, toolsUsed: ['repo_read'], text: plan() };
+      await new Promise<void>((resolve) => args.signal?.addEventListener('abort', () => resolve()));
+      return { requestId: 'w', role: 'status', text: 'The chat request was cancelled before completion.', failureCategory: 'cancelled' };
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
+    let turn: Awaited<ReturnType<typeof run>>;
+    try {
+      const pending = run({ budgetMs: 60_000 });
+      await vi.advanceTimersByTimeAsync(61_000);
+      turn = await pending;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(turn.role).not.toBe('status');
+    expect(turn.plan).toBeTruthy();
+    expect(turn.text).toContain('Review status: not reviewed (time budget)');
+    expect(calls.map((c) => c.stage)).toEqual(['planner', 'worker']);
+  });
+
   it('asks the Critic to be a different model from the Planner when the engine picked the same one', async () => {
     mocks.listModels.mockResolvedValue([
       { profileId: 'a'.repeat(24), model: 'gemma', free: true, contextTokens: 16000 },

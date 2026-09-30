@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-const state = vi.hoisted(() => ({ role: 'Administrator', fail: false }));
+const state = vi.hoisted(() => ({ role: 'Administrator', fail: false, hang: false }));
 
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/security/rateLimit', () => ({ enforceRateLimit: () => null, rateLimitKey: () => 'k' }));
@@ -11,6 +11,7 @@ vi.mock('@/lib/companies/osRouteContext', () => ({
 vi.mock('@/lib/ai/company/companyAssistant', () => ({
   listAssistantTurns: async () => [],
   askAssistant: async (_viewer: unknown, input: { onProgress?: (t: string) => void }) => {
+    if (state.hang) await new Promise(() => {});
     if (state.fail) throw new TypeError("Cannot read properties of undefined (reading 'plan')");
     input.onProgress?.('Planning how to answer with o4-mini');
     input.onProgress?.('Planning how to answer with o4-mini');
@@ -69,5 +70,23 @@ describe('Ask failures', () => {
   it('keeps the message generic for everyone else', async () => {
     const res = await failing('Employee');
     expect(await res.json()).toEqual({ error: 'The assistant could not answer. Try again.' });
+  });
+});
+
+describe('Ask long-running streams', () => {
+  it('keeps the connection alive and ends with a clear error before the platform kills the function', async () => {
+    vi.useFakeTimers();
+    state.hang = true;
+    try {
+      const res = await POST(request('application/x-ndjson'));
+      const text = res.text();
+      await vi.advanceTimersByTimeAsync(290_000);
+      const events = (await text).trim().split('\n').map((l) => JSON.parse(l));
+      expect(events.filter((e) => e.type === 'ping').length).toBeGreaterThan(10);
+      expect(events.at(-1)).toMatchObject({ type: 'error', status: 504 });
+    } finally {
+      state.hang = false;
+      vi.useRealTimers();
+    }
   });
 });

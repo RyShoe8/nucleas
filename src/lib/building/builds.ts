@@ -197,6 +197,8 @@ export async function proposeCodeChange(
     interactionMode: 'plan',
     level: input.level,
     signal: input.signal,
+    // The Ask route is cut off at 300 s; leave time for classifying the request and saving the result.
+    budgetMs: 200_000,
   });
   const costMicros = turn.costMicros ?? 0;
   if (!turn.plan) {

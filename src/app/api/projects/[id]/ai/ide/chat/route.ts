@@ -313,6 +313,7 @@ export async function POST(request: NextRequest, context: Context) {
           level: input.level,
           signal,
           onStage,
+          ...(input.interactionMode === 'plan' ? { budgetMs: 230_000 } : {}),
         });
         const payload = turnPayload(turn);
         const assistantPersisted = await persistAssistantTurn(payload);
