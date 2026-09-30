@@ -5,6 +5,7 @@ import Asset from '@/lib/models/Asset';
 import { browserNavigate } from '@/lib/ai/tools/browserClient';
 import { chooseBrowseTool, isBrowserWorkerConfigured } from '@/lib/ai/tools/browseRouter';
 import { webFetch } from '@/lib/ai/tools/webFetch';
+import { findReferences } from '@/lib/ai/repo/references';
 import { imageHitsToArtifacts } from '@/lib/ai/tools/imageSearchArtifacts';
 import { imageSearch, webSearch } from '@/lib/ai/tools/webSearch';
 import { listIdeTree, readIdeFile } from '@/lib/ai/ideCommitPush';
@@ -96,6 +97,16 @@ export async function executeIdeTool(input: {
   if (input.name === 'repo_commit') {
     const result = await commitWithDiff(input.organizationId, input.projectId, typeof args.sha === 'string' ? args.sha.trim() : '');
     return { content: JSON.stringify(result.ok ? { ok: true, commit: result.commit } : { ok: false, error: result.reason }), artifacts };
+  }
+
+  if (input.name === 'repo_references') {
+    const snap = await getRepoSnapshot(input.organizationId, input.projectId);
+    if (!snap.ok) return { content: JSON.stringify({ ok: false, error: snap.reason }), artifacts };
+    const found = findReferences(snap.snapshot.files, typeof args.path === 'string' ? args.path : '', {
+      maxDepth: typeof args.maxDepth === 'number' ? args.maxDepth : undefined,
+    });
+    if ('error' in found) return { content: JSON.stringify({ ok: false, error: found.error }), artifacts };
+    return { content: JSON.stringify({ ok: true, commit: snap.snapshot.commit.slice(0, 12), ...found }), artifacts };
   }
 
   if (input.name === 'repo_search') {

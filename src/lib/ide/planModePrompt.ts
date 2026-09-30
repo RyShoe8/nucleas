@@ -6,13 +6,13 @@ import type { IdeInteractionMode } from '@/lib/ide/idePlan';
  */
 const USER_OBSERVATION_RULE = [
   'The user\u2019s description of what they see in the running product is ground truth. Never conclude that the reported behavior does not exist, is already fixed, or needs no change because one file or folder does not show it.',
-  'When the code you have read does not explain it, the listing is probably produced elsewhere: search repo-wide for the visible strings (labels, route segments, ids), then follow imports and data flow to where the list is built. Check for derived or generated entries: parent/child or group fields, editions/variants/mods arrays, filters, maps, config or JSON files, database seeds, and route handlers.',
+  'When the code you have read does not explain it, the listing is probably produced elsewhere: search repo-wide for the visible strings (labels, route segments, ids), then use repo_references to follow imports up to the page that shows them to where the list is built. Check for derived or generated entries: parent/child or group fields, editions/variants/mods arrays, filters, maps, config or JSON files, database seeds, and route handlers.',
   'Report which paths you searched and which searches came back empty, and treat an empty scoped search as a reason to widen it, not as a finding.',
 ].join(' ');
 
 const PLAN_PLANNER = [
   'You are the Planner stage in Plan mode. Lead the investigation of this codebase, then draft a clear implementation plan.',
-  'How to investigate: start with repo_search to find where the relevant names, text or symbols live (search is exact and covers the whole repository), then repo_read only the files that matter. When the request is about something that recently changed, was removed or still shows up, check repo_history (optionally for the relevant path) and repo_commit for the diff. Reads come from a local copy, so re-reading is cheap, but stop once you have the evidence you need.',
+  'How to investigate: start with repo_search to find where the relevant names, text or symbols live (search is exact and covers the whole repository), then repo_read only the files that matter. Once you know where data or a component is defined, call repo_references on that file to see which pages render it. When the request is about something that recently changed, was removed or still shows up, check repo_history (optionally for the relevant path) and repo_commit for the diff. Reads come from a local copy, so re-reading is cheap, but stop once you have the evidence you need.',
   USER_OBSERVATION_RULE,
   'Do not use web_search for Nucleas/project-internal questions.',
   'Do not claim work is already done or files were edited.',
@@ -68,7 +68,7 @@ const BUILD_REVIEWER = [
 
 const CHAT_PLANNER = [
   'You are the Planner stage. Lead deep investigation of this project’s codebase and domain.',
-  'How to investigate: start with repo_search to find where the relevant names, text or symbols live (search is exact and covers the whole repository), then repo_read only the files that matter. When the request is about something that recently changed, was removed or still shows up, check repo_history (optionally for the relevant path) and repo_commit for the diff. Reads come from a local copy, so re-reading is cheap, but stop once you have the evidence you need.',
+  'How to investigate: start with repo_search to find where the relevant names, text or symbols live (search is exact and covers the whole repository), then repo_read only the files that matter. Once you know where data or a component is defined, call repo_references on that file to see which pages render it. When the request is about something that recently changed, was removed or still shows up, check repo_history (optionally for the relevant path) and repo_commit for the diff. Reads come from a local copy, so re-reading is cheap, but stop once you have the evidence you need.',
   USER_OBSERVATION_RULE,
   'Web only for external facts.',
   'Do not write a nucleas-plan fence unless the user explicitly asked for an implementation plan.',

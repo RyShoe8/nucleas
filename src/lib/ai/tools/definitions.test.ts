@@ -18,7 +18,7 @@ describe('ideChatToolDefinitions', () => {
     const names = ideChatToolDefinitions({ includeImage: true, profile: 'repo' }).map(
       (t) => t.function.name
     );
-    expect(names).toEqual(['repo_tree', 'repo_read', 'repo_search', 'repo_history', 'repo_commit']);
+    expect(names).toEqual(['repo_tree', 'repo_read', 'repo_search', 'repo_references', 'repo_history', 'repo_commit']);
   });
 
   it('omits repo tools when includeRepo is false', () => {

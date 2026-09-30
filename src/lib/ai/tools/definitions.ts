@@ -79,6 +79,22 @@ export function ideChatToolDefinitions(options: {
       {
         type: 'function',
         function: {
+          name: 'repo_references',
+          description:
+            'Find which files import a given file, following imports up to the pages/routes that render it. Use after repo_search finds where data or a component is defined, to learn where it shows up in the product.',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'Repository path of the file to trace, e.g. "src/games/openra.ts"' },
+              maxDepth: { type: 'integer', description: 'How many import hops to follow (default 3, max 6)' },
+            },
+            required: ['path'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
           name: 'repo_history',
           description:
             'Recent commits on the default branch, newest first: message, author, date and changed files. Use it to see what was changed lately (e.g. when something the user removed still shows up), optionally only for one path.',
