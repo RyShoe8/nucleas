@@ -32,6 +32,8 @@ export const executionEvidenceSchema = z.object({
   exitCode: z.number().int().nullable(),
   timedOut: z.boolean(),
   output: z.string().max(16_000),
+  /** Set on checks the worker ran itself after the build (typecheck, lint), as opposed to commands the model chose. */
+  kind: z.literal('definition_of_done').optional(),
 }).strict();
 
 export const executionWorkerResponseSchema = z.object({
@@ -52,8 +54,8 @@ export const executionWorkerResponseSchema = z.object({
   usage: z.object({ inputTokens: z.number().int().min(0), outputTokens: z.number().int().min(0) }).strict().optional(),
 }).strict();
 
-/** What a worker advertises on /health; "inference" = it accepts request.inference. */
-export const EXECUTION_WORKER_FEATURES = ['inference'] as const;
+/** What a worker advertises on /health; "inference" = it accepts request.inference; "definition_of_done" = it runs typecheck/lint itself and tags that evidence. */
+export const EXECUTION_WORKER_FEATURES = ['inference', 'definition_of_done'] as const;
 
 export type ExecutionWorkerRequest = z.infer<typeof executionWorkerRequestSchema>;
 export type ExecutionWorkerResponse = z.infer<typeof executionWorkerResponseSchema>;

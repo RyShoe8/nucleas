@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { EXECUTION_WORKER_FEATURES, executionWorkerRequestSchema, executionWorkerResponseSchema, type ExecutionWorkerRequest } from '../../packages/ai-contracts/src/execution';
 import { toolCallsFromText } from '../../packages/ai-contracts/src/textToolCalls';
+import { runDefinitionOfDone } from './definitionOfDone';
 import { assertWorkspacePath, deleteWorkspaceFile, readWorkspaceFile, runCommand, setWorkspaceOwner, writeWorkspaceFile, type CommandEvidence } from './runtime';
 
 type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
@@ -107,6 +108,7 @@ export async function modelReply(messages: ChatMessage[], inference: Inference, 
 }
 
 async function execute(request: ExecutionWorkerRequest) {
+  const startedAt = Date.now();
   const temp = await mkdtemp(path.join(os.tmpdir(), 'nucleas-exec-'));
   const workspace = path.join(temp, 'repo');
   const allowed = new Set((process.env.NUCLEAS_EXECUTION_ALLOWED_BINARIES ?? 'node,npm,npx,git').split(',').map((v) => v.trim().toLowerCase()).filter(Boolean));
@@ -163,9 +165,18 @@ async function execute(request: ExecutionWorkerRequest) {
     if (Buffer.byteLength(diff.output) > 1_048_576) throw new Error('Generated patch exceeds the artifact limit.');
     const status = finish.status === 'completed' && !diff.output.trim() ? 'blocked' : finish.status;
     const limitations = status === 'blocked' && !diff.output.trim() ? [...finish.limitations, 'No repository changes were produced.'] : finish.limitations;
+    const changedFiles = names.output.split(/\r?\n/).filter(Boolean).slice(0, 200);
+    // Independent of the model: run the repository's own typecheck/lint on the result, inside the
+    // caller's 240s deadline, and return the outcome as tagged evidence.
+    const dod = status === 'completed' && diff.output.trim() && process.env.NUCLEAS_EXECUTION_DOD !== 'off'
+      ? await runDefinitionOfDone({
+        workspace, changedFiles, allowedExecutables: allowed, deadline: startedAt + 215_000, perCommandTimeoutMs: 90_000,
+        spawnOptions: { extraEnv: { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'safe.directory', GIT_CONFIG_VALUE_0: workspace, CI: '1' }, ...(process.platform === 'win32' ? {} : { uid: SANDBOX_UID, gid: SANDBOX_GID }) },
+      }).catch(() => [])
+      : [];
     return executionWorkerResponseSchema.parse({ protocolVersion: 1, requestId: request.requestId,
       routing: { requestedModel, providerReportedModels: [...providerReportedModels] },
-      status, summary: finish.summary, baseCommit, patch: diff.output, changedFiles: names.output.split(/\r?\n/).filter(Boolean).slice(0, 200), evidence: evidence.slice(0, 30), limitations,
+      status, summary: finish.summary, baseCommit, patch: diff.output, changedFiles, evidence: [...evidence.slice(0, 30 - dod.length), ...dod], limitations,
       ...(usage.reported ? { usage: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } } : {}) });
   } finally { await rm(temp, { recursive: true, force: true }); }
 }

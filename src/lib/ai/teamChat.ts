@@ -25,6 +25,9 @@ import { gatewayFromModelProfile } from '@/lib/ai/rolePipeline/profiles';
 import { getRepoSnapshot } from '@/lib/ai/repo/snapshot';
 import { projectGuide } from '@/lib/ai/repo/projectGuide';
 import { shortModel, type ProgressFn } from '@/lib/ai/progress';
+import { checkNoChangeClaim, claimsNothingFound } from '@/lib/ai/repo/noChangeGuard';
+import { evaluateDefinitionOfDone, formatDefinitionOfDone, type DodResult } from '@/lib/ai/definitionOfDone';
+import { summarizeStageTools, type PipelineStage, type StageToolRecord } from '@/lib/ai/stageTools';
 import { dedupeEvidenceReceipts, type RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 import {
   type TeamContextSummary,
@@ -54,6 +57,10 @@ export type TeamChatTurn = {
   noProviderFee?: boolean;
   artifacts?: { kind: 'image'; assetId: string; name: string; url: string }[];
   toolsUsed?: string[];
+  /** The model that actually served this stage (after any automatic switch). */
+  model?: string;
+  /** Tools each stage called during the whole run, for spotting a model that never looked at the code. */
+  stageTools?: StageToolRecord[];
   /** Exact repository excerpts used to ground this answer, identified by revision and digest. */
   evidenceReceipts?: RepositoryEvidenceReceipt[];
   plan?: IdePlanDocument;
@@ -551,7 +558,8 @@ export async function attemptOrchestratedIdeReply(input: {
     };
 
     announce(args.binding);
-    const turn = await attemptBinding(args.binding);
+    const withModel = (candidate: TeamChatTurn, served: StageBinding): TeamChatTurn => (candidate.role === 'assistant' ? Object.assign(candidate, { model: served.model }) : candidate);
+    const turn = withModel(await attemptBinding(args.binding), args.binding);
     if (turn.role === 'assistant' && args.stage !== 'reviewer' && repoEvidenceReceipts.length) {
       turn.evidenceReceipts = dedupeEvidenceReceipts([...(turn.evidenceReceipts ?? []), ...repoEvidenceReceipts]);
     }
@@ -569,7 +577,7 @@ export async function attemptOrchestratedIdeReply(input: {
       if (next && (next.profileId !== args.binding.profileId || next.model !== args.binding.model)) {
         input.onProgress?.(`${shortModel(args.binding.model)} did not complete; switching to ${shortModel(next.model)}`);
         announce(next);
-        return attemptBinding(next);
+        return withModel(await attemptBinding(next), next);
       }
     }
     return turn;
@@ -586,6 +594,13 @@ export async function attemptOrchestratedIdeReply(input: {
     priorTurns: input.priorTurns,
   });
   if (plannerTurn.role !== 'assistant') return plannerTurn;
+
+  const stageLog: StageToolRecord[] = [];
+  const logStage = (stage: PipelineStage, turn: TeamChatTurn, fallbackModel?: string) => {
+    if (turn.role !== 'assistant') return;
+    stageLog.push({ stage, model: shortModel(turn.model ?? fallbackModel ?? 'unknown'), toolsUsed: [...(turn.toolsUsed ?? [])] });
+  };
+  logStage('planner', plannerTurn, plannerBinding?.model);
 
   // Preserve paid planning work without exposing an unverified, approvable plan.
   function interruptedStage(stage: 'Worker' | 'Reviewer', failed: TeamChatTurn, turns: TeamChatTurn[]): TeamChatTurn {
@@ -626,6 +641,7 @@ export async function attemptOrchestratedIdeReply(input: {
   ].join('\n');
 
   let workerTurn: TeamChatTurn;
+  let dodResult: DodResult = { ran: false, state: 'none', checks: [] };
   if (interactionMode === 'build') {
     const execution = await withStage(input.onStage, 'worker', () =>
       // The build runs on the engine's code model for this cost level (the worker pick).
@@ -639,7 +655,8 @@ export async function attemptOrchestratedIdeReply(input: {
     if (execution && 'error' in execution) {
       workerTurn = statusTurn(execution.error, 'execution_unavailable');
     } else if (execution) {
-      const checks = execution.evidence.map((item) => `${item.command.join(' ')}: ${item.timedOut ? 'timed out' : `exit ${item.exitCode}`}`).join('\n');
+      dodResult = evaluateDefinitionOfDone(execution.evidence);
+      const checks = execution.evidence.filter((item) => item.kind !== 'definition_of_done').map((item) => `${item.command.join(' ')}: ${item.timedOut ? 'timed out' : `exit ${item.exitCode}`}`).join('\n');
       workerTurn = {
         requestId: execution.requestId,
         role: 'assistant',
@@ -648,7 +665,10 @@ export async function attemptOrchestratedIdeReply(input: {
         costMicros: 0,
         reservedMicros: 0,
         toolsUsed: ['sandbox_edit', 'command_execute'],
+        model: workerBinding.model,
+        // The worker's own typecheck/lint result goes first so it survives the Reviewer's excerpt limit.
         text: [
+          formatDefinitionOfDone(dodResult),
           execution.summary,
           `Model requested: ${execution.routing.requestedModel}`,
           `Model reported by provider: ${execution.routing.providerReportedModels.join(', ') || 'not reported'}`,
@@ -676,6 +696,7 @@ export async function attemptOrchestratedIdeReply(input: {
   if (workerTurn.role !== 'assistant') {
     return interruptedStage('Worker', workerTurn, [plannerTurn, workerTurn]);
   }
+  logStage('worker', workerTurn, workerBinding.model);
 
   let plan: IdePlanDocument | undefined;
   if (interactionMode === 'plan') {
@@ -687,6 +708,8 @@ export async function attemptOrchestratedIdeReply(input: {
   let reviewerTurn: TeamChatTurn | null = null;
   let finalChatAnswer: string | null = null;
   let reviewerFormatCorrection = '';
+  let noChangeSnapshot: Awaited<ReturnType<typeof getRepoSnapshot>> | null | undefined;
+  let noChangeNote = '';
 
   if (reviewerBinding) {
     for (let pass = 0; pass < maxCompletionPasses; pass += 1) {
@@ -717,11 +740,29 @@ export async function attemptOrchestratedIdeReply(input: {
         priorTurns: [],
       });
       assistantStages.push(reviewerTurn);
+      logStage('reviewer', reviewerTurn, reviewerBinding.model);
       if (reviewerTurn.role !== 'assistant' || !reviewerTurn.text.trim()) {
         return interruptedStage('Reviewer', reviewerTurn, assistantStages);
       }
 
-      const gate = parseReviewerGate(reviewerTurn.text);
+      let gate = parseReviewerGate(reviewerTurn.text);
+      if (gate.status === 'accept' && interactionMode !== 'build') {
+        // Deterministic backstop: a "nothing found / no change needed" report cannot be accepted while
+        // files mentioning the user's own terms have not been looked at.
+        if (claimsNothingFound(workerTurn.text)) noChangeSnapshot ??= await getRepoSnapshot(input.organizationId, input.projectId).catch(() => null);
+        const guard = noChangeSnapshot?.ok
+          ? checkNoChangeClaim({ userText: input.userText, workerText: workerTurn.text, files: noChangeSnapshot.snapshot.files })
+          : null;
+        if (guard) {
+          const paths = guard.unexplored.map((item) => item.path).join(', ');
+          if (pass < maxCompletionPasses - 1) {
+            gate = { status: 'needs_more', jobs: guard.jobs, reason: `The report says nothing was found, but ${paths} mention${guard.unexplored.length === 1 ? 's' : ''} the request's terms and ${guard.unexplored.length === 1 ? 'was' : 'were'} not covered.` };
+          } else {
+            noChangeNote = `Nucleas check: this report says nothing was found or needs changing, but ${paths} mention the terms in your request and were never examined. Treat the conclusion as unverified.`;
+            plan = undefined; // An unverified "no change" must not publish a ready-for-review plan.
+          }
+        }
+      }
       if (gate.status === 'accept') {
         if (interactionMode === 'plan' && !plan) {
           plan = planFromVerifiedFallback(input.userText, plannerTurn.text, workerTurn.text);
@@ -794,11 +835,22 @@ export async function attemptOrchestratedIdeReply(input: {
       if (workerTurn.role !== 'assistant') {
         return interruptedStage('Worker', workerTurn, assistantStages);
       }
+      logStage('worker', workerTurn, workerBinding.model);
     }
   }
 
   const costs = mergeTurnCosts(assistantStages.filter((t) => t.role === 'assistant'));
   if (!reviewerBinding) plan = undefined;
+
+  const toolSummary = summarizeStageTools(stageLog, { buildMode: interactionMode === 'build' });
+  // Nucleas's own findings about how trustworthy this run is, appended after the model text.
+  const footer = [
+    dodResult.state === 'failed' || dodResult.state === 'incomplete' ? `**Nucleas check:** ${formatDefinitionOfDone(dodResult)}` : '',
+    noChangeNote,
+    ...toolSummary.warnings.map((warning) => `⚠ ${warning}`),
+    toolSummary.markdown,
+  ].filter(Boolean).join('\n\n');
+  const withFooter = (text: string) => (footer ? `${text.trim()}\n\n---\n${footer}` : text.trim());
 
   function reviewerUserFacingText(raw: string): string {
     if (finalChatAnswer) return finalChatAnswer.trim();
@@ -811,7 +863,8 @@ export async function attemptOrchestratedIdeReply(input: {
     if (interactionMode === 'chat') {
       return {
         ...reviewerTurn,
-        text: reviewerUserFacingText(reviewerTurn.text),
+        text: withFooter(reviewerUserFacingText(reviewerTurn.text)),
+        stageTools: toolSummary.records,
         toolsUsed: costs.toolsUsed,
         artifacts: costs.artifacts,
         evidenceReceipts: costs.evidenceReceipts,
@@ -826,7 +879,7 @@ export async function attemptOrchestratedIdeReply(input: {
       const display = parseNucleasPlan(plannerTurn.text)?.displayText ?? plannerTurn.text.trim();
       return {
         ...workerTurn,
-        text: [
+        text: withFooter([
           display,
           '',
           '---',
@@ -836,7 +889,8 @@ export async function attemptOrchestratedIdeReply(input: {
           '---',
           `**Reviewer (${reviewerBinding!.model}):**`,
           reviewerUserFacingText(reviewerTurn.text),
-        ].join('\n'),
+        ].join('\n')),
+        stageTools: toolSummary.records,
         toolsUsed: costs.toolsUsed,
         artifacts: costs.artifacts,
         evidenceReceipts: costs.evidenceReceipts,
@@ -849,13 +903,14 @@ export async function attemptOrchestratedIdeReply(input: {
 
     return {
       ...workerTurn,
-      text: [
+      text: withFooter([
         workerTurn.text.trim(),
         '',
         '---',
         `**Reviewer (${reviewerBinding!.model}):**`,
         reviewerUserFacingText(reviewerTurn.text),
-      ].join('\n'),
+      ].join('\n')),
+      stageTools: toolSummary.records,
       toolsUsed: costs.toolsUsed,
       artifacts: costs.artifacts,
       evidenceReceipts: costs.evidenceReceipts,
@@ -868,7 +923,8 @@ export async function attemptOrchestratedIdeReply(input: {
 
   return {
     ...workerTurn,
-    text: workerTurn.text.trim(),
+    text: withFooter(workerTurn.text),
+    stageTools: toolSummary.records,
     toolsUsed: costs.toolsUsed,
     artifacts: costs.artifacts,
     evidenceReceipts: costs.evidenceReceipts,

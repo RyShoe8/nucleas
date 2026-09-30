@@ -62,6 +62,7 @@ const BUILD_WORKER = [
 const BUILD_REVIEWER = [
   'You are the Reviewer in Build mode. Decide whether the Worker finished the approved plan with correct, verifiable code changes and repo evidence.',
   'Do not call tools. Use needs_more when any step is unverified, edits are claimed without evidence, or acceptance criteria fail.',
+  'A report that starts with "Definition of done: FAILED" or "incomplete" carries typecheck/lint results the worker ran itself on the finished patch. Never accept over a failed one; name the failing check and its first error as the job.',
   'Completion gate (required): end with a nucleas-gate fence accept or needs_more with concrete jobs for the Worker (paths, tests, fixes).',
   'On accept: write the user-facing build summary above the fence. On needs_more: actionable jobs the Worker must complete before you accept.',
 ].join(' ');

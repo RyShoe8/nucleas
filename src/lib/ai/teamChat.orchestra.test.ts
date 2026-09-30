@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   readSettings: vi.fn(),
   execute: vi.fn(),
   listModels: vi.fn(),
+  snapshot: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -47,6 +48,10 @@ vi.mock('@/lib/ai/control/config', () => ({
     organizationLimitMicros: 100000,
     projectLimitMicros: 50000,
   }),
+}));
+vi.mock('@/lib/ai/repo/snapshot', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/ai/repo/snapshot')>()),
+  getRepoSnapshot: (...args: unknown[]) => mocks.snapshot(...args),
 }));
 vi.mock('@/lib/ai/tools/serverRepoAssist', () => ({
   gatherRepoAssistContext: (...args: unknown[]) => mocks.repoDig(...args),
@@ -105,6 +110,7 @@ describe('attemptOrchestratedIdeReply full orchestra', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.snapshot.mockResolvedValue({ ok: false, reason: 'no snapshot' });
     mocks.repoDig.mockResolvedValue({
       ok: true,
       okReads: 2,
@@ -219,7 +225,8 @@ describe('attemptOrchestratedIdeReply full orchestra', () => {
     expect(stages).toEqual(['planner', 'worker', 'reviewer']);
     expect(mocks.companyChat).toHaveBeenCalledTimes(3);
     expect(turn.role).toBe('assistant');
-    expect(turn.text).toBe('Here is how the rules system works…');
+    expect(turn.text.startsWith('Here is how the rules system works…')).toBe(true);
+    expect(turn.text).toContain('**Tools used**');
     expect(turn.toolsUsed).toEqual(['repo_tree', 'repo_read']);
     expect(turn.costMicros).toBe(180);
     expect(onStage.mock.calls.map((c) => c.slice(0, 2))).toEqual([
@@ -276,7 +283,8 @@ describe('attemptOrchestratedIdeReply full orchestra', () => {
     const turn = await attemptOrchestratedIdeReply({ projectName: 'Playbound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'u'.repeat(24), userText: 'remove the duplicate OpenHV listing', priorTurns: [], interactionMode: 'chat' });
 
     expect(stages).toEqual(['planner', 'worker', 'reviewer', 'reviewer']);
-    expect(turn.text).toBe('Remove only the nested listing.');
+    expect(turn.text.startsWith('Remove only the nested listing.')).toBe(true);
+    expect(turn.text).toContain('**Tools used**');
   });
 
   it('on needs_more runs another Worker pass then accepts', async () => {
@@ -355,7 +363,8 @@ describe('attemptOrchestratedIdeReply full orchestra', () => {
 
     expect(stages).toEqual(['planner', 'worker', 'reviewer', 'worker', 'reviewer']);
     expect(turn.role).toBe('assistant');
-    expect(turn.text).toBe('Chat history is stored via appendIdeChatTurns in chatHistory.ts.');
+    expect(turn.text.startsWith('Chat history is stored via appendIdeChatTurns in chatHistory.ts.')).toBe(true);
+    expect(turn.text).toContain('**Tools used**');
     expect(turn.text).not.toMatch(/nucleas-gate/);
     expect(turn.toolsUsed).toEqual(['repo_read']);
     expect(turn.costMicros).toBe(10 + 5 + 8 + 5 + 8);
@@ -395,6 +404,69 @@ describe('attemptOrchestratedIdeReply full orchestra', () => {
     expect(turn.role).toBe('status');
     expect(turn.failureCategory).toBe('cancelled');
     expect(turn.text).toMatch(/cancelled/i);
+  });
+
+  it('will not accept a "nothing found" report while files mentioning the request terms were never examined', async () => {
+    mocks.snapshot.mockResolvedValue({ ok: true, snapshot: { files: new Map([
+      ['platform/src/lib/data/games.ts', 'export const games = ["OpenRA", "OpenHV"];'],
+      ['platform/src/lib/gameHost/mods.ts', "export const openra = { mods: ['ra', 'OpenHV'] };"],
+    ]) } });
+    const calls: { stage: string; userText: string }[] = [];
+    let workerRuns = 0;
+    mocks.companyChat.mockImplementation(async (args: { systemPrompt: string; userText: string }) => {
+      const stage = args.systemPrompt.match(/Pipeline stage: (planner|worker|reviewer)/)![1];
+      calls.push({ stage, userText: args.userText });
+      if (stage === 'planner') return { requestId: 'p', role: 'assistant', text: 'Find the nested listing.', toolsUsed: ['repo_search'], costMicros: 0 };
+      if (stage === 'worker') {
+        workerRuns += 1;
+        return { requestId: 'w', role: 'assistant', toolsUsed: ['repo_search', 'repo_read'], costMicros: 0,
+          text: workerRuns === 1 ? 'Read platform/src/lib/data/games.ts. No nested OpenHV entry found under OpenRA, so no change is necessary.' : 'platform/src/lib/gameHost/mods.ts lists OpenHV under OpenRA mods; remove it there.' };
+      }
+      return { requestId: 'r', role: 'assistant', text: 'Looks fine.\n```nucleas-gate\n{"status":"accept"}\n```', costMicros: 0 };
+    });
+
+    const turn = await attemptOrchestratedIdeReply({ projectName: 'PlayBound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'OpenHV is listed on its own and also under OpenRA. Remove the listing under OpenRA.', priorTurns: [], interactionMode: 'chat' });
+
+    expect(calls.map((c) => c.stage)).toEqual(['planner', 'worker', 'reviewer', 'worker', 'reviewer']);
+    expect(calls[3].userText).toContain('Read platform/src/lib/gameHost/mods.ts');
+    expect(turn.text.startsWith('Looks fine.')).toBe(true);
+    expect(turn.text).not.toContain('Nucleas check'); // the second pass covered the file, so no warning
+  });
+
+  it('shows which tools each stage used and warns about a model that never looked at the repository', async () => {
+    mocks.companyChat.mockImplementation(async (args: { systemPrompt: string }) => {
+      const stage = args.systemPrompt.match(/Pipeline stage: (planner|worker|reviewer)/)![1];
+      return { requestId: stage, role: 'assistant', costMicros: 0, toolsUsed: stage === 'planner' ? ['repo_search', 'repo_read'] : [],
+        text: stage === 'reviewer' ? 'Answer.\n```nucleas-gate\n{"status":"accept"}\n```' : 'Some text.' };
+    });
+    const turn = await attemptOrchestratedIdeReply({ projectName: 'PlayBound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'explain the rules system', priorTurns: [], interactionMode: 'chat' });
+    expect(turn.text).toMatch(/- Planner \(.*\): repo_search, repo_read/);
+    expect(turn.text).toMatch(/- Worker \(.*\): none ⚠ no repository tools/);
+    expect(turn.text).toContain('never called a repository tool');
+    expect(turn.stageTools?.map((r) => r.stage)).toEqual(['planner', 'worker', 'reviewer']);
+  });
+
+  it('puts a failed definition of done in front of the Reviewer and in the final reply', async () => {
+    mocks.execute.mockResolvedValue({
+      protocolVersion: 1, requestId: '123e4567-e89b-12d3-a456-426614174000', artifactId: 'd'.repeat(24),
+      routing: { requestedModel: 'qwen', providerReportedModels: [] },
+      status: 'completed', summary: 'Implemented the feature.', baseCommit: 'a'.repeat(40),
+      patch: 'diff --git a/a.ts b/a.ts\n+export const ready: number = "no";', changedFiles: ['a.ts'],
+      evidence: [
+        { command: ['npm', 'test'], exitCode: 0, timedOut: false, output: 'passed' },
+        { command: ['npm', 'run', 'typecheck'], exitCode: 2, timedOut: false, output: "a.ts(1,32): error TS2322: Type 'string' is not assignable to type 'number'.", kind: 'definition_of_done' },
+      ], limitations: [],
+    });
+    mocks.companyChat
+      .mockResolvedValueOnce({ requestId: 'p', role: 'assistant', text: 'Implement the feature.', costMicros: 0 })
+      .mockResolvedValueOnce({ requestId: 'r', role: 'assistant', text: 'Accepted.\n```nucleas-gate\n{"status":"accept"}\n```', costMicros: 0 });
+
+    const turn = await attemptOrchestratedIdeReply({ projectName: 'Nucleas', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'build the feature', priorTurns: [], interactionMode: 'build' });
+
+    expect(mocks.companyChat.mock.calls[1][0].userText).toContain('Definition of done: FAILED');
+    expect(mocks.companyChat.mock.calls[1][0].userText).toContain('error TS2322');
+    expect(turn.text).toContain('**Nucleas check:** Definition of done: FAILED');
+    expect(turn.text).not.toContain('npm run typecheck: exit 2'); // shown once, as the check, not as a model command
   });
 
   it('uses the isolated executor for Build mode and gives its evidence to the reviewer', async () => {
