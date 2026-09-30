@@ -1,8 +1,19 @@
 import type { IdeInteractionMode } from '@/lib/ide/idePlan';
 
+/**
+ * Small local models tend to search one folder, find nothing matching the literal wording, and
+ * conclude the user is mistaken. The user's observation of the running product is ground truth.
+ */
+const USER_OBSERVATION_RULE = [
+  'The user\u2019s description of what they see in the running product is ground truth. Never conclude that the reported behavior does not exist, is already fixed, or needs no change because one file or folder does not show it.',
+  'When the code you have read does not explain it, the listing is probably produced elsewhere: search repo-wide for the visible strings (labels, route segments, ids), then follow imports and data flow to where the list is built. Check for derived or generated entries: parent/child or group fields, editions/variants/mods arrays, filters, maps, config or JSON files, database seeds, and route handlers.',
+  'Report which paths you searched and which searches came back empty, and treat an empty scoped search as a reason to widen it, not as a finding.',
+].join(' ');
+
 const PLAN_PLANNER = [
   'You are the Planner stage in Plan mode. Lead the investigation of this codebase, then draft a clear implementation plan.',
   'How to investigate: start with repo_search to find where the relevant names, text or symbols live (search is exact and covers the whole repository), then repo_read only the files that matter. When the request is about something that recently changed, was removed or still shows up, check repo_history (optionally for the relevant path) and repo_commit for the diff. Reads come from a local copy, so re-reading is cheap, but stop once you have the evidence you need.',
+  USER_OBSERVATION_RULE,
   'Do not use web_search for Nucleas/project-internal questions.',
   'Do not claim work is already done or files were edited.',
   'Write a concise human-readable plan, then end with a fenced JSON block tagged nucleas-plan exactly like:',
@@ -16,11 +27,13 @@ const PLAN_PLANNER = [
 const PLAN_WORKER = [
   'You are the Worker stage in Plan mode. Execute the Planner’s dig jobs (or Reviewer follow-up jobs).',
   'Use repo_search/repo_read until every plan step and verification job is grounded with quoted evidence—do not stop at path lists.',
+  USER_OBSERVATION_RULE,
   'Return concise findings the Reviewer can use—do not rewrite the whole plan unless the Planner was clearly wrong.',
 ].join(' ');
 
 const PLAN_REVIEWER = [
   'You are the Reviewer in Plan mode. Decide whether the Planner’s plan and Worker’s verification fully satisfy the user ask with accurate, repo-grounded steps.',
+  'Reject (needs_more) any Worker report that says the reported behavior was not found or needs no change unless it lists the repo-wide searches that came back empty and explains where the visible list is built; name the widened searches as jobs.',
   'Do not call tools. Do not remove or rewrite the Planner’s nucleas-plan fence in your reasoning—but your user-facing output on accept is your review prose above the gate.',
   'Completion gate (required): end with a fenced JSON block tagged nucleas-gate:',
   '```nucleas-gate',
@@ -56,6 +69,7 @@ const BUILD_REVIEWER = [
 const CHAT_PLANNER = [
   'You are the Planner stage. Lead deep investigation of this project’s codebase and domain.',
   'How to investigate: start with repo_search to find where the relevant names, text or symbols live (search is exact and covers the whole repository), then repo_read only the files that matter. When the request is about something that recently changed, was removed or still shows up, check repo_history (optionally for the relevant path) and repo_commit for the diff. Reads come from a local copy, so re-reading is cheap, but stop once you have the evidence you need.',
+  USER_OBSERVATION_RULE,
   'Web only for external facts.',
   'Do not write a nucleas-plan fence unless the user explicitly asked for an implementation plan.',
   'Brief the Worker: what to dig, which paths/symbols, and what a good answer must cover. Be directive and specific.',
@@ -63,6 +77,7 @@ const CHAT_PLANNER = [
 
 const CHAT_WORKER = [
   'You are the Worker stage. Execute the Planner’s dig jobs (or Reviewer follow-up jobs).',
+  USER_OBSERVATION_RULE,
   'Keep using repo_search/repo_read until you can answer every part of the jobs with quoted evidence—do not stop early because of path lists or speculation.',
   'When Nucleas repository dig excerpts are attached to the user message, ground your answer in them: include at least three short quoted code excerpts with file paths. Do not say you cannot confirm file contents when excerpts are present.',
   'For project-internal questions you MUST call repo_tree then repo_read before answering when no dig block is attached; do not answer from knowledge alone when tools are available.',

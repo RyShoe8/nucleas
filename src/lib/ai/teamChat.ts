@@ -607,7 +607,7 @@ export async function attemptOrchestratedIdeReply(input: {
   }
 
   /** Circuit breaker: one correction pass. */
-  const maxCompletionPasses = 2;
+  const maxCompletionPasses = 3;
 
   if (input.signal?.aborted) {
     return statusTurn('The chat request was cancelled before completion.', 'cancelled', plannerTurn.runId, {
