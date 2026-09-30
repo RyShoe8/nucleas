@@ -106,6 +106,8 @@ export interface CheckProgress {
   toolScore: number | null;
   grounded: number[];
   coded: number[];
+  /** Gateway timeouts survived so far; the check is re-queued instead of failed until this runs out. */
+  transientRetries?: number;
 }
 
 export function newProgress(): CheckProgress {
@@ -334,6 +336,13 @@ const STALE_RUNNING_MS = 6 * 60 * 1000;
 const STAGE_LOCK_MS = 5 * 60 * 1000;
 const DEFAULT_CALL_MS = 8_000;
 
+const MAX_TRANSIENT_RETRIES = 3;
+
+/** A host-side timeout or overload (nginx 502/503/504), common for slow reasoning models; worth retrying. */
+function isTransientGatewayError(error: unknown): boolean {
+  return error instanceof GatewayError && [502, 503, 504].includes(Number(error.details?.httpStatus));
+}
+
 function failureMessage(error: unknown): string {
   return error instanceof GatewayError ? `${error.code}${error.details?.httpStatus ? ` (${error.details.httpStatus})` : ''}${error.details?.providerMessage ? `: ${error.details.providerMessage}` : ''}` : 'Check failed.';
 }
@@ -389,6 +398,15 @@ export async function runQueuedModelChecks(options: { budgetMs?: number; caller?
         stagesThisRun += 1;
         await AiModelCheck.updateOne({ _id: claimed._id }, { $set: { progress, startedAt: new Date() } });
       } catch (error) {
+        const retries = progress.transientRetries ?? 0;
+        if (isTransientGatewayError(error) && retries < MAX_TRANSIENT_RETRIES) {
+          // Keep finished stages and retry this one on the next run rather than discarding the check.
+          progress.transientRetries = retries + 1;
+          await AiModelCheck.updateOne({ _id: claimed._id }, { $set: { status: 'queued', progress } });
+          stopped = true;
+          failed = true;
+          break;
+        }
         await AiModelCheck.updateOne({ _id: claimed._id }, { $set: { status: 'failed', error: failureMessage(error).slice(0, 300) }, $unset: { progress: '' } });
         stopped = true;
         failed = true;

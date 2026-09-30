@@ -264,7 +264,7 @@ function FreeModelChecks({ rows, onRun }: { rows: CheckRow[]; onRun: () => Promi
                                             {short(r.model)}
                                         </button>
                                         <div className="text-[10px] text-text-secondary">
-                                            {r.status === 'queued' ? (r.stagesDone ? `${r.stagesDone} of 5 parts done · continues shortly` : 'queued') : r.status === 'running' ? `checking now · ${r.stagesDone} of 5 parts done` : r.status === 'failed' ? <span className="text-amber-400">failed: {r.error}</span> : r.checkedAt ? `checked ${new Date(r.checkedAt).toLocaleString()}` : ''}
+                                            {r.status === 'queued' ? (r.stagesDone ? `${r.stagesDone} of 5 parts done · continues shortly` : 'queued') : r.status === 'running' ? `checking now · ${r.stagesDone} of 5 parts done` : r.status === 'failed' ? <span className="text-amber-400">failed: {r.error}{r.checkedAt ? ` · scores are from the last good check (${new Date(r.checkedAt).toLocaleString()})` : ''}</span> : r.checkedAt ? `checked ${new Date(r.checkedAt).toLocaleString()}` : ''}
                                         </div>
                                         {open === key && r.notes.length ? (
                                             <ul className="mt-1 text-[10px] text-text-secondary list-disc pl-4">
