@@ -204,9 +204,9 @@ export async function proposeCodeChange(
       .catch(() => [] as BuildDoc[])
   );
   const background = [recent?.length ? renderTimeline(recent) : '', rejected].filter(Boolean).join('\n\n');
-  // With a test account for the site the request names, look at the page as it is now (read-only, time-boxed).
+  // With a admin account for the site the request names, look at the page as it is now (read-only, time-boxed).
   const startedAt = Date.now();
-  const { observePageForRequest } = await import('@/lib/companies/testAccount');
+  const { observePageForRequest } = await import('@/lib/companies/adminAccount');
   const observedPage = await observePageForRequest(viewer, input.companyId, input.request, { signal: input.signal, onProgress: input.onProgress }).catch(() => null);
   const turn = await attemptOrchestratedIdeReply({
     projectName: target.projectName,

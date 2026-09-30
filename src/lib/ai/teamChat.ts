@@ -367,7 +367,7 @@ export async function attemptOrchestratedIdeReply(input: {
    * instead of nothing.
    */
   budgetMs?: number;
-  /** The page the request names, opened read-only with the company's test account (or why it could not be). */
+  /** The page the request names, opened read-only with the company's admin account (or why it could not be). */
   observedPage?: { url: string; title: string | null; text: string } | { failure: string };
 }): Promise<TeamChatTurn> {
   const startedAt = Date.now();
@@ -840,7 +840,7 @@ export async function attemptOrchestratedIdeReply(input: {
     }
     const open = planAssessment.extra;
     const contexts = planAssessment.contexts;
-    const notes = [input.observedPage && 'failure' in input.observedPage ? `The live page could not be opened with the test account (${input.observedPage.failure}), so the plan is based on the code alone.` : '', correctionRounds || correctionSkipped ? `Planner correction rounds run: ${correctionRounds} of 2${correctionSkipped ? ' (the rest were skipped: out of time)' : ''}${planAssessment.issues.length ? `; ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} still open` : ''}.` : ''].filter(Boolean);
+    const notes = [input.observedPage && 'failure' in input.observedPage ? `The live page could not be opened with the admin account (${input.observedPage.failure}), so the plan is based on the code alone.` : '', correctionRounds || correctionSkipped ? `Planner correction rounds run: ${correctionRounds} of 2${correctionSkipped ? ' (the rest were skipped: out of time)' : ''}${planAssessment.issues.length ? `; ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} still open` : ''}.` : ''].filter(Boolean);
     return safely(() => recomposePlan(planned, {
       extraSections: automaticPlanSections({
         check: verified,

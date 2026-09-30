@@ -65,11 +65,12 @@ plan's files against a real change for evaluating full model runs.
 - **Second opinion:** the second correction round goes to the worker-model (a different model), and is given time before the Worker and Critic are.
 - **Honest sections:** "None found" side effects and "Nothing outstanding" unverified are replaced with `NOT ASSESSED` when the checks found readers or stored data the plan ignored; the plan also states how many correction rounds ran.
 
-## Live page observation (test account)
+## Live page observation (Admin account)
 
-A company can have a **test account** (Company and Integrations windows → "Test account (live page)"): a low-privilege login on its own site. When Ask plans a change and the request names a page on that site, Nucleas opens that page read-only in the browser worker before planning and shows the planner, Worker and Critic the lines around the request's names (emails and long numbers masked) as "What the page shows right now"; the same lines are saved in the plan.
+A company can have an **Admin account** session (Company and Integrations windows → "Admin account (live page)"). You log in to the company's own site yourself and the signed-in session is captured, so **no password is stored**. When Ask plans a change and the request names a page on that site, Nucleas opens that page read-only in the browser worker before planning and shows the planner, Worker and Critic the lines around the request's names (emails and long numbers masked) as "What the page shows right now"; the same lines are saved in the plan.
 
-- The password is sealed with a purpose-scoped key, never returned by any API, never given to a model, and never logged.
-- The worker (`services/ai-runtime/browserWorker.ts`, `/observe`) logs in once, then aborts every request that is not GET/HEAD/OPTIONS (only the login form's own submission is allowed) and refuses to leave the account's origin. **Redeploy the browser worker to get `/observe`.**
+- **Connecting:** "Log in and capture" shows a one-time code (15 minutes, spent on use) and a command: `npx tsx scripts/capture-admin-session.ts --site … --server … --code …`. It opens a browser on your computer; you log in (2FA and SSO work) and press Enter; only that site's cookies are uploaded. Or paste a cookie export / Playwright storageState. Cookies for other sites are dropped.
+- **What is stored:** the session cookies only, sealed with a purpose-scoped key; never returned by any API, never given to a model, never logged. They stop working when the site expires them or you log out; the card shows "Expired"/"Signed out" and "Reconnect" captures a fresh one. A session is still a secret with the power of the account that logged in: use the least-privileged user that can open the pages.
+- **Read-only:** the worker (`services/ai-runtime/browserWorker.ts`, `/observe`) aborts every request that is not GET/HEAD/OPTIONS (including scripts on the page), never leaves the site's origin, and reports a visible login form as "no longer signed in". **Redeploy the browser worker to get `/observe`.**
 - Time-boxed to 30 s; if the page cannot be opened the plan says so and continues from the code.
 - `services/ai-runtime/browserWorker.observe.test.ts` drives a real headless Chromium against a local site (skipped when Playwright/Chromium is not installed).

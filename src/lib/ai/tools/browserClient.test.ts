@@ -35,13 +35,13 @@ describe('browserNavigate', () => {
 });
 
 describe('browserObserve', () => {
-  it('sends the account to the worker\u2019s /observe and never returns the password', async () => {
+  it('sends the session to the worker\u2019s /observe and never returns the cookies', async () => {
     vi.stubEnv('NUCLEAS_BROWSER_WORKER_URL', 'https://browser.example.com');
     vi.stubEnv('NUCLEAS_BROWSER_WORKER_SECRET', 'x'.repeat(24));
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ url: 'https://site.example/admin/games', title: 'Games', loggedIn: true, text: 'OpenHV', note: 'Logged in with the test account.' }));
-    const result = await browserObserve({ baseUrl: 'https://site.example', url: 'https://site.example/admin/games', username: 'tester', password: 's3cret' }, { fetcher });
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ url: 'https://site.example/admin/games', title: 'Games', loggedIn: true, text: 'OpenHV', note: 'Logged in with the admin account.' }));
+    const result = await browserObserve({ baseUrl: 'https://site.example', url: 'https://site.example/admin/games', cookies: [{ name: 'session', value: 's3cret' }] }, { fetcher });
     expect(fetcher.mock.calls[0][0].toString()).toBe('https://browser.example.com/observe');
-    expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toMatchObject({ baseUrl: 'https://site.example', username: 'tester', password: 's3cret' });
+    expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toMatchObject({ baseUrl: 'https://site.example', cookies: [{ name: 'session', value: 's3cret' }] });
     expect(result).toMatchObject({ loggedIn: true, text: 'OpenHV' });
     expect(JSON.stringify(result)).not.toContain('s3cret');
   });
@@ -49,6 +49,6 @@ describe('browserObserve', () => {
   it('refuses a page outside the account\u2019s site', async () => {
     vi.stubEnv('NUCLEAS_BROWSER_WORKER_URL', 'https://browser.example.com');
     vi.stubEnv('NUCLEAS_BROWSER_WORKER_SECRET', 'x'.repeat(24));
-    await expect(browserObserve({ baseUrl: 'https://site.example', url: 'https://other.example/x', username: 'u', password: 'p' })).rejects.toThrow('outside');
+    await expect(browserObserve({ baseUrl: 'https://site.example', url: 'https://other.example/x', cookies: [] })).rejects.toThrow('outside');
   });
 });

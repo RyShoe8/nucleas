@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 
-import { normalizeBaseUrl, pageInRequest } from './testAccount';
+import { normalizeBaseUrl, pageInRequest } from './adminAccount';
 
 describe('pageInRequest', () => {
   const base = 'https://playbound.club';

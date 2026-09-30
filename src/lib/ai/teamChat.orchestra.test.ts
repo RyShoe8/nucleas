@@ -666,9 +666,9 @@ describe('plans are checked against the repository', () => {
   it('says in the plan when the live page could not be opened, and carries on with the code alone', async () => {
     const calls: { stage: string; userText: string }[] = [];
     accepting(calls, plan());
-    const turn = await run({ observedPage: { failure: 'The test account was not accepted.' } });
+    const turn = await run({ observedPage: { failure: 'The admin account was not accepted.' } });
     expect(turn.plan?.status).toBe('ready_for_review');
-    expect(turn.plan?.markdown).toContain('The live page could not be opened with the test account (The test account was not accepted.)');
+    expect(turn.plan?.markdown).toContain('The live page could not be opened with the admin account (The admin account was not accepted.)');
   });
 
   it('does not publish a plan that still contradicts itself after the correction rounds, and hands the second round to another model', async () => {

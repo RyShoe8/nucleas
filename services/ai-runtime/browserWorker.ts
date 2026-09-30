@@ -118,9 +118,6 @@ async function navigate(url: string, maxChars: number) {
 type Locator = {
   first: () => Locator;
   count: () => Promise<number>;
-  fill: (value: string, o?: { timeout: number }) => Promise<void>;
-  click: (o?: { timeout: number }) => Promise<void>;
-  press: (key: string, o?: { timeout: number }) => Promise<void>;
   isVisible: (o?: { timeout: number }) => Promise<boolean>;
 };
 type ObservePage = {
@@ -132,12 +129,23 @@ type ObservePage = {
   waitForLoadState: (state: string, o?: { timeout: number }) => Promise<void>;
 };
 
+export interface ObserveCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path?: string;
+  expires?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: 'Strict' | 'Lax' | 'None';
+}
+
 export interface ObserveInput {
-  /** https origin of the site; the account is only ever used there. */
+  /** https origin of the site; the session is only ever used there. */
   baseUrl: string;
   url: string;
-  username: string;
-  password: string;
+  /** The signed-in session, captured by a person logging in themselves. */
+  cookies: ObserveCookie[];
   maxChars?: number;
 }
 
@@ -150,24 +158,32 @@ export interface ObserveResult {
 }
 
 const PASSWORD_FIELD = 'input[type="password"]';
-const USER_FIELDS = 'input[type="email"], input[autocomplete="username"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[id*="user" i], input[id*="email" i], input[type="text"]';
 
 /**
- * Opens one page of a company's own site with its test account and returns the page text. Read-only by
- * construction: it logs in once, then aborts every request that is not GET/HEAD, and it never leaves the
- * site's origin. The password is used to fill the form and appears in no return value or log.
+ * Opens one page of a company's own site with a captured admin session and returns the page text.
+ * Read-only by construction: every request that is not GET/HEAD/OPTIONS is aborted, and it never leaves the
+ * site's origin. No password is involved; the cookies appear in no return value or log.
  */
 export async function observeAuthenticated(input: ObserveInput, options: { allowInsecure?: boolean; executablePath?: string } = {}): Promise<ObserveResult> {
   const origin = new URL(input.baseUrl);
   const target = new URL(input.url);
   if (target.origin !== origin.origin) throw new Error('The page is outside the account\u2019s site.');
   if (!options.allowInsecure && (!isSafePublicHttpsUrl(origin.toString()) || !isSafePublicHttpsUrl(target.toString()))) throw new Error('Unsafe URL');
+  const host = origin.hostname.toLowerCase();
+  const cookies = (Array.isArray(input.cookies) ? input.cookies : [])
+    .filter((c) => c && typeof c.name === 'string' && typeof c.value === 'string' && typeof c.domain === 'string')
+    .filter((c) => {
+      const d = c.domain.replace(/^\./, '').toLowerCase();
+      return host === d || host.endsWith(`.${d}`);
+    })
+    .slice(0, 60);
   const playwright = (await import(/* webpackIgnore: true */ 'playwright' as string)) as {
     chromium: {
       launch: (opts: Record<string, unknown>) => Promise<{
         newContext: () => Promise<{
           newPage: () => Promise<ObservePage>;
-          route: (glob: string, handler: (route: { request: () => { method: () => string; isNavigationRequest: () => boolean; url: () => string }; abort: () => Promise<void>; continue: () => Promise<void> }) => Promise<void>) => Promise<void>;
+          addCookies: (cookies: unknown[]) => Promise<void>;
+          route: (glob: string, handler: (route: { request: () => { method: () => string }; abort: () => Promise<void>; continue: () => Promise<void> }) => Promise<void>) => Promise<void>;
         }>;
         close: () => Promise<void>;
       }>;
@@ -180,51 +196,34 @@ export async function observeAuthenticated(input: ObserveInput, options: { allow
   });
   try {
     const context = await browser.newContext();
-    // Nothing can be changed: only reads go out. The one exception is the login form's own submission
-    // (a top-level navigation, once); scripts on the page cannot send writes even while logging in.
-    let loginSubmit = false;
+    // Nothing can be changed: only reads go out, including from scripts on the page.
     await context.route('**/*', async (route) => {
-      const request = route.request();
-      const method = request.method();
+      const method = route.request().method();
       if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return route.continue();
-      if (loginSubmit && request.isNavigationRequest()) {
-        loginSubmit = false;
-        return route.continue();
-      }
       return route.abort();
     });
+    await context.addCookies(cookies.map((c) => ({
+      name: c.name, value: c.value, domain: c.domain, path: c.path || '/',
+      ...(typeof c.expires === 'number' && c.expires > 0 ? { expires: c.expires } : {}),
+      httpOnly: c.httpOnly === true,
+      secure: options.allowInsecure ? false : c.secure !== false,
+      sameSite: c.sameSite ?? 'Lax',
+    })));
     const page = await context.newPage();
     await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 30000 });
-    let loggedIn = true;
-    let note = 'Opened without logging in.';
-    const password = page.locator(PASSWORD_FIELD).first();
-    if ((await password.count()) > 0 && (await password.isVisible({ timeout: 3000 }).catch(() => false))) {
-      note = 'Logged in with the test account.';
-      const user = page.locator(USER_FIELDS).first();
-      if ((await user.count()) > 0) await user.fill(input.username, { timeout: 5000 });
-      await password.fill(input.password, { timeout: 5000 });
-      const submit = page.locator('form:has(input[type="password"]) button[type="submit"], form:has(input[type="password"]) input[type="submit"]').first();
-      loginSubmit = true;
-      if ((await submit.count()) > 0) await submit.click({ timeout: 5000 });
-      else await password.press('Enter', { timeout: 5000 });
-      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => undefined);
-      if (new URL(page.url()).pathname !== target.pathname) await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => undefined);
-      const stillLogin = page.locator(PASSWORD_FIELD).first();
-      if ((await stillLogin.count()) > 0 && (await stillLogin.isVisible({ timeout: 1000 }).catch(() => false))) {
-        loggedIn = false;
-        note = 'The login form is still showing: the test account was not accepted.';
-      }
-    }
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => undefined);
+    // A login form means the session is not (or no longer) signed in.
+    const login = page.locator(PASSWORD_FIELD).first();
+    const signedOut = (await login.count()) > 0 && (await login.isVisible({ timeout: 1500 }).catch(() => false));
     const finalUrl = page.url();
     if (new URL(finalUrl).origin !== origin.origin) throw new Error('Redirected outside the site.');
     const title = await page.title();
-    const raw = await page.evaluate('document.body ? document.body.innerText : ""');
+    const raw = signedOut ? '' : await page.evaluate('document.body ? document.body.innerText : ""');
     return {
       url: finalUrl,
       title: title.slice(0, 200),
-      loggedIn,
-      note,
+      loggedIn: !signedOut,
+      note: signedOut ? 'The session is no longer signed in (the login form is showing).' : 'Opened with the captured admin session.',
       text: String(raw ?? '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, Math.min(Math.max(Number(input.maxChars) || 20000, 1000), 40000)),
     };
   } finally {
@@ -256,13 +255,13 @@ export function startBrowserWorkerServer() {
         return;
       }
       if (req.url === '/observe') {
-        const b = JSON.parse(await readBody(req, 16_000)) as Partial<ObserveInput>;
-        if (typeof b.baseUrl !== 'string' || typeof b.url !== 'string' || typeof b.username !== 'string' || typeof b.password !== 'string') {
+        const b = JSON.parse(await readBody(req, 64_000)) as Partial<ObserveInput>;
+        if (typeof b.baseUrl !== 'string' || typeof b.url !== 'string' || !Array.isArray(b.cookies)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Invalid request' }));
           return;
         }
-        const result = await observeAuthenticated({ baseUrl: b.baseUrl, url: b.url, username: b.username, password: b.password, maxChars: b.maxChars });
+        const result = await observeAuthenticated({ baseUrl: b.baseUrl, url: b.url, cookies: b.cookies, maxChars: b.maxChars });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
         return;
@@ -280,7 +279,7 @@ export function startBrowserWorkerServer() {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     } catch (err) {
-      // Never log the request body: /observe carries a password.
+      // Never log the request body: /observe carries session cookies.
       console.error('browser worker error', err instanceof Error ? err.message : 'unknown');
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'navigate_failed' }));

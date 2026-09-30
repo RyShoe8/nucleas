@@ -84,11 +84,11 @@ export async function browserNavigate(
 export type BrowserObserveResult = { url: string; title: string | null; loggedIn: boolean; text: string; note: string };
 
 /**
- * Open one page of a company's own site with its test account (read-only) through the browser worker.
- * The worker never returns the password; nothing here logs the request body.
+ * Open one page of a company's own site with its captured admin session (read-only) through the browser
+ * worker. The worker never returns the cookies; nothing here logs the request body.
  */
 export async function browserObserve(
-  input: { baseUrl: string; url: string; username: string; password: string },
+  input: { baseUrl: string; url: string; cookies: unknown[] },
   options: { signal?: AbortSignal; fetcher?: typeof fetch; timeoutMs?: number } = {}
 ): Promise<BrowserObserveResult> {
   if (!isBrowserWorkerConfigured()) {
@@ -96,7 +96,7 @@ export async function browserObserve(
   }
   const base = assertSafePublicHttpsUrl(input.baseUrl);
   const target = assertSafePublicHttpsUrl(input.url);
-  if (base.origin !== target.origin) throw new Error('The page is outside the test account’s site.');
+  if (base.origin !== target.origin) throw new Error('The page is outside the admin account’s site.');
   const workerBase = process.env.NUCLEAS_BROWSER_WORKER_URL!.replace(/\/+$/, '');
   const workerUrl = assertSafePublicHttpsUrl(`${workerBase}/observe`);
   const secret = process.env.NUCLEAS_BROWSER_WORKER_SECRET!.trim();
@@ -112,11 +112,11 @@ export async function browserObserve(
       cache: 'no-store',
       signal: controller.signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
-      body: JSON.stringify({ baseUrl: base.origin, url: target.toString(), username: input.username, password: input.password, maxChars: 20000 }),
+      body: JSON.stringify({ baseUrl: base.origin, url: target.toString(), cookies: input.cookies, maxChars: 20000 }),
     });
     if (!response.ok) {
       await response.body?.cancel();
-      throw new Error('The browser worker could not open the page with the test account (is it up to date?).');
+      throw new Error('The browser worker could not open the page with the admin session (is it up to date?).');
     }
     const body = (await response.json()) as { url?: string; title?: string | null; loggedIn?: boolean; text?: string; note?: string };
     return {

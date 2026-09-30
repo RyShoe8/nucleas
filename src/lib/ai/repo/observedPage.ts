@@ -42,7 +42,7 @@ export function observedWindows(pageText: string, terms: string[], options: { ra
 
 export function renderObservedPage(page: ObservedPage): string {
   return [
-    `What the page shows right now (opened read-only at ${page.url} with the company's test account${page.title ? `; title "${page.title}"` : ''}). Lines mentioning the request's names are marked >; headings and neighbouring rows are shown for context.`,
+    `What the page shows right now (opened read-only at ${page.url} with the company's admin account${page.title ? `; title "${page.title}"` : ''}). Lines mentioning the request's names are marked >; headings and neighbouring rows are shown for context.`,
     page.matches ? page.windows : `No line on the page mentions ${page.missing.join(', ') || 'the request’s names'}.`,
     ...(page.matches && page.missing.length ? [`Not on the page at all: ${page.missing.join(', ')}.`] : []),
     'This is what visitors of the deployed site see today; it can differ from the repository if the site was not redeployed. Rows that come from a database appear here even though no code file lists them.',
