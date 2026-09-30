@@ -15,7 +15,7 @@ import {
 } from '@/lib/ide/planModePrompt';
 import { parseNucleasPlan, recomposePlan } from '@/lib/ide/parseNucleasPlan';
 import { plannedFiles, validatePlanStructure } from '@/lib/ide/planStructure';
-import { automaticPlanSections, checkLineClaims, checkPlanClaims, dataStoreIssues, findContradictions, groupReaders, quoteContexts, readerCoverageIssues, readersOfPlannedFiles, renderQuoteContexts, unaddressedReaders, withoutNoneClaims, type ClaimCheck, type ReaderGroup } from '@/lib/ai/repo/claimCheck';
+import { automaticPlanSections, checkLineClaims, checkPlanClaims, counterexampleIssues, dataStoreIssues, driftedFromVerified, findContradictions, groupReaders, quoteContexts, readerCoverageIssues, readersOfPlannedFiles, renderQuoteContexts, unaddressedReaders, withoutNoneClaims, type ClaimCheck, type ReaderGroup } from '@/lib/ai/repo/claimCheck';
 import type { EvidencePack } from '@/lib/ai/repo/evidencePack';
 import { parseReviewerGate } from '@/lib/ide/parseReviewerGate';
 import { looksLikeProjectInternalQuery } from '@/lib/ai/tools/serverBrowseAssist';
@@ -690,13 +690,18 @@ export async function attemptOrchestratedIdeReply(input: {
       ...(planFiles ? safely(() => checkLineClaims(planFiles, parsed.plan), [] as string[]) : []),
       ...(planFiles ? safely(() => findContradictions(planFiles, parsed.plan), [] as string[]) : []),
     ];
-    const extra = [...hard, ...safely(() => dataStoreIssues(evidencePack?.unverified ?? [], parsed.plan), [] as string[])];
+    const extra = [
+      ...hard,
+      ...(planFiles && claim ? safely(() => counterexampleIssues(planFiles, claim, parsed.plan), [] as string[]) : []),
+      ...safely(() => dataStoreIssues(evidencePack?.unverified ?? [], parsed.plan), [] as string[]),
+    ];
     const contexts = planFiles && claim ? safely(() => quoteContexts(planFiles, claim), [] as ReturnType<typeof quoteContexts>) : [];
     return { parsed, structure, unaddressed, extra, hard, contexts, issues: [...structure, ...(claim?.issues ?? []), ...extra, ...readerCoverageIssues(unaddressed)], claim };
   };
   const plannerAttempts: TeamChatTurn[] = [];
   let correctionRounds = 0;
   let correctionSkipped = false;
+  let driftNote = '';
   let planAssessment: ReturnType<typeof assessPlan> | null = null;
   if (interactionMode === 'plan') {
     planAssessment = assessPlan(plannerTurn.text);
@@ -717,6 +722,7 @@ export async function attemptOrchestratedIdeReply(input: {
           input.userText, '',
           'Your previous plan was rejected by automatic checks against the repository. Return the complete plan again as one nucleas-plan JSON block, fixing exactly these problems:',
           ...planAssessment.issues.map((issue) => `- ${issue}`),
+          ...(planAssessment.claim?.verified.length ? ['', 'Facts already verified against the repository. Keep this diagnosis and fix the problems above around it; change the files or the cause only if you can quote code that contradicts it:', ...planAssessment.claim.verified.slice(0, 3).map((v) => `- ${v.evidence.file}:${v.foundLine}: ${v.evidence.quote.slice(0, 120)}`), ...(planAssessment.parsed ? [`- files to change: ${plannedFiles(planAssessment.parsed.plan).slice(0, 4).join(', ')}`] : [])] : []),
           ...(planAssessment.contexts.length ? ['', 'The code around each line you quoted. Say which entry, function or list each quote belongs to, and correct any claim these lines contradict:', renderQuoteContexts(planAssessment.contexts.slice(0, 3))] : []),
           '', 'Previous plan:', plannerTurn.text.slice(0, 5000),
         ].join('\n'),
@@ -724,10 +730,18 @@ export async function attemptOrchestratedIdeReply(input: {
         maxOutputTokens: 4096,
       });
       if (retry.role !== 'assistant') break;
+      const revised = assessPlan(retry.text);
+      // A revision that drops a verified diagnosis for unrelated files is escaping the complaint: keep the earlier plan.
+      if (planAssessment.parsed && revised.parsed && driftedFromVerified({ plan: planAssessment.parsed.plan, claim: planAssessment.claim }, { plan: revised.parsed.plan })) {
+        plannerAttempts.push(retry);
+        logStage('planner', retry, fixer.model);
+        driftNote = `A revision dropped the verified diagnosis for different files (${plannedFiles(revised.parsed.plan).slice(0, 2).join(', ')}) without contradicting it, so the earlier plan was kept.`;
+        break;
+      }
       plannerAttempts.push(plannerTurn);
       plannerTurn = retry;
-      logStage('planner', retry, plannerBinding.model);
-      planAssessment = assessPlan(retry.text);
+      logStage('planner', retry, fixer.model);
+      planAssessment = revised;
     }
   }
 
@@ -759,6 +773,7 @@ export async function attemptOrchestratedIdeReply(input: {
     const reasons: string[] = [];
     if (!planAssessment.parsed.plan.structured?.rootCause?.evidence.length) reasons.push('The plan cites no evidence from the code for its root cause.');
     else if (claim.verified.length === 0) reasons.push('None of the code the plan quotes could be found in the repository.');
+    if (correctionSkipped && planAssessment.issues.length) reasons.push(`Nucleas ran out of time before the checks\u2019 ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} could be sent back and fixed (${correctionRounds} of 2 correction rounds ran), so this plan is not approvable: ${planAssessment.issues.slice(0, 2).join(' ')}`);
     if (planAssessment.hard.length) reasons.push(`The plan still contradicts itself or the code after ${correctionRounds} correction round${correctionRounds === 1 ? '' : 's'}${correctionSkipped ? ' (more were skipped: out of time)' : ''}: ${planAssessment.hard.slice(0, 3).join(' ')}`);
     if (claim.evidenceOffPath && claim.offPath.length) reasons.push(`The plan\u2019s evidence and its edits (${claim.offPath.slice(0, 4).join(', ')}) are in files the named page does not use, so they would not change what the page shows.`);
     if (reasons.length) {
@@ -840,7 +855,7 @@ export async function attemptOrchestratedIdeReply(input: {
     }
     const open = planAssessment.extra;
     const contexts = planAssessment.contexts;
-    const notes = [input.observedPage && 'failure' in input.observedPage ? `The live page could not be opened with the admin account (${input.observedPage.failure}), so the plan is based on the code alone.` : '', correctionRounds || correctionSkipped ? `Planner correction rounds run: ${correctionRounds} of 2${correctionSkipped ? ' (the rest were skipped: out of time)' : ''}${planAssessment.issues.length ? `; ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} still open` : ''}.` : ''].filter(Boolean);
+    const notes = [driftNote, input.observedPage && 'failure' in input.observedPage ? `The live page could not be opened with the admin account (${input.observedPage.failure}), so the plan is based on the code alone.` : '', correctionRounds || correctionSkipped ? `Planner correction rounds run: ${correctionRounds} of 2${correctionSkipped ? ' (the rest were skipped: out of time)' : ''}${planAssessment.issues.length ? `; ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} still open` : ''}.` : ''].filter(Boolean);
     return safely(() => recomposePlan(planned, {
       extraSections: automaticPlanSections({
         check: verified,

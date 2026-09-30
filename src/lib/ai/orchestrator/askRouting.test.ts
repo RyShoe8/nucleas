@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 
-import { shouldOverrideToCodeChange, type AskPlan } from './askOrchestrator';
+import { codeChangeRequest, shouldOverrideToCodeChange, type AskPlan } from './askOrchestrator';
 import { renderRejectedPlans } from '@/lib/building/builds';
 
 const emptyPlan = { kind: 'answer', scope: 'company', fetch: [], actions: [], research: [], outline: [], review: false } as unknown as AskPlan;
@@ -30,5 +30,18 @@ describe('rejected plans as constraints', () => {
     expect(text).toContain('"Remove OpenHV edition" (Change gameSlug to openhv) — rejected because: creates an openhv:openhv duplicate');
     expect(text).toContain('"Other" (Second request) — rejected, no reason recorded');
     expect(renderRejectedPlans([])).toBe('');
+  });
+});
+
+describe('codeChangeRequest', () => {
+  it('keeps the user\u2019s own words (page address, exact names) beside the planner\u2019s restatement', () => {
+    const original = 'On playbound.club/admin/connect/game-servers, OpenHV is listed twice. Remove the OpenRA one.';
+    const out = codeChangeRequest('Remove the duplicate OpenHV listing from the game servers admin page.', original);
+    expect(out).toContain('Remove the duplicate OpenHV listing');
+    expect(out).toContain('playbound.club/admin/connect/game-servers');
+  });
+  it('does not repeat itself when the restatement already contains the message', () => {
+    const original = 'On example.com/admin, X is listed twice.';
+    expect(codeChangeRequest(original, original)).toBe(original);
   });
 });

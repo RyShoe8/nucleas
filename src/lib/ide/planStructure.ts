@@ -101,6 +101,8 @@ export function parseStructuredPlan(record: Record<string, unknown>): Structured
   return Object.keys(out).length ? out : undefined;
 }
 
+/** Words that mark a claim nobody checked. */
+const HEDGE = /\b(?:likely|probably|presumably|possibly|perhaps|might|seems? to|appears? to|I assume|I guess)\b/gi;
 const FILLER_STEP = /^\s*(?:verify|ensure|check|confirm|review|make sure|validate|test that|double[- ]check)\b/i;
 const FILE_IN_TEXT = /(?:[\w@.~-]+\/)+[\w@.~-]+\.[A-Za-z0-9]{1,6}\b/;
 /** A citation of code: a path, or a bare file name with a code extension (route.ts:8). */
@@ -123,6 +125,9 @@ export function validatePlanStructure(plan: { steps: string[]; structured?: Stru
   if (!s.rootCause?.explanation) issues.push('rootCause.explanation: explain in 2-4 steps how the current code produces the exact symptom.');
   else if (!s.rootCause.evidence.length) issues.push('rootCause.evidence: quote the code that produces the symptom as {file, line, quote}. Claims without a quote are not accepted.');
   else if (s.rootCause.evidence.some((e) => e.quote.replace(/\s+/g, '').length < 6)) issues.push('rootCause.evidence: each quote must be an actual line of code (at least a few characters), copied exactly.');
+  const guessed = [['rootCause.explanation', s.rootCause?.explanation], ['walkthrough', s.walkthrough], ['expectedResult', s.expectedResult]]
+    .flatMap(([field, text]) => [...new Set((text ?? '').match(HEDGE) ?? [])].slice(0, 2).map((word) => `${field}: "${word.toLowerCase()}" marks a guess. Replace it with quoted code that shows it, or move the claim to unverified.`));
+  issues.push(...guessed.slice(0, 2));
   if (!s.filesToChange?.length) issues.push('filesToChange: list the files the change edits.');
   if (!s.walkthrough) issues.push('walkthrough: step through the code that builds the symptom (the loop or function) with your change applied, name it (file and function) and say what it outputs now. If it would still output the symptom, the plan is wrong.');
   else if (!FILE_CITATION.test(s.walkthrough) || s.walkthrough.length < 40) issues.push('walkthrough: name the file and function you stepped through, and what it outputs with the change applied.');

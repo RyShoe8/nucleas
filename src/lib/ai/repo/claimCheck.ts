@@ -6,7 +6,7 @@
  */
 import type { PlanEvidence, StructuredPlan } from '@/lib/ide/planStructure';
 import { plannedFiles } from '@/lib/ide/planStructure';
-import { contextAround, describeEntry } from './entryFacts';
+import { contextAround, describeEntry, enclosingEntry } from './entryFacts';
 import { findReferences } from './references';
 
 export { contextAround };
@@ -221,6 +221,56 @@ export function dataStoreIssues(reads: { file: string; line: number; model?: str
   const missing = [...new Map(reads.filter((r) => r.model && /database/.test(r.note)).map((r) => [r.model!, r])).values()].filter((r) => !text.includes(r.model!.toLowerCase()));
   if (!missing.length) return [];
   return [`unverified: the code path reads ${missing.slice(0, 4).map((r) => `${r.model} (${r.file}:${r.line})`).join(', ')} from a database. For each, say whether stored rows could keep the symptom alive after your change, and how to check.`];
+}
+
+const KEY_VALUE = /^\s*["']?([\w.-]+)["']?\s*:\s*(["'][^"'\n]{3,80}["']|[A-Za-z][\w.-]{3,80})\s*,?\s*(?:\/\/.*)?$/;
+
+/**
+ * A quoted line whose value other entries share is not, on its own, the cause: if those others do not show
+ * the symptom, the shared value cannot explain it. Names the others so the plan has to say why they differ.
+ */
+export function counterexampleIssues(files: Map<string, string>, check: Pick<ClaimCheck, 'verified'>, plan: { structured?: StructuredPlan }): string[] {
+  const s = plan.structured;
+  const said = [s?.rootCause?.explanation, s?.walkthrough, s?.expectedResult, ...(s?.sideEffects ?? []), ...(s?.outOfScope ?? [])].join('\n').toLowerCase();
+  const issues: string[] = [];
+  for (const v of check.verified) {
+    const content = files.get(v.evidence.file);
+    const lines = content?.split('\n');
+    const own = lines?.[v.foundLine - 1] ? KEY_VALUE.exec(lines[v.foundLine - 1]) : null;
+    if (!content || !lines || !own || /^(?:true|false|null|undefined)$/i.test(own[2].replace(/["']/g, ''))) continue;
+    const entry = enclosingEntry(content, v.foundLine);
+    const from = entry ? entry.start - 1 : 0;
+    const to = entry ? entry.end : lines.length;
+    // Same value under a different key in the same object, or across the sibling lines of a flat map.
+    const others: { key: string; line: number }[] = [];
+    for (let i = from; i < to && i < lines.length; i += 1) {
+      if (i === v.foundLine - 1) continue;
+      const m = KEY_VALUE.exec(lines[i]);
+      if (m && m[2] === own[2] && m[1] !== own[1]) others.push({ key: m[1], line: i + 1 });
+    }
+    const unexplained = others.filter((o) => !said.includes(o.key.toLowerCase()));
+    if (unexplained.length) {
+      issues.push(`rootCause.evidence: ${v.evidence.file}:${v.foundLine} (${own[1]}: ${own[2]}) has the same value as ${unexplained.slice(0, 3).map((o) => `${o.key} (line ${o.line})`).join(', ')}. If those do not show the symptom, this value cannot be what causes it: say why they differ, or quote the line that only the affected item has.`);
+    }
+  }
+  return issues.slice(0, 2);
+}
+
+/**
+ * A revision that throws away a diagnosis backed by verified quotes on the page's own path, and switches to
+ * entirely different files, is escaping the complaint instead of fixing it.
+ */
+export function driftedFromVerified(
+  before: { plan: { steps: string[]; structured?: StructuredPlan }; claim: ClaimCheck | null },
+  after: { plan: { steps: string[]; structured?: StructuredPlan } }
+): boolean {
+  const claim = before.claim;
+  if (!claim || !claim.verified.length || claim.evidenceOffPath || claim.offPath.length) return false;
+  const was = new Set(plannedFiles(before.plan));
+  const now = plannedFiles(after.plan);
+  if (!was.size || !now.length || now.some((f) => was.has(f))) return false;
+  const verifiedFiles = new Set(claim.verified.map((v) => v.evidence.file));
+  return !(after.plan.structured?.rootCause?.evidence ?? []).some((e) => verifiedFiles.has(e.file));
 }
 
 /** "None found" and similar cannot stand next to readers that were never assessed. */

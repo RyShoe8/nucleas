@@ -137,3 +137,12 @@ describe('prose that only repeats the plan', () => {
     expect(proseBeyondThePlan('+---------+\n|  Header |\n+---------+', plan)).toContain('| Header |'.replace('| H', '|  H'));
   });
 });
+
+describe('guesses in a plan', () => {
+  it('flags hedging words in the root cause and walkthrough', () => {
+    const plan = { steps: ['Edit a.ts to remove x'], structured: { symptom: 's', path: [{ file: 'a.ts' }], rootCause: { explanation: 'The logic likely iterates over editions.', evidence: [{ file: 'a.ts', quote: 'const x = 1;' }] }, filesToChange: ['a.ts'], walkthrough: 'a.ts build() with the change, it should probably drop x from the output.', expectedResult: 'a.ts:1 renders it', sideEffects: [], unverified: [], outOfScope: [] } };
+    const issues = validatePlanStructure(plan);
+    expect(issues.join('\n')).toContain('rootCause.explanation: "likely" marks a guess');
+    expect(issues.join('\n')).toContain('walkthrough: "probably" marks a guess');
+  });
+});

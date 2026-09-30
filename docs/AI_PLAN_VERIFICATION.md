@@ -82,3 +82,11 @@ The browser worker runs from a fixed server, not from the Next app (Vercel's cha
 - Set `NUCLEAS_BROWSER_SITE_HEADER="X-Nucleas-Bypass: <long random secret>"` on the worker. It is sent only to the site being opened (never to other hosts). In Cloudflare, add a custom rule (Security → WAF → Custom rules): `http.request.headers["x-nucleas-bypass"][0] eq "<secret>"` → **Skip** the bot/managed-challenge features available on your plan.
 - Bot Fight Mode on the Free plan cannot be skipped by rules; turn it off for the login path (Configuration/WAF exceptions) or use Super Bot Fight (Pro+), or paste a session instead.
 - A Turnstile widget on the login form is verified by the site's server and cannot be bypassed by a header: paste a session instead.
+
+## Keeping revisions honest
+
+- **Original words travel with the request:** Ask's restated code change is sent with the user's exact message, so the page address (for the live-page step) and exact names survive a small planner's paraphrase.
+- **Verified facts are anchored:** correction rounds are told which quotes and files are already verified; a revision that abandons a verified on-path diagnosis for unrelated files without citing contradicting code is discarded and the earlier plan is kept (noted in the plan).
+- **Counterexample check:** if a quoted `key: value` line shares its value with other entries in the same object that the plan never mentions, the plan is asked why those do not show the symptom.
+- **Guesses are flagged:** "likely", "probably", "might", "appears to" in the root cause, walkthrough or expected result are sent back (quote code, or move to unverified).
+- **No approval after skipped corrections:** if a correction round was skipped for time while problems were open, the plan is shown as not approvable, with the draft.

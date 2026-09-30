@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { automaticPlanSections, checkLineClaims, checkPlanClaims, contextAround, dataStoreIssues, findContradictions, quoteContexts, withoutNoneClaims, groupReaders, readerCoverageIssues, readersOfPlannedFiles, unaddressedReaders } from './claimCheck';
+import { counterexampleIssues, driftedFromVerified, automaticPlanSections, checkLineClaims, checkPlanClaims, contextAround, dataStoreIssues, findContradictions, quoteContexts, withoutNoneClaims, groupReaders, readerCoverageIssues, readersOfPlannedFiles, unaddressedReaders } from './claimCheck';
 import { buildEvidencePack } from './evidencePack';
 
 const files = new Map<string, string>(Object.entries({
@@ -244,5 +244,42 @@ describe('checks on what the plan says about the code', () => {
 
   it('drops "none found" claims so they cannot stand next to unassessed readers', () => {
     expect(withoutNoneClaims(['None found.', 'No other readers.', 'The launcher reads it too.'])).toEqual(['The launcher reads it too.']);
+  });
+});
+
+describe('counterexamples and drift', () => {
+  const registry = new Map<string, string>([['lib/query.ts', [
+    'const KIND: Record<string, string> = {',
+    '  xonotic: "agent-local",',
+    '  // OpenRA-family servers advertise on the OpenRA master list.',
+    '  openra: "openra-master",',
+    '  openhv: "openra-master",',
+    '  "hurry-curry": "hurry-curry-registry",',
+    '  "earth-2140-trilogy": "openra-master",',
+    '};',
+  ].join('\n')]]);
+  const verified = (line: number, quote: string) => ({ verified: [{ evidence: { file: 'lib/query.ts', line, quote }, foundLine: line, occurrences: 1, ambiguous: false }] });
+
+  it('asks why other entries with the same value do not show the symptom', () => {
+    const issues = counterexampleIssues(registry, verified(5, 'openhv: "openra-master",'), { structured: { rootCause: { explanation: 'openhv shares the registry', evidence: [] } } });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('openra (line 4), earth-2140-trilogy (line 7)');
+    expect(issues[0]).toContain('cannot be what causes it');
+  });
+
+  it('is satisfied once the plan says why the others differ', () => {
+    expect(counterexampleIssues(registry, verified(5, 'openhv: "openra-master",'), { structured: { rootCause: { explanation: 'unlike openra and earth-2140-trilogy, which are not listed as editions...', evidence: [] } } })).toEqual([]);
+    expect(counterexampleIssues(registry, verified(2, 'xonotic: "agent-local",'), { structured: {} })).toEqual([]);
+  });
+
+  it('spots a revision that abandons a verified on-path diagnosis for unrelated files', () => {
+    const claim = { verified: [{ evidence: { file: 'a.ts', quote: 'x' }, foundLine: 1, occurrences: 1, ambiguous: false }], unverified: [], missingPathFiles: [], offPath: [], newOrUnknown: [], evidenceOffPath: false, issues: [] };
+    const before = { plan: { steps: ['Edit a.ts'], structured: { filesToChange: ['a.ts'] } }, claim };
+    expect(driftedFromVerified(before, { plan: { steps: ['Edit b.ts'], structured: { filesToChange: ['b.ts'], rootCause: { explanation: 'e', evidence: [{ file: 'b.ts', quote: 'y' }] } } } })).toBe(true);
+    // Still edits a.ts, or cites the verified file: not drift.
+    expect(driftedFromVerified(before, { plan: { steps: ['Edit a.ts and b.ts'], structured: { filesToChange: ['a.ts', 'b.ts'] } } })).toBe(false);
+    expect(driftedFromVerified(before, { plan: { steps: ['Edit b.ts'], structured: { filesToChange: ['b.ts'], rootCause: { explanation: 'e', evidence: [{ file: 'a.ts', quote: 'x' }] } } } })).toBe(false);
+    // The earlier plan was itself off the page's path: switching is welcome.
+    expect(driftedFromVerified({ ...before, claim: { ...claim, evidenceOffPath: true } }, { plan: { steps: ['Edit b.ts'], structured: { filesToChange: ['b.ts'] } } })).toBe(false);
   });
 });

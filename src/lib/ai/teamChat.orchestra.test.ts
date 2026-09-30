@@ -671,6 +671,32 @@ describe('plans are checked against the repository', () => {
     expect(turn.plan?.markdown).toContain('The live page could not be opened with the admin account (The admin account was not accepted.)');
   });
 
+  it('keeps the earlier plan when a revision drops its verified diagnosis for unrelated files', async () => {
+    const calls: { stage: string; userText: string }[] = [];
+    const escape = plan({
+      title: 'Change the settings copy', filesToChange: ['lib/settings.ts'], steps: ['Edit lib/settings.ts to drop gadgetPro'],
+      rootCause: { explanation: '1. settings lists it 2. remove it 3. done', evidence: [{ file: 'lib/settings.ts', line: 1, quote: 'export const OPTIONS = { ...DEFAULTS, slug: "gadgetPro" };' }] },
+      walkthrough: 'lib/settings.ts OPTIONS with the change no longer has gadgetPro, so it is not listed.', expectedResult: 'lib/settings.ts:1 no longer lists it.', sideEffects: [],
+    });
+    let planners = 0;
+    accepting(calls, () => (++planners === 1 ? plan({ sideEffects: ['Nothing else is affected.'] }) : escape));
+    const turn = await run();
+    expect(calls[1].userText).toContain('Facts already verified against the repository');
+    expect(calls[1].userText).toContain('lib/data/variants.ts:2');
+    expect(turn.plan?.title).toBe('Hide duplicate variant');
+    expect(turn.plan?.markdown).toContain('dropped the verified diagnosis for different files');
+    expect(turn.plan?.markdown).not.toContain('Change the settings copy');
+  });
+
+  it('does not make a plan approvable when the correction round was skipped for time and problems are open', async () => {
+    const calls: { stage: string; userText: string }[] = [];
+    accepting(calls, plan({ sideEffects: ['Nothing else is affected.'] }));
+    const turn = await run({ budgetMs: 55_000 });
+    expect(calls.map((c) => c.stage)).toEqual(['planner']);
+    expect(turn.plan).toBeUndefined();
+    expect(turn.text).toContain('ran out of time before the checks');
+  });
+
   it('does not publish a plan that still contradicts itself after the correction rounds, and hands the second round to another model', async () => {
     const calls: { stage: string; userText: string; model?: string }[] = [];
     const contradictory = plan({ steps: ["Remove the entry with slug 'gadgetPro' in lib/data/variants.ts.", "Verify the 'gadgetPro' entry at line 2 of lib/data/variants.ts remains unchanged."] });

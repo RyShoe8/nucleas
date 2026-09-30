@@ -116,6 +116,17 @@ export function shouldOverrideToCodeChange(plan: AskPlan, text: string): boolean
   return !/^(?:how|what|why|when|who|which|where|is|are|do|does|can|could|should|would|tell me|show me|give me|summari[sz]e)\b/i.test(trimmed);
 }
 
+/**
+ * The planner restates a code change "so it stands alone", and a small model often drops what matters most
+ * (the page address, the exact names). The user's own words go along with it, so the page can be opened and
+ * the names searched exactly as written.
+ */
+export function codeChangeRequest(restated: string, original: string): string {
+  const text = original.trim();
+  if (!text || restated.includes(text.slice(0, 60)) || restated.length + text.length > 5000) return restated;
+  return `${restated}\n\nThe user's exact message:\n${text}`;
+}
+
 export interface StageRecord {
   stage: 'plan' | 'fetch' | 'research' | 'work' | 'check' | 'review' | 'code' | 'job';
   model?: string;
@@ -442,9 +453,10 @@ export async function runAskOrchestrator(
         runId: planTurn.runId,
       };
     }
+    const restated = codeChangeRequest(plan.codeChange.request, input.text);
     const request = input.attachments
-      ? `${plan.codeChange.request}\n\nAttached by the user:\n${input.attachments}`.slice(0, 6000)
-      : plan.codeChange.request;
+      ? `${restated}\n\nAttached by the user:\n${input.attachments}`.slice(0, 6000)
+      : restated;
     say(`Planning the code change for ${company.name} (${repos.get(company.id)})`);
     const proposal = await proposeCodeChange(viewer, { companyId: company.id, request, level: input.level, signal: input.signal, onProgress: input.onProgress });
     costMicros += proposal.costMicros;
