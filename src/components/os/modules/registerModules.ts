@@ -17,6 +17,7 @@ import AiRoutingModule from './AiRoutingModule';
 import BuildingModule from './BuildingModule';
 import JobsModule from './JobsModule';
 import ToolsModule from './ToolsModule';
+import MailModule from './MailModule';
 
 let registered = false;
 
@@ -104,6 +105,16 @@ export function registerOsModules(): void {
             canPopout: true,
             permissions: 'member',
             render: () => createElement(BuildingModule),
+        },
+        {
+            id: 'mail',
+            title: 'Mail',
+            icon: '✉️',
+            defaultSize: { width: 1120, height: 720 },
+            minSize: { width: 640, height: 400 },
+            canPopout: true,
+            permissions: 'manager',
+            render: () => createElement(MailModule),
         },
         {
             id: 'jobs',

@@ -15,11 +15,12 @@ export default function IntegrationNotice() {
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
-        const text = params.get('integration_error') ?? params.get('integration_notice');
+        const text = params.get('integration_error') ?? params.get('mail_error') ?? params.get('integration_notice') ?? params.get('mail_notice');
         const companyId = params.get('company');
         if (!text && !companyId) return;
+        if (params.get('open') === 'mail') wm.open('mail');
 
-        if (text) setNotice({ kind: params.has('integration_error') ? 'error' : 'notice', text: text.slice(0, 300) });
+        if (text) setNotice({ kind: params.has('integration_error') || params.has('mail_error') ? 'error' : 'notice', text: text.slice(0, 300) });
         if (companyId && /^[a-f0-9]{24}$/i.test(companyId)) {
             // Open with the real name so the window matches (and is focused, not duplicated) when
             // the same company is later opened from the switcher.
@@ -31,7 +32,7 @@ export default function IntegrationNotice() {
                 .catch(() => {});
         }
 
-        for (const key of ['integration_error', 'integration_notice', 'company']) params.delete(key);
+        for (const key of ['integration_error', 'integration_notice', 'mail_error', 'mail_notice', 'open', 'company']) params.delete(key);
         const rest = params.toString();
         window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
         // Runs once on mount: the params are consumed and removed above.
