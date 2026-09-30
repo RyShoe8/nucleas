@@ -31,6 +31,7 @@ import { shortModel, type ProgressFn } from '@/lib/ai/progress';
 import { checkNoChangeClaim, claimsNothingFound } from '@/lib/ai/repo/noChangeGuard';
 import { planTemplateRequest } from '@/lib/ai/repo/planTemplate';
 import { identifierTerms } from '@/lib/ai/repo/digSelect';
+import { repoLookups } from '@/lib/ai/repo/jobLookups';
 import { observedWindows, renderObservedPage } from '@/lib/ai/repo/observedPage';
 import { evaluateDefinitionOfDone, formatDefinitionOfDone, type DodResult } from '@/lib/ai/definitionOfDone';
 import { summarizeStageTools, type PipelineStage, type StageToolRecord } from '@/lib/ai/stageTools';
@@ -984,6 +985,9 @@ export async function attemptOrchestratedIdeReply(input: {
   let reviewerFormatCorrection = '';
   let noChangeSnapshot: Awaited<ReturnType<typeof getRepoSnapshot>> | null | undefined;
   let noChangeNote = '';
+  const WORKER_UNREAD_NOTE = '(Earlier Worker report; it read no files, so treat its statements about the repository as unverified.)';
+  // Whether the Worker actually read anything: a Worker with no tool calls can only guess about the repository.
+  let workerRead = (workerTurn.toolsUsed?.length ?? 0) > 0;
 
   if (reviewerBinding) {
     for (let pass = 0; pass < maxCompletionPasses; pass += 1) {
@@ -1007,6 +1011,7 @@ export async function attemptOrchestratedIdeReply(input: {
           '',
           'Worker output:',
           workerTurn.text.slice(0, 6000),
+          ...(interactionMode === 'plan' && !workerRead ? ['', 'The Worker read no files, so its statements about the repository are unverified guesses. Rely on the automated checks, the code excerpts and any "Repository lookups run by Nucleas" above, not on the Worker\u2019s claims about files.'] : []),
           '',
           ...(automatedFindings ? [automatedFindings, ''] : []),
           'Review all acceptance criteria in one batch. Decide accept vs needs_more. End with a nucleas-gate fence (all interaction modes).',
@@ -1047,11 +1052,12 @@ export async function attemptOrchestratedIdeReply(input: {
       }
 
       if (pass >= maxCompletionPasses - 1 || remaining() < 70_000) {
+        const draftMarkdown = interactionMode === 'plan' ? plan?.markdown : undefined;
         plan = undefined; // A needs_more gate must never publish a ready-for-review plan.
         // Circuit breaker: return best effort from last Worker + Reviewer prose.
         finalChatAnswer =
           [
-            workerTurn.text.trim(),
+            draftMarkdown ? `Plan draft (not approved; the Critic was not satisfied):\n\n${draftMarkdown}` : workerTurn.text.trim(),
             '',
             '---',
             'Analysis stopped after the safety continue limit before the Reviewer fully accepted.',
@@ -1085,6 +1091,13 @@ export async function attemptOrchestratedIdeReply(input: {
         });
       }
 
+      // The checks the Critic asks for are run by Nucleas itself against the repository: a Worker with no tools would guess.
+      const lookups = interactionMode === 'plan' && planFiles ? safely(() => repoLookups(planFiles, [...gate.jobs, gate.reason ?? ''], evidencePack?.terms ?? []), '') : '';
+      if (interactionMode === 'plan' && lookups && !workerRead) {
+        workerTurn = { ...workerTurn, text: [WORKER_UNREAD_NOTE, workerTurn.text.replace(WORKER_UNREAD_NOTE, '').trim().slice(0, 2500), '', lookups].join('\n') };
+        assistantStages.push(workerTurn);
+        continue;
+      }
       workerTurn = await runStage({
         stage: 'worker',
         binding: workerBinding,
@@ -1094,6 +1107,7 @@ export async function attemptOrchestratedIdeReply(input: {
           '',
           'Planner briefing / jobs:',
           distilledPlanner,
+          ...(lookups ? ['', lookups] : []),
           '',
           'Reviewer needs_more — execute these jobs completely with repo_search/repo_read and quoted evidence:',
           ...gate.jobs.map((job, index) => `${index + 1}. ${job}`),
@@ -1111,6 +1125,8 @@ export async function attemptOrchestratedIdeReply(input: {
         return interruptedStage('Worker', workerTurn, assistantStages);
       }
       logStage('worker', workerTurn, workerBinding.model);
+      workerRead = workerRead || (workerTurn.toolsUsed?.length ?? 0) > 0;
+      if (lookups) workerTurn = { ...workerTurn, text: `${workerTurn.text.trim()}\n\n${lookups}` };
     }
   }
 
@@ -1178,7 +1194,7 @@ export async function attemptOrchestratedIdeReply(input: {
 
     return {
       ...workerTurn,
-      text: withFooter([
+      text: withFooter(interactionMode === 'plan' && finalChatAnswer ? finalChatAnswer : [
         workerTurn.text.trim(),
         '',
         '---',

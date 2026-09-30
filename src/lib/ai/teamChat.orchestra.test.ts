@@ -697,6 +697,42 @@ describe('plans are checked against the repository', () => {
     expect(turn.text).toContain('ran out of time before the checks');
   });
 
+  const toolless = (reviews: string[], calls: { stage: string; userText: string }[]) => {
+    let r = 0;
+    mocks.companyChat.mockImplementation(async (args: { systemPrompt: string; userText: string }) => {
+      const stage = stageOf(args);
+      calls.push({ stage, userText: args.userText });
+      if (stage === 'planner') return { requestId: 'p', role: 'assistant', costMicros: 0, toolsUsed: ['repo_read'], text: plan() };
+      if (stage === 'worker') return { requestId: 'w', role: 'assistant', costMicros: 0, toolsUsed: [], text: 'I believe variants.ts is missing the gadgetPro row.' };
+      const picked = reviews[Math.min(r++, reviews.length - 1)];
+      return { requestId: 'r', role: 'assistant', costMicros: 0, text: picked };
+    });
+  };
+  const NEEDS = 'The worker claims a file lacks an entry.\n```nucleas-gate\n{"status":"needs_more","jobs":["Check that `lib/data/variants.ts` contains `gadgetPro`"],"reason":"Unverified claim about variants.ts"}\n```';
+  const ACCEPT = 'Tried to break it and could not.\n```nucleas-gate\n{"status":"accept"}\n```';
+
+  it('runs the Critic\u2019s checks itself when the Worker read no files, instead of trusting the Worker\u2019s guess', async () => {
+    const calls: { stage: string; userText: string }[] = [];
+    toolless([NEEDS, ACCEPT], calls);
+    const turn = await run();
+    // No second Worker call: Nucleas looked it up.
+    expect(calls.map((c) => c.stage)).toEqual(['planner', 'worker', 'reviewer', 'reviewer']);
+    expect(calls[2].userText).toContain('The Worker read no files');
+    expect(calls[3].userText).toContain('Repository lookups run by Nucleas');
+    expect(calls[3].userText).toContain('lib/data/variants.ts:2');
+    expect(turn.plan?.status).toBe('ready_for_review');
+  });
+
+  it('shows the plan draft, not the Worker\u2019s report, when the Critic is never satisfied', async () => {
+    const calls: { stage: string; userText: string }[] = [];
+    toolless([NEEDS], calls);
+    const turn = await run();
+    expect(turn.plan).toBeUndefined();
+    expect(turn.text).toContain('Plan draft (not approved; the Critic was not satisfied)');
+    expect(turn.text).toContain('Hide duplicate variant');
+    expect(turn.text.match(/I believe variants\.ts is missing/g)?.length ?? 0).toBeLessThanOrEqual(1);
+  });
+
   it('does not publish a plan that still contradicts itself after the correction rounds, and hands the second round to another model', async () => {
     const calls: { stage: string; userText: string; model?: string }[] = [];
     const contradictory = plan({ steps: ["Remove the entry with slug 'gadgetPro' in lib/data/variants.ts.", "Verify the 'gadgetPro' entry at line 2 of lib/data/variants.ts remains unchanged."] });

@@ -96,3 +96,11 @@ The browser worker runs from a fixed server, not from the Next app (Vercel's cha
 Targets used to be ranked by how many of the request's names a file contains, with ties broken alphabetically. A lookup table (`openhv: "openra-master"`) then outranked the file that defines what is listed (`name: "OpenHV"`) purely by its path. Files are now ranked by how often they hold the names as the user spelled them (what is displayed), and the pack lists files that hold only the lowercase keys as "usually lookups, not where a listing is defined". A plan that changes only such a lookup file, while other files on the page's path hold the displayed names and it quotes nothing from them, is blocked as a contradiction.
 
 When the request names a page on the company's site but the live page could not be checked, the plan now says why (no session connected, worker not configured, session expired, not signed in).
+
+## A Worker that reads nothing cannot veto a plan
+
+Free Worker models often make no tool calls, so what they say about the repository ("games.ts has no `slug: "openhv"`") is a guess, and a Critic that believes it sends the plan round in circles until it is dropped. Now:
+
+- The Critic is told when the Worker read no files and to rely on the automated checks and lookups instead.
+- When the Critic asks for a check ("does games.ts contain …?"), Nucleas runs it against the repository (`src/lib/ai/repo/jobLookups.ts`, case-insensitive, quote-style-insensitive) and hands back the lines or their absence; the toolless Worker is not called again.
+- If the Critic is still not satisfied, the reply shows the plan draft and the Critic's reason, not the Worker's report repeated twice.

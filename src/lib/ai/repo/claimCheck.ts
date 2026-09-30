@@ -34,7 +34,7 @@ export interface ClaimCheck {
 const isTestOrDoc = (p: string) => /(?:\.|\/)(?:test|spec)\.[a-z]+$|(?:^|\/)__tests__\/|(?:^|\/)docs?\/|\.mdx?$/i.test(p);
 
 /** Whitespace-insensitive, quote-style-insensitive form of code for comparing a quote with a file. */
-const squash = (text: string) => text.replace(/[`'"“”‘’]/g, "'").replace(/\s+/g, ' ').trim();
+export const squash = (text: string) => text.replace(/[`'"“”‘’]/g, "'").replace(/\s+/g, ' ').trim();
 
 function quoteFragments(quote: string): string[] {
   // A model may elide the middle of a line with "..." or "…"; every fragment must still appear.
@@ -45,14 +45,14 @@ function quoteFragments(quote: string): string[] {
  * Every line (1-based) where the fragment starts, ignoring whitespace and quote style, and matching across
  * line breaks so a multi-line quote works. Empty when it does not appear.
  */
-function occurrencesOf(content: string, fragment: string): number[] {
+export function occurrencesOf(content: string, fragment: string, ignoreCase = false): number[] {
   const tokens = fragment.trim().split(/\s+/).filter(Boolean);
   if (!tokens.length) return [];
   const pattern = tokens
     .map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/['"`\u2018\u2019\u201C\u201D]/g, `['"\`\u2018\u2019\u201C\u201D]`))
     .join('\\s+');
   const lines: number[] = [];
-  for (const m of content.matchAll(new RegExp(pattern, 'g'))) {
+  for (const m of content.matchAll(new RegExp(pattern, ignoreCase ? 'gi' : 'g'))) {
     lines.push(1 + (content.slice(0, m.index).match(/\n/g)?.length ?? 0));
     if (lines.length >= 200) break;
   }
