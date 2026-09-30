@@ -139,3 +139,68 @@ export function reachableFrom(files: Map<string, string>, start: string, options
 export function routeFileFor(files: Map<string, string>, text: string): { file: string; route: string } | null {
   return findRouteFile(files, text, analyze(files).routes);
 }
+
+// ---------- Chains and connecting lines ----------
+
+/**
+ * Shortest chain of dependencies from `start` to each of `targets` (start first, target last), following
+ * imports and calls to the app's own routes. Targets that cannot be reached are omitted.
+ */
+export function shortestPaths(files: Map<string, string>, start: string, targets: Set<string>, options: { maxDepth?: number } = {}): Map<string, string[]> {
+  const analysis = analyze(files);
+  const handlers = analysis.routes.filter((r) => r.kind === 'handler' && r.route.length > 1);
+  const maxDepth = Math.min(Math.max(options.maxDepth ?? 8, 1), 12);
+  const parent = new Map<string, string>();
+  const seen = new Set([start]);
+  const found = new Map<string, string[]>();
+  let frontier = [start];
+  const chainTo = (node: string): string[] => {
+    const chain = [node];
+    while (chain[0] !== start) chain.unshift(parent.get(chain[0])!);
+    return chain;
+  };
+  for (let depth = 1; depth <= maxDepth && frontier.length && found.size < targets.size; depth += 1) {
+    const next: string[] = [];
+    for (const current of frontier) {
+      for (const dependency of [...(analysis.uses.get(current) ?? []), ...routeCalls(files.get(current) ?? '', handlers)]) {
+        if (seen.has(dependency)) continue;
+        seen.add(dependency);
+        parent.set(dependency, current);
+        next.push(dependency);
+        if (targets.has(dependency)) found.set(dependency, chainTo(dependency));
+      }
+    }
+    frontier = next;
+  }
+  return found;
+}
+
+/** The line in `from` that leads to `to`: the import/include line, or the call to one of `to`'s routes. */
+export function connectingLine(files: Map<string, string>, from: string, to: string): { line: number; text: string } | null {
+  const content = files.get(from);
+  if (content === undefined) return null;
+  const lines = content.split('\n');
+  const clip = (text: string) => text.trim().replace(/\s+/g, ' ').slice(0, 160);
+  const analysis = analyze(files);
+  // A call to one of the target's HTTP routes.
+  const routes = analysis.routes.filter((r) => r.file === to && r.kind === 'handler' && r.route.length > 1);
+  if (routes.length) {
+    for (let i = 0; i < lines.length; i += 1) {
+      for (const m of lines[i].matchAll(/['"`](?:https?:\/\/[^/'"`\s]+)?(\/[^'"`?\s#]*)/g)) {
+        const literal = m[1].replace(/\$\{[^}]*\}/g, 'x').replace(/\/+$/, '');
+        if (literal.length > 1 && routes.some((r) => r.pattern.test(literal))) return { line: i + 1, text: clip(lines[i]) };
+      }
+    }
+  }
+  // An import or include of the target file, found by its name.
+  const segments = to.replace(/\.[^./]+$/, '').replace(/\/(?:index|__init__)$/, '').split('/');
+  const tail = segments[segments.length - 1];
+  const tail2 = segments.slice(-2).join('/');
+  const escaped = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const needle of [tail2, tail]) {
+    const re = new RegExp(`(?<![\\w-])${escaped(needle)}(?![\\w-])`);
+    const index = lines.findIndex((l) => re.test(l) && /import|require|include|from|use\b|render|@extends|get_template_part|layout|section/i.test(l));
+    if (index >= 0) return { line: index + 1, text: clip(lines[index]) };
+  }
+  return null;
+}

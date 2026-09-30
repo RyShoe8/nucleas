@@ -4,6 +4,7 @@ import { extractChatHeuristicText } from '@/lib/ai/tools/serverBrowseAssist';
 import { getRepoSnapshot, type LoadedSnapshot } from '@/lib/ai/repo/snapshot';
 import { repositoryEvidenceReceipt, type RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 import { identifierTerms, relevantExcerptStart, snapshotCandidates } from '@/lib/ai/repo/digSelect';
+import { buildEvidencePack, type EvidencePack } from '@/lib/ai/repo/evidencePack';
 import { reachableFrom, routeFileFor } from '@/lib/ai/repo/references';
 
 export { snapshotCandidates };
@@ -81,6 +82,8 @@ export type RepoAssistResult = {
   /** Compact excerpts for Reviewer (file bodies only, no tree). */
   evidenceBlock: string;
   evidenceReceipts: RepositoryEvidenceReceipt[];
+  /** Facts traced from the code (data path, quotable lines, other readers, unverifiable data); absent when nothing matched. */
+  evidencePack?: EvidencePack;
 };
 
 function scorePath(path: string, query: string): number {
@@ -128,11 +131,16 @@ function fileCharBudget(path: string, ceiling = PRIORITY_FILE_CHARS): number {
 }
 
 
-function snapshotExcerpt(snapshot: LoadedSnapshot, path: string, query: string, maxChars: number): { block: string; receipt: RepositoryEvidenceReceipt } | null {
+function snapshotExcerpt(snapshot: LoadedSnapshot, path: string, query: string, maxChars: number, focusLine?: number): { block: string; receipt: RepositoryEvidenceReceipt } | null {
   const content = snapshot.files.get(path);
   if (content === undefined) return null;
   const excerptChars = fileCharBudget(path, maxChars);
-  const start = relevantExcerptStart(content, query, excerptChars);
+  let start = relevantExcerptStart(content, query, excerptChars);
+  if (focusLine && focusLine > 1) {
+    // A traced file (one the data flows through) is read around the line where it matters, starting on a line boundary.
+    const before = content.split('\n').slice(0, focusLine - 1).join('\n').length;
+    start = content.lastIndexOf('\n', Math.max(0, before - Math.floor(excerptChars / 3))) + 1;
+  }
   const excerpt = content.slice(start, start + excerptChars);
   const startLine = content.slice(0, start).split('\n').length;
   const endLine = startLine + excerpt.split('\n').length - 1;
@@ -205,21 +213,20 @@ export async function gatherRepoAssistContext(input: {
   const local = await getRepoSnapshot(input.organizationId, input.projectId).catch(() => null);
   if (local?.ok) {
     toolsUsed.push('repo_search');
-    // When the request names a page ("/admin/users/settings"), find it and what it uses, so the
-    // files shown first are the ones that can actually change what that page displays.
-    const page = routeFileFor(local.snapshot.files, input.userText);
-    const scope = page ? new Set(reachableFrom(local.snapshot.files, page.file)) : undefined;
-    const paths = snapshotCandidates(local.snapshot, query, maxFiles, { scope });
-    const ids = identifierTerms(query);
-    const pageNote = page
-      ? [`The request names the page ${page.route}, which is ${page.file}.`,
-        ...(scope && ids.length ? [`Files that page uses (imports and API calls) mentioning ${ids.join(' and ')}: ${paths.filter((p) => scope.has(p)).slice(0, 8).join(', ') || 'none found'}.`] : [])].join(' ')
-      : '';
-    const excerpts = paths.map(path => snapshotExcerpt(local.snapshot, path, query, maxCharsPerFile)).filter((item): item is NonNullable<typeof item> => Boolean(item));
+    // Trace how the code connects (page → components → routes → data), so the files shown first are the
+    // ones the change must go through. Tracing is an aid: if it fails, the ranking below still runs.
+    let pack: EvidencePack | null = null;
+    try { pack = buildEvidencePack(local.snapshot.files, input.userText); } catch { pack = null; }
+    const page = pack?.page ?? null;
+    const scope = pack?.scope.size ? pack.scope : undefined;
+    const ranked = snapshotCandidates(local.snapshot, query, maxFiles, { scope });
+    const focus = new Map((pack?.focus ?? []).map((f) => [f.file, f.line] as const));
+    const paths = [...new Set([...focus.keys(), ...ranked])].slice(0, maxFiles);
+    const excerpts = paths.map(path => snapshotExcerpt(local.snapshot, path, query, maxCharsPerFile, focus.get(path))).filter((item): item is NonNullable<typeof item> => Boolean(item));
     const fileBlocks = excerpts.map(item => item.block);
     if (fileBlocks.length) {
       toolsUsed.push('repo_read');
-      const evidenceBlock = fileBlocks.join('\n\n').slice(0, maxContextChars);
+      const evidenceBlock = [pack?.text, fileBlocks.join('\n\n')].filter(Boolean).join('\n\n').slice(0, maxContextChars);
       return {
         ok: true,
         note: `Read ${fileBlocks.length} whole-repository match(es) from commit ${local.snapshot.commit.slice(0, 12)}.`,
@@ -227,10 +234,11 @@ export async function gatherRepoAssistContext(input: {
         toolsUsed,
         evidenceBlock,
         evidenceReceipts: excerpts.map(item => item.receipt),
+        ...(pack ? { evidencePack: pack } : {}),
         contextBlock: [
           'Repository dig results (deterministic whole-repository search; use these excerpts before calling more tools):',
           `Query focus: ${query}`,
-          ...(pageNote ? [pageNote] : []),
+          ...(pack ? [pack.text] : page ? [`The request names the page ${page.route}, served by ${page.file}.`] : []),
           fileBlocks.join('\n\n').slice(0, Math.min(FILES_CHARS, maxContextChars)),
           'If anything is still missing, use repo_search/repo_read for another range. Do not stop at path lists.',
         ].join('\n\n').slice(0, maxContextChars),

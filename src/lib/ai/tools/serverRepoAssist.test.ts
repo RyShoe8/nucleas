@@ -67,6 +67,27 @@ describe('gatherRepoAssistContext', () => {
     expect(result.evidenceBlock).not.toContain('OpenHV mentioned once');
   });
 
+  it('shows the traced data path and the file that assembles the list, even though it never names the product', async () => {
+    const files = new Map<string, string>([
+      ['package.json', '{"dependencies":{"next":"14"}}'],
+      ['app/admin/catalog/page.tsx', "import Panel from '@/components/Panel';\nexport default function Page() { return <Panel /> }"],
+      ['components/Panel.tsx', "export default function Panel() { fetch('/api/admin/catalog/items'); return null }"],
+      ['app/api/admin/catalog/items/route.ts', "import { seedVariants } from '@/lib/data/variants';\nexport async function GET() {\n  const rows = [];\n  for (const v of seedVariants) rows.push({ key: v.slug });\n  return Response.json(rows);\n}"],
+      ['lib/data/variants.ts', "export const seedVariants = [{ parent: 'widget', slug: 'gadgetPro' }];"],
+    ]);
+    mocks.snapshot.mockResolvedValue({ ok: true, snapshot: { owner: 'o', repo: 'r', branch: 'main', commit: 'c'.repeat(40), skipped: [], files } });
+    const result = await gatherRepoAssistContext({
+      organizationId: 'org', projectId: new Types.ObjectId(), userText: 'On example.com/admin/catalog, gadgetPro is listed on its own and also under widget. Remove the listing under widget.', maxContextChars: 12_000, maxFiles: 4,
+    });
+    expect(result.contextBlock).toContain('Data path to lib/data/variants.ts:');
+    expect(result.contextBlock).toContain("lib/data/variants.ts:1: `export const seedVariants = [{ parent: 'widget', slug: 'gadgetPro' }];`");
+    // The assembling route is read, centred on where it uses the data.
+    expect(result.contextBlock).toContain('File app/api/admin/catalog/items/route.ts');
+    expect(result.contextBlock).toContain('for (const v of seedVariants)');
+    expect(result.evidencePack?.page?.route).toBe('/admin/catalog');
+    expect(result.evidenceBlock).toContain('Data path to lib/data/variants.ts:');
+  });
+
   it('returns unbound note when root tree fails', async () => {
     mocks.listTree.mockResolvedValue({ ok: false, reason: 'Bind a GitHub repository.' });
     const result = await gatherRepoAssistContext({
