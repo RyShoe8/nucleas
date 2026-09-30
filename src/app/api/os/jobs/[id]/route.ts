@@ -14,6 +14,7 @@ import {
   runNow,
   type ActionResult,
 } from '@/lib/jobs/jobs';
+import { updateLinkOpportunity, verifyLinkOpportunity, viewerOwnsOpportunity } from '@/lib/jobs/linkOpportunities';
 
 export const dynamic = 'force-dynamic';
 // Runs and redesigns continue after the response.
@@ -45,6 +46,9 @@ export async function POST(request: NextRequest, { params }: Context) {
     monthlyBudgetUsd?: unknown;
     runId?: unknown;
     note?: unknown;
+    opportunityId?: unknown;
+    status?: unknown;
+    liveLinkUrl?: unknown;
   };
   const note = typeof body.note === 'string' ? body.note : undefined;
   let result: ActionResult & { runId?: string; dryRunId?: string };
@@ -80,6 +84,28 @@ export async function POST(request: NextRequest, { params }: Context) {
     case 'archive':
       result = await archiveJob(viewer, id);
       break;
+    case 'opportunity_status': {
+      const updated = await updateLinkOpportunity(viewer, id, typeof body.opportunityId === 'string' ? body.opportunityId : '', {
+        status: body.status,
+        note: body.note,
+        liveLinkUrl: body.liveLinkUrl,
+      });
+      if (!updated.ok) return NextResponse.json({ error: updated.error }, { status: updated.status });
+      const job = await getJob(viewer, id);
+      if (!job) return NextResponse.json({ error: 'Job not found.' }, { status: 404 });
+      result = { ok: true, job };
+      break;
+    }
+    case 'verify_opportunity': {
+      if (typeof body.opportunityId !== 'string' || !(await viewerOwnsOpportunity(viewer, id, body.opportunityId))) {
+        return NextResponse.json({ error: 'Opportunity not found.' }, { status: 404 });
+      }
+      await verifyLinkOpportunity(body.opportunityId);
+      const job = await getJob(viewer, id);
+      if (!job) return NextResponse.json({ error: 'Job not found.' }, { status: 404 });
+      result = { ok: true, job };
+      break;
+    }
     default:
       return NextResponse.json({ error: 'Unknown action.' }, { status: 400 });
   }

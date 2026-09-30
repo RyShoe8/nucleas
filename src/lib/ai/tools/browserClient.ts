@@ -8,9 +8,11 @@ export type BrowserNavigateResult = {
   note: string;
   /** Absolute https image URLs discovered on the page (og:image, content imgs). */
   images: string[];
+  /** Public HTTPS links found in rendered anchors. */
+  links: string[];
 };
 
-function sanitizeImageList(raw: unknown): string[] {
+function sanitizeHttpsList(raw: unknown, limit: number): string[] {
   if (!Array.isArray(raw)) return [];
   const out: string[] = [];
   const seen = new Set<string>();
@@ -22,7 +24,7 @@ function sanitizeImageList(raw: unknown): string[] {
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(url.slice(0, 4000));
-    if (out.length >= 12) break;
+    if (out.length >= limit) break;
   }
   return out;
 }
@@ -67,13 +69,15 @@ export async function browserNavigate(
       title?: string | null;
       text?: string;
       images?: unknown;
+      links?: unknown;
     };
     return {
       url: typeof body.url === 'string' ? body.url : target.toString(),
       title: typeof body.title === 'string' ? body.title.slice(0, 200) : null,
       text: typeof body.text === 'string' ? body.text.slice(0, 12000) : '',
       note: 'Rendered via Playwright browser worker.',
-      images: sanitizeImageList(body.images),
+      images: sanitizeHttpsList(body.images, 12),
+      links: sanitizeHttpsList(body.links, 500),
     };
   } finally {
     clearTimeout(timeout);

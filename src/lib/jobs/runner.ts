@@ -12,6 +12,7 @@ import { loadCompanyViewer, getCompanyProfile } from '@/lib/companies/companyPro
 import { resolveCompanyRepository } from '@/lib/building/companyCode';
 import { Job, JobRun } from '@/lib/models/Job';
 import { checkRecords, jobDesignSchema, jobRunOutputSchema, type JobDesign, type JobRunOutput } from './schema';
+import { linkOpportunityMemory, syncLinkOpportunities } from './linkOpportunities';
 
 /**
  * Runs a job once: the engine's research model does the work with tools and returns structured,
@@ -72,12 +73,16 @@ export async function monthSpendMicros(jobId: Types.ObjectId, now = new Date()):
 }
 
 async function earlierRecords(jobId: Types.ObjectId, excludeRun: Types.ObjectId): Promise<string> {
-  const runs = await JobRun.find({ jobId, _id: { $ne: excludeRun }, status: 'completed', dryRun: false })
+  const runs = await JobRun.find({ jobId, _id: { $ne: excludeRun }, status: { $in: ['completed', 'rejected'] }, dryRun: false })
     .sort({ createdAt: -1 })
     .limit(20)
-    .select('output')
-    .lean<{ output?: JobRunOutput }[]>();
-  const lines = runs.flatMap((r) => (r.output?.records ?? []).map((rec) => `- ${JSON.stringify(rec.values).slice(0, 300)}`));
+    .select('output status decisionNote')
+    .lean<{ output?: JobRunOutput; status: 'completed' | 'rejected'; decisionNote?: string }[]>();
+  const lines = runs.flatMap((r) =>
+    (r.output?.records ?? []).map(
+      (rec) => `- ${r.status === 'rejected' ? 'Rejected' : 'Accepted/completed'}${r.decisionNote ? ` (${r.decisionNote})` : ''}: ${JSON.stringify(rec.values).slice(0, 500)}`
+    )
+  );
   return lines.slice(0, MEMORY_RECORDS).join('\n');
 }
 
@@ -119,7 +124,7 @@ export async function executeJobRun(runId: string): Promise<void> {
   const repo = await resolveCompanyRepository(viewer, String(job.companyId)).catch(() => null);
   const tools = await buildAssistantTools(viewer, [profile]);
   const today = new Date().toISOString().slice(0, 10);
-  const done = await earlierRecords(job._id, run._id);
+  const done = design.data.skill === 'link_building' ? await linkOpportunityMemory(job._id) : await earlierRecords(job._id, run._id);
   let cost = 0;
   const usedModels: string[] = [];
   const onProgress = (t: string) => void progress(run._id, t);
@@ -210,6 +215,16 @@ export async function executeJobRun(runId: string): Promise<void> {
         },
       }
     );
+    if (design.data.skill === 'link_building') {
+      await syncLinkOpportunities({
+        organizationId: job.organizationId,
+        companyId: job.companyId,
+        jobId: job._id,
+        runId: run._id,
+        output,
+        approved: status === 'completed',
+      });
+    }
     onProgress(status === 'completed' ? 'Done' : 'Ready for review');
   } catch (error) {
     await JobRun.updateOne({ _id: run._id }, { $set: { status: 'failed', error: error instanceof Error ? error.message.slice(0, 1000) : 'The run failed.', finishedAt: new Date(), costMicros: cost, models: usedModels } });

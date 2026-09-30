@@ -87,8 +87,15 @@ async function navigate(url: string, maxChars: number) {
         if ((w > 0 && w < 64) || (h > 0 && h < 64)) continue;
         push(img.currentSrc || img.src || img.getAttribute('src'));
       }
-      return { text, images };
-    })()`) as { text?: string; images?: string[] };
+      const links = [];
+      for (const anchor of Array.from(document.querySelectorAll('a[href]'))) {
+        try {
+          const abs = new URL(anchor.getAttribute('href') || '', location.href);
+          if (abs.protocol === 'https:') links.push(abs.toString());
+        } catch {}
+      }
+      return { text, images, links };
+    })()`) as { text?: string; images?: string[]; links?: string[] };
     const finalUrl = page.url();
     if (!isSafePublicHttpsUrl(finalUrl)) {
       throw new Error('Unsafe redirected URL.');
@@ -102,6 +109,7 @@ async function navigate(url: string, maxChars: number) {
       images.push(src.slice(0, 4000));
       if (images.length >= 12) break;
     }
+    const links = [...new Set((scraped.links ?? []).filter((href) => isSafePublicHttpsUrl(href)).map((href) => href.slice(0, 4000)))].slice(0, 500);
     return {
       url: finalUrl,
       title: title.slice(0, 200),
@@ -110,6 +118,7 @@ async function navigate(url: string, maxChars: number) {
         .trim()
         .slice(0, maxChars),
       images,
+      links,
     };
   } finally {
     await browser.close();
@@ -318,7 +327,6 @@ export function startBrowserWorkerServer() {
   });
 
   server.listen(PORT, () => {
-    // eslint-disable-next-line no-console
     console.log(`browserWorker listening on ${PORT}`);
   });
   return server;

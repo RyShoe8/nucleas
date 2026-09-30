@@ -33,6 +33,8 @@ const jobSchema = new Schema(
     monthlyBudgetMicros: { type: Number, default: 2_000_000 },
     designCostMicros: { type: Number, default: 0 },
     lastRunAt: { type: Date },
+    /** Exact next scheduled run; claimed atomically by the jobs cron. */
+    nextRunAt: { type: Date },
     error: { type: String, maxlength: 1000 },
     events: { type: [eventSchema], default: [] },
   },
@@ -40,6 +42,7 @@ const jobSchema = new Schema(
 );
 jobSchema.index({ organizationId: 1, status: 1, updatedAt: -1 });
 jobSchema.index({ organizationId: 1, companyId: 1, createdAt: -1 });
+jobSchema.index({ status: 1, nextRunAt: 1 });
 
 export type JobDoc = InferSchemaType<typeof jobSchema>;
 export const Job: Model<JobDoc> = (mongoose.models.Job as Model<JobDoc> | undefined) ?? mongoose.model<JobDoc>('Job', jobSchema);

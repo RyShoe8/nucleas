@@ -4,7 +4,7 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 
 vi.mock('server-only', () => ({}));
 
-const mocks = vi.hoisted(() => ({ design: vi.fn(), chat: vi.fn() }));
+const mocks = vi.hoisted(() => ({ design: vi.fn(), chat: vi.fn(), browser: vi.fn() }));
 vi.mock('./designer', () => ({ designJob: (...args: unknown[]) => mocks.design(...args) }));
 vi.mock('@/lib/ai/companyChat', () => ({ attemptCompanyCredentialChat: (input: unknown) => mocks.chat(input) }));
 vi.mock('@/lib/ai/engine/catalog', () => ({ listAvailableModels: async () => [] }));
@@ -17,14 +17,17 @@ vi.mock('@/lib/ai/engine/select', () => ({
   isCostLevel: (v: unknown) => v === 'low' || v === 'medium' || v === 'high',
 }));
 vi.mock('@/lib/building/companyCode', () => ({ resolveCompanyRepository: async () => null }));
+vi.mock('@/lib/ai/tools/browserClient', () => ({ browserNavigate: (...args: unknown[]) => mocks.browser(...args) }));
 
 import Client from '@/lib/models/Client';
 import User from '@/lib/models/User';
 import Employee from '@/lib/models/Employee';
 import { Job, JobRun } from '@/lib/models/Job';
+import { LinkOpportunity } from '@/lib/models/LinkOpportunity';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
-import { answerQuestions, approveJob, createJob, decideRun, executeJobRun, getJob, runDesign, runNow, sweepJobs } from './jobs';
+import { answerQuestions, approveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, runDesign, runNow, sweepJobs } from './jobs';
 import type { JobDesign } from './schema';
+import { updateLinkOpportunity, verifyLinkOpportunity } from './linkOpportunities';
 
 let replica: MongoMemoryReplSet;
 const org = new Types.ObjectId();
@@ -76,7 +79,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await Promise.all([Client.deleteMany({}), User.deleteMany({}), Employee.collection.deleteMany({}), Job.deleteMany({}), JobRun.deleteMany({})]);
+  await Promise.all([Client.deleteMany({}), User.deleteMany({}), Employee.collection.deleteMany({}), Job.deleteMany({}), JobRun.deleteMany({}), LinkOpportunity.deleteMany({})]);
   const user = await User.create({ email: 'owner@example.invalid', password: 'synthetic-pass', organizationId: String(org) });
   // Runs act as the job's creator, resolved from their employee record.
   await Employee.collection.insertOne({ userId: user._id, organizationId: String(org), role: 'Administrator', name: 'Owner', email: 'owner@example.invalid' });
@@ -89,6 +92,7 @@ beforeEach(async () => {
       ? { requestId: 'r', role: 'assistant', text: '{"verdict":"pass","notes":"Consistent and sourced."}', costMicros: 400 }
       : { requestId: 'w', role: 'assistant', text: GOOD, costMicros: 0 }
   );
+  mocks.browser.mockResolvedValue({ url: 'https://directory.example.org/listing/playbound', title: 'PlayBound', text: 'Listing', note: 'Rendered', images: [], links: ['https://playbound.club/games'] });
 });
 
 async function proposed(design: JobDesign = DESIGN) {
@@ -99,6 +103,15 @@ async function proposed(design: JobDesign = DESIGN) {
 }
 
 describe('designing', () => {
+  it('configures at most one open link-building skill per property', async () => {
+    const config = { schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
+    const first = await createTemplateJob(admin, { companyId, template: 'link_building', config });
+    const duplicate = await createTemplateJob(admin, { companyId, template: 'link_building', config });
+
+    expect(first).toMatchObject({ ok: true, job: { status: 'proposed', design: { skill: 'link_building' } } });
+    expect(duplicate).toMatchObject({ ok: false, status: 409 });
+  });
+
   it('persists Free Orchestrated jobs', async () => {
     mocks.design.mockResolvedValue({ ok: true, design: DESIGN, costMicros: 0, model: 'Rogly/model' });
     const created = await createJob(admin, { companyId, request: 'Research Deadlock and update the catalog', level: 'free' });
@@ -128,6 +141,30 @@ describe('designing', () => {
 });
 
 describe('approving and the dry run', () => {
+  it('tracks link recommendations through approval and submission with feedback history', async () => {
+    const config = { schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
+    const created = await createTemplateJob(admin, { companyId, template: 'link_building', config });
+    if (!created.ok) throw new Error(created.error);
+    mocks.chat.mockImplementation(async (input: { systemPrompt: string }) => input.systemPrompt.startsWith('You check one run')
+      ? { requestId: 'r', role: 'assistant', text: '{"verdict":"pass","notes":"Sourced."}', costMicros: 0 }
+      : { requestId: 'w', role: 'assistant', text: JSON.stringify({ records: [{ values: { strategic_reason: 'A new page needs authority.', opportunity_url: 'https://directory.example.org/submit', opportunity_type: 'Directory', estimated_authority: 'Medium estimate', authority_basis: 'Indexed and used by peers.', target_keywords: ['games'], target_url: 'https://playbound.club/games', anchor_text: 'PlayBound games', submission_copy: 'A useful directory description.', requirements: 'Free account.', link_attribute: 'unknown', quality_risk: 'Relevant and moderated.', confidence: 'Medium', next_action: 'Submit the listing.' }, sources: ['https://directory.example.org/submit'] }], summary: 'Found one.', gaps: [] }), costMicros: 0 });
+
+    const approved = await approveJob(admin, created.job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    let view = await getJob(admin, created.job.id);
+    expect(view?.opportunities).toHaveLength(1);
+    expect(view?.opportunities[0]).toMatchObject({ status: 'recommended', opportunityUrl: 'https://directory.example.org/submit' });
+
+    await decideRun(admin, created.job.id, approved.dryRunId!, 'accept', 'Good fit');
+    view = await getJob(admin, created.job.id);
+    expect(view?.opportunities[0].status).toBe('approved');
+    const moved = await updateLinkOpportunity(admin, created.job.id, view!.opportunities[0].id, { status: 'submitted', liveLinkUrl: 'https://directory.example.org/listing/playbound' });
+    expect(moved).toEqual({ ok: true });
+    expect(await LinkOpportunity.findById(view!.opportunities[0].id).lean()).toMatchObject({ status: 'submitted', note: 'Good fit', liveLinkUrl: 'https://directory.example.org/listing/playbound' });
+    expect(await verifyLinkOpportunity(view!.opportunities[0].id)).toBe('found');
+    expect(await LinkOpportunity.findById(view!.opportunities[0].id).lean()).toMatchObject({ status: 'live', verificationMessage: expect.stringContaining('found') });
+  });
+
   it('only managers approve; approval fixes completion and budget and starts one dry run', async () => {
     const job = await proposed();
     expect(await approveJob(member, job.id, { completion: 'review' })).toMatchObject({ ok: false, status: 403 });
@@ -162,6 +199,18 @@ describe('approving and the dry run', () => {
 });
 
 describe('real runs', () => {
+  it('claims a due recurring job once and advances its next run', async () => {
+    const id = await ready({ ...DESIGN, schedule: { kind: 'daily', time: '09:00', timezone: 'UTC' } });
+    await Job.updateOne({ _id: id }, { $set: { nextRunAt: new Date('2026-09-30T09:00:00Z') } });
+
+    const first = await claimDueJobRuns(new Date('2026-09-30T10:00:00Z'));
+    const second = await claimDueJobRuns(new Date('2026-09-30T10:00:00Z'));
+
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(0);
+    expect(await Job.findById(id).lean()).toMatchObject({ status: 'active', nextRunAt: new Date('2026-10-01T09:00:00Z') });
+  });
+
   async function ready(design: JobDesign) {
     const job = await proposed(design);
     const approved = await approveJob(admin, job.id, { completion: 'automatic' });

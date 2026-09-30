@@ -23,18 +23,37 @@ interface JobQuestion {
 }
 
 interface JobDesign {
+    skill?: 'link_building';
     title: string;
     category: string;
     instructions: string;
     fields: JobField[];
     sourcePolicy: string;
     delivery: { method: string; detail: string; setupSteps: string[] };
-    schedule: { kind: 'once' | 'daily' | 'weekly' | 'monthly'; time?: string; weekday?: number; dayOfMonth?: number };
+    schedule: { kind: 'once' | 'daily' | 'weekly' | 'monthly'; time?: string; timezone?: string; weekday?: number; dayOfMonth?: number };
     recordsPerRun: number;
     safeguards: string[];
     recommendedCompletion: 'review' | 'automatic';
     findings: string[];
     questions: JobQuestion[];
+}
+
+type LinkOpportunityStatus = 'recommended' | 'saved' | 'approved' | 'rejected' | 'submitted' | 'live' | 'submission_rejected' | 'removed' | 'expired';
+interface LinkOpportunityView {
+    id: string;
+    runId: string;
+    status: LinkOpportunityStatus;
+    opportunityUrl: string;
+    targetUrl: string | null;
+    liveLinkUrl: string | null;
+    values: Record<string, unknown>;
+    sources: string[];
+    note: string | null;
+    submittedAt: string | null;
+    lastVerifiedAt: string | null;
+    nextVerificationAt: string | null;
+    verificationMessage: string | null;
+    updatedAt: string;
 }
 
 export interface JobRunView {
@@ -60,7 +79,7 @@ export interface JobView {
     design: JobDesign | null;
     answers: Record<string, { option?: string; text?: string }>;
     completion: 'review' | 'automatic' | null;
-    level: 'low' | 'medium' | 'high' | null;
+    level: 'free' | 'low' | 'medium' | 'high' | null;
     monthlyBudgetMicros: number;
     spentThisMonthMicros: number;
     deliveryLabel: string | null;
@@ -68,9 +87,11 @@ export interface JobView {
     createdAt: string;
     updatedAt: string;
     lastRunAt: string | null;
+    nextRunAt: string | null;
     error: string | null;
     runs: JobRunView[];
     canManage: boolean;
+    opportunities: LinkOpportunityView[];
 }
 
 export const JOB_STATUS_LABEL: Record<JobStatus, string> = {
@@ -428,6 +449,73 @@ function RunBlock({ job, run, onChange }: { job: JobView; run: JobRunView; onCha
     );
 }
 
+const OPPORTUNITY_LABEL: Record<LinkOpportunityStatus, string> = {
+    recommended: 'Recommended', saved: 'Saved for later', approved: 'Approved', rejected: 'Rejected', submitted: 'Submitted', live: 'Live', submission_rejected: 'Submission rejected', removed: 'Link removed', expired: 'Expired',
+};
+
+function OpportunityTracker({ job, onChange }: { job: JobView; onChange: (j: JobView) => void }) {
+    const [busy, setBusy] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const update = async (opportunity: LinkOpportunityView, status: LinkOpportunityStatus) => {
+        let liveLinkUrl: string | undefined;
+        if ((status === 'submitted' || status === 'live') && !opportunity.liveLinkUrl) {
+            const entered = window.prompt('Paste the submitted or live page URL so Nucleas can verify the link:');
+            if (!entered) return;
+            liveLinkUrl = entered;
+        }
+        const note = status === 'rejected' || status === 'saved' || status === 'submission_rejected'
+            ? window.prompt('Optional note — Nucleas will use this feedback in future recommendations:') ?? undefined
+            : undefined;
+        setBusy(opportunity.id);
+        setError(null);
+        const res = await post(job.id, { action: 'opportunity_status', opportunityId: opportunity.id, status, liveLinkUrl, note });
+        setBusy(null);
+        if (res.error || !res.job) return setError(res.error ?? 'Failed');
+        onChange(res.job);
+    };
+    const verify = async (opportunity: LinkOpportunityView) => {
+        setBusy(opportunity.id);
+        setError(null);
+        const res = await post(job.id, { action: 'verify_opportunity', opportunityId: opportunity.id });
+        setBusy(null);
+        if (res.error || !res.job) return setError(res.error ?? 'Verification failed');
+        onChange(res.job);
+    };
+    if (!job.opportunities.length) return null;
+    return (
+        <details open className="rounded border border-border p-2">
+            <summary className="cursor-pointer text-xs font-medium">Opportunity tracker ({job.opportunities.length})</summary>
+            <div className="mt-2 space-y-2">
+                {job.opportunities.map((opportunity) => (
+                    <div key={opportunity.id} className="rounded border border-border/70 p-2 text-[11px] space-y-1">
+                        <div className="flex items-start gap-2">
+                            <a href={opportunity.opportunityUrl} target="_blank" rel="noreferrer" className="underline break-all flex-1">{String(opportunity.values.opportunity_type ?? opportunity.opportunityUrl)}</a>
+                            <span className="rounded border border-border px-1.5 py-0.5 whitespace-nowrap">{OPPORTUNITY_LABEL[opportunity.status]}</span>
+                        </div>
+                        {opportunity.targetUrl ? <p className="text-text-secondary truncate">Target: {opportunity.targetUrl}</p> : null}
+                        {opportunity.note ? <p>Feedback: {opportunity.note}</p> : null}
+                        {opportunity.verificationMessage ? <p className={opportunity.status === 'live' ? 'text-emerald-400' : 'text-amber-400'}>{opportunity.verificationMessage}</p> : null}
+                        {opportunity.lastVerifiedAt ? <p className="text-text-secondary">Checked {new Date(opportunity.lastVerifiedAt).toLocaleString()}</p> : null}
+                        {job.canManage ? (
+                            <div className="flex flex-wrap gap-1 pt-1">
+                                {['recommended', 'saved', 'rejected'].includes(opportunity.status) ? <button type="button" className={PRIMARY} disabled={busy === opportunity.id} onClick={() => void update(opportunity, 'approved')}>Approve</button> : null}
+                                {['recommended', 'approved', 'rejected', 'submission_rejected', 'expired'].includes(opportunity.status) ? <button type="button" className={BUTTON} disabled={busy === opportunity.id} onClick={() => void update(opportunity, 'saved')}>Save for later</button> : null}
+                                {['recommended', 'saved', 'approved'].includes(opportunity.status) ? <button type="button" className={BUTTON} disabled={busy === opportunity.id} onClick={() => void update(opportunity, 'rejected')}>Reject</button> : null}
+                                {['approved', 'submission_rejected'].includes(opportunity.status) ? <button type="button" className={PRIMARY} disabled={busy === opportunity.id} onClick={() => void update(opportunity, 'submitted')}>Mark submitted</button> : null}
+                                {opportunity.status === 'submitted' ? <button type="button" className={BUTTON} disabled={busy === opportunity.id} onClick={() => void update(opportunity, 'submission_rejected')}>Submission rejected</button> : null}
+                                {['submitted', 'live', 'removed'].includes(opportunity.status) ? <button type="button" className={BUTTON} disabled={busy === opportunity.id} onClick={() => void verify(opportunity)}>Verify link</button> : null}
+                                {opportunity.status === 'live' ? <button type="button" className={BUTTON} disabled={busy === opportunity.id} onClick={() => void update(opportunity, 'removed')}>Mark removed</button> : null}
+                                {['removed', 'submission_rejected'].includes(opportunity.status) ? <button type="button" className={BUTTON} disabled={busy === opportunity.id} onClick={() => void update(opportunity, 'expired')}>Expire</button> : null}
+                            </div>
+                        ) : null}
+                    </div>
+                ))}
+            </div>
+            {error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null}
+        </details>
+    );
+}
+
 // ---------- The card ----------
 
 /**
@@ -506,6 +594,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
             {job.status === 'proposed' && !job.canManage ? <p className="text-[11px] text-text-secondary">A manager or administrator approves jobs.</p> : null}
 
             {reviewRun ? <RunBlock job={job} run={reviewRun} onChange={update} /> : null}
+            {!compact && d?.skill === 'link_building' ? <OpportunityTracker job={job} onChange={update} /> : null}
             {!compact && doneRuns.length ? (
                 <details open={doneRuns.length === 1}>
                     <summary className="cursor-pointer text-xs text-text-secondary">Results ({doneRuns.length} run{doneRuns.length === 1 ? '' : 's'})</summary>
@@ -555,7 +644,9 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                 ) : null}
             </div>
             {!compact && (job.status === 'ready' || job.status === 'active') && d && d.schedule.kind !== 'once' ? (
-                <p className="text-[11px] text-text-secondary">Scheduled runs start in the next step of Jobs; use Run now meanwhile.</p>
+                <p className="text-[11px] text-text-secondary">
+                    {job.nextRunAt ? `Next scheduled run: ${new Date(job.nextRunAt).toLocaleString()}` : 'Scheduling resumes when this job is active.'}
+                </p>
             ) : null}
         </div>
     );

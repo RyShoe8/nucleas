@@ -24,12 +24,14 @@ describe('browserNavigate', () => {
           'data:image/png;base64,abc',
           'https://cdn.example.com/shot.png',
         ],
+        links: ['https://example.com/target', 'javascript:void(0)', 'https://example.com/target'],
       })
     );
 
     const result = await browserNavigate('https://example.com/game', { fetcher });
     expect(result.text).toMatch(/Gameplay/);
     expect(result.images).toEqual(['https://cdn.example.com/shot.png']);
+    expect(result.links).toEqual(['https://example.com/target']);
     expect(result.note).toMatch(/Playwright/i);
   });
 });

@@ -7,6 +7,9 @@ import type { ProgressFn } from '@/lib/ai/progress';
 import { designJob } from './designer';
 import { executeJobRun, monthSpendMicros } from './runner';
 import { DELIVERY_LABEL, RUNNABLE_DELIVERY, jobDesignSchema, type JobDesign, type JobRunOutput, type RecordIssue } from './schema';
+import { nextScheduledAt } from './schedule';
+import { linkBuildingConfigSchema, linkBuildingDesign } from './templates/linkBuilding';
+import { bulkDecideRunOpportunities, listLinkOpportunities, type LinkOpportunityView } from './linkOpportunities';
 
 /**
  * Jobs: Nucleas designs them, a manager approves them (choosing review or automatic completion and
@@ -48,9 +51,11 @@ export interface JobView {
   createdAt: string;
   updatedAt: string;
   lastRunAt: string | null;
+  nextRunAt: string | null;
   error: string | null;
   runs: JobRunView[];
   canManage: boolean;
+  opportunities: LinkOpportunityView[];
 }
 
 type JobLean = {
@@ -69,6 +74,7 @@ type JobLean = {
   createdAt: Date;
   updatedAt: Date;
   lastRunAt?: Date;
+  nextRunAt?: Date;
   error?: string;
 };
 
@@ -123,9 +129,11 @@ async function toView(job: JobLean, companyName: string, canManage: boolean, run
     createdAt: job.createdAt.toISOString(),
     updatedAt: job.updatedAt.toISOString(),
     lastRunAt: job.lastRunAt?.toISOString() ?? null,
+    nextRunAt: job.nextRunAt?.toISOString() ?? null,
     error: job.error ?? null,
     runs: runs.map(runView),
     canManage,
+    opportunities: design?.skill === 'link_building' ? await listLinkOpportunities(job._id) : [],
   };
 }
 
@@ -167,7 +175,7 @@ export async function getJob(viewer: CompanyViewer, id: string): Promise<JobView
 
 // ---------- Designing ----------
 
-export type CreateResult = { ok: true; job: JobView } | { ok: false; status: 400 | 403 | 404; error: string };
+export type CreateResult = { ok: true; job: JobView } | { ok: false; status: 400 | 403 | 404 | 409; error: string };
 
 /** Creates a job from a request and designs it (Nucleas investigates, then designs or asks). */
 export async function createJob(
@@ -190,6 +198,40 @@ export async function createJob(
   });
   // In the background the route hands runDesign to after(), so the response can return at once.
   if (!input.background) await runDesign(viewer, String(doc._id), { signal: input.signal, onProgress: input.onProgress });
+  const view = await getJob(viewer, String(doc._id));
+  return view ? { ok: true, job: view } : { ok: false, status: 404, error: 'Job not found.' };
+}
+
+/** Creates a reviewed first-party skill job without spending a model call redesigning known instructions. */
+export async function createTemplateJob(
+  viewer: CompanyViewer,
+  input: { companyId: string; template: 'link_building'; config: unknown; level?: CostLevel }
+): Promise<CreateResult> {
+  if (!isCompanyManager(viewer)) return { ok: false, status: 403, error: 'Only managers and administrators can configure skills.' };
+  const profile = await getCompanyProfile(viewer, input.companyId);
+  if (!profile) return { ok: false, status: 404, error: 'Company not found.' };
+  const parsed = linkBuildingConfigSchema.safeParse(input.config);
+  if (!parsed.success) return { ok: false, status: 400, error: parsed.error.issues[0]?.message ?? 'Invalid link-building settings.' };
+  const existing = await Job.exists({
+    organizationId: viewer.organizationId,
+    companyId: new Types.ObjectId(input.companyId),
+    'design.skill': 'link_building',
+    status: { $nin: ['rejected', 'archived', 'done'] },
+  });
+  if (existing) return { ok: false, status: 409, error: `${profile.name} already has an open Link Building job. Open it to review, pause, or archive it.` };
+  const level = input.level ?? (await readEngineSettings(String(viewer.organizationId))).defaultCostLevel;
+  const design = linkBuildingDesign(parsed.data);
+  const doc = await Job.create({
+    organizationId: viewer.organizationId,
+    companyId: new Types.ObjectId(input.companyId),
+    createdByUserId: new Types.ObjectId(viewer.userId),
+    status: 'proposed',
+    request: `Find the best free, self-service link-building opportunities for ${profile.name}.`,
+    design,
+    level,
+    designCostMicros: 0,
+    events: [event(viewer, 'skill_configured', 'link_building')],
+  });
   const view = await getJob(viewer, String(doc._id));
   return view ? { ok: true, job: view } : { ok: false, status: 404, error: 'Job not found.' };
 }
@@ -306,13 +348,22 @@ export async function decideRun(viewer: CompanyViewer, jobId: string, runId: str
     { new: true }
   ).lean<RunLean>();
   if (!run) return { ok: false, status: 409, error: 'That run is not waiting for review.' };
+  await bulkDecideRunOpportunities(run._id, decision, viewer, note);
   const design = jobDesignSchema.safeParse(found.job.design);
   if (run.dryRun) {
     // The sample was right: the job is ready. A one-off job whose results stay in Nucleas is done.
     const once = design.success && design.data.schedule.kind === 'once';
     const deliverable = design.success && RUNNABLE_DELIVERY.includes(design.data.delivery.method);
     const next: JobStatus = decision === 'reject' ? 'proposed' : once && deliverable ? 'done' : 'ready';
-    await Job.updateOne({ _id: found.job._id, status: 'testing' }, { $set: { status: next }, $push: { events: event(viewer, decision === 'accept' ? 'dry_run_accepted' : 'dry_run_rejected', note) } });
+    const nextRunAt = decision === 'accept' && design.success && deliverable ? nextScheduledAt(design.data.schedule, new Date()) : null;
+    await Job.updateOne(
+      { _id: found.job._id, status: 'testing' },
+      {
+        $set: { status: next, ...(nextRunAt ? { nextRunAt } : {}) },
+        ...(!nextRunAt ? { $unset: { nextRunAt: '' } } : {}),
+        $push: { events: event(viewer, decision === 'accept' ? 'dry_run_accepted' : 'dry_run_rejected', note) },
+      }
+    );
   } else {
     await Job.updateOne({ _id: found.job._id }, { $push: { events: event(viewer, decision === 'accept' ? 'run_accepted' : 'run_rejected', note) } });
   }
@@ -320,11 +371,21 @@ export async function decideRun(viewer: CompanyViewer, jobId: string, runId: str
 }
 
 export function pauseJob(viewer: CompanyViewer, id: string): Promise<ActionResult> {
-  return managed(viewer, id).then((f) => (f.ok ? transition(viewer, f.job, ['active', 'ready'], { status: 'paused' }, 'paused') : f));
+  return managed(viewer, id).then(async (f) => {
+    if (!f.ok) return f;
+    const result = await transition(viewer, f.job, ['active', 'ready'], { status: 'paused' }, 'paused');
+    if (result.ok) await Job.updateOne({ _id: f.job._id }, { $unset: { nextRunAt: '' } });
+    return result.ok ? done(viewer, id) : result;
+  });
 }
 
-export function resumeJob(viewer: CompanyViewer, id: string): Promise<ActionResult> {
-  return managed(viewer, id).then((f) => (f.ok ? transition(viewer, f.job, ['paused'], { status: 'ready' }, 'resumed') : f));
+export async function resumeJob(viewer: CompanyViewer, id: string): Promise<ActionResult> {
+  const found = await managed(viewer, id);
+  if (!found.ok) return found;
+  const design = jobDesignSchema.safeParse(found.job.design);
+  if (!design.success) return { ok: false, status: 409, error: 'This job has no valid design.' };
+  const nextRunAt = nextScheduledAt(design.data.schedule, new Date());
+  return transition(viewer, found.job, ['paused'], { status: 'active', ...(nextRunAt ? { nextRunAt } : {}) }, 'resumed');
 }
 
 export function archiveJob(viewer: CompanyViewer, id: string): Promise<ActionResult> {
@@ -334,6 +395,38 @@ export function archiveJob(viewer: CompanyViewer, id: string): Promise<ActionRes
 // ---------- Background ----------
 
 export { executeJobRun };
+
+/** Claims due recurring jobs and creates their runs. Each job advances before its run starts, so cron retries cannot duplicate it. */
+export async function claimDueJobRuns(now = new Date(), limit = 2): Promise<string[]> {
+  const candidates = await Job.find({ status: { $in: ['ready', 'active'] }, nextRunAt: { $lte: now } })
+    .sort({ nextRunAt: 1 })
+    .limit(Math.max(1, Math.min(limit, 10)))
+    .lean<JobLean[]>();
+  const runIds: string[] = [];
+  for (const job of candidates) {
+    const design = jobDesignSchema.safeParse(job.design);
+    if (!design.success || design.data.schedule.kind === 'once' || !RUNNABLE_DELIVERY.includes(design.data.delivery.method)) continue;
+    if (await JobRun.exists({ jobId: job._id, status: 'running' })) continue;
+    const nextRunAt = nextScheduledAt(design.data.schedule, now);
+    const claimed = await Job.findOneAndUpdate(
+      { _id: job._id, status: { $in: ['ready', 'active'] }, nextRunAt: job.nextRunAt },
+      { $set: { status: 'active', lastRunAt: now, ...(nextRunAt ? { nextRunAt } : {}) }, $push: { events: event(null, 'scheduled_run_started') } },
+      { new: true }
+    );
+    if (!claimed) continue;
+    const run = await JobRun.create({
+      organizationId: job.organizationId,
+      jobId: job._id,
+      companyId: job.companyId,
+      dryRun: false,
+      status: 'running',
+      startedAt: now,
+      progress: ['Starting scheduled run'],
+    });
+    runIds.push(String(run._id));
+  }
+  return runIds;
+}
 
 /** Cron: fails runs and designs that have been stuck too long. */
 export async function sweepJobs(now = new Date()): Promise<{ runsFailed: number; designsFailed: number }> {

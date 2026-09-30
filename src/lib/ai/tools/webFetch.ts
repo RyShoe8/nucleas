@@ -1,4 +1,4 @@
-import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
+import { assertSafePublicHttpsUrl, isSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 
 const MAX_BYTES = 250_000;
 const TIMEOUT_MS = 12_000;
@@ -18,7 +18,25 @@ export type WebFetchResult = {
   text: string;
   thin: boolean;
   escalateHint: boolean;
+  links: string[];
 };
+
+function extractLinks(raw: string, base: URL): string[] {
+  const links: string[] = [];
+  const seen = new Set<string>();
+  for (const match of raw.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["']/gi)) {
+    try {
+      const href = new URL(match[1], base).toString();
+      if (!isSafePublicHttpsUrl(href) || seen.has(href)) continue;
+      seen.add(href);
+      links.push(href.slice(0, 4000));
+      if (links.length >= 500) break;
+    } catch {
+      // Ignore malformed page links.
+    }
+  }
+  return links;
+}
 
 export async function webFetch(
   rawUrl: string,
@@ -84,7 +102,7 @@ export async function webFetch(
     const escalateHint =
       thin ||
       /react-root|data-reactroot|ng-app|__NEXT_DATA__|webpackJsonp/i.test(raw.slice(0, 4000));
-    return { url: url.toString(), title, text, thin, escalateHint };
+    return { url: url.toString(), title, text, thin, escalateHint, links: extractLinks(raw, url) };
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener('abort', cancel);

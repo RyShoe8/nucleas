@@ -1,7 +1,7 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { isCostLevel } from '@/lib/ai/engine/select';
-import { createJob, listJobs, runDesign } from '@/lib/jobs/jobs';
+import { createJob, createTemplateJob, listJobs, runDesign } from '@/lib/jobs/jobs';
 
 export const dynamic = 'force-dynamic';
 // Designing continues after the response (Nucleas investigates, then designs or asks).
@@ -22,9 +22,22 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const viewer = await requireCompanyViewer(request);
   if (viewer instanceof NextResponse) return viewer;
-  const body = (await request.json().catch(() => ({}))) as { companyId?: unknown; request?: unknown; level?: unknown };
-  if (typeof body.companyId !== 'string' || typeof body.request !== 'string') {
-    return NextResponse.json({ error: 'companyId and request are required.' }, { status: 400 });
+  const body = (await request.json().catch(() => ({}))) as { companyId?: unknown; request?: unknown; level?: unknown; template?: unknown; config?: unknown };
+  if (typeof body.companyId !== 'string') {
+    return NextResponse.json({ error: 'companyId is required.' }, { status: 400 });
+  }
+  if (body.template === 'link_building') {
+    const result = await createTemplateJob(viewer, {
+      companyId: body.companyId,
+      template: 'link_building',
+      config: body.config,
+      level: isCostLevel(body.level) ? body.level : undefined,
+    });
+    if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
+    return NextResponse.json({ job: result.job });
+  }
+  if (typeof body.request !== 'string') {
+    return NextResponse.json({ error: 'request is required.' }, { status: 400 });
   }
   const result = await createJob(viewer, { companyId: body.companyId, request: body.request, level: isCostLevel(body.level) ? body.level : undefined, background: true });
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });

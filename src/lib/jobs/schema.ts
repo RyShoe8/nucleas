@@ -57,6 +57,8 @@ export const jobScheduleSchema = z.object({
   kind: z.enum(['once', 'daily', 'weekly', 'monthly']).catch('once'),
   /** Local time "HH:MM" for repeating jobs. */
   time: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  /** IANA timezone used to turn the local schedule into an exact run time. */
+  timezone: z.string().min(1).max(100).optional(),
   weekday: z.number().int().min(0).max(6).optional(),
   dayOfMonth: z.number().int().min(1).max(28).optional(),
 });
@@ -64,6 +66,8 @@ export type JobSchedule = z.infer<typeof jobScheduleSchema>;
 
 /** What the designer must return. */
 export const jobDesignSchema = z.object({
+  /** First-party skill/template that owns this design, when applicable. */
+  skill: z.enum(['link_building']).optional(),
   title: z.string().min(3).max(120),
   category: z.enum(JOB_CATEGORIES).catch('research'),
   /** Exact, self-contained instructions for each run. */
