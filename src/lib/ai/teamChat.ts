@@ -104,6 +104,15 @@ function workNeedFor(interactionMode: IdeInteractionMode, userText: string): Nee
   return 'research';
 }
 
+/** The new plan checks are aids: if one throws, the pipeline carries on without it instead of failing the request. */
+function safely<T>(fn: () => T, fallback: T): T {
+  try {
+    return fn();
+  } catch {
+    return fallback;
+  }
+}
+
 function binding(choice: { profileId: string; model: string } | null): StageBinding | null {
   return choice ? { profileId: choice.profileId, model: choice.model } : null;
 }
@@ -623,8 +632,8 @@ export async function attemptOrchestratedIdeReply(input: {
   const assessPlan = (text: string) => {
     const parsed = parseNucleasPlan(text);
     if (!parsed) return { parsed: null, structure: [] as string[], issues: ['The response did not contain a valid nucleas-plan JSON block. Return the complete plan as one fenced JSON block tagged nucleas-plan.'], claim: null as ClaimCheck | null };
-    const structure = validatePlanStructure(parsed.plan, { hasKnownPath: Boolean(evidencePack?.chains.length) });
-    const claim = planFiles ? checkPlanClaims(planFiles, parsed.plan, planScope) : null;
+    const structure = safely(() => validatePlanStructure(parsed.plan, { hasKnownPath: Boolean(evidencePack?.chains.length) }), [] as string[]);
+    const claim = planFiles ? safely(() => checkPlanClaims(planFiles, parsed.plan, planScope), null as ClaimCheck | null) : null;
     return { parsed, structure, issues: [...structure, ...(claim?.issues ?? [])], claim };
   };
   const plannerAttempts: TeamChatTurn[] = [];
@@ -803,14 +812,16 @@ export async function attemptOrchestratedIdeReply(input: {
       plan = parsed.plan;
       if (planFiles && planAssessment?.claim) {
         // Nucleas's own sections: what was verified, other readers of the changed files, unverifiable data.
-        plan = recomposePlan(plan, {
+        const verified = planAssessment.claim;
+        const planned = plan;
+        plan = safely(() => recomposePlan(planned, {
           extraSections: automaticPlanSections({
-            check: planAssessment.claim,
-            readers: readersOfPlannedFiles(planFiles, plannedFiles(plan), { ...planScope, pageRoute: evidencePack?.page?.route }),
+            check: verified,
+            readers: readersOfPlannedFiles(planFiles, plannedFiles(planned), { ...planScope, pageRoute: evidencePack?.page?.route }),
             dataStoreNotes: evidencePack?.unverified ?? [],
           }),
-          notFound: new Set(planAssessment.claim.unverified.map((u) => u.evidence.quote)),
-        });
+          notFound: new Set(verified.unverified.map((u) => u.evidence.quote)),
+        }), planned);
       }
     }
   }

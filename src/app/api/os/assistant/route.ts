@@ -15,6 +15,17 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ turns: await listAssistantTurns(viewer) });
 }
 
+/**
+ * The message shown when the assistant fails unexpectedly: generic for everyone, with what actually
+ * failed added for administrators so it can be fixed without digging through server logs.
+ */
+function failureMessage(error: unknown, viewer: { role?: string }): string {
+  const generic = 'The assistant could not answer. Try again.';
+  if (viewer.role !== 'Administrator') return generic;
+  const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return `${generic} (Administrator detail: ${detail.replace(/\s+/g, ' ').slice(0, 300)})`;
+}
+
 /** Ask Nucleas about any company the viewer can access. Optional focus; budgets and approvals apply. */
 export async function POST(request: NextRequest) {
   const limited = enforceRateLimit({ key: rateLimitKey(request, 'os-assistant'), limit: 20, windowMs: 60_000 });
@@ -58,8 +69,8 @@ export async function POST(request: NextRequest) {
           if (!result.ok) send({ type: 'error', status: result.status, error: result.error });
           else send({ type: 'reply', ...result.reply });
         } catch (error) {
-          console.error('[os/assistant] failed', error instanceof Error ? error.message : 'unknown');
-          send({ type: 'error', status: 500, error: 'The assistant could not answer. Try again.' });
+          console.error('[os/assistant] failed', error instanceof Error ? `${error.name}: ${error.message}` : 'unknown');
+          send({ type: 'error', status: 500, error: failureMessage(error, viewer) });
         } finally {
           try {
             controller.close();
@@ -77,7 +88,7 @@ export async function POST(request: NextRequest) {
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
     return NextResponse.json(result.reply);
   } catch (error) {
-    console.error('[os/assistant] failed', error instanceof Error ? error.message : 'unknown');
-    return NextResponse.json({ error: 'The assistant could not answer. Try again.' }, { status: 500 });
+    console.error('[os/assistant] failed', error instanceof Error ? `${error.name}: ${error.message}` : 'unknown');
+    return NextResponse.json({ error: failureMessage(error, viewer) }, { status: 500 });
   }
 }
