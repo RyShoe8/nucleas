@@ -24,3 +24,29 @@ export function contextIdentity(version: string): { userAgent: string; locale: s
 
 /** Runs in every page before its own scripts. */
 export const HIDE_AUTOMATION_SCRIPT = "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });";
+
+/**
+ * An optional secret header (NUCLEAS_BROWSER_SITE_HEADER="X-Nucleas-Bypass: <secret>") sent only to the site
+ * being opened, never to other hosts. A rule in the site's own firewall (for example a Cloudflare custom rule
+ * that skips bot checks when this header equals the secret) can then let the worker through without knowing its IP.
+ */
+export function siteHeader(): { name: string; value: string } | null {
+  const raw = process.env.NUCLEAS_BROWSER_SITE_HEADER?.trim() ?? '';
+  const i = raw.indexOf(':');
+  if (i < 1) return null;
+  const name = raw.slice(0, i).trim();
+  const value = raw.slice(i + 1).trim();
+  return /^[A-Za-z0-9-]{3,60}$/.test(name) && value.length >= 8 && value.length <= 300 && !/[\r\n]/.test(value) ? { name, value } : null;
+}
+
+/** continue() options that add the secret header when the request goes to the site's own host. */
+export function withSiteHeader(request: { url: () => string; headers: () => Record<string, string> }, host: string): { headers: Record<string, string> } | undefined {
+  const header = siteHeader();
+  if (!header) return undefined;
+  try {
+    if (new URL(request.url()).hostname.toLowerCase() !== host.toLowerCase()) return undefined;
+  } catch {
+    return undefined;
+  }
+  return { headers: { ...request.headers(), [header.name]: header.value } };
+}

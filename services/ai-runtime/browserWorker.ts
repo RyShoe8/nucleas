@@ -35,7 +35,7 @@ function readBody(req: http.IncomingMessage, maxBytes: number): Promise<string> 
 }
 
 import { isSafePublicHttpsUrl } from '../../src/lib/ai/tools/ssrf';
-import { contextIdentity, HIDE_AUTOMATION_SCRIPT, IGNORE_DEFAULT_ARGS, LAUNCH_ARGS } from './browserIdentity';
+import { contextIdentity, HIDE_AUTOMATION_SCRIPT, IGNORE_DEFAULT_ARGS, LAUNCH_ARGS, withSiteHeader } from './browserIdentity';
 import { cancelLogin, finishLogin, loginFrame, loginInput, startLogin, type LoginInput } from './loginSessions';
 
 
@@ -187,7 +187,7 @@ export async function observeAuthenticated(input: ObserveInput, options: { allow
           newPage: () => Promise<ObservePage>;
           addInitScript: (script: string) => Promise<void>;
           addCookies: (cookies: unknown[]) => Promise<void>;
-          route: (glob: string, handler: (route: { request: () => { method: () => string }; abort: () => Promise<void>; continue: () => Promise<void> }) => Promise<void>) => Promise<void>;
+          route: (glob: string, handler: (route: { request: () => { method: () => string; url: () => string; headers: () => Record<string, string> }; abort: () => Promise<void>; continue: (o?: { headers: Record<string, string> }) => Promise<void> }) => Promise<void>) => Promise<void>;
         }>;
         close: () => Promise<void>;
       }>;
@@ -204,8 +204,9 @@ export async function observeAuthenticated(input: ObserveInput, options: { allow
     await context.addInitScript(HIDE_AUTOMATION_SCRIPT);
     // Nothing can be changed: only reads go out, including from scripts on the page.
     await context.route('**/*', async (route) => {
-      const method = route.request().method();
-      if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return route.continue();
+      const request = route.request();
+      const method = request.method();
+      if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return route.continue(withSiteHeader(request, host));
       return route.abort();
     });
     await context.addCookies(cookies.map((c) => ({

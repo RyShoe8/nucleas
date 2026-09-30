@@ -6,7 +6,7 @@
  */
 import crypto from 'crypto';
 import { isSafePublicHttpsUrl } from '../../src/lib/ai/tools/ssrf';
-import { contextIdentity, HIDE_AUTOMATION_SCRIPT, IGNORE_DEFAULT_ARGS, LAUNCH_ARGS } from './browserIdentity';
+import { contextIdentity, HIDE_AUTOMATION_SCRIPT, IGNORE_DEFAULT_ARGS, LAUNCH_ARGS, withSiteHeader } from './browserIdentity';
 
 export const VIEWPORT = { width: 1000, height: 640 };
 const MAX_SESSIONS = 2;
@@ -24,7 +24,7 @@ type Context = {
   newPage: () => Promise<Page>;
   addInitScript: (script: string) => Promise<void>;
   cookies: () => Promise<{ name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean; sameSite: string }[]>;
-  route: (glob: string, handler: (route: { request: () => { url: () => string }; abort: () => Promise<void>; continue: () => Promise<void> }) => Promise<void>) => Promise<void>;
+  route: (glob: string, handler: (route: { request: () => { url: () => string; headers: () => Record<string, string> }; abort: () => Promise<void>; continue: (o?: { headers: Record<string, string> }) => Promise<void> }) => Promise<void>) => Promise<void>;
 };
 type Browser = { version: () => string; newContext: (o: Record<string, unknown>) => Promise<Context>; close: () => Promise<void> };
 
@@ -69,8 +69,9 @@ export async function startLogin(input: { baseUrl: string }, options: LoginOptio
     await context.addInitScript(HIDE_AUTOMATION_SCRIPT);
     // Logins often bounce through an identity provider, so other public https sites are allowed; private hosts are not.
     await context.route('**/*', async (route) => {
-      const url = route.request().url();
-      if (options.allowInsecure || isSafePublicHttpsUrl(url) || url.startsWith('data:') || url.startsWith('blob:')) return route.continue();
+      const request = route.request();
+      const url = request.url();
+      if (options.allowInsecure || isSafePublicHttpsUrl(url) || url.startsWith('data:') || url.startsWith('blob:')) return route.continue(withSiteHeader(request, base.hostname));
       return route.abort();
     });
     const page = await context.newPage();

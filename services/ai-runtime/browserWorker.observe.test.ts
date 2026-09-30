@@ -11,12 +11,19 @@ try { await import(/* @vite-ignore */ 'playwright' as string); } catch { playwri
 /** A tiny site: /admin/games needs the session cookie; /admin/delete would change data. */
 function site() {
   const hits: string[] = [];
+  const headers: (string | undefined)[] = [];
   const server = http.createServer((req, res) => {
     hits.push(`${req.method} ${req.url}`);
+    headers.push(req.headers['x-nucleas-bypass'] as string | undefined);
     const authed = (req.headers.cookie ?? '').includes('session=ok');
     if (req.url === '/login') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end('<form method="post" action="/login"><input name="password" type="password"></form>');
+      return;
+    }
+    if (req.url === '/header') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(`<body>header=${req.headers['x-nucleas-bypass'] ?? 'none'}</body>`);
       return;
     }
     if (req.url === '/who' ) {
@@ -32,7 +39,7 @@ function site() {
     if (req.url === '/admin/games') { res.writeHead(302, { Location: '/login' }); res.end(); return; }
     res.writeHead(200); res.end('other');
   });
-  return { server, hits };
+  return { server, hits, headers };
 }
 
 describe.skipIf(!chrome || !playwrightAvailable)('observeAuthenticated (real browser, local site)', () => {
@@ -78,6 +85,31 @@ describe.skipIf(!chrome || !playwrightAvailable)('observeAuthenticated (real bro
       expect(text).toContain('tz=America/New_York');
     } finally {
       server.close();
+    }
+  }, 60_000);
+
+  it('sends the site header to the site only, never to another host the page loads', async () => {
+    process.env.NUCLEAS_BROWSER_SITE_HEADER = 'X-Nucleas-Bypass: s3cret-value';
+    const home = site();
+    const other = site();
+    await Promise.all([new Promise<void>((r) => home.server.listen(0, '127.0.0.1', r)), new Promise<void>((r) => other.server.listen(0, '127.0.0.1', r))]);
+    const base = `http://127.0.0.1:${(home.server.address() as AddressInfo).port}`;
+    // The page pulls a resource from a different host (localhost, not 127.0.0.1).
+    home.server.removeAllListeners('request');
+    home.server.on('request', (req, res) => {
+      home.headers.push(req.headers['x-nucleas-bypass'] as string | undefined);
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(`<body>ok<img src="http://localhost:${(other.server.address() as AddressInfo).port}/pixel"></body>`);
+    });
+    try {
+      await observeAuthenticated({ baseUrl: base, url: `${base}/embed`, cookies: [] }, { allowInsecure: true, executablePath: chrome });
+      expect(home.headers[0]).toBe('s3cret-value');
+      expect(other.headers.length).toBeGreaterThan(0);
+      expect(other.headers.every((h) => h === undefined)).toBe(true);
+    } finally {
+      delete process.env.NUCLEAS_BROWSER_SITE_HEADER;
+      home.server.close();
+      other.server.close();
     }
   }, 60_000);
 

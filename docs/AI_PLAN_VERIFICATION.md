@@ -74,3 +74,11 @@ A company can have an **Admin account** session (Company and Integrations window
 - **Read-only:** the worker (`services/ai-runtime/browserWorker.ts`, `/observe`) aborts every request that is not GET/HEAD/OPTIONS (including scripts on the page), never leaves the site's origin, and reports a visible login form as "no longer signed in". **Redeploy the browser worker to get `/observe`.**
 - Time-boxed to 30 s; if the page cannot be opened the plan says so and continues from the code.
 - `services/ai-runtime/browserWorker.observe.test.ts` drives a real headless Chromium against a local site (skipped when Playwright/Chromium is not installed).
+
+### When the site's bot protection blocks the worker
+
+The browser worker runs from a fixed server, not from the Next app (Vercel's changing IPs are irrelevant to it), so its own address can be allowed. If that is not possible or not enough:
+
+- Set `NUCLEAS_BROWSER_SITE_HEADER="X-Nucleas-Bypass: <long random secret>"` on the worker. It is sent only to the site being opened (never to other hosts). In Cloudflare, add a custom rule (Security → WAF → Custom rules): `http.request.headers["x-nucleas-bypass"][0] eq "<secret>"` → **Skip** the bot/managed-challenge features available on your plan.
+- Bot Fight Mode on the Free plan cannot be skipped by rules; turn it off for the login path (Configuration/WAF exceptions) or use Super Bot Fight (Pro+), or paste a session instead.
+- A Turnstile widget on the login form is verified by the site's server and cannot be bypassed by a header: paste a session instead.
