@@ -301,7 +301,10 @@ export async function checkModel(caller: CheckCaller, onProgress?: (text: string
 
 /** The real caller: the credential's gateway, small outputs, plain chat or tools. */
 async function gatewayCaller(profileId: string, model: string): Promise<CheckCaller> {
-  const { gateway } = await gatewayFromModelProfile(profileId, model);
+  // Stream every check call: a reasoning model can think for over a minute before its first token,
+  // and a reverse proxy in front of the host (nginx) answers 504 after 60s without bytes.
+  const { gateway: base } = await gatewayFromModelProfile(profileId, model);
+  const gateway = { ...base, stream: true };
   return {
     async plain(messages, format) {
       const r = await invokeModel(gateway, { role: 'worker', messages, maxOutputTokens: 4096, ...(format ? { responseFormat: format } : {}) });

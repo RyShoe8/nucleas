@@ -35,6 +35,15 @@ const planSchema = new Schema(
   { _id: false }
 );
 
+const stageToolSchema = new Schema(
+  {
+    stage: { type: String, enum: ['planner', 'worker', 'reviewer'] as const, required: true },
+    model: { type: String, required: true, maxlength: 200 },
+    toolsUsed: { type: [String], default: [] },
+  },
+  { _id: false }
+);
+
 const evidenceReceiptSchema = new Schema(
   {
     kind: { type: String, enum: ['repository'] as const, required: true },
@@ -84,6 +93,7 @@ const schema = new Schema(
     toolsUsed: { type: [String], default: undefined },
     artifacts: { type: [artifactSchema], default: undefined },
     evidenceReceipts: { type: [evidenceReceiptSchema], default: undefined },
+    stageTools: { type: [stageToolSchema], default: undefined },
     plan: { type: planSchema, default: undefined },
   },
   { timestamps: true }

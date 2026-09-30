@@ -37,18 +37,22 @@ export interface StageToolSummary {
 }
 
 /**
- * The Reviewer is tool-free by design. Planner and Worker are expected to call repo tools; in Build
- * mode the Worker edits in a sandbox instead, so any tool at all counts.
+ * The Reviewer is tool-free by design, so it never counts as a gap. Planner and Worker are expected to
+ * call repo tools; in Build mode the Worker edits in a sandbox instead, so any tool at all counts.
  */
+export function stageLackedRepoTools(record: StageToolRecord, buildMode = false): boolean {
+  if (record.stage === 'reviewer') return false;
+  if (buildMode && record.stage === 'worker') return record.toolsUsed.length === 0;
+  return !record.toolsUsed.some((tool) => tool.startsWith('repo_'));
+}
+
 export function summarizeStageTools(input: StageToolRecord[], options: { buildMode?: boolean } = {}): StageToolSummary {
   const records = mergeStageTools(input);
   const warnings: string[] = [];
   const lines = records.map((record) => {
     const label = `${LABEL[record.stage]} (${record.model})`;
     if (record.stage === 'reviewer') return `- ${label}: no tools (by design)`;
-    const usedRepo = record.toolsUsed.some((tool) => tool.startsWith('repo_'));
-    const ok = options.buildMode && record.stage === 'worker' ? record.toolsUsed.length > 0 : usedRepo;
-    if (!ok) {
+    if (stageLackedRepoTools(record, options.buildMode)) {
       warnings.push(`${LABEL[record.stage]} (${record.model}) never called a repository tool, so its findings are not grounded in a search or read.`);
       return `- ${label}: ${record.toolsUsed.length ? record.toolsUsed.join(', ') : 'none'} ⚠ no repository tools`;
     }
@@ -56,4 +60,16 @@ export function summarizeStageTools(input: StageToolRecord[], options: { buildMo
   });
   const markdown = records.length ? ['**Tools used**', ...lines].join('\n') : '';
   return { records, warnings, markdown };
+}
+
+/**
+ * Removes the plain-text tools report (and the per-stage warnings) that teamChat appends to a reply, for
+ * screens that render the structured `stageTools` instead. Other Nucleas notes in the footer stay.
+ */
+export function stripStageToolsFooter(text: string): string {
+  return text
+    .replace(/\n*\*\*Tools used\*\*\n(?:- [^\n]*(?:\n|$))+/g, '\n')
+    .replace(/^⚠ (?:Planner|Worker|Reviewer) \([^)\n]*\) never called a repository tool[^\n]*\n*/gm, '')
+    .replace(/\n+---\s*$/, '')
+    .trimEnd();
 }

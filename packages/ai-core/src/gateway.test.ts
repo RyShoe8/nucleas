@@ -174,3 +174,70 @@ describe('remote inference gateway', () => {
     expect(result.toolCalls).toEqual([]);
   });
 });
+
+function sse(events: unknown[], chunkSize = 1000): Response {
+  const text = `: keep-alive\n\n${events.map((e) => `data: ${typeof e === 'string' ? e : JSON.stringify(e)}\n\n`).join('')}`;
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(text);
+  return new Response(new ReadableStream({
+    start(controller) {
+      for (let i = 0; i < bytes.length; i += chunkSize) controller.enqueue(bytes.slice(i, i + chunkSize));
+      controller.close();
+    },
+  }), { headers: { 'Content-Type': 'text/event-stream' } });
+}
+
+describe('streamed responses', () => {
+  const streamConfig = { ...config, stream: true };
+
+  it('asks for a stream and assembles content, reasoning and usage, even when events split across chunks', async () => {
+    const events = [
+      { model: 'test-model', choices: [{ delta: { reasoning_content: 'Let me think. ' } }] },
+      { choices: [{ delta: { content: 'A ' } }] },
+      { choices: [{ delta: { content: 'plan' }, finish_reason: 'stop' }] },
+      { choices: [], usage: { prompt_tokens: 12, completion_tokens: 34 } },
+      '[DONE]',
+    ];
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => sse(events, 7));
+    const result = await invokeModel(streamConfig, request, { fetcher });
+    const body = JSON.parse(String(fetcher.mock.calls[0][1]!.body));
+    expect(body).toMatchObject({ stream: true, stream_options: { include_usage: true } });
+    expect(result).toMatchObject({ content: 'A plan', inputTokens: 12, outputTokens: 34, finishReason: 'stop' });
+  });
+
+  it('stays non-streaming unless asked', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(output));
+    await invokeModel(config, request, { fetcher });
+    expect(JSON.parse(String(fetcher.mock.calls[0][1]!.body)).stream).toBe(false);
+  });
+
+  it('reassembles tool calls whose name and arguments arrive in pieces', async () => {
+    const events = [
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_1', function: { name: 'repo_', arguments: '{"que' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { name: 'search', arguments: 'ry":"OpenHV"}' } }] } }] },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+      '[DONE]',
+    ];
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => sse(events, 11));
+    const result = await invokeModelWithTools(streamConfig, { role: 'worker', messages: [{ role: 'user', content: 'find it' }], maxOutputTokens: 100, tools: [{ type: 'function', function: { name: 'repo_search', description: 'search', parameters: { type: 'object', properties: {} } } }] }, { fetcher });
+    expect(result.toolCalls).toEqual([{ id: 'call_1', type: 'function', function: { name: 'repo_search', arguments: '{"query":"OpenHV"}' } }]);
+  });
+
+  it('turns an error event mid-stream into an unavailable error', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => sse([{ choices: [{ delta: { content: 'x' } }] }, { error: { message: 'boom' } }]));
+    await expect(invokeModel(streamConfig, request, { fetcher })).rejects.toMatchObject({ code: 'unavailable', details: { kind: 'stream_error' } });
+  });
+
+  it('gives up when a stream goes quiet for longer than the idle timeout', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
+      const signal = init!.signal!;
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"x"}}]}\n\n'));
+          signal.addEventListener('abort', () => controller.error(new Error('aborted')));
+        },
+      }));
+    });
+    await expect(invokeModel({ ...streamConfig, timeoutMs: 50 }, request, { fetcher })).rejects.toMatchObject({ code: 'unavailable', details: { kind: 'timeout' } });
+  });
+});

@@ -54,7 +54,16 @@ export type GatewayConfiguration = {
    * tools (measured by the free model checks).
    */
   toolMode?: 'native' | 'prompted';
+  /**
+   * Ask the host for a server-sent-events stream and assemble it locally. Bytes keep arriving, so a
+   * reverse proxy's read timeout (nginx's default is 60s) doesn't cut off a slow reasoning model, and
+   * `timeoutMs` becomes an idle timeout (no bytes for that long) with a hard cap of STREAM_MAX_MS.
+   */
+  stream?: boolean;
 };
+
+/** Hard cap on one streamed call, however steadily it produces bytes. */
+export const STREAM_MAX_MS = 200_000;
 
 type ToolMessage = ModelToolRequest['messages'][number];
 
@@ -259,6 +268,87 @@ async function readBoundedJson(response: Response, maxBytes: number): Promise<un
   }
 }
 
+/**
+ * Reads an OpenAI-compatible chat-completions event stream and returns the same object a non-streaming
+ * call would have, so the normal response parsing applies unchanged.
+ */
+export async function readStreamedCompletion(response: Response, maxBytes: number, onActivity: () => void = () => {}): Promise<unknown> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new GatewayError('invalid_response');
+  const decoder = new TextDecoder();
+  let pending = '';
+  let size = 0;
+  let model: string | undefined;
+  let content = '';
+  let reasoning = '';
+  let finishReason: string | null = null;
+  let usage: unknown;
+  const calls: { id?: string; name: string; args: string }[] = [];
+
+  const handle = (payload: string): boolean => {
+    if (payload === '[DONE]') return true;
+    let event: {
+      model?: string; usage?: unknown; error?: unknown;
+      choices?: { delta?: { content?: string | null; reasoning_content?: string | null; reasoning?: string | null; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] }; finish_reason?: string | null }[];
+    };
+    try { event = JSON.parse(payload); } catch { return false; }
+    if (event.error) throw new GatewayError('unavailable', { kind: 'stream_error' });
+    if (typeof event.model === 'string') model = event.model;
+    if (event.usage) usage = event.usage;
+    for (const choice of event.choices?.slice(0, 1) ?? []) {
+      const delta = choice.delta;
+      if (delta?.content) content += delta.content;
+      const thought = delta?.reasoning_content ?? delta?.reasoning;
+      if (thought) reasoning += thought;
+      for (const part of delta?.tool_calls ?? []) {
+        const index = part.index ?? 0;
+        const call = (calls[index] ??= { name: '', args: '' });
+        if (part.id) call.id = part.id;
+        if (part.function?.name) call.name += part.function.name;
+        if (part.function?.arguments) call.args += part.function.arguments;
+      }
+      if (choice.finish_reason) finishReason = choice.finish_reason;
+    }
+    return false;
+  };
+
+  try {
+    let finished = false;
+    while (!finished) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      onActivity();
+      size += value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel();
+        throw new GatewayError('invalid_response');
+      }
+      pending += decoder.decode(value, { stream: true });
+      let newline: number;
+      while (!finished && (newline = pending.indexOf('\n')) >= 0) {
+        const line = pending.slice(0, newline).replace(/\r$/, '');
+        pending = pending.slice(newline + 1);
+        if (line.startsWith('data:')) finished = handle(line.slice(5).trim());
+      }
+    }
+    if (!finished && pending.startsWith('data:')) handle(pending.slice(5).trim());
+  } finally {
+    reader.releaseLock();
+  }
+  return {
+    ...(model ? { model } : {}),
+    choices: [{
+      message: {
+        content: content || null,
+        reasoning_content: reasoning || null,
+        ...(calls.length ? { tool_calls: calls.filter(Boolean).map((c) => ({ ...(c.id ? { id: c.id } : {}), type: 'function', function: { name: c.name, arguments: c.args } })) } : {}),
+      },
+      finish_reason: finishReason,
+    }],
+    ...(usage ? { usage } : {}),
+  };
+}
+
 /** Provider tool_calls; extra fields (index, etc.) are dropped and object arguments are re-serialized. */
 function parseToolCalls(raw: unknown[] | undefined): ToolCall[] {
   if (!raw?.length) return [];
@@ -341,6 +431,25 @@ export function responseFormatBody(format: ModelRequest['responseFormat']): Reco
   return { response_format: { type: 'json_schema', json_schema: { name: format.name, schema: format.schema, strict: true } } };
 }
 
+/**
+ * Cancels the request after `idleMs` without activity (streaming) or a fixed `idleMs` (otherwise).
+ * Streams also get a hard cap so a model that trickles forever still ends.
+ */
+function callTimer(config: GatewayConfiguration, cancel: () => void): { touch: () => void; clear: () => void } {
+  const idleMs = config.timeoutMs ?? 60000;
+  let idle = setTimeout(cancel, idleMs);
+  const hard = config.stream ? setTimeout(cancel, STREAM_MAX_MS) : undefined;
+  return {
+    touch: () => { if (config.stream) { clearTimeout(idle); idle = setTimeout(cancel, idleMs); } },
+    clear: () => { clearTimeout(idle); if (hard) clearTimeout(hard); },
+  };
+}
+
+/** Body fields for the response mode; streaming also asks for token usage in the final event. */
+function streamBody(config: GatewayConfiguration): Record<string, unknown> {
+  return config.stream ? { stream: true, stream_options: { include_usage: true } } : { stream: false };
+}
+
 /** Called only by a server-side, budget-authorized dispatcher; never directly by a browser route. */
 export async function invokeModel(
   config: GatewayConfiguration,
@@ -353,7 +462,7 @@ export async function invokeModel(
   const cancel = () => controller.abort();
   if (options.signal?.aborted) throw new GatewayError('cancelled');
   options.signal?.addEventListener('abort', cancel, { once: true });
-  const timeout = setTimeout(cancel, config.timeoutMs ?? 60000);
+  const timer = callTimer(config, cancel);
   const started = Date.now();
   try {
     const response = await (options.fetcher ?? fetch)(endpoint, {
@@ -367,13 +476,13 @@ export async function invokeModel(
         messages: input.messages,
         ...completionLimitBody(config.model, input.maxOutputTokens),
         ...responseFormatBody(input.responseFormat),
-        stream: false,
+        ...streamBody(config),
       }),
     });
     if (!response.ok) {
       throw await httpGatewayError(response, config.bearerToken);
     }
-    const parsed = responseSchema.parse(await readBoundedJson(response, 512000));
+    const parsed = responseSchema.parse(config.stream ? await readStreamedCompletion(response, 512000, timer.touch) : await readBoundedJson(response, 512000));
     const choice = parsed.choices[0]!;
     const visible = visibleAssistantText(choice.message);
     // Plain chat: accept truncated replies when there is visible text. Ignore unexpected
@@ -400,7 +509,7 @@ export async function invokeModel(
     if (options.signal?.aborted) throw new GatewayError('cancelled', { kind: 'cancelled' });
     throw new GatewayError('unavailable', { kind: controller.signal.aborted ? 'timeout' : 'transport' });
   } finally {
-    clearTimeout(timeout);
+    timer.clear();
     options.signal?.removeEventListener('abort', cancel);
   }
 }
@@ -420,7 +529,7 @@ export async function invokeModelWithTools(
   const cancel = () => controller.abort();
   if (options.signal?.aborted) throw new GatewayError('cancelled', { kind: 'cancelled' });
   options.signal?.addEventListener('abort', cancel, { once: true });
-  const timeout = setTimeout(cancel, config.timeoutMs ?? 60000);
+  const timer = callTimer(config, cancel);
   const started = Date.now();
   try {
     const response = await (options.fetcher ?? fetch)(endpoint, {
@@ -435,7 +544,7 @@ export async function invokeModelWithTools(
               model: config.model,
               messages: promptedToolMessages(input.messages, input.tools),
               ...completionLimitBody(config.model, input.maxOutputTokens),
-              stream: false,
+              ...streamBody(config),
             }
           : {
               model: config.model,
@@ -443,14 +552,14 @@ export async function invokeModelWithTools(
               ...completionLimitBody(config.model, input.maxOutputTokens),
               ...toolCallReasoningBody(config.model),
               tools: input.tools,
-              stream: false,
+              ...streamBody(config),
             }
       ),
     });
     if (!response.ok) {
       throw await httpGatewayError(response, config.bearerToken);
     }
-    const parsed = responseSchema.parse(await readBoundedJson(response, 512000));
+    const parsed = responseSchema.parse(config.stream ? await readStreamedCompletion(response, 512000, timer.touch) : await readBoundedJson(response, 512000));
     const choice = parsed.choices[0]!;
     let toolCalls = parseToolCalls(choice.message.tool_calls);
     let visible = visibleAssistantText(choice.message);
@@ -486,7 +595,7 @@ export async function invokeModelWithTools(
     if (options.signal?.aborted) throw new GatewayError('cancelled', { kind: 'cancelled' });
     throw new GatewayError('unavailable', { kind: controller.signal.aborted ? 'timeout' : 'transport' });
   } finally {
-    clearTimeout(timeout);
+    timer.clear();
     options.signal?.removeEventListener('abort', cancel);
   }
 }

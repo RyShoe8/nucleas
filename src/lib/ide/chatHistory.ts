@@ -6,6 +6,7 @@ import type { IdePlanDocument } from '@/lib/ide/idePlan';
 import { AiIdeChatTurn } from '@/lib/models/AiIdeChatTurn';
 import { isMongoDuplicateKeyError } from '@/lib/utils/mongoErrors';
 import type { RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
+import type { StageToolRecord } from '@/lib/ai/stageTools';
 
 const HISTORY_LIMIT = 50;
 
@@ -34,6 +35,7 @@ export type IdePersistedTurn = {
   toolsUsed?: string[];
   artifacts?: { kind: 'image'; assetId: string; name: string; url: string }[];
   evidenceReceipts?: RepositoryEvidenceReceipt[];
+  stageTools?: StageToolRecord[];
   plan?: IdePlanDocument | null;
   createdAt?: string | null;
 };
@@ -111,6 +113,9 @@ function toInsertDocs(
     ...(turn.evidenceReceipts?.length
       ? { evidenceReceipts: turn.evidenceReceipts.slice(0, 50) }
       : {}),
+    ...(turn.stageTools?.length
+      ? { stageTools: turn.stageTools.slice(0, 12).map((item) => ({ stage: item.stage, model: item.model.slice(0, 200), toolsUsed: item.toolsUsed.slice(0, 20) })) }
+      : {}),
     ...(options.includePlan && turn.plan
       ? {
           plan: {
@@ -182,6 +187,7 @@ export async function loadIdeChatHistory(input: {
         url: item.url,
       })),
       evidenceReceipts: (row.evidenceReceipts ?? []) as RepositoryEvidenceReceipt[],
+      stageTools: (row.stageTools ?? []) as StageToolRecord[],
       plan: mapPlan(row.plan),
       createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : null,
     }));
@@ -318,6 +324,7 @@ export async function findExistingIdeAssistantTurn(input: {
       url: item.url,
     })),
     evidenceReceipts: (row.evidenceReceipts as RepositoryEvidenceReceipt[] | undefined) ?? [],
+    stageTools: (row.stageTools as StageToolRecord[] | undefined) ?? [],
     plan: mapPlan(row.plan),
     createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : null,
   };

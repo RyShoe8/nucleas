@@ -27,6 +27,7 @@ import {
 import { isMongoDuplicateKeyError, isMongoNetworkError, MONGO_NETWORK_USER_MESSAGE } from '@/lib/utils/mongoErrors';
 import { mergeAbortSignals } from '@/lib/ai/control/mergeAbortSignals';
 import type { RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
+import type { StageToolRecord } from '@/lib/ai/stageTools';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -45,6 +46,7 @@ function turnPayload(turn: {
   toolsUsed?: string[];
   artifacts?: { kind: 'image'; assetId: string; name: string; url: string }[];
   evidenceReceipts?: RepositoryEvidenceReceipt[];
+  stageTools?: StageToolRecord[];
   plan?: {
     title: string;
     summary: string;
@@ -66,6 +68,7 @@ function turnPayload(turn: {
     artifacts: turn.artifacts ?? [],
     toolsUsed: turn.toolsUsed ?? [],
     evidenceReceipts: turn.evidenceReceipts ?? [],
+    stageTools: turn.stageTools ?? [],
     ...(turn.plan ? { plan: turn.plan } : {}),
   };
 }
@@ -182,6 +185,7 @@ export async function POST(request: NextRequest, context: Context) {
         toolsUsed: existingAssistantTurn.toolsUsed ?? undefined,
         artifacts: existingAssistantTurn.artifacts ?? undefined,
         evidenceReceipts: existingAssistantTurn.evidenceReceipts ?? undefined,
+        stageTools: existingAssistantTurn.stageTools ?? undefined,
         plan: existingAssistantTurn.plan ?? undefined,
       });
       if (stream) {
@@ -248,6 +252,7 @@ export async function POST(request: NextRequest, context: Context) {
             toolsUsed: reply.toolsUsed ?? [],
             artifacts: reply.artifacts ?? [],
             evidenceReceipts: reply.evidenceReceipts ?? [],
+            stageTools: reply.stageTools ?? [],
             plan: reply.plan ?? null,
           },
         ],

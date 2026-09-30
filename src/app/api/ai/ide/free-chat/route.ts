@@ -30,6 +30,7 @@ function turnPayload(turn: {
   reservedMicros?: number | null;
   noProviderFee?: boolean;
   toolsUsed?: string[];
+  stageTools?: { stage: 'planner' | 'worker' | 'reviewer'; model: string; toolsUsed: string[] }[];
   artifacts?: { kind: 'image'; assetId: string; name: string; url: string }[];
   plan?: {
     title: string;
@@ -51,6 +52,7 @@ function turnPayload(turn: {
     noProviderFee: turn.noProviderFee ?? false,
     artifacts: turn.artifacts ?? [],
     toolsUsed: turn.toolsUsed ?? [],
+    stageTools: turn.stageTools ?? [],
     ...(turn.plan ? { plan: turn.plan } : {}),
   };
 }
@@ -188,6 +190,7 @@ export async function POST(request: NextRequest) {
             reservedMicros: payload.reservedMicros ?? null,
             noProviderFee: payload.noProviderFee ?? false,
             toolsUsed: payload.toolsUsed ?? [],
+            stageTools: payload.stageTools ?? [],
             artifacts: payload.artifacts ?? [],
             plan: payload.plan ?? null,
           },
