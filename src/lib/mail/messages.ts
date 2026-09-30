@@ -77,13 +77,25 @@ export interface ThreadSummary {
   triage: { bucket: Bucket; reasons: string[]; risk: number } | null;
 }
 
+interface LatestRow {
+  _id: Types.ObjectId;
+  accountId: Types.ObjectId;
+  threadId: string;
+  subject?: string;
+  snippet?: string;
+  from?: { name?: string; email?: string };
+  internalDate: Date;
+  aiSummary?: string;
+  triage?: { bucket: Bucket; reasons?: string[]; risk?: number };
+}
+
 export async function listThreads(viewer: CompanyViewer, query: ThreadQuery): Promise<ThreadSummary[] | null> {
   if (!canUseMail(viewer)) return null;
   if (query.companyId && Types.ObjectId.isValid(query.companyId) && !query.accountId) {
     const accounts = await MailAccount.find({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(query.companyId) }).select('_id').lean<{ _id: Types.ObjectId }[]>();
     query = { ...query, companyAccountIds: accounts.map((a) => String(a._id)) };
   }
-  const rows = await MailMessage.aggregate<{ latest: Record<string, any>; count: number; unreadCount: number; attachmentCount: number; starred: boolean }>(
+  const rows = await MailMessage.aggregate<{ latest: LatestRow; count: number; unreadCount: number; attachmentCount: number; starred: boolean }>(
     threadPipeline(threadFilter(viewer.organizationId, query), query.limit ?? 50)
   );
   return rows.map((r) => ({
