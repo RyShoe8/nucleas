@@ -31,6 +31,8 @@ interface Benchmark {
     coding: number | null;
     math: number | null;
     source: string;
+    /** A compressed copy of the listed model: its score is discounted, an estimate rather than a measurement. */
+    estimated?: { quantization: string; factor: number };
 }
 
 interface ModelRow {
@@ -152,7 +154,13 @@ function PickCell({ pick }: { pick: Pick }) {
 
 function score(b: Benchmark | null, kind: 'intelligence' | 'coding'): string {
     const v = b ? (kind === 'coding' ? (b.coding ?? b.intelligence) : b.intelligence) : null;
-    return v === null ? 'no score' : v.toFixed(1);
+    return v === null ? 'no score' : `${b?.estimated ? '~' : ''}${v.toFixed(1)}`;
+}
+
+function scoreTitle(b: Benchmark | null, free: boolean): string {
+    if (!b) return free ? 'Not on the Artificial Analysis leaderboard' : 'Not on the leaderboard; ranked by price after scored models';
+    if (!b.estimated) return `Artificial Analysis: ${b.source}`;
+    return `Estimate. The listed model (${b.source}) scores higher; this compressed copy (${b.estimated.quantization}) is discounted to ${Math.round(b.estimated.factor * 1000) / 10}% as a rule of thumb, not measured.`;
 }
 
 function Ranking({ title, kind, rows }: { title: string; kind: 'intelligence' | 'coding'; rows: RankRow[] }) {
@@ -173,17 +181,20 @@ function Ranking({ title, kind, rows }: { title: string; kind: 'intelligence' | 
                         {i === firstUnscored && i > 0 && r.free ? <div className="text-[10px] text-text-secondary">Not on the leaderboard: ranked by Nucleas checks only</div> : null}
                         <div className="flex items-baseline gap-2 text-[11px]">
                             <span className="w-4 text-right text-text-secondary">{i + 1}</span>
-                            <span className="truncate flex-1" title={r.benchmark ? `Artificial Analysis: ${r.benchmark.source}` : r.free ? 'Not on the Artificial Analysis leaderboard' : 'Not on the leaderboard; ranked by price after scored models'}>
+                            <span className="truncate flex-1" title={scoreTitle(r.benchmark, r.free)}>
                                 {short(r.model)} <span className="text-text-secondary">· {r.profileLabel}</span>
                                 {r.free ? <span className="ml-1 text-[10px] text-emerald-400">free</span> : null}
                             </span>
-                            <span className={r.benchmark ? '' : 'text-text-secondary'}>{score(r.benchmark, kind)}</span>
+                            <span className={r.benchmark ? (r.benchmark.estimated ? 'italic' : '') : 'text-text-secondary'} title={scoreTitle(r.benchmark, r.free)}>{score(r.benchmark, kind)}</span>
                             <span className="w-12 text-right text-text-secondary">{r.free ? (r.check === null ? 'unchecked' : `${Math.round(r.check * 100)}%`) : ''}</span>
                             <span className="w-14 text-right text-text-secondary">{r.price !== null ? `${r.price}` : r.free ? 'free' : ''}</span>
                         </div>
                     </li>
                 ))}
             </ol>
+            {rows.some((r) => r.benchmark?.estimated) ? (
+                <p className="mt-1 text-[10px] text-text-secondary">~ Estimate: the listed model&apos;s score for a compressed copy, discounted by a rule of thumb (8-bit about 0.5%, 4-bit about 1.5-4%). Not measured by Nucleas.</p>
+            ) : null}
         </div>
     );
 }
