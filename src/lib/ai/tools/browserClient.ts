@@ -131,3 +131,32 @@ export async function browserObserve(
     options.signal?.removeEventListener('abort', cancel);
   }
 }
+
+/**
+ * A call to the browser worker's interactive login (/login/*). Errors carry the worker's own short message
+ * (timeouts, bad input); nothing from the page is included, and no request body is logged.
+ */
+export async function browserWorkerCall<T>(path: '/login/start' | '/login/frame' | '/login/input' | '/login/finish' | '/login/cancel', body: Record<string, unknown>, options: { signal?: AbortSignal; fetcher?: typeof fetch; timeoutMs?: number } = {}): Promise<T> {
+  if (!isBrowserWorkerConfigured()) throw new Error('Browser worker is not configured.');
+  const workerUrl = assertSafePublicHttpsUrl(`${process.env.NUCLEAS_BROWSER_WORKER_URL!.replace(/\/+$/, '')}${path}`);
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  options.signal?.addEventListener('abort', cancel, { once: true });
+  const timeout = setTimeout(cancel, options.timeoutMs ?? 40000);
+  try {
+    const response = await (options.fetcher ?? fetch)(workerUrl, {
+      method: 'POST',
+      redirect: 'error',
+      cache: 'no-store',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.NUCLEAS_BROWSER_WORKER_SECRET!.trim()}` },
+      body: JSON.stringify(body),
+    });
+    const parsed = (await response.json().catch(() => ({}))) as T & { error?: string };
+    if (!response.ok) throw new Error(typeof parsed.error === 'string' ? parsed.error : 'The browser worker could not do that (is it up to date?).');
+    return parsed;
+  } finally {
+    clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', cancel);
+  }
+}

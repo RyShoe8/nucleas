@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
-import { checkAdminAccount, clearAdminAccount, createCaptureCode, getAdminAccount, saveSessionPaste } from '@/lib/companies/adminAccount';
+import { checkAdminAccount, clearAdminAccount, getAdminAccount, saveSessionPaste } from '@/lib/companies/adminAccount';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 90;
@@ -15,30 +15,21 @@ export async function GET(request: NextRequest, { params }: Context) {
   return NextResponse.json(view, { headers: { 'Cache-Control': 'no-store' } });
 }
 
-/**
- * Connect a session. { baseUrl } alone returns a one-time code for the capture script (the person logs in on
- * their own machine); { baseUrl, session } saves a session pasted from a logged-in browser.
- */
+/** Save a session pasted from a logged-in browser: { baseUrl, session } (a Playwright storageState or a cookie export). */
 export async function PUT(request: NextRequest, { params }: Context) {
   const viewer = await requireCompanyViewer(request);
   if (viewer instanceof NextResponse) return viewer;
   const body = (await request.json().catch(() => ({}))) as { baseUrl?: unknown; session?: unknown };
-  if (typeof body.baseUrl !== 'string') return NextResponse.json({ error: 'baseUrl is required.' }, { status: 400 });
-  const id = (await params).id;
-  if (body.session === undefined) {
-    const made = await createCaptureCode(viewer, id, body.baseUrl);
-    if (!made.ok) return NextResponse.json({ error: made.error }, { status: made.status });
-    return NextResponse.json({ code: made.code, baseUrl: made.baseUrl, expiresAt: made.expiresAt });
-  }
+  if (typeof body.baseUrl !== 'string' || body.session === undefined) return NextResponse.json({ error: 'baseUrl and session are required.' }, { status: 400 });
   let session = body.session;
   if (typeof session === 'string') {
     try {
       session = JSON.parse(session);
     } catch {
-      return NextResponse.json({ error: 'That is not valid JSON. Paste the cookie export exactly as the browser or script produced it.' }, { status: 400 });
+      return NextResponse.json({ error: 'That is not valid JSON. Paste the cookie export exactly as the browser produced it.' }, { status: 400 });
     }
   }
-  const result = await saveSessionPaste(viewer, id, { baseUrl: body.baseUrl, session });
+  const result = await saveSessionPaste(viewer, (await params).id, { baseUrl: body.baseUrl, session });
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
   return NextResponse.json({ ok: true });
 }

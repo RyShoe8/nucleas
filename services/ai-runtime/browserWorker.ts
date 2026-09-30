@@ -35,6 +35,7 @@ function readBody(req: http.IncomingMessage, maxBytes: number): Promise<string> 
 }
 
 import { isSafePublicHttpsUrl } from '../../src/lib/ai/tools/ssrf';
+import { cancelLogin, finishLogin, loginFrame, loginInput, startLogin, type LoginInput } from './loginSessions';
 
 
 async function navigate(url: string, maxChars: number) {
@@ -243,7 +244,7 @@ export function startBrowserWorkerServer() {
         res.end(JSON.stringify({ ok: true }));
         return;
       }
-      if (req.method !== 'POST' || (req.url !== '/navigate' && req.url !== '/observe')) {
+      if (req.method !== 'POST' || !['/navigate', '/observe', '/login/start', '/login/frame', '/login/input', '/login/finish', '/login/cancel'].includes(req.url ?? '')) {
         res.writeHead(404);
         res.end();
         return;
@@ -253,6 +254,30 @@ export function startBrowserWorkerServer() {
         res.writeHead(401);
         res.end();
         return;
+      }
+      if (req.url?.startsWith('/login/')) {
+        try {
+        const b = JSON.parse(await readBody(req, 16_000)) as { baseUrl?: string; sessionId?: string; input?: LoginInput };
+        const send = (payload: unknown) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(payload));
+        };
+        if (req.url === '/login/start') {
+          if (typeof b.baseUrl !== 'string') throw new Error('baseUrl is required');
+          return send(await startLogin({ baseUrl: b.baseUrl }));
+        }
+        if (typeof b.sessionId !== 'string') throw new Error('sessionId is required');
+        if (req.url === '/login/frame') return send(await loginFrame(b.sessionId));
+        if (req.url === '/login/input') { await loginInput(b.sessionId, b.input as LoginInput); return send({ ok: true }); }
+        if (req.url === '/login/finish') return send(await finishLogin(b.sessionId));
+        await cancelLogin(b.sessionId);
+        return send({ ok: true });
+        } catch (error) {
+          // These messages are ours (timeouts, bad input); they carry no cookies or page content.
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error instanceof Error ? error.message.slice(0, 200) : 'Login failed' }));
+          return;
+        }
       }
       if (req.url === '/observe') {
         const b = JSON.parse(await readBody(req, 64_000)) as Partial<ObserveInput>;
@@ -279,7 +304,7 @@ export function startBrowserWorkerServer() {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     } catch (err) {
-      // Never log the request body: /observe carries session cookies.
+      // Never log the request body: /observe and /login carry session cookies.
       console.error('browser worker error', err instanceof Error ? err.message : 'unknown');
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'navigate_failed' }));

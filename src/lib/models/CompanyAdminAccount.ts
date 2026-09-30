@@ -1,7 +1,7 @@
 import mongoose, { Schema, type InferSchemaType, type Model } from 'mongoose';
 
 /**
- * A signed-in session on a company's own website or app, captured by a person logging in themselves.
+ * A signed-in session on a company's own website or app, captured by a person logging in themselves in a browser window inside Nucleas.
  * Nucleas uses it only to open pages read-only while planning a change, so the plan can see what the page
  * really shows. No password is ever stored: only the session cookies, sealed (AES-GCM, purpose-scoped),
  * never returned by any API, and they stop working when the site expires or the person logs out.
@@ -18,9 +18,6 @@ const schema = new Schema(
     capturedAt: { type: Date },
     /** The earliest expiry among the session's cookies, when the site sets one. */
     expiresAt: { type: Date },
-    /** One-time code for the capture script (hash only), valid for a short time. */
-    captureCodeHash: { type: String, maxlength: 64 },
-    captureCodeExpiresAt: { type: Date },
     updatedByUserId: { type: Schema.Types.ObjectId },
     lastCheckedAt: { type: Date },
     lastCheckOk: { type: Boolean },
@@ -30,7 +27,6 @@ const schema = new Schema(
 );
 
 schema.index({ organizationId: 1, companyId: 1 }, { unique: true });
-schema.index({ captureCodeHash: 1 }, { sparse: true });
 
 function modelFor<T>(name: string, definition: Schema<T>): Model<T> {
   return (mongoose.models[name] as Model<T> | undefined) ?? mongoose.model<T>(name, definition);

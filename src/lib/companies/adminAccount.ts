@@ -1,11 +1,10 @@
 import 'server-only';
-import crypto from 'crypto';
 import { Types } from 'mongoose';
 import { CompanyAdminAccount } from '@/lib/models/CompanyAdminAccount';
 import { getCompanyProfile, isCompanyManager, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { openSecret, sealSecret } from '@/lib/security/secretBox';
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
-import { browserObserve } from '@/lib/ai/tools/browserClient';
+import { browserObserve, browserWorkerCall } from '@/lib/ai/tools/browserClient';
 import { isBrowserWorkerConfigured } from '@/lib/ai/tools/browseRouter';
 import { sanitizeSessionCookies, type SessionCookie } from '@/lib/companies/sessionCookies';
 
@@ -31,8 +30,6 @@ export interface AdminAccountView {
 }
 
 const purpose = (companyId: string) => `company-admin-session:${companyId}`;
-const CODE_MINUTES = 15;
-const hashCode = (code: string) => crypto.createHash('sha256').update(code.trim().toUpperCase()).digest('hex');
 
 type Row = {
   baseUrl: string;
@@ -82,26 +79,6 @@ async function managed(viewer: CompanyViewer, companyId: string, action: string)
   return { ok: true };
 }
 
-/** A one-time code for the capture script: the person logs in on their own machine and the script sends the session here. */
-export async function createCaptureCode(viewer: CompanyViewer, companyId: string, siteAddress: string): Promise<{ ok: true; code: string; baseUrl: string; expiresAt: string } | { ok: false; status: 400 | 403 | 404; error: string }> {
-  const allowed = await managed(viewer, companyId, 'connect an admin account');
-  if (!allowed.ok) return allowed;
-  let baseUrl: string;
-  try {
-    baseUrl = normalizeBaseUrl(siteAddress);
-  } catch (error) {
-    return { ok: false, status: 400, error: error instanceof Error ? error.message : 'Enter the site’s https address.' };
-  }
-  const code = crypto.randomBytes(5).toString('hex').toUpperCase();
-  const expires = new Date(Date.now() + CODE_MINUTES * 60_000);
-  await CompanyAdminAccount.findOneAndUpdate(
-    scope(viewer, companyId),
-    { $set: { baseUrl, captureCodeHash: hashCode(code), captureCodeExpiresAt: expires, updatedByUserId: new Types.ObjectId(viewer.userId) } },
-    { upsert: true, setDefaultsOnInsert: true }
-  );
-  return { ok: true, code, baseUrl, expiresAt: expires.toISOString() };
-}
-
 async function storeSession(filter: Record<string, unknown>, companyId: string, baseUrl: string, raw: unknown): Promise<{ ok: true; count: number; organizationId: Types.ObjectId } | { ok: false; error: string }> {
   let sanitized: ReturnType<typeof sanitizeSessionCookies>;
   try {
@@ -119,7 +96,7 @@ async function storeSession(filter: Record<string, unknown>, companyId: string, 
         capturedAt: new Date(),
         ...(sanitized.expiresAt ? { expiresAt: sanitized.expiresAt } : {}),
       },
-      $unset: { captureCodeHash: 1, captureCodeExpiresAt: 1, lastCheckedAt: 1, lastCheckOk: 1, lastCheckNote: 1, ...(sanitized.expiresAt ? {} : { expiresAt: 1 }) },
+      $unset: { lastCheckedAt: 1, lastCheckOk: 1, lastCheckNote: 1, ...(sanitized.expiresAt ? {} : { expiresAt: 1 }) },
     },
     { new: true, upsert: true, setDefaultsOnInsert: true }
   ).lean<{ organizationId: Types.ObjectId }>();
@@ -143,15 +120,91 @@ export async function saveSessionPaste(viewer: CompanyViewer, companyId: string,
   return { ok: true };
 }
 
-/** The capture script's upload: authorised by the one-time code alone, which is spent by use. */
-export async function captureWithCode(code: string, session: unknown): Promise<{ ok: true; host: string; count: number } | { ok: false; status: 400 | 404; error: string }> {
-  const row = await CompanyAdminAccount.findOne({ captureCodeHash: hashCode(code), captureCodeExpiresAt: { $gt: new Date() } }).lean<{ _id: Types.ObjectId; organizationId: Types.ObjectId; companyId: Types.ObjectId; baseUrl: string }>();
-  if (!row) return { ok: false, status: 404, error: 'That code is not valid or has expired. Get a new one in Nucleas.' };
-  const stored = await storeSession({ _id: row._id }, String(row.companyId), row.baseUrl, session);
-  if (!stored.ok) return { ok: false, status: 400, error: stored.error };
+// ---------- Logging in through a browser window inside Nucleas ----------
+
+interface LoginHandle {
+  s: string; // the worker's session id
+  c: string; // company
+  u: string; // user
+  b: string; // site origin
+  x: number; // expiry, ms
+}
+
+const HANDLE_PURPOSE = 'admin-login-handle';
+const HANDLE_MINUTES = 10;
+
+/** The opaque handle the page holds: it names the worker's browser window and is only valid for this person and company. */
+function openHandle(viewer: CompanyViewer, companyId: string, handle: string): LoginHandle | null {
+  try {
+    const h = JSON.parse(openSecret(HANDLE_PURPOSE, handle)) as LoginHandle;
+    return h.c === companyId && h.u === viewer.userId && h.x > Date.now() ? h : null;
+  } catch {
+    return null;
+  }
+}
+
+const EXPIRED = { ok: false as const, status: 400 as const, error: 'The login window timed out. Start again.' };
+
+export async function loginStart(viewer: CompanyViewer, companyId: string, siteAddress: string): Promise<{ ok: true; handle: string; width: number; height: number; baseUrl: string } | { ok: false; status: 400 | 403 | 404; error: string }> {
+  const allowed = await managed(viewer, companyId, 'connect an admin account');
+  if (!allowed.ok) return allowed;
+  if (!isBrowserWorkerConfigured()) return { ok: false, status: 400, error: 'The browser worker is not configured on the server.' };
+  let baseUrl: string;
+  try {
+    baseUrl = normalizeBaseUrl(siteAddress);
+  } catch (error) {
+    return { ok: false, status: 400, error: error instanceof Error ? error.message : 'Enter the site’s https address.' };
+  }
+  try {
+    const started = await browserWorkerCall<{ sessionId: string; width: number; height: number }>('/login/start', { baseUrl });
+    const handle = sealSecret(HANDLE_PURPOSE, JSON.stringify({ s: started.sessionId, c: companyId, u: viewer.userId, b: baseUrl, x: Date.now() + HANDLE_MINUTES * 60_000 } satisfies LoginHandle));
+    return { ok: true, handle, width: started.width, height: started.height, baseUrl };
+  } catch (error) {
+    return { ok: false, status: 400, error: error instanceof Error ? error.message : 'Could not open the login window (is the browser worker up to date?).' };
+  }
+}
+
+export async function loginFrame(viewer: CompanyViewer, companyId: string, handle: string): Promise<{ ok: true; image: string; url: string; title: string } | typeof EXPIRED> {
+  const h = openHandle(viewer, companyId, handle);
+  if (!h) return EXPIRED;
+  try {
+    return { ok: true, ...(await browserWorkerCall<{ image: string; url: string; title: string }>('/login/frame', { sessionId: h.s })) };
+  } catch {
+    return EXPIRED;
+  }
+}
+
+export async function loginInput(viewer: CompanyViewer, companyId: string, handle: string, input: unknown): Promise<{ ok: true } | typeof EXPIRED> {
+  const h = openHandle(viewer, companyId, handle);
+  if (!h) return EXPIRED;
+  try {
+    await browserWorkerCall('/login/input', { sessionId: h.s, input });
+    return { ok: true };
+  } catch {
+    return EXPIRED;
+  }
+}
+
+/** "I'm logged in": take the site's cookies from the window, seal them, close the window. */
+export async function loginFinish(viewer: CompanyViewer, companyId: string, handle: string): Promise<AdminAccountResult> {
+  const h = openHandle(viewer, companyId, handle);
+  if (!h) return EXPIRED;
+  let done: { cookies: unknown[] };
+  try {
+    done = await browserWorkerCall<{ cookies: unknown[] }>('/login/finish', { sessionId: h.s });
+  } catch {
+    return EXPIRED;
+  }
+  const stored = await storeSession(scope(viewer, companyId), companyId, h.b, { cookies: done.cookies });
+  if (!stored.ok) return { ok: false, status: 400, error: /None of those cookies/.test(stored.error) ? 'The site did not set a session yet. Log in first, then press Save.' : stored.error };
   const { recordActivity } = await import('@/lib/companies/activityLog');
-  await recordActivity({ organizationId: row.organizationId, companyId: row.companyId, kind: 'code', title: `Admin account session captured for ${new URL(row.baseUrl).host}` });
-  return { ok: true, host: new URL(row.baseUrl).host, count: stored.count };
+  await recordActivity({ organizationId: viewer.organizationId, companyId, kind: 'code', title: `Admin account session captured for ${new URL(h.b).host}`, actorUserId: viewer.userId });
+  return { ok: true };
+}
+
+export async function loginCancel(viewer: CompanyViewer, companyId: string, handle: string): Promise<void> {
+  const h = openHandle(viewer, companyId, handle);
+  if (h) await browserWorkerCall('/login/cancel', { sessionId: h.s }).catch(() => undefined);
 }
 
 export async function clearAdminAccount(viewer: CompanyViewer, companyId: string): Promise<AdminAccountResult> {
