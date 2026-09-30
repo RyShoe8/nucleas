@@ -57,3 +57,10 @@ plan's files against a real change for evaluating full model runs.
 - **Contradictions:** a step that changes code that another step says stays unchanged (same line, or the named thing sits on that line) is flagged.
 - **Readers:** up to two correction rounds; if readers of the changed files are still unassessed, "None found" claims are removed and a `NOT ASSESSED` line is added, so the plan never says "none" beside the warnings.
 - **Stored data:** every database model the data path reads must be mentioned by the plan (could stored rows keep the symptom alive?).
+
+## Blocking, and facts before planning
+
+- **Structure facts:** the evidence pack now says, for the top mentioned lines, which bracketed object each belongs to (its fields, and what directly contains it), computed from the file. The planner cannot invent a nested array that is not there.
+- **Hard blocks:** a plan that still has a wrong line claim or a step that contradicts another after the correction rounds is not published for approval; the draft and the reasons are shown instead.
+- **Second opinion:** the second correction round goes to the worker-model (a different model), and is given time before the Worker and Critic are.
+- **Honest sections:** "None found" side effects and "Nothing outstanding" unverified are replaced with `NOT ASSESSED` when the checks found readers or stored data the plan ignored; the plan also states how many correction rounds ran.

@@ -11,6 +11,15 @@ const files = new Map<string, string>(Object.entries({
   'lib/data/variants.ts': "export const seedVariants = [\n  { parent: 'widget', slug: 'gadgetPro' },\n];",
 }));
 
+describe('structure facts in the evidence pack', () => {
+  it('says which object each quoted line belongs to, so the structure is not guessed', () => {
+    const pack = buildEvidencePack(files, 'On example.com/admin/catalog, gadgetPro is listed on its own and also under widget.')!;
+    expect(pack.text).toContain('Structure around those lines');
+    expect(pack.text).toContain("is inside one object");
+    expect(pack.text).toContain("parent: 'widget'");
+  });
+});
+
 describe('planTemplate', () => {
   const pack = buildEvidencePack(files, 'On example.com/admin/catalog, gadgetPro is listed on its own and also under widget. Remove the listing under widget.');
 

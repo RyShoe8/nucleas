@@ -656,7 +656,7 @@ export async function attemptOrchestratedIdeReply(input: {
   const planScope = { scope: evidencePack?.scope, pageFile: evidencePack?.page?.file };
   const assessPlan = (text: string) => {
     const parsed = parseNucleasPlan(text);
-    const none = { structure: [] as string[], unaddressed: [] as ReaderGroup[], extra: [] as string[], contexts: [] as ReturnType<typeof quoteContexts>, claim: null as ClaimCheck | null };
+    const none = { structure: [] as string[], unaddressed: [] as ReaderGroup[], extra: [] as string[], hard: [] as string[], contexts: [] as ReturnType<typeof quoteContexts>, claim: null as ClaimCheck | null };
     if (!parsed) return { parsed: null, ...none, issues: ['The response did not contain a valid nucleas-plan JSON block. Return the complete plan as one fenced JSON block tagged nucleas-plan.'] };
     const structure = safely(() => validatePlanStructure(parsed.plan, { hasKnownPath: Boolean(evidencePack?.chains.length) }), [] as string[]);
     // Text left over from the fill-in form is not a plan.
@@ -669,26 +669,34 @@ export async function attemptOrchestratedIdeReply(input: {
       : [];
     // Claims the plan makes about the code that the code contradicts: wrong line numbers, steps that undo each
     // other, and stored data it never considered.
-    const extra = [
+    // Wrong line claims and contradictions cannot be approved as they stand; the rest is reported honestly.
+    const hard = [
       ...(planFiles ? safely(() => checkLineClaims(planFiles, parsed.plan), [] as string[]) : []),
       ...(planFiles ? safely(() => findContradictions(planFiles, parsed.plan), [] as string[]) : []),
-      ...safely(() => dataStoreIssues(evidencePack?.unverified ?? [], parsed.plan), [] as string[]),
     ];
+    const extra = [...hard, ...safely(() => dataStoreIssues(evidencePack?.unverified ?? [], parsed.plan), [] as string[])];
     const contexts = planFiles && claim ? safely(() => quoteContexts(planFiles, claim), [] as ReturnType<typeof quoteContexts>) : [];
-    return { parsed, structure, unaddressed, extra, contexts, issues: [...structure, ...(claim?.issues ?? []), ...extra, ...readerCoverageIssues(unaddressed)], claim };
+    return { parsed, structure, unaddressed, extra, hard, contexts, issues: [...structure, ...(claim?.issues ?? []), ...extra, ...readerCoverageIssues(unaddressed)], claim };
   };
   const plannerAttempts: TeamChatTurn[] = [];
+  let correctionRounds = 0;
+  let correctionSkipped = false;
   let planAssessment: ReturnType<typeof assessPlan> | null = null;
   if (interactionMode === 'plan') {
     planAssessment = assessPlan(plannerTurn.text);
     // Up to two targeted correction rounds, only for problems the code can prove; whatever remains is reported.
-    for (let round = 0; round < 2 && planAssessment.issues.length && !input.signal?.aborted && remaining() > 100_000; round += 1) {
-      input.onProgress?.(`Checked the plan against the repository: sending ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} back to the planner${round ? ' (second round)' : ''}`);
+    for (let round = 0; round < 2 && planAssessment.issues.length && !input.signal?.aborted; round += 1) {
+      // Fixing the plan is worth more than reviewing it, so it gets the time before the Worker and Critic do.
+      if (remaining() <= 60_000) { correctionSkipped = true; break; }
+      // The second round goes to a different model: one that is stuck on its own first belief will not shake it.
+      const fixer = round >= 1 && workerBinding && (workerBinding.profileId !== plannerBinding.profileId || workerBinding.model !== plannerBinding.model) ? workerBinding : plannerBinding;
+      input.onProgress?.(`Checked the plan against the repository: sending ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} back to ${shortModel(fixer.model)}${round ? ' (second round)' : ''}`);
+      correctionRounds += 1;
       // A reply with no plan at all gets a fill-in-the-blanks form with the traced facts pre-filled;
       // a plan with specific problems gets those problems back, with the code around what it quoted.
       const retry = await runStage({
         stage: 'planner',
-        binding: plannerBinding,
+        binding: fixer,
         userText: !planAssessment.parsed ? planTemplateRequest(input.userText, evidencePack ?? null) : [
           input.userText, '',
           'Your previous plan was rejected by automatic checks against the repository. Return the complete plan again as one nucleas-plan JSON block, fixing exactly these problems:',
@@ -735,6 +743,7 @@ export async function attemptOrchestratedIdeReply(input: {
     const reasons: string[] = [];
     if (!planAssessment.parsed.plan.structured?.rootCause?.evidence.length) reasons.push('The plan cites no evidence from the code for its root cause.');
     else if (claim.verified.length === 0) reasons.push('None of the code the plan quotes could be found in the repository.');
+    if (planAssessment.hard.length) reasons.push(`The plan still contradicts itself or the code after ${correctionRounds} correction round${correctionRounds === 1 ? '' : 's'}${correctionSkipped ? ' (more were skipped: out of time)' : ''}: ${planAssessment.hard.slice(0, 3).join(' ')}`);
     if (claim.evidenceOffPath && claim.offPath.length) reasons.push(`The plan\u2019s evidence and its edits (${claim.offPath.slice(0, 4).join(', ')}) are in files the named page does not use, so they would not change what the page shows.`);
     if (reasons.length) {
       const costs = mergeTurnCosts([...plannerAttempts, plannerTurn]);
@@ -809,8 +818,13 @@ export async function attemptOrchestratedIdeReply(input: {
     const unaddressed = planAssessment.unaddressed;
     // "None found" cannot stand beside readers nobody assessed.
     if (unaddressed.length && planned.structured?.sideEffects) planned = { ...planned, structured: { ...planned.structured, sideEffects: [...withoutNoneClaims(planned.structured.sideEffects), 'NOT ASSESSED: the planner did not say how this change affects the other readers listed under Automatic checks.'] } };
+    // "Nothing outstanding" cannot stand beside stored data the plan never considered.
+    if (planAssessment.extra.some((x) => /^unverified:/.test(x)) && !planned.structured?.unverified?.length) {
+      planned = { ...planned, structured: { ...(planned.structured ?? {}), unverified: ['NOT ASSESSED: whether stored rows the code path reads could keep the symptom alive (see the automatic checks).'] } };
+    }
     const open = planAssessment.extra;
     const contexts = planAssessment.contexts;
+    const notes = [correctionRounds || correctionSkipped ? `Planner correction rounds run: ${correctionRounds} of 2${correctionSkipped ? ' (the rest were skipped: out of time)' : ''}${planAssessment.issues.length ? `; ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} still open` : ''}.` : ''].filter(Boolean);
     return safely(() => recomposePlan(planned, {
       extraSections: automaticPlanSections({
         check: verified,
@@ -819,6 +833,7 @@ export async function attemptOrchestratedIdeReply(input: {
         unaddressed,
         contexts,
         remaining: open,
+        notes,
       }),
       notFound: new Set(verified.unverified.map((u) => u.evidence.quote)),
     }), planned);

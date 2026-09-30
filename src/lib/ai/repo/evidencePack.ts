@@ -11,6 +11,7 @@
  *  - who else reads the files that are likely to change.
  */
 import { identifierTerms, snapshotCandidates } from './digSelect';
+import { contextAround, describeEntry } from './entryFacts';
 import { connectingLine, findReferences, reachableFrom, routeFileFor, shortestPaths } from './references';
 
 export interface PathHop {
@@ -34,6 +35,8 @@ export interface EvidencePack {
   scope: Set<string>;
   /** Files worth reading first: targets, then the assemblers between the page and them. */
   focus: { file: string; line?: number }[];
+  /** What object each of the lines above belongs to, so the structure around them is not guessed. */
+  entries?: { file: string; line: number; text: string; snippet: string }[];
   /** The pack as a block of text for a model. */
   text: string;
 }
@@ -172,7 +175,14 @@ export function buildEvidencePack(files: Map<string, string>, userText: string, 
     }
   }
 
-  const pack: EvidencePack = { page, terms, chains, termLines, unverified, readers, scope, focus, text: '' };
+  const entries: NonNullable<EvidencePack['entries']> = [];
+  for (const l of termLines) {
+    if (entries.length >= 3) break;
+    const content = files.get(l.file);
+    const text = content ? describeEntry(l.file, l.line, content) : null;
+    if (content && text && !entries.some((e) => e.text === text)) entries.push({ file: l.file, line: l.line, text, snippet: contextAround(content, l.line, 4) });
+  }
+  const pack: EvidencePack = { page, terms, chains, termLines, unverified, readers, scope, focus, entries, text: '' };
   pack.text = renderEvidencePack(pack);
   return pack;
 }
@@ -192,6 +202,10 @@ export function renderEvidencePack(pack: Omit<EvidencePack, 'text'> | EvidencePa
   if (pack.termLines.length) {
     out.push(`Lines mentioning ${pack.terms.join(', ')}:`);
     for (const l of pack.termLines) out.push(`  ${l.file}:${l.line}: \`${l.text}\``);
+  }
+  if (pack.entries?.length) {
+    out.push('Structure around those lines (computed from the brackets in the file; do not assume any structure that is not shown here):');
+    for (const e of pack.entries) out.push(`  ${e.text}`, ...e.snippet.split('\n').map((l) => `    ${l}`));
   }
   for (const r of pack.readers) {
     if (r.usedBy.length || r.routes.length) out.push(`${r.file} is also used by: ${[...r.usedBy, ...r.routes.map((x) => `route ${x}`)].join(', ')}. A change there reaches them too.`);

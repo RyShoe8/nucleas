@@ -644,6 +644,23 @@ describe('plans are checked against the repository', () => {
     expect(calls[3].userText).toContain('The code around each quoted line');
   });
 
+  it('does not publish a plan that still contradicts itself after the correction rounds, and hands the second round to another model', async () => {
+    const calls: { stage: string; userText: string; model?: string }[] = [];
+    const contradictory = plan({ steps: ["Remove the entry with slug 'gadgetPro' in lib/data/variants.ts.", "Verify the 'gadgetPro' entry at line 2 of lib/data/variants.ts remains unchanged."] });
+    mocks.companyChat.mockImplementation(async (args: { systemPrompt: string; userText: string; model?: string }) => {
+      const stage = stageOf(args);
+      calls.push({ stage, userText: args.userText, model: args.model });
+      return { requestId: 'x', role: 'assistant', costMicros: 0, toolsUsed: ['repo_read'], text: contradictory };
+    });
+    const turn = await run();
+    expect(calls.map((c) => c.stage)).toEqual(['planner', 'planner', 'planner']);
+    expect(calls.map((c) => c.model)).toEqual(['gemma', 'gemma', 'qwen']);
+    expect(calls[1].userText).toContain('Contradiction:');
+    expect(calls[1].userText).toContain('The code around each line you quoted');
+    expect(turn.plan).toBeUndefined();
+    expect(turn.text).toContain('still contradicts itself or the code after 2 correction rounds');
+  });
+
   it('skips the correction round when time is short, and publishes a checked plan as not reviewed', async () => {
     const calls: { stage: string; userText: string }[] = [];
     accepting(calls, plan());

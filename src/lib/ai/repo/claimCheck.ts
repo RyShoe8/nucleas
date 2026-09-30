@@ -6,7 +6,10 @@
  */
 import type { PlanEvidence, StructuredPlan } from '@/lib/ide/planStructure';
 import { plannedFiles } from '@/lib/ide/planStructure';
+import { contextAround, describeEntry } from './entryFacts';
 import { findReferences } from './references';
+
+export { contextAround };
 
 export interface ClaimCheck {
   /**
@@ -110,31 +113,23 @@ export function checkPlanClaims(
   return { verified, unverified, missingPathFiles, offPath, newOrUnknown, evidenceOffPath, issues };
 }
 
-/** Numbered lines around `line` (the line itself marked with >), so a quote can be read in the entry it belongs to. */
-export function contextAround(content: string, line: number, radius = 5): string {
-  const lines = content.split('\n');
-  const from = Math.max(1, line - radius);
-  const to = Math.min(lines.length, line + radius);
-  return lines.slice(from - 1, to).map((text, i) => `${from + i}${from + i === line ? '>' : ' '} ${text.length > 140 ? `${text.slice(0, 140)}\u2026` : text}`).join('\n');
-}
-
 /** The code around each quoted line that was found, for the planner to reread, the Worker and Critic to check, and the reviewer to see. */
-export function quoteContexts(files: Map<string, string>, check: Pick<ClaimCheck, 'verified'>, max = 4, radius = 5): { file: string; line: number; snippet: string }[] {
+export function quoteContexts(files: Map<string, string>, check: Pick<ClaimCheck, 'verified'>, max = 4, radius = 5): { file: string; line: number; snippet: string; entry?: string }[] {
   const seen = new Set<string>();
-  const out: { file: string; line: number; snippet: string }[] = [];
+  const out: { file: string; line: number; snippet: string; entry?: string }[] = [];
   for (const v of check.verified) {
     const key = `${v.evidence.file}:${v.foundLine}`;
     const content = files.get(v.evidence.file);
     if (!content || seen.has(key)) continue;
     seen.add(key);
-    out.push({ file: v.evidence.file, line: v.foundLine, snippet: contextAround(content, v.foundLine, radius) });
+    out.push({ file: v.evidence.file, line: v.foundLine, snippet: contextAround(content, v.foundLine, radius), ...(describeEntry(v.evidence.file, v.foundLine, content) ? { entry: describeEntry(v.evidence.file, v.foundLine, content)! } : {}) });
     if (out.length >= max) break;
   }
   return out;
 }
 
-export function renderQuoteContexts(contexts: { file: string; line: number; snippet: string }[]): string {
-  return contexts.map((c) => `${c.file}:${c.line}\n${c.snippet}`).join('\n\n');
+export function renderQuoteContexts(contexts: { file: string; line: number; snippet: string; entry?: string }[]): string {
+  return contexts.map((c) => `${c.file}:${c.line}\n${c.snippet}${c.entry ? `\n${c.entry}` : ''}`).join('\n\n');
 }
 
 const SENTENCE_SPLIT = /\n+|;\s+|\.\s+(?=[A-Z])/;
@@ -310,9 +305,11 @@ export function automaticPlanSections(input: {
   /** Reader groups the plan never answered for. */
   unaddressed?: ReaderGroup[];
   /** Code around each quoted line, shown so a reader can see what each quote belongs to. */
-  contexts?: { file: string; line: number; snippet: string }[];
+  contexts?: { file: string; line: number; snippet: string; entry?: string }[];
   /** Problems the checks still found in the final plan (contradictions, wrong line claims). */
   remaining?: string[];
+  /** How the run went, e.g. how many correction rounds ran. */
+  notes?: string[];
 }): string {
   const out: string[] = [];
   const { check } = input;
@@ -329,8 +326,9 @@ export function automaticPlanSections(input: {
   for (const r of input.readers) lines.push(`- ${r.file} is also used by ${[...r.usedBy, ...r.routes.map((x) => `route ${x}`)].join(', ')}; a change there reaches them too.`);
   for (const g of input.unaddressed ?? []) lines.push(`- The plan does not say how the change affects: ${g.label} (${[...g.files.slice(0, 4).map((f) => f.split('/').pop()), ...g.routes.slice(0, 2)].join(', ')}).`);
   for (const n of input.dataStoreNotes) lines.push(`- Not verifiable from the repository: ${n.file}:${n.line} ${n.note} (\`${n.text}\`). Stored data may differ from the code.`);
+  for (const note of input.notes ?? []) lines.push(`- ${note}`);
   for (const issue of input.remaining ?? []) lines.push(`- Still open: ${issue}`);
   if (lines.length) out.push(`## Automatic checks (from the repository)\n\n${lines.join('\n')}`);
-  if (input.contexts?.length) out.push(`## Code around the quoted lines\n\n${input.contexts.slice(0, 3).map((c) => `\`${c.file}:${c.line}\`\n\`\`\`\n${c.snippet}\n\`\`\``).join('\n\n')}`);
+  if (input.contexts?.length) out.push(`## Code around the quoted lines\n\n${input.contexts.slice(0, 3).map((c) => `\`${c.file}:${c.line}\`\n\`\`\`\n${c.snippet}\n\`\`\`${c.entry ? `\n${c.entry}` : ''}`).join('\n\n')}`);
   return out.join('\n\n');
 }
