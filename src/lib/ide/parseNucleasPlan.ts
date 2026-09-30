@@ -1,4 +1,5 @@
 import type { IdePlanDocument } from '@/lib/ide/idePlan';
+import { parseStructuredPlan, renderStructuredSections } from '@/lib/ide/planStructure';
 
 const FENCE_RE = /```nucleas-plan\s*([\s\S]*?)```/i;
 const JSON_FENCE_RE = /```(?:json)?\s*([\s\S]*?)```/i;
@@ -48,10 +49,12 @@ export function parseNucleasPlan(raw: string): {
     withoutFence ||
     'Plan ready to review in the center pane. Approve it when you want me to build.';
 
+  const structured = parseStructuredPlan(record);
   const markdownParts = [
     `# ${title}`,
     summary ? summary : '',
     steps.length ? steps.map((step, index) => `${index + 1}. ${step}`).join('\n') : '',
+    renderStructuredSections(structured),
     withoutFence ? `## Details & Architecture\n\n${withoutFence}` : '',
   ].filter(Boolean);
 
@@ -62,6 +65,7 @@ export function parseNucleasPlan(raw: string): {
       steps: steps.map((step) => step.slice(0, 500)),
       markdown: markdownParts.join('\n\n').slice(0, 24000),
       status: 'ready_for_review',
+      ...(structured ? { structured } : {}),
     },
     displayText: displayText.slice(0, 24000),
   };
