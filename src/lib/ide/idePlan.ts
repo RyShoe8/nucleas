@@ -15,6 +15,8 @@ export type IdePlanDocument = {
   status: 'ready_for_review' | 'approved' | 'building';
   /** The plan's required fields (symptom, path, cause with evidence...). Rendered into `markdown`; not stored separately. */
   structured?: StructuredPlan;
+  /** The model's free-text explanation that accompanied the plan. Kept so the markdown can be recomposed. */
+  details?: string;
 };
 
 export type IdeRunActivity = {

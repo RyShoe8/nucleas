@@ -99,6 +99,8 @@ export function parseStructuredPlan(record: Record<string, unknown>): Structured
 
 const FILLER_STEP = /^\s*(?:verify|ensure|check|confirm|review|make sure|validate|test that|double[- ]check)\b/i;
 const FILE_IN_TEXT = /(?:[\w@.~-]+\/)+[\w@.~-]+\.[A-Za-z0-9]{1,6}\b/;
+/** A citation of code: a path, or a bare file name with a code extension (route.ts:8). */
+const FILE_CITATION = /(?:[\w@.~-]+\/)+[\w@.~-]+\.[A-Za-z0-9]{1,6}\b|\b[\w@~-]+\.(?:[cm]?[jt]sx?|py|php|go|rb|rs|java|kt|vue|svelte|astro|liquid|html?|css|json|ya?ml|md)\b/;
 
 /**
  * What is wrong with a plan's structure, phrased as instructions to fix it. Empty when it is complete.
@@ -119,6 +121,7 @@ export function validatePlanStructure(plan: { steps: string[]; structured?: Stru
   else if (s.rootCause.evidence.some((e) => e.quote.replace(/\s+/g, '').length < 6)) issues.push('rootCause.evidence: each quote must be an actual line of code (at least a few characters), copied exactly.');
   if (!s.filesToChange?.length) issues.push('filesToChange: list the files the change edits.');
   if (!s.expectedResult) issues.push('expectedResult: say what the user will see after the change and why, pointing to the code that renders it.');
+  else if (!FILE_CITATION.test(s.expectedResult)) issues.push('expectedResult: name the file (and line) of the code that produces the result, not just the outcome.');
   if (!s.sideEffects) issues.push('sideEffects: list other places that read the code or data you change, or [] if none.');
   if (!s.unverified) issues.push('unverified: list anything you could not confirm from the code (database contents, production settings), or [] if none.');
   if (!s.outOfScope) issues.push('outOfScope: say what you are deliberately not changing and why, or [] if nothing.');
@@ -130,15 +133,15 @@ export function validatePlanStructure(plan: { steps: string[]; structured?: Stru
   return issues;
 }
 
-/** Markdown sections for a plan document. */
-export function renderStructuredSections(s: StructuredPlan | undefined): string {
+/** Markdown sections for a plan document. Quotes in `notFound` are marked as not found in the repository. */
+export function renderStructuredSections(s: StructuredPlan | undefined, options: { notFound?: Set<string> } = {}): string {
   if (!s) return '';
   const out: string[] = [];
   const loc = (file: string, line?: number) => (line ? `${file}:${line}` : file);
   if (s.symptom) out.push(`## Symptom\n\n${s.symptom}`);
   if (s.path?.length) out.push(`## Code path\n\n${s.path.map((h) => `- \`${loc(h.file, h.line)}\`${h.note ? ` — ${h.note}` : ''}`).join('\n')}`);
   if (s.rootCause) {
-    out.push([`## Root cause`, s.rootCause.explanation, s.rootCause.evidence.length ? `Evidence:\n${s.rootCause.evidence.map((e) => `- \`${loc(e.file, e.line)}\`: \`${e.quote}\``).join('\n')}` : ''].filter(Boolean).join('\n\n'));
+    out.push([`## Root cause`, s.rootCause.explanation, s.rootCause.evidence.length ? `Evidence:\n${s.rootCause.evidence.map((e) => `- \`${loc(e.file, e.line)}\`: \`${e.quote}\`${options.notFound?.has(e.quote) ? ' — ⚠ not found in the repository' : ''}`).join('\n')}` : ''].filter(Boolean).join('\n\n'));
   }
   if (s.filesToChange?.length) out.push(`## Files to change\n\n${s.filesToChange.map((f) => `- \`${f}\``).join('\n')}`);
   if (s.expectedResult) out.push(`## Expected result\n\n${s.expectedResult}`);

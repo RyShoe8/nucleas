@@ -13,7 +13,10 @@ import {
   shouldForcePlainChat,
   toolProfileForOrchestraStage,
 } from '@/lib/ide/planModePrompt';
-import { parseNucleasPlan } from '@/lib/ide/parseNucleasPlan';
+import { parseNucleasPlan, recomposePlan } from '@/lib/ide/parseNucleasPlan';
+import { plannedFiles, validatePlanStructure } from '@/lib/ide/planStructure';
+import { automaticPlanSections, checkPlanClaims, readersOfPlannedFiles, type ClaimCheck } from '@/lib/ai/repo/claimCheck';
+import type { EvidencePack } from '@/lib/ai/repo/evidencePack';
 import { parseReviewerGate } from '@/lib/ide/parseReviewerGate';
 import { looksLikeProjectInternalQuery } from '@/lib/ai/tools/serverBrowseAssist';
 import { gatherRepoAssistContext } from '@/lib/ai/tools/serverRepoAssist';
@@ -364,7 +367,14 @@ export async function attemptOrchestratedIdeReply(input: {
   const plannerBinding = binding(plannerPick.primary);
   const workerBinding = binding(workerPick.primary);
   const workerFallback = binding(workerPick.fallback);
-  const reviewerBinding = binding(reviewerPick.primary);
+  let reviewerBinding = binding(reviewerPick.primary);
+  // The Critic should not be the model that wrote the plan: a model rarely finds its own blind spots.
+  if (interactionMode === 'plan' && reviewerBinding && plannerBinding && reviewerBinding.profileId === plannerBinding.profileId && reviewerBinding.model === plannerBinding.model) {
+    const others = models.filter((m) => !(m.profileId === plannerBinding.profileId && m.model === plannerBinding.model));
+    const alternative = await selectModel(input.organizationId, 'review', level, { models: others, settings }).catch(() => null);
+    const alt = binding(alternative?.primary ?? null);
+    if (alt && (alt.profileId !== plannerBinding.profileId || alt.model !== plannerBinding.model)) reviewerBinding = alt;
+  }
 
   if (!plannerBinding || !workerBinding) {
     return statusTurn('No AI model is available. Add an AI credential in Admin → AI, then retry.', 'configuration');
@@ -396,6 +406,8 @@ export async function attemptOrchestratedIdeReply(input: {
 
   let repoContextBlock: string | undefined;
   let repoEvidenceReceipts: RepositoryEvidenceReceipt[] = [];
+  /** Facts traced from the code before any model runs (data path, quotable lines, other readers). */
+  let evidencePack: EvidencePack | undefined;
   // Plan and Build are repository workflows even when the user's wording does not explicitly say
   // "codebase" or "repository" (for example, "remove OpenHV from the OpenRA listing"). Always
   // prepare bounded evidence so tool-free recovery can remain grounded.
@@ -432,6 +444,7 @@ export async function attemptOrchestratedIdeReply(input: {
       const block = (dig.evidenceBlock || dig.contextBlock).trim();
       if (block) repoContextBlock = block.slice(0, repoBudgetChars);
       repoEvidenceReceipts = dig.evidenceReceipts ?? [];
+      evidencePack = dig.evidencePack;
     } catch {
       return statusTurn(
         'Repository dig failed before orchestra could start. Check GitHub bind/App connection and retry.',
@@ -589,7 +602,7 @@ export async function attemptOrchestratedIdeReply(input: {
     return statusTurn('The chat request was cancelled before completion.', 'cancelled');
   }
 
-  const plannerTurn = await runStage({
+  let plannerTurn = await runStage({
     stage: 'planner',
     binding: plannerBinding,
     userText: input.userText,
@@ -603,6 +616,88 @@ export async function attemptOrchestratedIdeReply(input: {
     stageLog.push({ stage, model: shortModel(turn.model ?? fallbackModel ?? 'unknown'), toolsUsed: [...(turn.toolsUsed ?? [])], ...(turn.compactRecovery ? { compact: true } : {}) });
   };
   logStage('planner', plannerTurn, plannerBinding?.model);
+
+  // ---- Plan mode: check the plan against the repository before spending the Worker and Critic on it ----
+  const planFiles = snapshot?.ok ? snapshot.snapshot.files : null;
+  const planScope = { scope: evidencePack?.scope, pageFile: evidencePack?.page?.file };
+  const assessPlan = (text: string) => {
+    const parsed = parseNucleasPlan(text);
+    if (!parsed) return { parsed: null, structure: [] as string[], issues: ['The response did not contain a valid nucleas-plan JSON block. Return the complete plan as one fenced JSON block tagged nucleas-plan.'], claim: null as ClaimCheck | null };
+    const structure = validatePlanStructure(parsed.plan, { hasKnownPath: Boolean(evidencePack?.chains.length) });
+    const claim = planFiles ? checkPlanClaims(planFiles, parsed.plan, planScope) : null;
+    return { parsed, structure, issues: [...structure, ...(claim?.issues ?? [])], claim };
+  };
+  const plannerAttempts: TeamChatTurn[] = [];
+  let planAssessment: ReturnType<typeof assessPlan> | null = null;
+  if (interactionMode === 'plan') {
+    planAssessment = assessPlan(plannerTurn.text);
+    // One targeted correction round, only for problems the code can prove; then whatever remains is reported.
+    if (planAssessment.issues.length && !input.signal?.aborted) {
+      input.onProgress?.(`Checked the plan against the repository: sending ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} back to the planner`);
+      const retry = await runStage({
+        stage: 'planner',
+        binding: plannerBinding,
+        userText: [
+          input.userText, '',
+          'Your previous plan was rejected by automatic checks against the repository. Return the complete plan again as one nucleas-plan JSON block, fixing exactly these problems:',
+          ...planAssessment.issues.map((issue) => `- ${issue}`),
+          '', 'Previous plan:', plannerTurn.text.slice(0, 5000),
+        ].join('\n'),
+        priorTurns: [],
+      });
+      if (retry.role === 'assistant') {
+        plannerAttempts.push(plannerTurn);
+        plannerTurn = retry;
+        logStage('planner', retry, plannerBinding.model);
+        planAssessment = assessPlan(retry.text);
+      }
+    }
+  }
+
+  // A plan whose evidence cannot be found in the repository, or whose edits are on code the named page
+  // does not use, is not published as ready for review: that is the failure this whole check exists for.
+  if (interactionMode === 'plan' && planFiles && planAssessment?.parsed && planAssessment.claim) {
+    const claim = planAssessment.claim;
+    const reasons: string[] = [];
+    if (!planAssessment.parsed.plan.structured?.rootCause?.evidence.length) reasons.push('The plan cites no evidence from the code for its root cause.');
+    else if (claim.verified.length === 0) reasons.push('None of the code the plan quotes could be found in the repository.');
+    if (claim.evidenceOffPath && claim.offPath.length) reasons.push(`The plan\u2019s evidence and its edits (${claim.offPath.slice(0, 4).join(', ')}) are in files the named page does not use, so they would not change what the page shows.`);
+    if (reasons.length) {
+      const costs = mergeTurnCosts([...plannerAttempts, plannerTurn]);
+      const tools = summarizeStageTools(stageLog);
+      const draft = planAssessment.parsed.displayText.replace(/```nucleas-plan[\s\S]*?```/gi, '').trim();
+      return {
+        ...plannerTurn,
+        text: [
+          'Nucleas checked this plan against the repository and could not verify it, so it is not ready for review.',
+          '', 'Why:', ...reasons.map((r) => `- ${r}`),
+          ...(planAssessment.issues.length ? ['', 'Problems the checks found:', ...planAssessment.issues.slice(0, 8).map((i) => `- ${i}`)] : []),
+          '', '---', 'Planner draft (unverified):', planAssessment.parsed.plan.markdown.slice(0, 6000) || draft,
+          ...(tools.markdown ? ['', '---', tools.markdown] : []),
+        ].join('\n').slice(0, 24_000),
+        plan: undefined,
+        stageTools: tools.records,
+        toolsUsed: costs.toolsUsed, artifacts: costs.artifacts, evidenceReceipts: costs.evidenceReceipts,
+        costMicros: costs.costMicros, reservedMicros: costs.reservedMicros, noProviderFee: costs.noProviderFee,
+      };
+    }
+  }
+
+  /** What the automatic checks found, for the Worker (to resolve) and the Critic (to weigh). */
+  const automatedFindings = (() => {
+    if (interactionMode !== 'plan' || !planAssessment?.claim) return '';
+    const c = planAssessment.claim;
+    const lines: string[] = [];
+    const total = c.verified.length + c.unverified.length;
+    if (total) lines.push(`${c.verified.length} of ${total} quoted lines were found in the repository.`);
+    for (const u of c.unverified) lines.push(`FAILED: ${u.evidence.file}: quote not found: ${u.evidence.quote.slice(0, 100)}`);
+    if (c.offPath.length) lines.push(`FAILED: planned edits outside the named page's data path: ${c.offPath.slice(0, 4).join(', ')}`);
+    if (c.evidenceOffPath) lines.push('FAILED: none of the quoted evidence is in a file the named page uses.');
+    for (const issue of planAssessment.structure.slice(0, 4)) lines.push(`INCOMPLETE: ${issue}`);
+    return lines.length
+      ? ['Automated checks on the plan (run by Nucleas against the repository):', ...lines.map((l) => `- ${l}`)].join('\n')
+      : 'Automated checks on the plan (run by Nucleas against the repository): every quoted line was found and the edits are on the named page\u2019s data path.';
+  })();
 
   // Preserve paid planning work without exposing an unverified, approvable plan.
   function interruptedStage(stage: 'Worker' | 'Reviewer', failed: TeamChatTurn, turns: TeamChatTurn[]): TeamChatTurn {
@@ -638,6 +733,7 @@ export async function attemptOrchestratedIdeReply(input: {
 
   const workerBrief = [
     'User request:', input.userText.slice(0, 2000), '', 'Planner briefing / jobs:', distilledPlanner, '',
+    ...(automatedFindings ? [automatedFindings, `For each claim in the plan, read the cited file and confirm or refute it with a quoted line (file:line).${/^- (?:FAILED|INCOMPLETE):/m.test(automatedFindings) ? ' Resolve every FAILED or INCOMPLETE item above first.' : ''}`, ''] : []),
     ...(interactionMode === 'build' ? [BUILD_METHOD, ...(guide ? ['', 'Project guide (excerpt):', guide.slice(0, 3000)] : []), ''] : []),
     'Return one concise completion report covering all jobs. Include concrete evidence, checks performed, limitations, and anything still unverified. Do not narrate routine progress.',
   ].join('\n');
@@ -703,10 +799,23 @@ export async function attemptOrchestratedIdeReply(input: {
   let plan: IdePlanDocument | undefined;
   if (interactionMode === 'plan') {
     const parsed = parseNucleasPlan(plannerTurn.text);
-    if (parsed) plan = parsed.plan;
+    if (parsed) {
+      plan = parsed.plan;
+      if (planFiles && planAssessment?.claim) {
+        // Nucleas's own sections: what was verified, other readers of the changed files, unverifiable data.
+        plan = recomposePlan(plan, {
+          extraSections: automaticPlanSections({
+            check: planAssessment.claim,
+            readers: readersOfPlannedFiles(planFiles, plannedFiles(plan), { ...planScope, pageRoute: evidencePack?.page?.route }),
+            dataStoreNotes: evidencePack?.unverified ?? [],
+          }),
+          notFound: new Set(planAssessment.claim.unverified.map((u) => u.evidence.quote)),
+        });
+      }
+    }
   }
 
-  const assistantStages: TeamChatTurn[] = [plannerTurn, workerTurn];
+  const assistantStages: TeamChatTurn[] = [...plannerAttempts, plannerTurn, workerTurn];
   let reviewerTurn: TeamChatTurn | null = null;
   let finalChatAnswer: string | null = null;
   let reviewerFormatCorrection = '';
@@ -736,6 +845,7 @@ export async function attemptOrchestratedIdeReply(input: {
           'Worker output:',
           workerTurn.text.slice(0, 6000),
           '',
+          ...(automatedFindings ? [automatedFindings, ''] : []),
           'Review all acceptance criteria in one batch. Decide accept vs needs_more. End with a nucleas-gate fence (all interaction modes).',
           reviewerFormatCorrection,
         ].join('\n'),
@@ -753,7 +863,7 @@ export async function attemptOrchestratedIdeReply(input: {
         // files mentioning the user's own terms have not been looked at.
         if (claimsNothingFound(workerTurn.text)) noChangeSnapshot ??= await getRepoSnapshot(input.organizationId, input.projectId).catch(() => null);
         const guard = noChangeSnapshot?.ok
-          ? checkNoChangeClaim({ userText: input.userText, workerText: workerTurn.text, files: noChangeSnapshot.snapshot.files })
+          ? checkNoChangeClaim({ userText: input.userText, workerText: workerTurn.text, files: noChangeSnapshot.snapshot.files, scope: evidencePack?.scope })
           : null;
         if (guard) {
           const paths = guard.unexplored.map((item) => item.path).join(', ');

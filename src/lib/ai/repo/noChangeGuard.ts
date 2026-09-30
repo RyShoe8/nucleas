@@ -42,7 +42,8 @@ export interface NoChangeCheck {
   jobs: string[];
 }
 
-export function checkNoChangeClaim(input: { userText: string; workerText: string; files: Map<string, string> }): NoChangeCheck | null {
+/** `scope`: files the page named in the request uses. When any unexplored file is inside it, only those are reported. */
+export function checkNoChangeClaim(input: { userText: string; workerText: string; files: Map<string, string>; scope?: Set<string> }): NoChangeCheck | null {
   if (!claimsNothingFound(input.workerText)) return null;
   const terms = keyTerms(input.userText);
   if (!terms.length) return null;
@@ -59,8 +60,8 @@ export function checkNoChangeClaim(input: { userText: string; workerText: string
     if (worker.includes(path.toLowerCase()) || (base.includes('.') && worker.includes(base))) continue;
     scored.push({ path, matched, test: TEST_PATH.test(path) });
   }
-  const unexplored = scored
-    .filter((item) => !item.test)
+  const inScope = input.scope?.size ? scored.filter((item) => !item.test && input.scope!.has(item.path)) : [];
+  const unexplored = (inScope.length ? inScope : scored.filter((item) => !item.test))
     .sort((a, b) => b.matched.length - a.matched.length || a.path.localeCompare(b.path))
     .slice(0, 5)
     .map(({ path, matched }) => ({ path, matched }));

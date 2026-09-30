@@ -36,6 +36,18 @@ function analyze(files: Map<string, string>): Analysis {
     }
   }
   const routes = collectRoutes(files, index);
+  // Calling one of the app's own HTTP routes is a dependency on the file that serves it.
+  const handlers = routes.filter((r) => r.kind === 'handler' && r.route.length > 1);
+  if (handlers.length) {
+    for (const [path, content] of files) {
+      if (content.length > 400_000) continue;
+      for (const served of routeCalls(content, handlers)) {
+        if (served === path) continue;
+        (uses.get(path) ?? uses.set(path, new Set()).get(path)!).add(served);
+        (usedBy.get(served) ?? usedBy.set(served, new Set()).get(served)!).add(path);
+      }
+    }
+  }
   const routesByFile = new Map<string, string[]>();
   for (const entry of routes) (routesByFile.get(entry.file) ?? routesByFile.set(entry.file, []).get(entry.file)!).push(entry.route);
   const analysis: Analysis = { routes, uses, usedBy, routesByFile };

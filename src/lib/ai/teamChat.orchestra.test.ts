@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Types } from 'mongoose';
 
 const mocks = vi.hoisted(() => ({
@@ -67,6 +67,17 @@ vi.mock('@/lib/ai/executionWorkerClient', () => ({
 }));
 
 import { attemptOrchestratedIdeReply, distillPlannerBriefing, isTrivialTeamChatRequest } from '@/lib/ai/teamChat';
+import { buildEvidencePack } from '@/lib/ai/repo/evidencePack';
+/** A complete plan, as the Planner is now required to write it. */
+const structuredPlan = (overrides: Record<string, unknown> = {}) => JSON.stringify({
+  title: 'Blog', summary: 'Add blog', symptom: 'The site has no blog.',
+  path: [{ file: 'app/routes.ts', line: 1, note: 'declares the routes' }],
+  rootCause: { explanation: '1. Routes are declared in one file. 2. There is no blog route.', evidence: [{ file: 'app/routes.ts', line: 1, quote: 'export const routes = []' }] },
+  filesToChange: ['app/routes.ts'], expectedResult: 'A /blog page appears because app/routes.ts:1 now lists it.',
+  sideEffects: [], unverified: [], outOfScope: [], steps: ['Add routes in app/routes.ts'], ...overrides,
+});
+const PLAN_FENCE = `\`\`\`nucleas-plan\n${structuredPlan()}\n\`\`\``;
+
 
 function leanChain(result: unknown) {
   return {
@@ -137,7 +148,7 @@ describe('attemptOrchestratedIdeReply full orchestra', () => {
   });
 
   it.each(['worker', 'reviewer'] as const)('preserves an unverified draft when %s fails without making it approvable', async failedStage => {
-    const draft = `Blog layout and integration. ${'detail '.repeat(1000)}End-of-briefing acceptance checks.\n\`\`\`nucleas-plan\n{"title":"Blog","summary":"Add blog","steps":["Add routes"]}\n\`\`\``;
+    const draft = `Blog layout and integration. ${'detail '.repeat(1000)}End-of-briefing acceptance checks.\n${PLAN_FENCE}`;
     mocks.companyChat.mockResolvedValueOnce({ requestId: 'p', role: 'assistant', text: draft, costMicros: 74000 });
     if (failedStage === 'reviewer') mocks.companyChat.mockResolvedValueOnce({ requestId: 'w', role: 'assistant', text: 'Verified routes.', costMicros: 0 });
     mocks.companyChat.mockResolvedValueOnce({ requestId: 'failed', role: 'status', text: 'Gateway returned HTTP 504.', failureCategory: 'unavailable', debugHint: 'httpStatus=504', costMicros: 0 });
@@ -159,7 +170,7 @@ describe('attemptOrchestratedIdeReply full orchestra', () => {
     mocks.companyChat.mockImplementation(async ({ systemPrompt }: { systemPrompt: string }) => ({
       requestId: 'stage', role: 'assistant', costMicros: 1,
       text: systemPrompt.includes('Pipeline stage: planner')
-        ? 'Draft blog\n```nucleas-plan\n{"title":"Blog","summary":"Add blog","steps":["Add routes"]}\n```'
+        ? `Draft blog\n${PLAN_FENCE}`
         : systemPrompt.includes('Pipeline stage: worker') ? 'Read routes.'
           : accept ? 'Verified.\n```nucleas-gate\n{"status":"accept"}\n```'
             : 'Need evidence.\n```nucleas-gate\n{"status":"needs_more","jobs":["Read routes"]}\n```',
@@ -495,6 +506,136 @@ describe('attemptOrchestratedIdeReply full orchestra', () => {
   });
 });
 
+describe('plans are checked against the repository', () => {
+  const files = new Map<string, string>(Object.entries({
+    'package.json': '{"dependencies":{"next":"14"}}',
+    'app/admin/catalog/page.tsx': "import Panel from '@/components/Panel';\nexport default function Page() { return <Panel /> }",
+    'components/Panel.tsx': "export default function Panel() { fetch('/api/admin/catalog/items'); return null }",
+    'app/api/admin/catalog/items/route.ts': "import { seedVariants } from '@/lib/data/variants';\nimport { Variant } from '@/models/Variant';\nexport async function GET() {\n  const rows = [];\n  for (const v of seedVariants) rows.push({ key: `${v.parent}:${v.slug}` });\n  const stored = await Variant.find({});\n  return Response.json(rows.concat(stored));\n}",
+    'lib/data/variants.ts': "export const seedVariants = [\n  { parent: 'widget', slug: 'gadgetPro' },\n];",
+    'app/shop/[slug]/page.tsx': "import { seedVariants } from '@/lib/data/variants';",
+    'models/Variant.ts': 'export const Variant = {};',
+    'lib/settings.ts': 'export const OPTIONS = { ...DEFAULTS, slug: "gadgetPro" };',
+  }));
+  const request = 'On example.com/admin/catalog, gadgetPro is listed on its own and also under widget. Remove the listing under widget.';
+  const goodEvidence = [{ file: 'lib/data/variants.ts', line: 2, quote: "{ parent: 'widget', slug: 'gadgetPro' }," }];
+  const plan = (o: Record<string, unknown> = {}) => `Plan.\n\`\`\`nucleas-plan\n${structuredPlan({
+    title: 'Hide duplicate variant', summary: 'gadgetPro is listed twice', symptom: 'gadgetPro shows on its own and under widget.',
+    path: [{ file: 'app/admin/catalog/page.tsx', line: 1 }, { file: 'app/api/admin/catalog/items/route.ts', line: 5, note: 'builds the rows' }],
+    rootCause: { explanation: '1. The route lists variants. 2. gadgetPro is a variant of widget. 3. It is also top level.', evidence: goodEvidence },
+    filesToChange: ['lib/data/variants.ts'], expectedResult: 'One gadgetPro row remains because lib/data/variants.ts:2 no longer lists it under widget.',
+    steps: ['Edit lib/data/variants.ts to remove the gadgetPro entry under widget'], ...o,
+  })}\n\`\`\``;
+  const run = (over: Partial<Parameters<typeof attemptOrchestratedIdeReply>[0]> = {}) => attemptOrchestratedIdeReply({ projectName: 'X', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'u'.repeat(24), userText: request, priorTurns: [], interactionMode: 'plan', ...over });
+  const stageOf = (args: { systemPrompt: string }) => args.systemPrompt.match(/Pipeline stage: (planner|worker|reviewer)/)![1];
+  let pack: ReturnType<typeof buildEvidencePack>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    pack = buildEvidencePack(files, request);
+    mocks.snapshot.mockResolvedValue({ ok: true, snapshot: { owner: 'o', repo: 'r', branch: 'main', commit: 'a'.repeat(40), skipped: [], files } });
+    mocks.repoDig.mockResolvedValue({ ok: true, okReads: 2, note: 'Read', toolsUsed: [], contextBlock: pack!.text, evidenceBlock: pack!.text, evidencePack: pack });
+    mocks.readSettings.mockResolvedValue({ value: readySettings });
+    mocks.execute.mockResolvedValue(null);
+    mocks.listModels.mockResolvedValue([]);
+    mocks.findObjectives.mockReturnValue(leanChain([]));
+    mocks.findRuns.mockReturnValue(leanChain([]));
+    mocks.selectModel.mockImplementation(async (_o: string, need: string) => ({
+      primary: need === 'plan' ? { profileId: 'a'.repeat(24), model: 'gemma', free: true, label: 'R' } : need === 'review' ? { profileId: 'c'.repeat(24), model: 'critic', free: true, label: 'R' } : { profileId: 'b'.repeat(24), model: 'qwen', free: true, label: 'R' },
+      fallback: null,
+    }));
+  });
+
+  afterEach(() => {
+    mocks.snapshot.mockResolvedValue({ ok: false, reason: 'no snapshot' });
+    mocks.repoDig.mockResolvedValue({ ok: true, okReads: 2, note: 'Read 2 file(s).', toolsUsed: ['repo_tree', 'repo_read'], contextBlock: 'File loadTaskRules.ts:\nexport async function loadIdeTaskRuleTexts', evidenceBlock: 'File loadTaskRules.ts:\nexport async function loadIdeTaskRuleTexts' });
+  });
+
+  const accepting = (calls: { stage: string; userText: string }[], planText: string | (() => string)) => mocks.companyChat.mockImplementation(async (args: { systemPrompt: string; userText: string }) => {
+    const stage = stageOf(args);
+    calls.push({ stage, userText: args.userText });
+    if (stage === 'planner') return { requestId: 'p', role: 'assistant', costMicros: 0, toolsUsed: ['repo_read'], text: typeof planText === 'function' ? planText() : planText };
+    if (stage === 'worker') return { requestId: 'w', role: 'assistant', costMicros: 0, toolsUsed: ['repo_read'], text: 'Confirmed app/api/admin/catalog/items/route.ts:5 builds the rows.' };
+    return { requestId: 'r', role: 'assistant', costMicros: 0, text: 'I tried to break it and could not.\n```nucleas-gate\n{"status":"accept"}\n```' };
+  });
+
+  it('publishes a verified plan with Nucleas\'s own sections: what was found, and who else reads the data', async () => {
+    const calls: { stage: string; userText: string }[] = [];
+    accepting(calls, plan());
+    const turn = await run();
+    expect(calls.map((c) => c.stage)).toEqual(['planner', 'worker', 'reviewer']);
+    expect(turn.plan?.status).toBe('ready_for_review');
+    expect(turn.plan?.markdown).toContain('## Automatic checks (from the repository)');
+    expect(turn.plan?.markdown).toContain('1 of 1 quoted lines were found in the repository');
+    // A change to the seed data reaches the public shop page too, which the plan did not say.
+    expect(turn.plan?.markdown).toContain('lib/data/variants.ts is also used by app/shop/[slug]/page.tsx, route /shop/:slug');
+    expect(calls[1].userText).toContain('1 of 1 quoted lines were found in the repository.');
+    expect(calls[1].userText).not.toContain('FAILED');
+    expect(calls[2].userText).toContain('Automated checks on the plan');
+  });
+
+  it('sends an incomplete plan back once, with exactly what is wrong, and uses the corrected one', async () => {
+    const calls: { stage: string; userText: string }[] = [];
+    let planners = 0;
+    accepting(calls, () => (++planners === 1 ? 'Plan.\n```nucleas-plan\n{"title":"Fix","summary":"Fix it","symptom":"gadgetPro is listed twice","steps":["Fix it"]}\n```' : plan()));
+    const turn = await run();
+    expect(calls.map((c) => c.stage)).toEqual(['planner', 'planner', 'worker', 'reviewer']);
+    expect(calls[1].userText).toContain('rejected by automatic checks against the repository');
+    expect(calls[1].userText).toContain('rootCause');
+    expect(calls[1].userText).toContain('Data path');
+    expect(turn.plan?.status).toBe('ready_for_review');
+    expect(turn.plan?.title).toBe('Hide duplicate variant');
+  });
+
+  it('rejects a plan whose quoted evidence is not in the repository, showing the draft and why', async () => {
+    const calls: { stage: string; userText: string }[] = [];
+    const invented = plan({ rootCause: { explanation: '1. a 2. b', evidence: [{ file: 'lib/data/variants.ts', line: 2, quote: "export const gadgetPro = { parent: 'top-level' };" }] } });
+    accepting(calls, invented);
+    const turn = await run();
+    // One correction round, then it is not spent on a Worker and Critic.
+    expect(calls.map((c) => c.stage)).toEqual(['planner', 'planner']);
+    expect(calls[1].userText).toContain('was not found in lib/data/variants.ts');
+    expect(turn.plan).toBeUndefined();
+    expect(turn.text).toContain('could not verify it, so it is not ready for review');
+    expect(turn.text).toContain('None of the code the plan quotes could be found in the repository');
+    expect(turn.text).toContain('Planner draft (unverified)');
+  });
+
+  it('rejects a plan that edits code the named page does not use, even when its quotes are real', async () => {
+    const calls: { stage: string; userText: string }[] = [];
+    accepting(calls, plan({
+      filesToChange: ['lib/settings.ts'], steps: ['Edit lib/settings.ts to drop the slug'],
+      rootCause: { explanation: '1. a 2. b', evidence: [{ file: 'lib/settings.ts', line: 1, quote: 'slug: "gadgetPro"' }] },
+      expectedResult: 'gadgetPro disappears because lib/settings.ts:1 no longer sets it.',
+    }));
+    const turn = await run();
+    expect(turn.plan).toBeUndefined();
+    expect(turn.text).toContain('are in files the named page does not use');
+    expect(turn.text).toContain('lib/settings.ts');
+  });
+
+  it('asks the Critic to be a different model from the Planner when the engine picked the same one', async () => {
+    mocks.listModels.mockResolvedValue([
+      { profileId: 'a'.repeat(24), model: 'gemma', free: true, contextTokens: 16000 },
+      { profileId: 'e'.repeat(24), model: 'other-critic', free: true, contextTokens: 16000 },
+    ]);
+    mocks.selectModel.mockImplementation(async (_o: string, need: string, _l: string, opts?: { models?: { profileId: string; model: string }[] }) => {
+      if (need === 'plan' || (need === 'review' && !opts?.models)) return { primary: { profileId: 'a'.repeat(24), model: 'gemma', free: true, label: 'R' }, fallback: null };
+      if (need === 'review') return { primary: { ...opts!.models![0], free: true, label: 'R' }, fallback: null };
+      return { primary: { profileId: 'b'.repeat(24), model: 'qwen', free: true, label: 'R' }, fallback: null };
+    });
+    const models: Record<string, string> = {};
+    mocks.companyChat.mockImplementation(async (args: { systemPrompt: string; model: string }) => {
+      const stage = stageOf(args);
+      models[stage] = args.model;
+      return { requestId: stage, role: 'assistant', costMicros: 0, text: stage === 'planner' ? plan() : stage === 'reviewer' ? 'Held.\n```nucleas-gate\n{"status":"accept"}\n```' : 'Confirmed.' };
+    });
+    await run();
+    expect(models.planner).toBe('gemma');
+    expect(models.reviewer).toBe('other-critic');
+  });
+});
+
 describe('distillPlannerBriefing', () => {
   it('distills structured nucleas-plan output for the worker', () => {
     const raw = [
@@ -553,7 +694,7 @@ describe('provider refusals during code planning', () => {
         if (input.model === 'meta/muse-spark-1.3') {
           return { requestId: 'r', role: 'status', text: 'The remote model endpoint was unreachable or returned an error. OpenRouter returned HTTP 402: requires more credits.', failureCategory: 'unavailable', debugHint: 'code=unavailable kind=http httpStatus=402' };
         }
-        return { requestId: 'p', role: 'assistant', text: 'Investigation done.', costMicros: 10 };
+        return { requestId: 'p', role: 'assistant', text: `Investigation done.\n${PLAN_FENCE}`, costMicros: 10 };
       }
       return { requestId: 'w', role: 'assistant', text: 'ok', costMicros: 0 };
     });
@@ -584,7 +725,7 @@ describe('provider refusals during code planning', () => {
         if (input.model.includes('Qwen3-VL')) {
           return { requestId: 'timeout', role: 'status', text: 'HTTP 504 (upstream timeout).', failureCategory: 'unavailable', debugHint: 'code=unavailable kind=http httpStatus=504' };
         }
-        return { requestId: 'plan', role: 'assistant', text: 'Investigation done.', costMicros: 0, noProviderFee: true };
+        return { requestId: 'plan', role: 'assistant', text: `Investigation done.\n${PLAN_FENCE}`, costMicros: 0, noProviderFee: true };
       }
       return { requestId: 'worker', role: 'assistant', text: 'ok', costMicros: 0, noProviderFee: true };
     });
@@ -616,7 +757,7 @@ describe('provider refusals during code planning', () => {
           return { requestId: 'failed', role: 'status', text: 'Local model gateway returned HTTP 500.', failureCategory: 'unavailable', debugHint: 'code=unavailable kind=http httpStatus=500 providerMessage=model not found' };
         }
       }
-      return { requestId: 'ok', role: 'assistant', text: 'Grounded plan.', costMicros: 0, noProviderFee: true };
+      return { requestId: 'ok', role: 'assistant', text: `Grounded plan.\n${PLAN_FENCE}`, costMicros: 0, noProviderFee: true };
     });
 
     await attemptOrchestratedIdeReply({ projectName: 'PlayBound', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'Remove OpenHV from OpenRA.', priorTurns: [], interactionMode: 'plan', level: 'free' });
@@ -637,7 +778,7 @@ describe('provider refusals during code planning', () => {
         expect(input.toolProfile).toBe('none');
         expect(input.forcePlain).toBe(true);
         expect(input.repoContextBlock?.length).toBeLessThanOrEqual(3_500);
-        return { requestId: 'plan', role: 'assistant', text: 'Recovered plan.', costMicros: 0 };
+        return { requestId: 'plan', role: 'assistant', text: `Recovered plan.\n${PLAN_FENCE}`, costMicros: 0 };
       }
       return { requestId: 'ok', role: 'assistant', text: 'Verified.', costMicros: 0 };
     });

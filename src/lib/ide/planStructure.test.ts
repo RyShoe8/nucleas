@@ -96,3 +96,19 @@ describe('plan documents', () => {
     expect(plannedFiles({ steps: ['Edit src/a.ts and update docs/readme.md'], structured: { filesToChange: ['src/b.ts'] } })).toEqual(['src/b.ts', 'src/a.ts', 'docs/readme.md']);
   });
 });
+
+describe('recomposing a plan', () => {
+  it('adds Nucleas\'s own sections and marks quotes that were not found, keeping the model\'s details', async () => {
+    const { recomposePlan } = await import('@/lib/ide/parseNucleasPlan');
+    const raw = `Some explanation the model wrote.\n\`\`\`nucleas-plan\n${JSON.stringify(full)}\n\`\`\``;
+    const { plan } = parseNucleasPlan(raw)!;
+    const next = recomposePlan(plan, { extraSections: '## Automatic checks (from the repository)\n\n- 1 of 2 quoted lines were found.', notFound: new Set(["{ parent: 'widget', slug: 'gadgetPro' },"]) });
+    expect(next.markdown).toContain("`lib/data/variants.ts:2`: `{ parent: 'widget', slug: 'gadgetPro' },` — ⚠ not found in the repository");
+    expect(next.markdown).toContain('## Automatic checks (from the repository)');
+    expect(next.markdown).toContain('## Details & Architecture\n\nSome explanation the model wrote.');
+    // The automatic section sits after the structured ones and before the free text.
+    expect(next.markdown.indexOf('## Unverified')).toBeLessThan(next.markdown.indexOf('## Automatic checks'));
+    expect(next.markdown.indexOf('## Automatic checks')).toBeLessThan(next.markdown.indexOf('## Details & Architecture'));
+    expect(plan.markdown).not.toContain('not found in the repository');
+  });
+});

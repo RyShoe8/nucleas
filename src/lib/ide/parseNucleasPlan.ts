@@ -1,5 +1,22 @@
 import type { IdePlanDocument } from '@/lib/ide/idePlan';
-import { parseStructuredPlan, renderStructuredSections } from '@/lib/ide/planStructure';
+import { parseStructuredPlan, renderStructuredSections, type StructuredPlan } from '@/lib/ide/planStructure';
+
+/** The plan document as markdown: title, summary, steps, the structured sections, Nucleas's own sections, then details. */
+export function composePlanMarkdown(parts: { title: string; summary: string; steps: string[]; structured?: StructuredPlan; details?: string; extraSections?: string; notFound?: Set<string> }): string {
+  return [
+    `# ${parts.title}`,
+    parts.summary,
+    parts.steps.length ? parts.steps.map((step, index) => `${index + 1}. ${step}`).join('\n') : '',
+    renderStructuredSections(parts.structured, { notFound: parts.notFound }),
+    parts.extraSections ?? '',
+    parts.details ? `## Details & Architecture\n\n${parts.details}` : '',
+  ].filter(Boolean).join('\n\n').slice(0, 24000);
+}
+
+/** Adds Nucleas's own sections to a plan and marks quotes that were not found, keeping everything else. */
+export function recomposePlan(plan: IdePlanDocument, options: { extraSections?: string; notFound?: Set<string> }): IdePlanDocument {
+  return { ...plan, markdown: composePlanMarkdown({ title: plan.title, summary: plan.summary === plan.title ? '' : plan.summary, steps: plan.steps, structured: plan.structured, details: plan.details, ...options }) };
+}
 
 const FENCE_RE = /```nucleas-plan\s*([\s\S]*?)```/i;
 const JSON_FENCE_RE = /```(?:json)?\s*([\s\S]*?)```/i;
@@ -50,22 +67,16 @@ export function parseNucleasPlan(raw: string): {
     'Plan ready to review in the center pane. Approve it when you want me to build.';
 
   const structured = parseStructuredPlan(record);
-  const markdownParts = [
-    `# ${title}`,
-    summary ? summary : '',
-    steps.length ? steps.map((step, index) => `${index + 1}. ${step}`).join('\n') : '',
-    renderStructuredSections(structured),
-    withoutFence ? `## Details & Architecture\n\n${withoutFence}` : '',
-  ].filter(Boolean);
 
   return {
     plan: {
       title: title.slice(0, 200),
       summary: (summary || title).slice(0, 2000),
       steps: steps.map((step) => step.slice(0, 500)),
-      markdown: markdownParts.join('\n\n').slice(0, 24000),
+      markdown: composePlanMarkdown({ title, summary, steps, structured, details: withoutFence }),
       status: 'ready_for_review',
       ...(structured ? { structured } : {}),
+      ...(withoutFence ? { details: withoutFence } : {}),
     },
     displayText: displayText.slice(0, 24000),
   };
