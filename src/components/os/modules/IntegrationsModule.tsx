@@ -9,6 +9,7 @@ import { useOsCompanies } from './CompaniesModule';
 import ResourcePicker from './ResourcePicker';
 import WebhookSetup from './WebhookSetup';
 import CodeRepositories from './CodeRepositories';
+import TestAccount from './TestAccount';
 
 const PINNABLE_PROVIDERS: Record<string, string> = { ga4: 'Choose property', gsc: 'Choose site', ahrefs: 'Choose project', adsense: 'Choose site' };
 
@@ -103,6 +104,7 @@ function CompanyIntegrations({ companyId }: { companyId: string }) {
             </p>
             <ConnectionsSection companyId={detail.company.id} connections={detail.connections} onChanged={reload} />
             <CodeRepositories companyId={detail.company.id} />
+            <TestAccount companyId={detail.company.id} defaultDomain={detail.company.domain} />
         </div>
     );
 }

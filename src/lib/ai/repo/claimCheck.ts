@@ -310,6 +310,8 @@ export function automaticPlanSections(input: {
   remaining?: string[];
   /** How the run went, e.g. how many correction rounds ran. */
   notes?: string[];
+  /** The live page's lines around the request's names, as seen with the test account. */
+  observed?: { url: string; windows: string };
 }): string {
   const out: string[] = [];
   const { check } = input;
@@ -329,6 +331,7 @@ export function automaticPlanSections(input: {
   for (const note of input.notes ?? []) lines.push(`- ${note}`);
   for (const issue of input.remaining ?? []) lines.push(`- Still open: ${issue}`);
   if (lines.length) out.push(`## Automatic checks (from the repository)\n\n${lines.join('\n')}`);
+  if (input.observed) out.push(`## What the live page showed (test account, read-only)\n\n${input.observed.url}\n\n\`\`\`\n${input.observed.windows}\n\`\`\``);
   if (input.contexts?.length) out.push(`## Code around the quoted lines\n\n${input.contexts.slice(0, 3).map((c) => `\`${c.file}:${c.line}\`\n\`\`\`\n${c.snippet}\n\`\`\`${c.entry ? `\n${c.entry}` : ''}`).join('\n\n')}`);
   return out.join('\n\n');
 }

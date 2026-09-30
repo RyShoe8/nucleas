@@ -114,6 +114,124 @@ async function navigate(url: string, maxChars: number) {
   }
 }
 
+
+type Locator = {
+  first: () => Locator;
+  count: () => Promise<number>;
+  fill: (value: string, o?: { timeout: number }) => Promise<void>;
+  click: (o?: { timeout: number }) => Promise<void>;
+  press: (key: string, o?: { timeout: number }) => Promise<void>;
+  isVisible: (o?: { timeout: number }) => Promise<boolean>;
+};
+type ObservePage = {
+  goto: (u: string, o: { waitUntil: string; timeout: number }) => Promise<unknown>;
+  title: () => Promise<string>;
+  evaluate: <T>(fn: (() => T) | string) => Promise<T>;
+  url: () => string;
+  locator: (selector: string) => Locator;
+  waitForLoadState: (state: string, o?: { timeout: number }) => Promise<void>;
+};
+
+export interface ObserveInput {
+  /** https origin of the site; the account is only ever used there. */
+  baseUrl: string;
+  url: string;
+  username: string;
+  password: string;
+  maxChars?: number;
+}
+
+export interface ObserveResult {
+  url: string;
+  title: string;
+  loggedIn: boolean;
+  text: string;
+  note: string;
+}
+
+const PASSWORD_FIELD = 'input[type="password"]';
+const USER_FIELDS = 'input[type="email"], input[autocomplete="username"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[id*="user" i], input[id*="email" i], input[type="text"]';
+
+/**
+ * Opens one page of a company's own site with its test account and returns the page text. Read-only by
+ * construction: it logs in once, then aborts every request that is not GET/HEAD, and it never leaves the
+ * site's origin. The password is used to fill the form and appears in no return value or log.
+ */
+export async function observeAuthenticated(input: ObserveInput, options: { allowInsecure?: boolean; executablePath?: string } = {}): Promise<ObserveResult> {
+  const origin = new URL(input.baseUrl);
+  const target = new URL(input.url);
+  if (target.origin !== origin.origin) throw new Error('The page is outside the account\u2019s site.');
+  if (!options.allowInsecure && (!isSafePublicHttpsUrl(origin.toString()) || !isSafePublicHttpsUrl(target.toString()))) throw new Error('Unsafe URL');
+  const playwright = (await import(/* webpackIgnore: true */ 'playwright' as string)) as {
+    chromium: {
+      launch: (opts: Record<string, unknown>) => Promise<{
+        newContext: () => Promise<{
+          newPage: () => Promise<ObservePage>;
+          route: (glob: string, handler: (route: { request: () => { method: () => string; isNavigationRequest: () => boolean; url: () => string }; abort: () => Promise<void>; continue: () => Promise<void> }) => Promise<void>) => Promise<void>;
+        }>;
+        close: () => Promise<void>;
+      }>;
+    };
+  };
+  const browser = await playwright.chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    ...(options.executablePath ? { executablePath: options.executablePath } : {}),
+  });
+  try {
+    const context = await browser.newContext();
+    // Nothing can be changed: only reads go out. The one exception is the login form's own submission
+    // (a top-level navigation, once); scripts on the page cannot send writes even while logging in.
+    let loginSubmit = false;
+    await context.route('**/*', async (route) => {
+      const request = route.request();
+      const method = request.method();
+      if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return route.continue();
+      if (loginSubmit && request.isNavigationRequest()) {
+        loginSubmit = false;
+        return route.continue();
+      }
+      return route.abort();
+    });
+    const page = await context.newPage();
+    await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 30000 });
+    let loggedIn = true;
+    let note = 'Opened without logging in.';
+    const password = page.locator(PASSWORD_FIELD).first();
+    if ((await password.count()) > 0 && (await password.isVisible({ timeout: 3000 }).catch(() => false))) {
+      note = 'Logged in with the test account.';
+      const user = page.locator(USER_FIELDS).first();
+      if ((await user.count()) > 0) await user.fill(input.username, { timeout: 5000 });
+      await password.fill(input.password, { timeout: 5000 });
+      const submit = page.locator('form:has(input[type="password"]) button[type="submit"], form:has(input[type="password"]) input[type="submit"]').first();
+      loginSubmit = true;
+      if ((await submit.count()) > 0) await submit.click({ timeout: 5000 });
+      else await password.press('Enter', { timeout: 5000 });
+      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => undefined);
+      if (new URL(page.url()).pathname !== target.pathname) await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => undefined);
+      const stillLogin = page.locator(PASSWORD_FIELD).first();
+      if ((await stillLogin.count()) > 0 && (await stillLogin.isVisible({ timeout: 1000 }).catch(() => false))) {
+        loggedIn = false;
+        note = 'The login form is still showing: the test account was not accepted.';
+      }
+    }
+    const finalUrl = page.url();
+    if (new URL(finalUrl).origin !== origin.origin) throw new Error('Redirected outside the site.');
+    const title = await page.title();
+    const raw = await page.evaluate('document.body ? document.body.innerText : ""');
+    return {
+      url: finalUrl,
+      title: title.slice(0, 200),
+      loggedIn,
+      note,
+      text: String(raw ?? '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, Math.min(Math.max(Number(input.maxChars) || 20000, 1000), 40000)),
+    };
+  } finally {
+    await browser.close();
+  }
+}
+
 export function startBrowserWorkerServer() {
   if (SECRET.length < 16) {
     throw new Error('NUCLEAS_BROWSER_WORKER_SECRET must be at least 16 characters.');
@@ -126,7 +244,7 @@ export function startBrowserWorkerServer() {
         res.end(JSON.stringify({ ok: true }));
         return;
       }
-      if (req.method !== 'POST' || req.url !== '/navigate') {
+      if (req.method !== 'POST' || (req.url !== '/navigate' && req.url !== '/observe')) {
         res.writeHead(404);
         res.end();
         return;
@@ -135,6 +253,18 @@ export function startBrowserWorkerServer() {
       if (auth !== `Bearer ${SECRET}`) {
         res.writeHead(401);
         res.end();
+        return;
+      }
+      if (req.url === '/observe') {
+        const b = JSON.parse(await readBody(req, 16_000)) as Partial<ObserveInput>;
+        if (typeof b.baseUrl !== 'string' || typeof b.url !== 'string' || typeof b.username !== 'string' || typeof b.password !== 'string') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid request' }));
+          return;
+        }
+        const result = await observeAuthenticated({ baseUrl: b.baseUrl, url: b.url, username: b.username, password: b.password, maxChars: b.maxChars });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
         return;
       }
       const raw = await readBody(req, 16_000);
@@ -150,7 +280,8 @@ export function startBrowserWorkerServer() {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     } catch (err) {
-      console.error('navigate error', err);
+      // Never log the request body: /observe carries a password.
+      console.error('browser worker error', err instanceof Error ? err.message : 'unknown');
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'navigate_failed' }));
     }

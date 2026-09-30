@@ -644,6 +644,33 @@ describe('plans are checked against the repository', () => {
     expect(calls[3].userText).toContain('The code around each quoted line');
   });
 
+  it('shows the planner, Worker and Critic what the live page shows, and puts it in the plan', async () => {
+    const calls: { stage: string; userText: string; repoContextBlock?: string }[] = [];
+    mocks.companyChat.mockImplementation(async (args: { systemPrompt: string; userText: string; repoContextBlock?: string }) => {
+      const stage = stageOf(args);
+      calls.push({ stage, userText: args.userText, repoContextBlock: args.repoContextBlock });
+      if (stage === 'planner') return { requestId: 'p', role: 'assistant', costMicros: 0, toolsUsed: ['repo_read'], text: plan() };
+      if (stage === 'worker') return { requestId: 'w', role: 'assistant', costMicros: 0, toolsUsed: ['repo_read'], text: 'Confirmed app/api/admin/catalog/items/route.ts:5 builds the rows.' };
+      return { requestId: 'r', role: 'assistant', costMicros: 0, text: 'Tried to break it.\n```nucleas-gate\n{"status":"accept"}\n```' };
+    });
+    const page = 'Catalog\nWidget\nVariants\ngadgetPro\nOther\nStandalone\ngadgetPro\nOrder 4111 1111 1111 1111 for jane@example.com';
+    const turn = await run({ observedPage: { url: 'https://example.com/admin/catalog', title: 'Catalog', text: page } });
+    expect(calls[0].repoContextBlock).toContain('What the page shows right now');
+    expect(calls[0].repoContextBlock).toContain('> gadgetPro');
+    expect(calls[0].repoContextBlock).not.toContain('jane@example.com');
+    expect(calls.find((c) => c.stage === 'reviewer')!.userText).toContain('What the page shows right now');
+    expect(turn.plan?.markdown).toContain('## What the live page showed');
+    expect(turn.plan?.markdown).not.toContain('4111');
+  });
+
+  it('says in the plan when the live page could not be opened, and carries on with the code alone', async () => {
+    const calls: { stage: string; userText: string }[] = [];
+    accepting(calls, plan());
+    const turn = await run({ observedPage: { failure: 'The test account was not accepted.' } });
+    expect(turn.plan?.status).toBe('ready_for_review');
+    expect(turn.plan?.markdown).toContain('The live page could not be opened with the test account (The test account was not accepted.)');
+  });
+
   it('does not publish a plan that still contradicts itself after the correction rounds, and hands the second round to another model', async () => {
     const calls: { stage: string; userText: string; model?: string }[] = [];
     const contradictory = plan({ steps: ["Remove the entry with slug 'gadgetPro' in lib/data/variants.ts.", "Verify the 'gadgetPro' entry at line 2 of lib/data/variants.ts remains unchanged."] });

@@ -80,3 +80,54 @@ export async function browserNavigate(
     options.signal?.removeEventListener('abort', cancel);
   }
 }
+
+export type BrowserObserveResult = { url: string; title: string | null; loggedIn: boolean; text: string; note: string };
+
+/**
+ * Open one page of a company's own site with its test account (read-only) through the browser worker.
+ * The worker never returns the password; nothing here logs the request body.
+ */
+export async function browserObserve(
+  input: { baseUrl: string; url: string; username: string; password: string },
+  options: { signal?: AbortSignal; fetcher?: typeof fetch; timeoutMs?: number } = {}
+): Promise<BrowserObserveResult> {
+  if (!isBrowserWorkerConfigured()) {
+    throw new Error('Browser worker is not configured (set NUCLEAS_BROWSER_WORKER_URL and NUCLEAS_BROWSER_WORKER_SECRET).');
+  }
+  const base = assertSafePublicHttpsUrl(input.baseUrl);
+  const target = assertSafePublicHttpsUrl(input.url);
+  if (base.origin !== target.origin) throw new Error('The page is outside the test account’s site.');
+  const workerBase = process.env.NUCLEAS_BROWSER_WORKER_URL!.replace(/\/+$/, '');
+  const workerUrl = assertSafePublicHttpsUrl(`${workerBase}/observe`);
+  const secret = process.env.NUCLEAS_BROWSER_WORKER_SECRET!.trim();
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  if (options.signal?.aborted) throw new Error('Browser observe cancelled.');
+  options.signal?.addEventListener('abort', cancel, { once: true });
+  const timeout = setTimeout(cancel, options.timeoutMs ?? 60000);
+  try {
+    const response = await (options.fetcher ?? fetch)(workerUrl, {
+      method: 'POST',
+      redirect: 'error',
+      cache: 'no-store',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+      body: JSON.stringify({ baseUrl: base.origin, url: target.toString(), username: input.username, password: input.password, maxChars: 20000 }),
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error('The browser worker could not open the page with the test account (is it up to date?).');
+    }
+    const body = (await response.json()) as { url?: string; title?: string | null; loggedIn?: boolean; text?: string; note?: string };
+    return {
+      url: typeof body.url === 'string' ? body.url : target.toString(),
+      title: typeof body.title === 'string' ? body.title.slice(0, 200) : null,
+      loggedIn: body.loggedIn === true,
+      text: typeof body.text === 'string' ? body.text.slice(0, 40000) : '',
+      note: typeof body.note === 'string' ? body.note.slice(0, 300) : '',
+    };
+  } finally {
+    clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', cancel);
+  }
+}

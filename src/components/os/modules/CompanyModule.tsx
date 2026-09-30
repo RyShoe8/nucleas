@@ -8,6 +8,7 @@ import CompanySnapshot from './CompanySnapshot';
 import { setAssistantFocus } from '@/lib/os/assistantFocus';
 import CompanyActivity from './CompanyActivity';
 import CodeRepositories from './CodeRepositories';
+import TestAccount from './TestAccount';
 import CompanyChanges from './CompanyChanges';
 
 export default function CompanyModule({ payload }: ModuleRenderContext) {
@@ -75,6 +76,7 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
             />
             <ProjectsSection projects={projects} />
             <CodeRepositories companyId={company.id} compact />
+            <TestAccount companyId={company.id} defaultDomain={company.domain} />
             <CompanyChanges companyId={company.id} />
             <CompanyActivity companyId={company.id} refreshKey={activityKey} />
             <IntegrationsSummary companyId={company.id} companyName={company.name} connections={connections} />

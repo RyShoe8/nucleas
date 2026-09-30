@@ -64,3 +64,12 @@ plan's files against a real change for evaluating full model runs.
 - **Hard blocks:** a plan that still has a wrong line claim or a step that contradicts another after the correction rounds is not published for approval; the draft and the reasons are shown instead.
 - **Second opinion:** the second correction round goes to the worker-model (a different model), and is given time before the Worker and Critic are.
 - **Honest sections:** "None found" side effects and "Nothing outstanding" unverified are replaced with `NOT ASSESSED` when the checks found readers or stored data the plan ignored; the plan also states how many correction rounds ran.
+
+## Live page observation (test account)
+
+A company can have a **test account** (Company and Integrations windows → "Test account (live page)"): a low-privilege login on its own site. When Ask plans a change and the request names a page on that site, Nucleas opens that page read-only in the browser worker before planning and shows the planner, Worker and Critic the lines around the request's names (emails and long numbers masked) as "What the page shows right now"; the same lines are saved in the plan.
+
+- The password is sealed with a purpose-scoped key, never returned by any API, never given to a model, and never logged.
+- The worker (`services/ai-runtime/browserWorker.ts`, `/observe`) logs in once, then aborts every request that is not GET/HEAD/OPTIONS (only the login form's own submission is allowed) and refuses to leave the account's origin. **Redeploy the browser worker to get `/observe`.**
+- Time-boxed to 30 s; if the page cannot be opened the plan says so and continues from the code.
+- `services/ai-runtime/browserWorker.observe.test.ts` drives a real headless Chromium against a local site (skipped when Playwright/Chromium is not installed).

@@ -30,6 +30,8 @@ import { projectGuide } from '@/lib/ai/repo/projectGuide';
 import { shortModel, type ProgressFn } from '@/lib/ai/progress';
 import { checkNoChangeClaim, claimsNothingFound } from '@/lib/ai/repo/noChangeGuard';
 import { planTemplateRequest } from '@/lib/ai/repo/planTemplate';
+import { identifierTerms } from '@/lib/ai/repo/digSelect';
+import { observedWindows, renderObservedPage } from '@/lib/ai/repo/observedPage';
 import { evaluateDefinitionOfDone, formatDefinitionOfDone, type DodResult } from '@/lib/ai/definitionOfDone';
 import { summarizeStageTools, type PipelineStage, type StageToolRecord } from '@/lib/ai/stageTools';
 import { dedupeEvidenceReceipts, type RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
@@ -365,6 +367,8 @@ export async function attemptOrchestratedIdeReply(input: {
    * instead of nothing.
    */
   budgetMs?: number;
+  /** The page the request names, opened read-only with the company's test account (or why it could not be). */
+  observedPage?: { url: string; title: string | null; text: string } | { failure: string };
 }): Promise<TeamChatTurn> {
   const startedAt = Date.now();
   const budgetMs = input.budgetMs ?? Infinity;
@@ -432,6 +436,8 @@ export async function attemptOrchestratedIdeReply(input: {
   let repoEvidenceReceipts: RepositoryEvidenceReceipt[] = [];
   /** Facts traced from the code before any model runs (data path, quotable lines, other readers). */
   let evidencePack: EvidencePack | undefined;
+  let observedBlock = '';
+  let observedWindowText = '';
   // Plan and Build are repository workflows even when the user's wording does not explicitly say
   // "codebase" or "repository" (for example, "remove OpenHV from the OpenRA listing"). Always
   // prepare bounded evidence so tool-free recovery can remain grounded.
@@ -469,6 +475,16 @@ export async function attemptOrchestratedIdeReply(input: {
       if (block) repoContextBlock = block.slice(0, repoBudgetChars);
       repoEvidenceReceipts = dig.evidenceReceipts ?? [];
       evidencePack = dig.evidencePack;
+      if (input.observedPage && 'text' in input.observedPage) {
+        const seen = input.observedPage;
+        const found = observedWindows(seen.text, evidencePack?.terms ?? identifierTerms(input.userText));
+        observedBlock = renderObservedPage({ url: seen.url, title: seen.title, ...found });
+        observedWindowText = found.matches ? found.windows : '';
+        repoContextBlock = [repoContextBlock ?? '', observedBlock].filter(Boolean).join('\n\n');
+        input.onProgress?.(found.matches ? `The live page shows ${found.matches} line${found.matches === 1 ? '' : 's'} mentioning the request` : 'Opened the live page; it does not mention the request\u2019s names');
+      } else if (input.observedPage) {
+        input.onProgress?.(`Could not open the live page: ${input.observedPage.failure}`);
+      }
     } catch {
       return statusTurn(
         'Repository dig failed before orchestra could start. Check GitHub bind/App connection and retry.',
@@ -784,7 +800,7 @@ export async function attemptOrchestratedIdeReply(input: {
       : '';
     return (lines.length
       ? ['Automated checks on the plan (run by Nucleas against the repository):', ...lines.map((l) => `- ${l}`)].join('\n')
-      : 'Automated checks on the plan (run by Nucleas against the repository): every quoted line was found and the edits are on the named page\u2019s data path.') + context;
+      : 'Automated checks on the plan (run by Nucleas against the repository): every quoted line was found and the edits are on the named page\u2019s data path.') + context + (observedBlock ? `\n\n${observedBlock}\nCheck that the plan explains every row shown here, and that its change would remove the unwanted row without removing the wanted ones.` : '');
   })();
 
   // Preserve paid planning work without exposing an unverified, approvable plan.
@@ -824,7 +840,7 @@ export async function attemptOrchestratedIdeReply(input: {
     }
     const open = planAssessment.extra;
     const contexts = planAssessment.contexts;
-    const notes = [correctionRounds || correctionSkipped ? `Planner correction rounds run: ${correctionRounds} of 2${correctionSkipped ? ' (the rest were skipped: out of time)' : ''}${planAssessment.issues.length ? `; ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} still open` : ''}.` : ''].filter(Boolean);
+    const notes = [input.observedPage && 'failure' in input.observedPage ? `The live page could not be opened with the test account (${input.observedPage.failure}), so the plan is based on the code alone.` : '', correctionRounds || correctionSkipped ? `Planner correction rounds run: ${correctionRounds} of 2${correctionSkipped ? ' (the rest were skipped: out of time)' : ''}${planAssessment.issues.length ? `; ${planAssessment.issues.length} problem${planAssessment.issues.length === 1 ? '' : 's'} still open` : ''}.` : ''].filter(Boolean);
     return safely(() => recomposePlan(planned, {
       extraSections: automaticPlanSections({
         check: verified,
@@ -834,6 +850,7 @@ export async function attemptOrchestratedIdeReply(input: {
         contexts,
         remaining: open,
         notes,
+        observed: observedWindowText ? { url: input.observedPage && 'url' in input.observedPage ? input.observedPage.url : '', windows: observedWindowText } : undefined,
       }),
       notFound: new Set(verified.unverified.map((u) => u.evidence.quote)),
     }), planned);
