@@ -3,7 +3,7 @@ import User from '@/lib/models/User';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { listAvailableModels, shortlistModels } from '@/lib/ai/engine/catalog';
 import { activeHealthIssues } from '@/lib/ai/engine/health';
-import { listModelChecks, queueModelChecks, runQueuedModelChecks } from '@/lib/ai/engine/modelChecks';
+import { cancelModelChecks, listModelChecks, queueModelChecks, runQueuedModelChecks } from '@/lib/ai/engine/modelChecks';
 import { BENCHMARK_SOURCE, benchmarkRows, benchmarkStatus, saveBenchmarkKey } from '@/lib/ai/engine/benchmarks';
 import { buildRanking } from '@/lib/ai/engine/rankings';
 import { COST_LEVELS, NEED_LABELS, NEEDS, isCostLevel, isPriceCeiling, rankPaid, readEngineSettings, saveEngineSettings, selectModel, type Need } from '@/lib/ai/engine/select';
@@ -102,6 +102,7 @@ export async function POST(request: NextRequest) {
   const viewer = await requireAdmin(request);
   if (viewer instanceof NextResponse) return viewer;
   const body = (await request.json().catch(() => ({}))) as { action?: unknown };
+  if (body.action === 'cancel_checks') return NextResponse.json({ ok: true, cancelled: await cancelModelChecks() });
   if (body.action !== 'run_checks') return NextResponse.json({ error: 'Unknown action.' }, { status: 400 });
   const queued = await queueModelChecks();
   if (queued === 0) return NextResponse.json({ error: 'No free models are available to check.' }, { status: 400 });

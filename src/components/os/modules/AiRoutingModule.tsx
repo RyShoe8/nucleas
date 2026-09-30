@@ -86,6 +86,7 @@ interface CheckRow {
     notes: string[];
     toolMode: 'native' | 'prompted' | null;
     stagesDone: number;
+    stepDetail: string | null;
     error: string | null;
 }
 
@@ -231,7 +232,7 @@ const pct = (v: number | null) => (v === null ? '–' : `${Math.round(v * 100)}%
 const yesNo = (v: boolean | null) => (v === null ? '?' : v ? 'yes' : 'no');
 
 /** Nucleas measures its free models by running them; selection ranks Rogly models by these scores. */
-function FreeModelChecks({ rows, onRun }: { rows: CheckRow[]; onRun: () => Promise<void> }) {
+function FreeModelChecks({ rows, onRun, onCancel }: { rows: CheckRow[]; onRun: () => Promise<void>; onCancel: () => Promise<void> }) {
     const [busy, setBusy] = useState(false);
     const [open, setOpen] = useState<string | null>(null);
     const active = rows.some((r) => r.status === 'queued' || r.status === 'running');
@@ -239,6 +240,22 @@ function FreeModelChecks({ rows, onRun }: { rows: CheckRow[]; onRun: () => Promi
         <section className="space-y-2">
             <div className="flex items-center justify-between gap-2">
                 <h2 className="text-sm font-semibold">Free model checks</h2>
+                <div className="flex items-center gap-2">
+                {active ? (
+                    <button
+                        type="button"
+                        disabled={busy}
+                        onClick={async () => {
+                            setBusy(true);
+                            await onCancel();
+                            setBusy(false);
+                        }}
+                        title="Stops queued and running checks. A running one stops at its next step; earlier scores stay in use."
+                        className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card disabled:opacity-50"
+                    >
+                        Cancel checks
+                    </button>
+                ) : null}
                 <button
                     type="button"
                     disabled={busy || active}
@@ -251,6 +268,7 @@ function FreeModelChecks({ rows, onRun }: { rows: CheckRow[]; onRun: () => Promi
                 >
                     {active ? 'Checking…' : busy ? 'Starting…' : 'Run checks'}
                 </button>
+                </div>
             </div>
             <p className="text-[11px] text-text-secondary">
                 Nucleas runs each free model through tests of the work Ask gives it: forced JSON, sorting requests (including follow-ups) into questions, code changes and jobs, calling the right tool with exact arguments over several steps, exact code edits, and answering only from given
@@ -281,7 +299,7 @@ function FreeModelChecks({ rows, onRun }: { rows: CheckRow[]; onRun: () => Promi
                                             {short(r.model)}
                                         </button>
                                         <div className="text-[10px] text-text-secondary">
-                                            {r.status === 'queued' ? (r.stagesDone ? `${r.stagesDone} of 5 parts done · continues shortly` : 'queued') : r.status === 'running' ? `checking now · ${r.stagesDone} of 5 parts done` : r.status === 'failed' ? <span className="text-amber-400">failed: {r.error}{r.checkedAt ? ` · scores are from the last good check (${new Date(r.checkedAt).toLocaleString()})` : ''}</span> : r.checkedAt ? `checked ${new Date(r.checkedAt).toLocaleString()}` : ''}
+                                            {r.status === 'queued' ? (r.stagesDone || r.stepDetail ? `${r.stagesDone} of 5 parts done${r.stepDetail ? ` · ${r.stepDetail}` : ''} · continues shortly` : 'queued') : r.status === 'running' ? `checking now · ${r.stagesDone} of 5 parts done${r.stepDetail ? ` · ${r.stepDetail}` : ''}` : r.status === 'failed' ? <span className="text-amber-400">failed: {r.error}{r.checkedAt ? ` · scores are from the last good check (${new Date(r.checkedAt).toLocaleString()})` : ''}</span> : r.checkedAt ? `checked ${new Date(r.checkedAt).toLocaleString()}` : ''}
                                         </div>
                                         {open === key && r.notes.length ? (
                                             <ul className="mt-1 text-[10px] text-text-secondary list-disc pl-4">
@@ -395,6 +413,13 @@ export default function AiRoutingModule() {
         reload();
     };
 
+    const cancelChecks = async () => {
+        const res = await fetch('/api/os/ai-engine', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'cancel_checks' }) });
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(res.ok ? null : body.error ?? `Failed (${res.status})`);
+        reload();
+    };
+
     if (!data) return <div className="p-4 text-sm text-text-secondary">{error ?? 'Loading…'}</div>;
 
     return (
@@ -458,7 +483,7 @@ export default function AiRoutingModule() {
                 </section>
             ) : null}
 
-            <FreeModelChecks rows={data.checks} onRun={runChecks} />
+            <FreeModelChecks rows={data.checks} onRun={runChecks} onCancel={cancelChecks} />
 
             <section className="space-y-2">
                 <h2 className="text-sm font-semibold">Benchmark ranking</h2>

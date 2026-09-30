@@ -84,16 +84,7 @@ const clip = (text: string, n = 100) => text.replace(/\s+/g, ' ').trim().slice(0
 export const CHECK_STAGES = ['json', 'routing', 'tools', 'grounded', 'code'] as const;
 export type CheckStage = (typeof CHECK_STAGES)[number];
 
-/** Rough model calls per stage (tools may run twice: native, then prompted), to fit stages into the time left. */
-const STAGE_CALLS: Record<CheckStage, number> = {
-  json: 2,
-  routing: ROUTING_CASES.length,
-  tools: TOOL_CASES.length * 2,
-  grounded: GROUNDED_CASES.length,
-  code: EDIT_CASES.length,
-};
-
-/** Everything measured so far; saved after each stage so a check cut off mid-way resumes. */
+/** Everything measured so far; saved after each case so a check cut off mid-way resumes where it stopped. */
 export interface CheckProgress {
   done: CheckStage[];
   supports: { jsonSchema: boolean; jsonObject: boolean; tools: boolean };
@@ -108,6 +99,17 @@ export interface CheckProgress {
   coded: number[];
   /** Gateway timeouts survived so far; the check is re-queued instead of failed until this runs out. */
   transientRetries?: number;
+  /** Cases already finished in the stage that is in progress, so a run cut off mid-stage resumes there. */
+  cursor?: { stage: CheckStage; index: number };
+  /** The tools stage's two-phase state (native, then tools described in the prompt), saved between cases. */
+  toolRun?: ToolRun;
+}
+
+export interface ToolSeed { results: number[]; notes: string[]; accepted: boolean; halted: boolean }
+export interface ToolRun {
+  mode: ToolMode;
+  seed: ToolSeed;
+  native?: { score: number; notes: string[]; accepted: boolean };
 }
 
 export function newProgress(): CheckProgress {
@@ -127,7 +129,23 @@ export function newProgress(): CheckProgress {
 }
 
 /** Runs one stage against one model, adding its results to the progress. Transport failures propagate. */
-export async function runCheckStage(caller: CheckCaller, stage: CheckStage, p: CheckProgress, onProgress?: (text: string) => void): Promise<void> {
+export interface StageHooks {
+  /** Called after every finished case so the caller can save progress. */
+  onStep?: () => Promise<void>;
+  /** Asked before every model call; false pauses the stage (progress is kept) to fit a time budget. */
+  canCall?: () => boolean;
+}
+
+/**
+ * Runs one stage, one case at a time. Returns 'paused' when `canCall` said stop: the stage's finished
+ * cases are recorded in `p.cursor` and the next run continues from there instead of starting over.
+ */
+export async function runCheckStage(caller: CheckCaller, stage: CheckStage, p: CheckProgress, onProgress?: (text: string) => void, hooks: StageHooks = {}): Promise<'done' | 'paused'> {
+  const startAt = p.cursor?.stage === stage ? p.cursor.index : 0;
+  const finishCase = async (index: number) => {
+    p.cursor = { stage, index: index + 1 };
+    await hooks.onStep?.();
+  };
   switch (stage) {
     case 'json': {
       // Forced JSON: schema-guided first, then any-object, then prompt only.
@@ -156,7 +174,9 @@ export async function runCheckStage(caller: CheckCaller, stage: CheckStage, p: C
     case 'routing': {
       // The real Direct-mode router prompt: route and company both count.
       onProgress?.('Checking request routing');
-      for (const item of ROUTING_CASES) {
+      for (let i = startAt; i < ROUTING_CASES.length; i += 1) {
+        if (hooks.canCall && !hooks.canCall()) return 'paused';
+        const item = ROUTING_CASES[i];
         const reply = await caller.plain(
           [
             { role: 'system', content: routerPrompt(CHECK_COMPANIES, CHECK_CODE_COMPANIES) },
@@ -171,6 +191,7 @@ export async function runCheckStage(caller: CheckCaller, stage: CheckStage, p: C
         const companyOk = decision ? decision.company === item.company : false;
         p.routed.push(routeOk ? (companyOk ? 1 : 0.5) : 0);
         if (!routeOk || !companyOk) p.notes.push(`Routing "${clip(item.text, 50)}": got ${decision ? `${decision.route} / ${decision.company ?? 'none'}` : 'no decision'}, expected ${item.route} / ${item.company ?? 'none'}.`);
+        await finishCase(i);
       }
       break;
     }
@@ -179,15 +200,16 @@ export async function runCheckStage(caller: CheckCaller, stage: CheckStage, p: C
       // The provider's tools parameter first; when that misses, tools described in the prompt
       // (hosts whose chat template drops tools). Chats use whichever mode scored better.
       onProgress?.('Checking tool calls');
-      const runToolCases = async (mode: ToolMode) => {
-        const results: number[] = [];
-        const modeNotes: string[] = [];
-        let accepted = false;
-        for (const item of TOOL_CASES) {
+      const emptySeed = (): ToolSeed => ({ results: [], notes: [], accepted: false, halted: false });
+      const run: ToolRun = (p.toolRun ??= { mode: 'native', seed: emptySeed() });
+      const runToolCases = async (mode: ToolMode, seed: ToolSeed): Promise<'paused' | { score: number; notes: string[]; accepted: boolean }> => {
+        for (let i = seed.results.length; i < TOOL_CASES.length && !seed.halted; i += 1) {
+          if (hooks.canCall && !hooks.canCall()) return 'paused';
+          const item = TOOL_CASES[i];
           try {
             const reply = await caller.tools(item.messages, CHECK_TOOLS, mode);
             p.latencies.push(reply.latencyMs);
-            accepted = true;
+            seed.accepted = true;
             const raw = reply.toolCalls[0];
             let call: { name: string; args: Record<string, unknown> } | null = null;
             if (raw) {
@@ -195,33 +217,47 @@ export async function runCheckStage(caller: CheckCaller, stage: CheckStage, p: C
                 call = { name: raw.name, args: JSON.parse(raw.arguments || '{}') as Record<string, unknown> };
               } catch {
                 call = { name: raw.name, args: {} };
-                modeNotes.push(`${mode}: tool arguments were not valid JSON (${item.label}).`);
+                seed.notes.push(`${mode}: tool arguments were not valid JSON (${item.label}).`);
               }
             }
             const ok = item.expect(call);
-            results.push(ok ? 1 : 0);
+            seed.results.push(ok ? 1 : 0);
             if (!ok) {
-              modeNotes.push(
+              seed.notes.push(
                 raw ? `${mode} (${item.label}): called ${raw.name} ${clip(raw.arguments, 80)}` : `${mode} (${item.label}): no tool call; replied: ${clip(reply.text) || '(nothing)'}`
               );
             }
           } catch (error) {
             if (!refusedShape(error)) throw error;
-            modeNotes.push(`${mode}: host refused tool calls.`);
-            results.push(0);
-            break;
+            seed.notes.push(`${mode}: host refused tool calls.`);
+            seed.results.push(0);
+            seed.halted = true;
           }
+          await hooks.onStep?.();
         }
-        return { score: mean(results), notes: modeNotes, accepted };
+        return { score: mean(seed.results), notes: seed.notes, accepted: seed.accepted };
       };
-      const native = await runToolCases('native');
-      p.supports.tools = native.accepted;
-      p.toolMode = 'native';
-      p.toolScore = native.score;
-      let toolNotes = native.notes;
-      if (native.score < 1) {
-        onProgress?.('Checking tools described in the prompt');
-        const prompted = await runToolCases('prompted');
+      let toolNotes: string[] = [];
+      if (run.mode === 'native') {
+        const native = await runToolCases('native', run.seed);
+        if (native === 'paused') return 'paused';
+        p.supports.tools = native.accepted;
+        p.toolMode = 'native';
+        p.toolScore = native.score;
+        run.native = native;
+        toolNotes = native.notes;
+        if (native.score < 1) {
+          onProgress?.('Checking tools described in the prompt');
+          run.mode = 'prompted';
+          run.seed = emptySeed();
+          await hooks.onStep?.();
+        }
+      }
+      if (run.mode === 'prompted') {
+        const prompted = await runToolCases('prompted', run.seed);
+        if (prompted === 'paused') return 'paused';
+        const native = run.native!;
+        toolNotes = native.notes;
         if (prompted.score > native.score) {
           p.toolMode = 'prompted';
           p.toolScore = prompted.score;
@@ -229,13 +265,16 @@ export async function runCheckStage(caller: CheckCaller, stage: CheckStage, p: C
         }
       }
       p.notes.push(...toolNotes);
+      delete p.toolRun;
       break;
     }
 
     case 'grounded': {
       // Combine facts, resist common knowledge, admit what the notes do not say.
       onProgress?.('Checking grounded answers');
-      for (const item of GROUNDED_CASES) {
+      for (let i = startAt; i < GROUNDED_CASES.length; i += 1) {
+        if (hooks.canCall && !hooks.canCall()) return 'paused';
+        const item = GROUNDED_CASES[i];
         const reply = await caller.plain([
           { role: 'system', content: GROUNDED_SYSTEM },
           { role: 'user', content: item.question },
@@ -244,6 +283,7 @@ export async function runCheckStage(caller: CheckCaller, stage: CheckStage, p: C
         const ok = item.pass(reply.text);
         p.grounded.push(ok ? 1 : 0);
         if (!ok) p.notes.push(`Grounded "${item.question}": ${clip(reply.text)}`);
+        await finishCase(i);
       }
       break;
     }
@@ -251,7 +291,9 @@ export async function runCheckStage(caller: CheckCaller, stage: CheckStage, p: C
     case 'code': {
       // Code edits, scored by applying them.
       onProgress?.('Checking code edits');
-      for (const item of EDIT_CASES) {
+      for (let i = startAt; i < EDIT_CASES.length; i += 1) {
+        if (hooks.canCall && !hooks.canCall()) return 'paused';
+        const item = EDIT_CASES[i];
         const reply = await caller.plain(
           [
             { role: 'system', content: EDIT_SYSTEM },
@@ -266,11 +308,14 @@ export async function runCheckStage(caller: CheckCaller, stage: CheckStage, p: C
         const ok = result !== null && item.pass(result);
         p.coded.push(ok ? 1 : 0);
         if (!ok) p.notes.push(`Code edit (${item.label}): ${result === null ? 'edits did not apply' : 'wrong result'}.`);
+        await finishCase(i);
       }
       break;
     }
   }
+  delete p.cursor;
   if (!p.done.includes(stage)) p.done.push(stage);
+  return 'done';
 }
 
 export function finishCheck(p: CheckProgress): CheckOutcome {
@@ -341,6 +386,18 @@ const DEFAULT_CALL_MS = 8_000;
 
 const MAX_TRANSIENT_RETRIES = 3;
 
+/** Thrown inside a running check when an administrator cancelled it, so the run stops at its next step. */
+class CheckCancelledError extends Error {}
+
+/** Stops every queued or running model check. A running one notices at its next saved step. */
+export async function cancelModelChecks(): Promise<number> {
+  const result = await AiModelCheck.updateMany(
+    { status: { $in: ['queued', 'running'] } },
+    { $set: { status: 'failed', error: 'Cancelled by an administrator.' }, $unset: { progress: '' } }
+  );
+  return result.modifiedCount;
+}
+
 /** A host-side timeout or overload (nginx 502/503/504), common for slow reasoning models; worth retrying. */
 function isTransientGatewayError(error: unknown): boolean {
   return error instanceof GatewayError && [502, 503, 504].includes(Number(error.details?.httpStatus));
@@ -363,7 +420,7 @@ function failureMessage(error: unknown): string {
 export async function runQueuedModelChecks(options: { budgetMs?: number; caller?: (profileId: string, model: string) => Promise<CheckCaller> } = {}): Promise<{ checked: number }> {
   const deadline = Date.now() + (options.budgetMs ?? 240_000);
   let checked = 0;
-  let stagesThisRun = 0;
+  let callsThisRun = 0;
   while (Date.now() < deadline) {
     const now = new Date();
     const claimed = await AiModelCheck.findOneAndUpdate(
@@ -385,12 +442,6 @@ export async function runQueuedModelChecks(options: { budgetMs?: number; caller?
     let stopped = false;
     let failed = false;
     for (const stage of CHECK_STAGES.filter((st) => !progress.done.includes(st))) {
-      const perCall = progress.latencies.length ? mean(progress.latencies) : DEFAULT_CALL_MS;
-      const expected = STAGE_CALLS[stage] * perCall * 1.2;
-      if (stagesThisRun > 0 && Date.now() + expected > deadline) {
-        stopped = true;
-        break;
-      }
       const token = randomUUID();
       try {
         await waitForDispatchLock();
@@ -400,16 +451,47 @@ export async function runQueuedModelChecks(options: { budgetMs?: number; caller?
         break;
       }
       await holdDispatchLock(token, STAGE_LOCK_MS);
+      // Stages that cannot resume mid-way (the JSON probe) are restored from here if a call fails.
+      const before = structuredClone(progress);
       try {
-        await runCheckStage(caller, stage, progress);
-        stagesThisRun += 1;
+        const outcome = await runCheckStage(caller, stage, progress, undefined, {
+          // Saved after every case: a run cut off by the route limit, or a slow reasoning model, keeps
+          // what it finished instead of redoing the whole stage next time.
+          onStep: async () => {
+            // Only while the row is still ours and running: a cancel (or another run) ends this one.
+            const saved = await AiModelCheck.updateOne({ _id: claimed._id, status: 'running' }, { $set: { progress, startedAt: new Date() } });
+            if (saved.matchedCount === 0) throw new CheckCancelledError();
+          },
+          // One call may start only if it should finish inside the run's budget (the first call of a
+          // run always may, so every run makes progress).
+          canCall: () => {
+            const perCall = progress.latencies.length ? mean(progress.latencies) : DEFAULT_CALL_MS;
+            const ok = callsThisRun === 0 || Date.now() + perCall * 1.2 <= deadline;
+            if (ok) callsThisRun += 1;
+            return ok;
+          },
+        });
+        if (outcome === 'paused') {
+          // Out of time for this run: the cases finished so far are saved; continue on the next run.
+          await AiModelCheck.updateOne({ _id: claimed._id, status: 'running' }, { $set: { progress, status: 'queued', startedAt: new Date() } });
+          stopped = true;
+          break;
+        }
         await AiModelCheck.updateOne({ _id: claimed._id }, { $set: { progress, startedAt: new Date() } });
       } catch (error) {
+        if (error instanceof CheckCancelledError) {
+          // Cancelled: leave the row as the cancel left it, and end this run.
+          stopped = true;
+          failed = true;
+          break;
+        }
         const retries = progress.transientRetries ?? 0;
         if (isTransientGatewayError(error) && retries < MAX_TRANSIENT_RETRIES) {
-          // Keep finished stages and retry this one on the next run rather than discarding the check.
-          progress.transientRetries = retries + 1;
-          await AiModelCheck.updateOne({ _id: claimed._id }, { $set: { status: 'queued', progress } });
+          // Keep finished cases and retry the failing one on the next run rather than discarding the check.
+          // A stage that cannot resume mid-way goes back to how it was, so nothing is counted twice.
+          const restored = stage === 'json' ? before : progress;
+          restored.transientRetries = retries + 1;
+          await AiModelCheck.updateOne({ _id: claimed._id, status: 'running' }, { $set: { status: 'queued', progress: restored } });
           // Not `failed`: the run ends here so the retry waits for the next run instead of
           // re-claiming this model at once and waiting out another gateway timeout.
           stopped = true;

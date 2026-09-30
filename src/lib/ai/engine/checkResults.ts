@@ -1,4 +1,5 @@
 import mongoose, { Schema, Types, type InferSchemaType, type Model } from 'mongoose';
+import { EDIT_CASES, GROUNDED_CASES, ROUTING_CASES, TOOL_CASES } from './checkCases';
 
 /**
  * What Nucleas measured about each free model by running it (see modelChecks.ts): which request
@@ -81,6 +82,8 @@ export interface ModelCheckRow extends ModelCheckSummary {
   model: string;
   /** While a check runs across passes: parts finished so far (of 5). */
   stagesDone: number;
+  /** Where it is inside the current part, e.g. "routing 7 of 12"; null between parts. */
+  stepDetail: string | null;
 }
 
 type LeanCheck = {
@@ -95,8 +98,19 @@ type LeanCheck = {
   notes?: string[];
   toolMode?: 'native' | 'prompted' | null;
   error?: string | null;
-  progress?: { done?: string[] } | null;
+  progress?: { done?: string[]; cursor?: { stage: string; index: number } | null; toolRun?: { mode: string; seed?: { results?: unknown[] } } | null } | null;
 };
+
+const STAGE_TOTALS: Record<string, number> = { routing: ROUTING_CASES.length, grounded: GROUNDED_CASES.length, code: EDIT_CASES.length };
+
+/** "routing 7 of 12" for the part a check is in the middle of. */
+export function stepDetailFor(progress: LeanCheck['progress']): string | null {
+  const cursor = progress?.cursor;
+  if (cursor && STAGE_TOTALS[cursor.stage]) return `${cursor.stage} ${cursor.index} of ${STAGE_TOTALS[cursor.stage]}`;
+  const tools = progress?.toolRun;
+  if (tools) return `tools${tools.mode === 'prompted' ? ' (prompted)' : ''} ${tools.seed?.results?.length ?? 0} of ${TOOL_CASES.length}`;
+  return null;
+}
 
 export function toCheckRow(doc: LeanCheck): ModelCheckRow {
   return {
@@ -111,6 +125,7 @@ export function toCheckRow(doc: LeanCheck): ModelCheckRow {
     notes: doc.notes ?? [],
     toolMode: doc.toolMode ?? null,
     stagesDone: doc.progress?.done?.length ?? 0,
+    stepDetail: stepDetailFor(doc.progress),
     error: doc.error ?? null,
   };
 }
