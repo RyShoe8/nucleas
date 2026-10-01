@@ -24,6 +24,8 @@ import User from '@/lib/models/User';
 import Employee from '@/lib/models/Employee';
 import { Job, JobRun } from '@/lib/models/Job';
 import { LinkOpportunity } from '@/lib/models/LinkOpportunity';
+import Project from '@/lib/models/Project';
+import { SeoBrief } from '@/lib/models/SeoBrief';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { answerQuestions, approveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, runDesign, runNow, sweepJobs } from './jobs';
 import type { JobDesign } from './schema';
@@ -34,6 +36,7 @@ const org = new Types.ObjectId();
 let admin: CompanyViewer;
 let member: CompanyViewer;
 let companyId: string;
+let projectId: string;
 
 const DESIGN: JobDesign = {
   title: 'Add Deadlock to the catalog',
@@ -79,7 +82,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await Promise.all([Client.deleteMany({}), User.deleteMany({}), Employee.collection.deleteMany({}), Job.deleteMany({}), JobRun.deleteMany({}), LinkOpportunity.deleteMany({})]);
+  await Promise.all([Client.deleteMany({}), User.deleteMany({}), Employee.collection.deleteMany({}), Project.deleteMany({}), SeoBrief.deleteMany({}), Job.deleteMany({}), JobRun.deleteMany({}), LinkOpportunity.deleteMany({})]);
   const user = await User.create({ email: 'owner@example.invalid', password: 'synthetic-pass', organizationId: String(org) });
   // Runs act as the job's creator, resolved from their employee record.
   await Employee.collection.insertOne({ userId: user._id, organizationId: String(org), role: 'Administrator', name: 'Owner', email: 'owner@example.invalid' });
@@ -87,6 +90,9 @@ beforeEach(async () => {
   member = { ...admin, role: 'User' };
   const company = await Client.create({ organizationId: org, name: 'Playbound.club', color: '#222', relationship: 'owned', domain: 'playbound.club' });
   companyId = String(company._id);
+  const project = await Project.create({ userId: user._id, name: 'PlayBound', description: 'Game discovery', projectType: 'internal', category: 'website', color: '#222', status: 'launched', clientId: company._id });
+  projectId = String(project._id);
+  await SeoBrief.create({ organizationId: org, companyId: company._id, projectId: project._id, status: 'approved', projectName: 'PlayBound', summary: 'A game discovery site.', audience: 'Players looking for games and servers.', goals: ['Grow game discovery traffic'], primaryTopics: ['video games'], excludedTopics: ['schools'], geographicTargets: ['United States'], positioning: 'Useful game discovery.', priorityPages: [{ url: 'https://playbound.club/games', purpose: 'Discover games', keywords: ['games'] }], revision: 1, updatedByUserId: user._id, approvedByUserId: user._id, approvedAt: new Date() });
   mocks.chat.mockImplementation(async (input: { systemPrompt: string }) =>
     input.systemPrompt.startsWith('You check one run')
       ? { requestId: 'r', role: 'assistant', text: '{"verdict":"pass","notes":"Consistent and sourced."}', costMicros: 400 }
@@ -104,7 +110,7 @@ async function proposed(design: JobDesign = DESIGN) {
 
 describe('designing', () => {
   it('configures at most one open link-building skill per property', async () => {
-    const config = { schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
+    const config = { projectId, schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
     const first = await createTemplateJob(admin, { companyId, template: 'link_building', config });
     const duplicate = await createTemplateJob(admin, { companyId, template: 'link_building', config });
 
@@ -142,12 +148,12 @@ describe('designing', () => {
 
 describe('approving and the dry run', () => {
   it('tracks link recommendations through approval and submission with feedback history', async () => {
-    const config = { schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
+    const config = { projectId, schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
     const created = await createTemplateJob(admin, { companyId, template: 'link_building', config });
     if (!created.ok) throw new Error(created.error);
     mocks.chat.mockImplementation(async (input: { systemPrompt: string }) => input.systemPrompt.startsWith('You check one run')
       ? { requestId: 'r', role: 'assistant', text: '{"verdict":"pass","notes":"Sourced."}', costMicros: 0 }
-      : { requestId: 'w', role: 'assistant', text: JSON.stringify({ records: [{ values: { strategic_reason: 'A new page needs authority.', opportunity_url: 'https://directory.example.org/submit', opportunity_type: 'Directory', estimated_authority: 'Medium estimate', authority_basis: 'Indexed and used by peers.', target_keywords: ['games'], target_url: 'https://playbound.club/games', anchor_text: 'PlayBound games', submission_copy: 'A useful directory description.', requirements: 'Free account.', link_attribute: 'unknown', quality_risk: 'Relevant and moderated.', confidence: 'Medium', next_action: 'Submit the listing.' }, sources: ['https://directory.example.org/submit'] }], summary: 'Found one.', gaps: [] }), costMicros: 0 });
+      : { requestId: 'w', role: 'assistant', text: JSON.stringify({ records: [{ values: { strategic_reason: 'A new page needs authority.', opportunity_url: 'https://directory.example.org/submit', opportunity_type: 'Directory', relevance_score: 90, relevance_evidence: 'The directory exclusively catalogs video games and is used by players searching for games and community servers.', estimated_authority: 'Medium estimate', authority_basis: 'Indexed and used by peers.', target_keywords: ['games'], target_url: 'https://playbound.club/games', anchor_text: 'PlayBound games', submission_copy: 'A useful directory description.', requirements: 'Free account.', link_attribute: 'unknown', quality_risk: 'Relevant and moderated.', confidence: 'Medium', next_action: 'Submit the listing.' }, sources: ['https://directory.example.org/submit'] }], summary: 'Found one.', gaps: [] }), costMicros: 0 });
 
     const approved = await approveJob(admin, created.job.id, { completion: 'review' });
     await executeJobRun(approved.dryRunId!);

@@ -9,6 +9,9 @@ import { executeJobRun, monthSpendMicros } from './runner';
 import { DELIVERY_LABEL, RUNNABLE_DELIVERY, jobDesignSchema, type JobDesign, type JobRunOutput, type RecordIssue } from './schema';
 import { nextScheduledAt } from './schedule';
 import { linkBuildingConfigSchema, linkBuildingDesign } from './templates/linkBuilding';
+import { seoBriefConfigSchema, seoBriefDesign } from './templates/seoBrief';
+import { approvedSeoBrief, saveGeneratedSeoBrief } from './seoBriefs';
+import Project from '@/lib/models/Project';
 import { bulkDecideRunOpportunities, listLinkOpportunities, type LinkOpportunityView } from './linkOpportunities';
 
 /**
@@ -36,6 +39,7 @@ export interface JobRunView {
 export interface JobView {
   id: string;
   companyId: string;
+  projectId: string | null;
   companyName: string;
   status: JobStatus;
   request: string;
@@ -62,6 +66,7 @@ type JobLean = {
   _id: Types.ObjectId;
   organizationId: Types.ObjectId;
   companyId: Types.ObjectId;
+  projectId?: Types.ObjectId;
   createdByUserId: Types.ObjectId;
   status: JobStatus;
   request: string;
@@ -115,6 +120,7 @@ async function toView(job: JobLean, companyName: string, canManage: boolean, run
   return {
     id: String(job._id),
     companyId: String(job.companyId),
+    projectId: job.projectId ? String(job.projectId) : null,
     companyName,
     status: job.status,
     request: job.request,
@@ -205,32 +211,41 @@ export async function createJob(
 /** Creates a reviewed first-party skill job without spending a model call redesigning known instructions. */
 export async function createTemplateJob(
   viewer: CompanyViewer,
-  input: { companyId: string; template: 'link_building'; config: unknown; level?: CostLevel }
+  input: { companyId: string; template: 'link_building' | 'seo_brief'; config: unknown; level?: CostLevel }
 ): Promise<CreateResult> {
   if (!isCompanyManager(viewer)) return { ok: false, status: 403, error: 'Only managers and administrators can configure skills.' };
   const profile = await getCompanyProfile(viewer, input.companyId);
   if (!profile) return { ok: false, status: 404, error: 'Company not found.' };
-  const parsed = linkBuildingConfigSchema.safeParse(input.config);
-  if (!parsed.success) return { ok: false, status: 400, error: parsed.error.issues[0]?.message ?? 'Invalid link-building settings.' };
+  const parsed = input.template === 'link_building' ? linkBuildingConfigSchema.safeParse(input.config) : seoBriefConfigSchema.safeParse(input.config);
+  if (!parsed.success) return { ok: false, status: 400, error: parsed.error.issues[0]?.message ?? 'Invalid skill settings.' };
+  const project = await Project.findOne({ _id: parsed.data.projectId, clientId: new Types.ObjectId(input.companyId) }).select('name').lean<{ _id: Types.ObjectId; name: string }>();
+  if (!project) return { ok: false, status: 404, error: 'Project not found for this company.' };
+  if (input.template === 'link_building' && !(await approvedSeoBrief(viewer.organizationId, new Types.ObjectId(input.companyId), project._id))) {
+    return { ok: false, status: 409, error: `Create and approve the SEO brief for ${project.name} before configuring link building.` };
+  }
   const existing = await Job.exists({
     organizationId: viewer.organizationId,
     companyId: new Types.ObjectId(input.companyId),
-    'design.skill': 'link_building',
+    projectId: project._id,
+    'design.skill': input.template,
     status: { $nin: ['rejected', 'archived', 'done'] },
   });
-  if (existing) return { ok: false, status: 409, error: `${profile.name} already has an open Link Building job. Open it to review, pause, or archive it.` };
+  if (existing) return { ok: false, status: 409, error: `${project.name} already has an open ${input.template === 'link_building' ? 'Link Building job' : 'SEO brief job'}. Open it to review or archive it.` };
   const level = input.level ?? (await readEngineSettings(String(viewer.organizationId))).defaultCostLevel;
-  const design = linkBuildingDesign(parsed.data);
+  const design = input.template === 'link_building'
+    ? linkBuildingDesign(parsed.data as ReturnType<typeof linkBuildingConfigSchema.parse>)
+    : seoBriefDesign({ ...(parsed.data as ReturnType<typeof seoBriefConfigSchema.parse>), projectName: project.name });
   const doc = await Job.create({
     organizationId: viewer.organizationId,
     companyId: new Types.ObjectId(input.companyId),
+    projectId: project._id,
     createdByUserId: new Types.ObjectId(viewer.userId),
     status: 'proposed',
-    request: `Find the best free, self-service link-building opportunities for ${profile.name}.`,
+    request: input.template === 'link_building' ? `Find the best free, self-service link-building opportunities for ${project.name}.` : `Create an SEO brief for ${project.name}.`,
     design,
     level,
     designCostMicros: 0,
-    events: [event(viewer, 'skill_configured', 'link_building')],
+    events: [event(viewer, 'skill_configured', input.template)],
   });
   const view = await getJob(viewer, String(doc._id));
   return view ? { ok: true, job: view } : { ok: false, status: 404, error: 'Job not found.' };
@@ -350,6 +365,9 @@ export async function decideRun(viewer: CompanyViewer, jobId: string, runId: str
   if (!run) return { ok: false, status: 409, error: 'That run is not waiting for review.' };
   await bulkDecideRunOpportunities(run._id, decision, viewer, note);
   const design = jobDesignSchema.safeParse(found.job.design);
+  if (decision === 'accept' && design.success && design.data.skill === 'seo_brief' && found.job.projectId && run.output) {
+    await saveGeneratedSeoBrief({ organizationId: found.job.organizationId, companyId: found.job.companyId, projectId: found.job.projectId, userId: viewer.userId, output: run.output });
+  }
   if (run.dryRun) {
     // The sample was right: the job is ready. A one-off job whose results stay in Nucleas is done.
     const once = design.success && design.data.schedule.kind === 'once';

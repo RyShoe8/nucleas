@@ -13,6 +13,7 @@ import { resolveCompanyRepository } from '@/lib/building/companyCode';
 import { Job, JobRun } from '@/lib/models/Job';
 import { checkRecords, jobDesignSchema, jobRunOutputSchema, type JobDesign, type JobRunOutput } from './schema';
 import { linkOpportunityMemory, syncLinkOpportunities } from './linkOpportunities';
+import { approvedSeoBrief, seoBriefContext } from './seoBriefs';
 
 /**
  * Runs a job once: the engine's research model does the work with tools and returns structured,
@@ -94,6 +95,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     _id: Types.ObjectId;
     organizationId: Types.ObjectId;
     companyId: Types.ObjectId;
+    projectId?: Types.ObjectId;
     createdByUserId: Types.ObjectId;
     design?: unknown;
     completion?: 'review' | 'automatic';
@@ -113,6 +115,8 @@ export async function executeJobRun(runId: string): Promise<void> {
   const viewer = await loadCompanyViewer(String(job.createdByUserId));
   const profile = viewer ? await getCompanyProfile(viewer, String(job.companyId)) : null;
   if (!viewer || !profile) return fail('The company is no longer accessible.');
+  const seoBrief = design.data.skill === 'link_building' ? await approvedSeoBrief(job.organizationId, job.companyId, job.projectId) : null;
+  if (design.data.skill === 'link_building' && !seoBrief) return fail('This project needs an approved SEO brief before link building can run.');
   const org = String(job.organizationId);
   const settings = await readEngineSettings(org);
   const level = job.level ?? settings.defaultCostLevel;
@@ -137,7 +141,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       organizationId: org,
       projectId: repo?.projectId ?? assistantLedgerProjectId(org),
       userId: viewer.userId,
-      userText: [`Company: ${profile.name} (${profile.domain ?? 'no domain'})`, done ? `\n# Already done (do not repeat)\n${done}` : '', correction ?? ''].join('\n'),
+      userText: [`Company: ${profile.name} (${profile.domain ?? 'no domain'})`, seoBrief ? `\n# Approved SEO brief (hard relevance constraints)\n${seoBriefContext(seoBrief)}` : '', done ? `\n# Already done (do not repeat)\n${done}` : '', correction ?? ''].join('\n'),
       priorTurns: [],
       modelProfileId: choice.profileId,
       model: choice.model,
@@ -171,6 +175,13 @@ export async function executeJobRun(runId: string): Promise<void> {
 
     onProgress('Checking the records');
     const issues = checkRecords(design.data.fields, output);
+    if (design.data.skill === 'link_building') {
+      output.records.forEach((record, index) => {
+        const score = Number(record.values.relevance_score);
+        if (!Number.isFinite(score) || score < 75) issues.push({ record: index, field: 'relevance_score', problem: 'Direct audience/topic relevance must score at least 75/100.' });
+        if (String(record.values.relevance_evidence ?? '').trim().length < 80) issues.push({ record: index, field: 'relevance_evidence', problem: 'Relevance evidence must specifically prove audience and topical overlap.' });
+      });
+    }
 
     let verdict: { verdict: 'pass' | 'fail'; notes: string; model: string } | null = null;
     if (review.primary) {
@@ -180,7 +191,7 @@ export async function executeJobRun(runId: string): Promise<void> {
         organizationId: org,
         projectId: repo?.projectId ?? assistantLedgerProjectId(org),
         userId: viewer.userId,
-        userText: [`# Instructions\n${design.data.instructions}`, `# Source policy\n${design.data.sourcePolicy}`, `# Result\n${JSON.stringify(output).slice(0, 30000)}`, issues.length ? `# Problems found by code\n${issues.map((i) => `- ${i.problem}`).join('\n')}` : ''].join('\n\n'),
+        userText: [`# Instructions\n${design.data.instructions}`, seoBrief ? `# Approved SEO brief\n${seoBriefContext(seoBrief)}` : '', `# Source policy\n${design.data.sourcePolicy}`, `# Result\n${JSON.stringify(output).slice(0, 30000)}`, issues.length ? `# Problems found by code\n${issues.map((i) => `- ${i.problem}`).join('\n')}` : ''].join('\n\n'),
         priorTurns: [],
         modelProfileId: review.primary.profileId,
         model: review.primary.model,
@@ -219,6 +230,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       await syncLinkOpportunities({
         organizationId: job.organizationId,
         companyId: job.companyId,
+        projectId: job.projectId,
         jobId: job._id,
         runId: run._id,
         output,

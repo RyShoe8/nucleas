@@ -28,6 +28,7 @@ const linkOpportunitySchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, required: true },
     companyId: { type: Schema.Types.ObjectId, required: true },
+    projectId: { type: Schema.Types.ObjectId, ref: 'Project' },
     jobId: { type: Schema.Types.ObjectId, ref: 'Job', required: true },
     runId: { type: Schema.Types.ObjectId, ref: 'JobRun', required: true },
     fingerprint: { type: String, required: true, maxlength: 64 },

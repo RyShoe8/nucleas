@@ -26,10 +26,10 @@ export async function POST(request: NextRequest) {
   if (typeof body.companyId !== 'string') {
     return NextResponse.json({ error: 'companyId is required.' }, { status: 400 });
   }
-  if (body.template === 'link_building') {
+  if (body.template === 'link_building' || body.template === 'seo_brief') {
     const result = await createTemplateJob(viewer, {
       companyId: body.companyId,
-      template: 'link_building',
+      template: body.template,
       config: body.config,
       level: isCostLevel(body.level) ? body.level : undefined,
     });

@@ -85,6 +85,7 @@ function fingerprint(opportunityUrl: string, targetUrl: string | null): string {
 export async function syncLinkOpportunities(input: {
   organizationId: Types.ObjectId;
   companyId: Types.ObjectId;
+  projectId?: Types.ObjectId;
   jobId: Types.ObjectId;
   runId: Types.ObjectId;
   output: JobRunOutput;
@@ -101,6 +102,7 @@ export async function syncLinkOpportunities(input: {
         $setOnInsert: {
           organizationId: input.organizationId,
           companyId: input.companyId,
+          ...(input.projectId ? { projectId: input.projectId } : {}),
           jobId: input.jobId,
           runId: input.runId,
           fingerprint: fingerprint(opportunityUrl, targetUrl),

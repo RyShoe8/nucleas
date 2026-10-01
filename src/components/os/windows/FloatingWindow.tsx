@@ -172,7 +172,6 @@ export default function FloatingWindow({ window: w, module, children }: Floating
             <div
                 onPointerDown={onHeaderPointerDown}
                 onDoubleClick={() => wm.maximize(w.id)}
-                title={module.canPopout ? 'Drag outside window to pop out' : undefined}
                 className={`flex items-center gap-2 px-3 h-9 border-b border-border select-none ${
                     w.maximized ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
                 } ${isActive ? 'bg-background-elevated' : 'bg-background-card'}`}
@@ -269,6 +268,7 @@ function WindowButton({ label, onClick, danger, children }: WindowButtonProps) {
         <button
             type="button"
             aria-label={label}
+            title={label}
             onClick={onClick}
             onPointerDown={(e) => e.stopPropagation()}
             className={`w-6 h-6 inline-flex items-center justify-center rounded text-text-secondary hover:text-text-primary ${

@@ -24,7 +24,9 @@ function NewJob({ onCreated, placeholder, marketing }: { onCreated: (j: JobView)
     const { companies } = useOsCompanies();
     const [companyId, setCompanyId] = useState('');
     const [request, setRequest] = useState('');
-    const [kind, setKind] = useState<'custom' | 'link_building'>(marketing ? 'link_building' : 'custom');
+    const [kind, setKind] = useState<'custom' | 'link_building' | 'seo_brief'>(marketing ? 'link_building' : 'custom');
+    const [projects, setProjects] = useState<{ projectId: string; projectName: string }[]>([]);
+    const [projectId, setProjectId] = useState('');
     const [frequency, setFrequency] = useState<'daily' | 'weekly' | 'monthly'>('daily');
     const [time, setTime] = useState('09:00');
     const [weekday, setWeekday] = useState(1);
@@ -35,6 +37,16 @@ function NewJob({ onCreated, placeholder, marketing }: { onCreated: (j: JobView)
     const [exclusions, setExclusions] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    useEffect(() => {
+        setProjectId('');
+        if (!companyId || kind === 'custom') { setProjects([]); return; }
+        let cancelled = false;
+        void fetch(`/api/os/companies/${companyId}/code`, { cache: 'no-store' }).then(async (res) => {
+            const body = (await res.json().catch(() => ({}))) as { projects?: { projectId: string; projectName: string }[] };
+            if (!cancelled) setProjects(body.projects ?? []);
+        });
+        return () => { cancelled = true; };
+    }, [companyId, kind]);
     const create = async () => {
         setBusy(true);
         setError(null);
@@ -44,6 +56,7 @@ function NewJob({ onCreated, placeholder, marketing }: { onCreated: (j: JobView)
                   companyId,
                   template: 'link_building',
                   config: {
+                      projectId,
                       schedule: {
                           kind: frequency,
                           time,
@@ -57,6 +70,8 @@ function NewJob({ onCreated, placeholder, marketing }: { onCreated: (j: JobView)
                       exclusions,
                   },
               }
+            : kind === 'seo_brief'
+              ? { companyId, template: 'seo_brief', config: { projectId, projectName: projects.find((p) => p.projectId === projectId)?.projectName } }
             : { companyId, request };
         const res = await fetch('/api/os/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
         const body = (await res.json().catch(() => ({}))) as { job?: JobView; error?: string };
@@ -70,6 +85,7 @@ function NewJob({ onCreated, placeholder, marketing }: { onCreated: (j: JobView)
             {marketing ? (
                 <div className="flex gap-1">
                     <button type="button" onClick={() => setKind('link_building')} className={`text-[11px] px-2 py-1 rounded border ${kind === 'link_building' ? 'border-primary text-primary' : 'border-border text-text-secondary'}`}>Link building</button>
+                    <button type="button" onClick={() => setKind('seo_brief')} className={`text-[11px] px-2 py-1 rounded border ${kind === 'seo_brief' ? 'border-primary text-primary' : 'border-border text-text-secondary'}`}>SEO brief</button>
                     <button type="button" onClick={() => setKind('custom')} className={`text-[11px] px-2 py-1 rounded border ${kind === 'custom' ? 'border-primary text-primary' : 'border-border text-text-secondary'}`}>Custom job</button>
                 </div>
             ) : null}
@@ -88,9 +104,10 @@ function NewJob({ onCreated, placeholder, marketing }: { onCreated: (j: JobView)
                     ))}
                 </select>
                 <span className="text-[11px] text-text-secondary self-center">
-                    {kind === 'link_building' ? 'Nucleas chooses the strongest free opportunity from current property evidence. Recommendations require review.' : 'Describe the work; Nucleas investigates, asks what it must, and designs it for your approval.'}
+                    {kind === 'link_building' ? 'Uses the project’s approved SEO brief to reject irrelevant opportunities.' : kind === 'seo_brief' ? 'Nucleas researches a project and creates an editable strategy draft for approval.' : 'Describe the work; Nucleas investigates, asks what it must, and designs it for your approval.'}
                 </span>
             </div>
+            {kind !== 'custom' ? <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="h-7 w-full px-1 rounded border border-border bg-background-elevated text-xs" aria-label="Project"><option value="">Project…</option>{projects.map((p) => <option key={p.projectId} value={p.projectId}>{p.projectName}</option>)}</select> : null}
             {kind === 'link_building' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
                     <label className="space-y-1"><span className="text-text-secondary">Frequency</span><select value={frequency} onChange={(e) => setFrequency(e.target.value as typeof frequency)} className="block w-full h-7 rounded border border-border bg-background-elevated px-1"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
@@ -102,17 +119,17 @@ function NewJob({ onCreated, placeholder, marketing }: { onCreated: (j: JobView)
                     <label className="space-y-1"><span className="text-text-secondary">Language</span><input value={language} onChange={(e) => setLanguage(e.target.value)} className="block w-full h-7 rounded border border-border bg-background-elevated px-1" /></label>
                     <label className="space-y-1 col-span-2 sm:col-span-3"><span className="text-text-secondary">Optional exclusions</span><input value={exclusions} onChange={(e) => setExclusions(e.target.value)} placeholder="Sites, categories, or tactics to exclude" className="block w-full h-7 rounded border border-border bg-background-elevated px-1" /></label>
                 </div>
-            ) : (
+            ) : kind === 'custom' ? (
                 <textarea value={request} onChange={(e) => setRequest(e.target.value)} placeholder={placeholder} className="w-full h-20 px-2 py-1.5 rounded border border-border bg-background-elevated text-sm resize-y" aria-label="Job request" />
-            )}
+            ) : <p className="text-xs text-text-secondary">The first run produces a sourced draft. Accept the result, then edit and approve the brief from the job card.</p>}
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
             <button
                 type="button"
-                disabled={busy || !companyId || (kind === 'custom' && request.trim().length < 10)}
+                disabled={busy || !companyId || (kind !== 'custom' && !projectId) || (kind === 'custom' && request.trim().length < 10)}
                 onClick={() => void create()}
                 className="text-[11px] px-2 py-1 rounded bg-primary text-white disabled:opacity-50"
             >
-                {busy ? 'Starting…' : kind === 'link_building' ? 'Configure link building' : 'Design this job'}
+                {busy ? 'Starting…' : kind === 'link_building' ? 'Configure link building' : kind === 'seo_brief' ? 'Create SEO brief' : 'Design this job'}
             </button>
         </div>
     );

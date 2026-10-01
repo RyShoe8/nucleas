@@ -18,6 +18,8 @@ const jobSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, required: true },
     companyId: { type: Schema.Types.ObjectId, ref: 'Client', required: true },
+    /** Project whose property/strategy this first-party skill operates on. */
+    projectId: { type: Schema.Types.ObjectId, ref: 'Project' },
     createdByUserId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     status: { type: String, enum: JOB_STATUSES, required: true, default: 'designing' },
     /** What was asked for, in the person's words. */

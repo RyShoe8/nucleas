@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Modal from '@/components/ui/Modal';
 
 // ---------- Types (mirror the server's JobView) ----------
 
@@ -23,7 +24,7 @@ interface JobQuestion {
 }
 
 interface JobDesign {
-    skill?: 'link_building';
+    skill?: 'link_building' | 'seo_brief';
     title: string;
     category: string;
     instructions: string;
@@ -73,6 +74,7 @@ export interface JobRunView {
 export interface JobView {
     id: string;
     companyId: string;
+    projectId: string | null;
     companyName: string;
     status: JobStatus;
     request: string;
@@ -361,7 +363,7 @@ function Results({ job, run }: { job: JobView; run: JobRunView }) {
                                                         {text}
                                                     </a>
                                                 ) : (
-                                                    <span className="line-clamp-4">{text || '—'}</span>
+                                                    <span className="whitespace-pre-wrap break-words leading-relaxed">{text || '—'}</span>
                                                 )}
                                             </td>
                                         );
@@ -403,7 +405,7 @@ function Results({ job, run }: { job: JobView; run: JobRunView }) {
     );
 }
 
-function RunBlock({ job, run, onChange }: { job: JobView; run: JobRunView; onChange: (j: JobView) => void }) {
+function RunBlock({ job, run, onChange, onView }: { job: JobView; run: JobRunView; onChange: (j: JobView) => void; onView: (run: JobRunView) => void }) {
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const decide = async (action: 'accept_run' | 'reject_run') => {
@@ -433,7 +435,12 @@ function RunBlock({ job, run, onChange }: { job: JobView; run: JobRunView; onCha
                 </ul>
             ) : null}
             {run.error ? <p className="text-xs text-red-400">{run.error}</p> : null}
-            {run.output ? <Results job={job} run={run} /> : null}
+            {run.output ? (
+                <div className="flex items-center justify-between gap-3 rounded border border-border bg-background-elevated/40 p-2">
+                    <div className="min-w-0"><p className="text-xs line-clamp-2">{run.output.summary || `${run.output.records.length} result${run.output.records.length === 1 ? '' : 's'}`}</p><p className="text-[10px] text-text-secondary">{run.output.records.length} detailed result{run.output.records.length === 1 ? '' : 's'} · {run.issues.length} flagged check{run.issues.length === 1 ? '' : 's'}</p></div>
+                    <button type="button" className={PRIMARY} onClick={() => onView(run)}>View full results</button>
+                </div>
+            ) : null}
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
             {run.status === 'needs_review' && job.canManage ? (
                 <div className="flex gap-2">
@@ -516,6 +523,57 @@ function OpportunityTracker({ job, onChange }: { job: JobView; onChange: (j: Job
     );
 }
 
+type SeoBriefView = { projectId: string; projectName: string; status: 'draft' | 'approved'; summary: string; audience: string; goals: string[]; primaryTopics: string[]; competitors: string[]; excludedTopics: string[]; geographicTargets: string[]; positioning: string; priorityPages: { url: string; purpose: string; keywords: string[] }[]; notes: string; revision: number; approvedAt: string | null };
+
+function SeoBriefEditor({ job }: { job: JobView }) {
+    const [brief, setBrief] = useState<SeoBriefView | null>(null);
+    const [editing, setEditing] = useState(false);
+    const [form, setForm] = useState<Record<string, string>>({});
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    useEffect(() => {
+        if (!job.projectId) return;
+        let cancelled = false;
+        void fetch(`/api/os/seo-briefs/${job.projectId}?companyId=${job.companyId}`, { cache: 'no-store' }).then(async (res) => {
+            const body = (await res.json().catch(() => ({}))) as { brief?: SeoBriefView | null };
+            if (!cancelled) setBrief(body.brief ?? null);
+        });
+        return () => { cancelled = true; };
+    }, [job.companyId, job.projectId, job.updatedAt]);
+    const open = () => {
+        if (!brief) return;
+        setForm({ summary: brief.summary, audience: brief.audience, goals: brief.goals.join('\n'), primaryTopics: brief.primaryTopics.join('\n'), competitors: brief.competitors.join('\n'), excludedTopics: brief.excludedTopics.join('\n'), geographicTargets: brief.geographicTargets.join('\n'), positioning: brief.positioning, priorityPages: JSON.stringify(brief.priorityPages, null, 2), notes: brief.notes });
+        setEditing(true);
+    };
+    const save = async (status: 'draft' | 'approved') => {
+        if (!job.projectId) return;
+        setBusy(true); setError(null);
+        const list = (key: string) => (form[key] ?? '').split('\n').map((v) => v.trim()).filter(Boolean);
+        let priorityPages: unknown = [];
+        try { priorityPages = JSON.parse(form.priorityPages || '[]'); } catch { setBusy(false); setError('Priority pages must be valid JSON.'); return; }
+        const res = await fetch(`/api/os/seo-briefs/${job.projectId}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ companyId: job.companyId, status, summary: form.summary, audience: form.audience, goals: list('goals'), primaryTopics: list('primaryTopics'), competitors: list('competitors'), excludedTopics: list('excludedTopics'), geographicTargets: list('geographicTargets'), positioning: form.positioning, priorityPages, notes: form.notes }) });
+        const body = (await res.json().catch(() => ({}))) as { brief?: SeoBriefView; error?: string };
+        setBusy(false);
+        if (!res.ok || !body.brief) return setError(body.error ?? 'Could not save the brief.');
+        setBrief(body.brief); setEditing(false);
+    };
+    if (!brief) return <p className="text-xs text-text-secondary">Accept the generated result to create the editable SEO brief.</p>;
+    const textarea = (key: string, label: string, rows = 3) => <label className="block space-y-1"><span className="text-xs font-medium">{label}</span><textarea value={form[key] ?? ''} onChange={(e) => setForm((v) => ({ ...v, [key]: e.target.value }))} rows={rows} className="w-full rounded border border-border bg-background-elevated px-2 py-1.5 text-sm" /></label>;
+    return <>
+        <div className="rounded border border-border p-2 flex items-center gap-2"><div className="min-w-0 flex-1"><p className="text-xs font-medium">SEO brief · {brief.projectName}</p><p className="text-[11px] text-text-secondary">{brief.status === 'approved' ? `Approved · revision ${brief.revision}` : `Draft · revision ${brief.revision}`}</p></div><button type="button" className={PRIMARY} onClick={open}>{brief.status === 'approved' ? 'View or edit brief' : 'Edit and approve'}</button></div>
+        <Modal isOpen={editing} onClose={() => setEditing(false)} title={`SEO brief · ${brief.projectName}`} maxWidth="4xl">
+            <div className="space-y-4">
+                <p className="text-xs text-text-secondary">Edits return the brief to draft unless you approve it. Approved content becomes hard context for this project’s SEO marketing work.</p>
+                {textarea('summary', 'Property and offering', 4)}{textarea('audience', 'Target audience', 4)}
+                <div className="grid sm:grid-cols-2 gap-4">{textarea('goals', 'SEO goals (one per line)')}{textarea('primaryTopics', 'Primary topics (one per line)')}{textarea('competitors', 'Search competitors (one per line)')}{textarea('excludedTopics', 'Excluded topics and audiences (one per line)')}{textarea('geographicTargets', 'Geographic targets (one per line)')}{textarea('positioning', 'Search positioning')}</div>
+                {textarea('priorityPages', 'Priority pages (JSON: url, purpose, keywords[])', 8)}{textarea('notes', 'Strategy notes', 3)}
+                {error ? <p className="text-xs text-red-400">{error}</p> : null}
+                <div className="flex gap-2"><button type="button" className={BUTTON} disabled={busy} onClick={() => void save('draft')}>Save draft</button><button type="button" className={PRIMARY} disabled={busy} onClick={() => void save('approved')}>{busy ? 'Saving…' : 'Approve brief'}</button></div>
+            </div>
+        </Modal>
+    </>;
+}
+
 // ---------- The card ----------
 
 /**
@@ -526,6 +584,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
     const [job, setJob] = useState(initial);
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [resultRun, setResultRun] = useState<JobRunView | null>(null);
     const update = (next: JobView) => {
         setJob(next);
         onChange?.(next);
@@ -593,14 +652,15 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
             {job.status === 'proposed' && job.canManage ? <Approve job={job} onChange={update} /> : null}
             {job.status === 'proposed' && !job.canManage ? <p className="text-[11px] text-text-secondary">A manager or administrator approves jobs.</p> : null}
 
-            {reviewRun ? <RunBlock job={job} run={reviewRun} onChange={update} /> : null}
+            {reviewRun ? <RunBlock job={job} run={reviewRun} onChange={update} onView={setResultRun} /> : null}
             {!compact && d?.skill === 'link_building' ? <OpportunityTracker job={job} onChange={update} /> : null}
+            {!compact && d?.skill === 'seo_brief' ? <SeoBriefEditor job={job} /> : null}
             {!compact && doneRuns.length ? (
                 <details open={doneRuns.length === 1}>
                     <summary className="cursor-pointer text-xs text-text-secondary">Results ({doneRuns.length} run{doneRuns.length === 1 ? '' : 's'})</summary>
                     <div className="mt-2 space-y-2">
                         {doneRuns.slice(0, 5).map((r) => (
-                            <RunBlock key={r.id} job={job} run={r} onChange={update} />
+                            <RunBlock key={r.id} job={job} run={r} onChange={update} onView={setResultRun} />
                         ))}
                     </div>
                 </details>
@@ -648,6 +708,9 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                     {job.nextRunAt ? `Next scheduled run: ${new Date(job.nextRunAt).toLocaleString()}` : 'Scheduling resumes when this job is active.'}
                 </p>
             ) : null}
+            <Modal isOpen={Boolean(resultRun)} onClose={() => setResultRun(null)} title={`${d?.title ?? 'Job'} results`} maxWidth="5xl">
+                {resultRun ? <Results job={job} run={resultRun} /> : null}
+            </Modal>
         </div>
     );
 }

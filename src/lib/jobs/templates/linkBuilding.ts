@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { JobDesign } from '../schema';
 
 export const linkBuildingConfigSchema = z.object({
+  projectId: z.string().min(1),
   schedule: z.object({
     kind: z.enum(['daily', 'weekly', 'monthly']).default('daily'),
     time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default('09:00'),
@@ -32,6 +33,7 @@ export function linkBuildingDesign(config: LinkBuildingConfig): JobDesign {
       'Begin by diagnosing what would create the most strategic value now. Use connected search/SEO/analytics data to detect weak domain or homepage authority, newly launched pages, ranking or traffic declines, high-impression near-ranking pages, commercially important pages, topic-authority gaps, and competitor backlink gaps. Select the target page, keywords, tactic, and natural anchor from that evidence; do not rotate mechanically through tactics.',
       'Call list_companies first to see which data providers are connected. Use company_metrics and all relevant connected search, analytics, and SEO read tools before public research. If no SEO or keyword provider is available, compensate with free public evidence: search for indexed pages, rankings, competitors, competitor citations/backlinks, niche directories, resource pages, and comparable listings. Use web_search and web_fetch first, then browser_navigate through the Playwright worker for JavaScript-rendered or thin pages and free public tools. Never bypass a login, CAPTCHA, rate limit, robots restriction, or site terms. Clearly label authority as an estimate unless a connected provider returned the metric directly.',
       'Prioritize relevant niche/business/software/local directories, public resource databases, legitimate industry profiles, partner or technology directories available to the property, useful forum or Q&A contributions, competitor-linked self-service listings, and broken/outdated resources with a direct submission mechanism.',
+      'Treat direct audience and topical overlap as mandatory, not a bonus. Reject broad directories whose actual inventory, visitors, or category structure does not directly serve the approved audience and topics. A site being indexable or authoritative is never enough by itself.',
       'Exclude paid placements, link exchanges, PBNs, mass-submission or spam directories, irrelevant comments, fake identities, artificial community participation, outreach-only opportunities, journalist/PR work, and launch platforms that require an existing following. Verify the destination and submission path still exist, no payment is required, the property is not already listed, and the recommendation has not appeared in earlier runs.',
       'Provide ready-to-use submission text when the opportunity supports it. Do not submit, create an account, post, or contact anyone; this phase recommends only.',
       config.exclusions ? `Property-specific exclusions: ${config.exclusions}` : '',
@@ -40,6 +42,8 @@ export function linkBuildingDesign(config: LinkBuildingConfig): JobDesign {
       { key: 'strategic_reason', label: 'Why now', type: 'long_text', required: true, description: 'The diagnosed weakness or opportunity and evidence behind this priority.' },
       { key: 'opportunity_url', label: 'Opportunity', type: 'url', required: true, description: 'Exact public page where the listing, profile, resource, or contribution can be submitted.' },
       { key: 'opportunity_type', label: 'Type', type: 'text', required: true, description: 'Directory, resource page, profile, forum, Q&A, competitor gap, or another legitimate self-service type.' },
+      { key: 'relevance_score', label: 'Relevance score', type: 'number', required: true, description: '0–100 direct relevance to the approved audience, topics, and target page; only 75+ qualifies.' },
+      { key: 'relevance_evidence', label: 'Relevance evidence', type: 'long_text', required: true, description: 'Concrete evidence of audience and topical overlap from the opportunity page.' },
       { key: 'estimated_authority', label: 'Estimated authority', type: 'text', required: true, description: 'A clearly labeled estimate/range, or an exact named metric only when returned by a connected provider.' },
       { key: 'authority_basis', label: 'Authority evidence', type: 'long_text', required: true, description: 'Signals and sources used for the estimate; never present an invented Ahrefs DR.' },
       { key: 'target_keywords', label: 'Target keywords', type: 'list', required: true, description: 'Keywords or topic cluster this link should support.' },
@@ -63,6 +67,7 @@ export function linkBuildingDesign(config: LinkBuildingConfig): JobDesign {
       'Forum and Q&A opportunities must support a genuinely useful, context-specific response.',
       'Never call an authority estimate Ahrefs DR unless Ahrefs returned that value.',
       'Do not repeat previously recommended, rejected, submitted, or live opportunities.',
+      'Reject anything below 75/100 direct relevance to the approved SEO brief.',
     ],
     recommendedCompletion: 'review',
     findings: [
