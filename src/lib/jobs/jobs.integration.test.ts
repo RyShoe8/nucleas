@@ -156,10 +156,14 @@ describe('approving and the dry run', () => {
       : { requestId: 'w', role: 'assistant', text: JSON.stringify({ records: [{ values: { strategic_reason: 'A new page needs authority.', strategy_evidence: 'The games page is a newly launched priority page in the approved brief and currently has no directory citations.', opportunity_url: 'https://directory.example.org/submit', opportunity_type: 'Directory', relevance_score: 90, relevance_evidence: 'The directory exclusively catalogs video games and is used by players searching for games and community servers.', estimated_authority: 'Medium estimate', authority_basis: 'Indexed and used by peers.', target_keywords: ['games'], target_url: 'https://playbound.club/games', anchor_text: 'PlayBound games', submission_copy: 'A useful directory description.', requirements: 'Free account.', link_attribute: 'unknown', quality_risk: 'Relevant and moderated.', confidence: 'Medium', next_action: 'Submit the listing.' }, sources: ['https://directory.example.org/submit'] }], summary: 'Found one.', gaps: [] }), costMicros: 0 });
 
     const approved = await approveJob(admin, created.job.id, { completion: 'review' });
+    expect((await getJob(admin, created.job.id))?.runs[0].progressState).toMatchObject({ stage: 'preparing', percent: 5, label: 'Preparing the dry run' });
     await executeJobRun(approved.dryRunId!);
     let view = await getJob(admin, created.job.id);
+    expect(view).toMatchObject({ status: 'ready' });
+    expect(view?.nextRunAt).not.toBeNull();
     expect(view?.opportunities).toHaveLength(1);
     expect(view?.opportunities[0]).toMatchObject({ status: 'recommended', opportunityUrl: 'https://directory.example.org/submit' });
+    expect(view?.runs[0].progressState).toMatchObject({ stage: 'complete', percent: 100, label: 'Ready for review' });
 
     await decideRun(admin, created.job.id, approved.dryRunId!, 'accept', 'Good fit');
     view = await getJob(admin, created.job.id);
@@ -169,6 +173,26 @@ describe('approving and the dry run', () => {
     expect(await LinkOpportunity.findById(view!.opportunities[0].id).lean()).toMatchObject({ status: 'submitted', note: 'Good fit', liveLinkUrl: 'https://directory.example.org/listing/playbound' });
     expect(await verifyLinkOpportunity(view!.opportunities[0].id)).toBe('found');
     expect(await LinkOpportunity.findById(view!.opportunities[0].id).lean()).toMatchObject({ status: 'live', verificationMessage: expect.stringContaining('found') });
+  });
+
+  it('keeps recurring link building scheduled while earlier recommendations await review', async () => {
+    const config = { projectId, schedule: { kind: 'daily' as const, time: '09:00', timezone: 'UTC' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
+    const created = await createTemplateJob(admin, { companyId, template: 'link_building', config });
+    if (!created.ok) throw new Error(created.error);
+    mocks.chat.mockImplementation(async (input: { systemPrompt: string }) => input.systemPrompt.startsWith('You check one run')
+      ? { requestId: 'r', role: 'assistant', text: '{"verdict":"pass","notes":"Sourced."}', costMicros: 0 }
+      : { requestId: 'w', role: 'assistant', text: JSON.stringify({ records: [{ values: { strategic_reason: 'The priority page needs relevant citations.', strategy_evidence: 'The approved brief identifies the games page as a priority and the named directory has a matching video-game category.', opportunity_url: 'https://directory.example.org/submit', opportunity_type: 'Directory', relevance_score: 90, relevance_evidence: 'The directory exclusively catalogs video games and is used by players searching for games and community servers.', estimated_authority: 'Medium estimate', authority_basis: 'Indexed and used by peers.', target_keywords: ['games'], target_url: 'https://playbound.club/games', anchor_text: 'PlayBound games', submission_copy: 'A useful directory description.', requirements: 'Free account.', link_attribute: 'unknown', quality_risk: 'Relevant and moderated.', confidence: 'Medium', next_action: 'Submit the listing.' }, sources: ['https://directory.example.org/submit'] }], summary: 'Found one.', gaps: [] }), costMicros: 0 });
+
+    const approved = await approveJob(admin, created.job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    const sample = await JobRun.findById(approved.dryRunId).lean();
+    expect(sample?.status).toBe('needs_review');
+    await Job.updateOne({ _id: created.job.id }, { $set: { nextRunAt: new Date('2026-10-01T09:00:00Z') } });
+
+    const claimed = await claimDueJobRuns(new Date('2026-10-01T10:00:00Z'));
+    expect(claimed).toHaveLength(1);
+    expect(await JobRun.countDocuments({ jobId: created.job.id })).toBe(2);
+    expect(await JobRun.findById(approved.dryRunId).lean()).toMatchObject({ status: 'needs_review' });
   });
 
   it('only managers approve; approval fixes completion and budget and starts one dry run', async () => {

@@ -10,7 +10,7 @@ import { shortModel } from '@/lib/ai/progress';
 import { assistantLedgerProjectId } from '@/lib/ai/company/assistantLedger';
 import { loadCompanyViewer, getCompanyProfile } from '@/lib/companies/companyProfile';
 import { resolveCompanyRepository } from '@/lib/building/companyCode';
-import { Job, JobRun } from '@/lib/models/Job';
+import { Job, JobRun, type JobRunProgressStage } from '@/lib/models/Job';
 import { checkRecords, jobDesignSchema, jobRunOutputSchema, type JobDesign, type JobRunOutput } from './schema';
 import { linkOpportunityMemory, syncLinkOpportunities } from './linkOpportunities';
 import { approvedSeoBrief, seoBriefContext } from './seoBriefs';
@@ -18,6 +18,7 @@ import Project from '@/lib/models/Project';
 import { getRepoSnapshot } from '@/lib/ai/repo/snapshot';
 import { projectGuide } from '@/lib/ai/repo/projectGuide';
 import { webFetch } from '@/lib/ai/tools/webFetch';
+import { nextScheduledAt } from './schedule';
 
 /**
  * Runs a job once: the engine's research model does the work with tools and returns structured,
@@ -109,8 +110,16 @@ export function seoBriefIssues(output: JobRunOutput, propertyHost: string | null
   return issues;
 }
 
-async function progress(runId: Types.ObjectId, text: string) {
-  await JobRun.updateOne({ _id: runId }, { $push: { progress: { $each: [text.slice(0, 300)], $slice: -40 } } }).catch(() => undefined);
+async function progress(runId: Types.ObjectId, text: string, milestone?: { stage: JobRunProgressStage; percent: number }) {
+  await JobRun.updateOne(
+    milestone
+      ? { _id: runId, $or: [{ 'progressState.percent': { $exists: false } }, { 'progressState.percent': { $lte: milestone.percent } }] }
+      : { _id: runId },
+    {
+      $push: { progress: { $each: [text.slice(0, 300)], $slice: -40 } },
+      ...(milestone ? { $set: { progressState: { ...milestone, label: text.slice(0, 300), updatedAt: new Date() } } } : {}),
+    }
+  ).catch(() => undefined);
 }
 
 /** AI spent on this job this calendar month (design plus runs). */
@@ -159,6 +168,7 @@ export async function executeJobRun(runId: string): Promise<void> {
   const design = jobDesignSchema.safeParse(job.design);
   if (!design.success) return fail('The job has no valid design.');
   const activeDesign = currentDesign(design.data);
+  await progress(run._id, 'Preparing company, project, and model context', { stage: 'preparing', percent: 8 });
 
   const spent = await monthSpendMicros(job._id);
   if (spent >= (job.monthlyBudgetMicros ?? 0)) return fail(`This job has reached its monthly budget ($${((job.monthlyBudgetMicros ?? 0) / 1_000_000).toFixed(2)}).`);
@@ -197,10 +207,16 @@ export async function executeJobRun(runId: string): Promise<void> {
   const done = activeDesign.skill === 'link_building' ? await linkOpportunityMemory(job._id) : await earlierRecords(job._id, run._id);
   let cost = 0;
   const usedModels: string[] = [];
-  const onProgress = (t: string) => void progress(run._id, t);
+  let researchPercent = 28;
+  const onProgress = (t: string) => {
+    // Tool/model messages prove liveness. Advance slowly within the research band without
+    // implying a precise time estimate; later milestones supply the meaningful completion signal.
+    researchPercent = Math.min(58, researchPercent + 2);
+    void progress(run._id, t, { stage: 'researching', percent: researchPercent });
+  };
 
   const doWork = async (choice: typeof worker, correction?: string, researchRetry = false) => {
-    onProgress(correction ? `${researchRetry ? 'Re-researching' : 'Fixing the result format'} with ${shortModel(choice.model)}` : `Working with ${shortModel(choice.model)}`);
+    onProgress(correction ? `${researchRetry ? 'Re-researching' : 'Fixing the result format'} with ${shortModel(choice.model)}` : `Researching with ${shortModel(choice.model)}`);
     usedModels.push(choice.model);
     const turn = await attemptCompanyCredentialChat({
       systemPrompt: runnerPrompt(activeDesign, today),
@@ -239,7 +255,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     if (!parsed.success) return void (await JobRun.updateOne({ _id: run._id }, { $set: { status: 'failed', error: 'The run did not return usable records.', finishedAt: new Date(), costMicros: cost, models: usedModels } }));
     let output = parsed.data;
 
-    onProgress('Checking the records');
+    await progress(run._id, 'Validating evidence and required fields', { stage: 'validating', percent: 68 });
     let issues = checkRecords(activeDesign.fields, output);
     if (activeDesign.skill === 'seo_brief') issues.push(...seoBriefIssues(output, propertyHost, groundingFacts));
     if (activeDesign.skill === 'seo_brief' && issues.length) {
@@ -267,7 +283,7 @@ export async function executeJobRun(runId: string): Promise<void> {
 
     let verdict: { verdict: 'pass' | 'fail'; notes: string; model: string } | null = null;
     if (review.primary) {
-      onProgress(`Reviewing with ${shortModel(review.primary.model)}`);
+      await progress(run._id, `Independent review with ${shortModel(review.primary.model)}`, { stage: 'reviewing', percent: 84 });
       const reviewTurn = await attemptCompanyCredentialChat({
         systemPrompt: reviewerPrompt(),
         organizationId: org,
@@ -294,6 +310,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     // Dry runs always wait for a person; real runs complete by themselves only when automatic and clean.
     const clean = issues.length === 0 && verdict?.verdict !== 'fail';
     const status = !run.dryRun && job.completion === 'automatic' && clean ? 'completed' : 'needs_review';
+    await progress(run._id, 'Saving results and recommendations', { stage: 'saving', percent: 95 });
     await JobRun.updateOne(
       { _id: run._id, status: 'running' },
       {
@@ -305,6 +322,7 @@ export async function executeJobRun(runId: string): Promise<void> {
           finishedAt: new Date(),
           costMicros: cost,
           models: usedModels,
+          progressState: { stage: 'complete', label: status === 'completed' ? 'Complete' : 'Ready for review', percent: 100, updatedAt: new Date() },
         },
       }
     );
@@ -318,8 +336,18 @@ export async function executeJobRun(runId: string): Promise<void> {
         output,
         approved: status === 'completed',
       });
+      // A clean, independently reviewed sample proves the recurring skill can run. Keep its
+      // recommendation pending for a person, but do not make that decision a scheduling lock.
+      if (run.dryRun && clean && verdict?.verdict === 'pass' && activeDesign.schedule.kind !== 'once') {
+        const nextRunAt = nextScheduledAt(activeDesign.schedule, new Date());
+        if (nextRunAt) {
+          await Job.updateOne(
+            { _id: job._id, status: 'testing' },
+            { $set: { status: 'ready', nextRunAt }, $push: { events: { at: new Date(), action: 'sample_auto_scheduled', note: 'Clean link-building sample; recommendation remains in review.' } } }
+          );
+        }
+      }
     }
-    onProgress(status === 'completed' ? 'Done' : 'Ready for review');
   } catch (error) {
     await JobRun.updateOne({ _id: run._id }, { $set: { status: 'failed', error: error instanceof Error ? error.message.slice(0, 1000) : 'The run failed.', finishedAt: new Date(), costMicros: cost, models: usedModels } });
   }

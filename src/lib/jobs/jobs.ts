@@ -1,6 +1,6 @@
 import 'server-only';
 import { Types } from 'mongoose';
-import { Job, JobRun, type JobRunStatus, type JobStatus } from '@/lib/models/Job';
+import { Job, JobRun, type JobRunProgressStage, type JobRunStatus, type JobStatus } from '@/lib/models/Job';
 import { getCompanyProfile, isCompanyManager, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { readEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
 import type { ProgressFn } from '@/lib/ai/progress';
@@ -29,6 +29,7 @@ export interface JobRunView {
   startedAt: string;
   finishedAt: string | null;
   progress: string[];
+  progressState: { stage: JobRunProgressStage; label: string; percent: number; updatedAt: string };
   output: JobRunOutput | null;
   issues: RecordIssue[];
   review: { verdict: 'pass' | 'fail'; notes: string; model: string } | null;
@@ -91,6 +92,7 @@ type RunLean = {
   startedAt: Date;
   finishedAt?: Date;
   progress?: string[];
+  progressState?: { stage: JobRunProgressStage; label: string; percent: number; updatedAt: Date };
   output?: JobRunOutput;
   issues?: RecordIssue[];
   review?: { verdict: 'pass' | 'fail'; notes: string; model: string };
@@ -99,6 +101,9 @@ type RunLean = {
 };
 
 function runView(r: RunLean): JobRunView {
+  const terminal = r.status !== 'running';
+  const fallbackLabel = r.status === 'needs_review' ? 'Ready for review' : r.status === 'completed' ? 'Complete' : r.status === 'failed' ? 'Stopped' : r.status === 'rejected' ? 'Rejected' : r.progress?.at(-1) ?? 'Starting';
+  const progressState = r.progressState ?? { stage: terminal ? 'complete' : 'preparing', label: fallbackLabel, percent: terminal ? 100 : 5, updatedAt: r.finishedAt ?? r.startedAt };
   return {
     id: String(r._id),
     dryRun: r.dryRun,
@@ -106,6 +111,7 @@ function runView(r: RunLean): JobRunView {
     startedAt: r.startedAt.toISOString(),
     finishedAt: r.finishedAt?.toISOString() ?? null,
     progress: r.progress ?? [],
+    progressState: { ...progressState, updatedAt: progressState.updatedAt.toISOString() },
     output: r.output ?? null,
     issues: r.issues ?? [],
     review: r.review?.verdict ? r.review : null,
@@ -327,7 +333,8 @@ export async function approveJob(viewer: CompanyViewer, id: string, input: { com
   if (!(budget > 0 && budget <= 1_000_000_000)) return { ok: false, status: 400, error: 'Set a monthly budget above $0.' };
   const result = await transition(viewer, found.job, ['proposed'], { status: 'testing', completion: input.completion, monthlyBudgetMicros: budget }, 'approved', input.completion);
   if (!result.ok) return result;
-  const run = await JobRun.create({ organizationId: found.job.organizationId, jobId: found.job._id, companyId: found.job.companyId, dryRun: true, status: 'running', startedAt: new Date(), progress: ['Starting the dry run'] });
+  const startedAt = new Date();
+  const run = await JobRun.create({ organizationId: found.job.organizationId, jobId: found.job._id, companyId: found.job.companyId, dryRun: true, status: 'running', startedAt, progress: ['Starting the dry run'], progressState: { stage: 'preparing', label: 'Preparing the dry run', percent: 5, updatedAt: startedAt } });
   return { ...result, dryRunId: String(run._id) };
 }
 
@@ -346,7 +353,8 @@ export async function runNow(viewer: CompanyViewer, id: string): Promise<ActionR
     return { ok: false, status: 409, error: `${DELIVERY_LABEL[design.data.delivery.method]} needs its one-time setup first: ${design.data.delivery.setupSteps.join('; ') || 'see the design'}.` };
   }
   if (await JobRun.exists({ jobId: found.job._id, status: 'running' })) return { ok: false, status: 409, error: 'A run is already in progress.' };
-  const run = await JobRun.create({ organizationId: found.job.organizationId, jobId: found.job._id, companyId: found.job.companyId, dryRun: false, status: 'running', startedAt: new Date(), progress: ['Starting'] });
+  const startedAt = new Date();
+  const run = await JobRun.create({ organizationId: found.job.organizationId, jobId: found.job._id, companyId: found.job.companyId, dryRun: false, status: 'running', startedAt, progress: ['Starting'], progressState: { stage: 'preparing', label: 'Preparing the run', percent: 5, updatedAt: startedAt } });
   await Job.updateOne({ _id: found.job._id }, { $set: { lastRunAt: new Date() }, $push: { events: event(viewer, 'run_started') } });
   const view = await done(viewer, id);
   return view.ok ? { ...view, runId: String(run._id) } : view;
@@ -432,14 +440,16 @@ export async function claimDueJobRuns(now = new Date(), limit = 2): Promise<stri
       { new: true }
     );
     if (!claimed) continue;
+    const startedAt = new Date();
     const run = await JobRun.create({
       organizationId: job.organizationId,
       jobId: job._id,
       companyId: job.companyId,
       dryRun: false,
       status: 'running',
-      startedAt: now,
+      startedAt,
       progress: ['Starting scheduled run'],
+      progressState: { stage: 'preparing', label: 'Preparing the scheduled run', percent: 5, updatedAt: startedAt },
     });
     runIds.push(String(run._id));
   }

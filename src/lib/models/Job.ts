@@ -52,6 +52,20 @@ export const Job: Model<JobDoc> = (mongoose.models.Job as Model<JobDoc> | undefi
 export const JOB_RUN_STATUSES = ['running', 'needs_review', 'completed', 'rejected', 'failed'] as const;
 export type JobRunStatus = (typeof JOB_RUN_STATUSES)[number];
 
+export const JOB_RUN_PROGRESS_STAGES = ['preparing', 'researching', 'validating', 'reviewing', 'saving', 'complete'] as const;
+export type JobRunProgressStage = (typeof JOB_RUN_PROGRESS_STAGES)[number];
+
+const runProgressSchema = new Schema(
+  {
+    stage: { type: String, enum: JOB_RUN_PROGRESS_STAGES, required: true },
+    label: { type: String, required: true, maxlength: 300 },
+    /** Milestone progress, not a time estimate. Long AI/tool stages may take most of the runtime. */
+    percent: { type: Number, required: true, min: 0, max: 100 },
+    updatedAt: { type: Date, required: true },
+  },
+  { _id: false }
+);
+
 const runSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, required: true },
@@ -64,6 +78,8 @@ const runSchema = new Schema(
     finishedAt: { type: Date },
     /** Live progress lines, newest last. */
     progress: { type: [String], default: [] },
+    /** Persisted milestone shown after reloads and across clients. */
+    progressState: { type: runProgressSchema },
     output: { type: Schema.Types.Mixed },
     /** Deterministic check problems and the reviewer's notes. */
     issues: { type: Schema.Types.Mixed, default: [] },

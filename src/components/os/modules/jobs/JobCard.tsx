@@ -64,6 +64,7 @@ export interface JobRunView {
     startedAt: string;
     finishedAt: string | null;
     progress: string[];
+    progressState: { stage: 'preparing' | 'researching' | 'validating' | 'reviewing' | 'saving' | 'complete'; label: string; percent: number; updatedAt: string };
     output: { records: { values: Record<string, unknown>; sources: string[] }[]; summary: string; gaps: string[] } | null;
     issues: { record: number; field?: string; problem: string }[];
     review: { verdict: 'pass' | 'fail'; notes: string; model: string } | null;
@@ -406,14 +407,21 @@ function RunBlock({ job, run, onChange, onView }: { job: JobView; run: JobRunVie
                 </span>
             </p>
             {run.status === 'running' ? (
-                <ul className="text-[11px] text-text-secondary space-y-0.5">
-                    {run.progress.slice(-6).map((p, i, list) => (
-                        <li key={i} className={i === list.length - 1 ? 'text-text-primary' : ''}>
-                            {i === list.length - 1 ? '● ' : '✓ '}
-                            {p}
-                        </li>
-                    ))}
-                </ul>
+                <div className="rounded-lg border border-primary/25 bg-primary/5 p-3" role="status" aria-live="polite">
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                        <span className="font-medium text-text-primary">{run.progressState.label}</span>
+                        <span className="tabular-nums text-text-secondary">{run.progressState.percent}%</span>
+                    </div>
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-background-elevated" aria-label={`Job progress: ${run.progressState.percent}%`}>
+                        <div className="h-full rounded-full bg-primary transition-[width] duration-700 ease-out" style={{ width: `${run.progressState.percent}%` }} />
+                    </div>
+                    <div className="mt-2 flex items-center justify-between gap-3 text-[10px] text-text-secondary">
+                        <span className="capitalize">{run.progressState.stage} · milestone progress</span>
+                        <span>Updated {new Date(run.progressState.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                    </div>
+                    {run.progress.length > 1 ? <details className="mt-2"><summary className="cursor-pointer text-[10px] text-text-secondary hover:text-text-primary">Activity log</summary><ul className="mt-1 space-y-0.5 text-[11px] text-text-secondary">{run.progress.slice(-8).map((p, i, list) => <li key={`${p}-${i}`} className={i === list.length - 1 ? 'text-text-primary' : ''}>{i === list.length - 1 ? '● ' : '✓ '}{p}</li>)}</ul></details> : null}
+                    <p className="mt-2 text-[10px] text-text-secondary">Research time varies with the number of sources and tools needed.</p>
+                </div>
             ) : null}
             {run.error ? <p className="text-xs text-red-400">{run.error}</p> : null}
             {run.output ? (
