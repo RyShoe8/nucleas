@@ -42,7 +42,10 @@ describe('company production domain', () => {
     mocks.profile.mockResolvedValue({ id: companyId, name: 'PlayBound', relationship: 'owned' });
     mocks.projects.mockResolvedValue([]);
     mocks.connections.mockResolvedValue([]);
-    mocks.citations.mockResolvedValue([{ count: 17 }]);
+    mocks.citations.mockResolvedValue([
+      { _id: 'https://example.com/a', firstSeen: new Date('2026-09-01T00:00:00Z') },
+      { _id: 'https://example.com/b', firstSeen: new Date('2026-09-20T00:00:00Z') },
+    ]);
   });
 
   it('normalizes and saves a production URL as the canonical hostname', async () => {
@@ -72,10 +75,13 @@ describe('company production domain', () => {
   it('returns the company AI citation count for its stat card', async () => {
     const response = await GET(new NextRequest(`https://os.nucleas.test/api/os/companies/${companyId}`), { params: Promise.resolve({ id: companyId }) });
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ stats: { aiCitations: 17 } });
+    const body = await response.json();
+    expect(body).toMatchObject({ stats: { aiCitations: 2 } });
+    expect(body.stats.aiCitationSeries).toHaveLength(28);
+    expect(body.stats.aiCitationSeries.at(-1)).toMatchObject({ value: 2 });
     expect(mocks.citations).toHaveBeenCalledWith(expect.arrayContaining([
       expect.objectContaining({ $match: expect.objectContaining({ role: 'assistant' }) }),
-      { $count: 'count' },
+      expect.objectContaining({ $group: expect.objectContaining({ firstSeen: { $min: '$createdAt' } }) }),
     ]));
   });
 });

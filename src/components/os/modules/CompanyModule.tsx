@@ -78,6 +78,7 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                 companyId={company.id}
                 connections={connections.filter((c) => c.status === 'connected')}
                 aiCitations={detail.stats?.aiCitations ?? 0}
+                aiCitationSeries={detail.stats?.aiCitationSeries ?? []}
                 onActivity={() => setActivityKey((k) => k + 1)}
             />
             <ProjectsSection projects={projects} />

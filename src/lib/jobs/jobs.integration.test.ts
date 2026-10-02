@@ -232,7 +232,7 @@ describe('approving and the dry run', () => {
 });
 
 describe('real runs', () => {
-  it('tracks a VPS Property Overview as a durable background job', async () => {
+  it('tracks a VPS Company Overview as a durable background job', async () => {
     const overview = await PropertyOverview.create({ organizationId: org, companyId: new Types.ObjectId(companyId), rootUrl: 'https://playbound.club/', status: 'queued' });
     const linked = await createPropertyOverviewJob({ organizationId: org, companyId: new Types.ObjectId(companyId), userId: admin.userId, companyName: 'Playbound.club', overviewId: overview._id, rootUrl: overview.rootUrl });
     await PropertyOverview.updateOne({ _id: overview._id }, { $set: { jobId: linked.jobId, runId: linked.runId } });

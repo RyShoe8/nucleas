@@ -19,7 +19,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const profile = await getCompanyProfile(viewer, id);
     if (!profile) return NextResponse.json({ error: 'Company not found' }, { status: 404 });
 
-    const [projects, connections, citationRows] = await Promise.all([
+    const [projects, connections, citationSources] = await Promise.all([
       Project.aggregate<{ _id: Types.ObjectId; name: string; status: string; projectType: string; openTasks: number; totalTasks: number }>([
         { $match: { clientId: new Types.ObjectId(id) } },
         {
@@ -38,14 +38,24 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         { $sort: { name: 1 } },
       ]),
       listCompanyConnections(viewer, id),
-      CompanyAssistantTurn.aggregate<{ count: number }>([
+      CompanyAssistantTurn.aggregate<{ _id: string; firstSeen: Date }>([
         { $match: { organizationId: viewer.organizationId, companyIds: new Types.ObjectId(id), role: 'assistant', 'contextSources.0': { $exists: true } } },
         { $unwind: '$contextSources' },
         { $match: { contextSources: { $type: 'string', $ne: '' } } },
-        { $group: { _id: '$contextSources' } },
-        { $count: 'count' },
+        { $group: { _id: '$contextSources', firstSeen: { $min: '$createdAt' } } },
+        { $sort: { firstSeen: 1 } },
       ]),
     ]);
+
+    const citationSeries = Array.from({ length: 28 }, (_, index) => {
+      const day = new Date();
+      day.setUTCHours(23, 59, 59, 999);
+      day.setUTCDate(day.getUTCDate() - (27 - index));
+      return {
+        date: day.toISOString().slice(0, 10),
+        value: citationSources.filter((source) => new Date(source.firstSeen).getTime() <= day.getTime()).length,
+      };
+    });
 
     return NextResponse.json({
       canManage: isCompanyManager(viewer),
@@ -59,7 +69,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         totalTasks: p.totalTasks,
       })),
       connections: connections ?? [],
-      stats: { aiCitations: citationRows[0]?.count ?? 0 },
+      stats: { aiCitations: citationSources.length, aiCitationSeries: citationSeries },
     });
   } catch (error) {
     console.error('[os/companies/:id] failed', error);

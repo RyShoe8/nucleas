@@ -65,11 +65,18 @@ export function ChangeBadge({ change }: { change: number | null }) {
 }
 
 export function Sparkline({ series, label }: { series: { value: number }[]; label: string }) {
-    if (series.length < 2) return null;
+    if (series.length === 0) return null;
     const w = 120;
     const h = 28;
-    const max = Math.max(...series.map((p) => p.value), 1);
-    const points = series.map((p, i) => `${((i / (series.length - 1)) * w).toFixed(1)},${(h - (p.value / max) * (h - 2) - 1).toFixed(1)}`).join(' ');
+    const drawable = series.length === 1 ? [series[0], series[0]] : series;
+    const min = Math.min(...drawable.map((point) => point.value));
+    const max = Math.max(...drawable.map((point) => point.value));
+    const range = max - min;
+    const points = drawable.map((point, index) => {
+        const x = (index / (drawable.length - 1)) * w;
+        const normalized = range === 0 ? 0.5 : (point.value - min) / range;
+        return `${x.toFixed(1)},${(h - normalized * (h - 2) - 1).toFixed(1)}`;
+    }).join(' ');
     return (
         <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none" role="img" aria-label={`${label}, last ${series.length} days`} className="text-primary">
             <polyline points={points} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
@@ -129,7 +136,7 @@ function MetricCard({ m, slot }: { m?: OsMetric; slot: MetricSlot }) {
             <div className="text-[10px] text-text-secondary">
                 {!m ? 'Connect a data source' : m.kind === 'daily' ? `last 7 days${m.lastDay ? ` · ${formatMetric(m.unit, m.lastDay.value)} on ${m.lastDay.date.slice(5)}` : ''}` : 'current'}
             </div>
-            {m?.kind === 'daily' ? <Sparkline series={m.series} label={slot.label} /> : null}
+            {m?.series.length ? <Sparkline series={m.series} label={slot.label} /> : null}
         </div>
     );
 }
@@ -170,11 +177,13 @@ export default function CompanySnapshot({
     companyId,
     connections,
     aiCitations,
+    aiCitationSeries,
     onActivity,
 }: {
     companyId: string;
     connections: OsConnection[];
     aiCitations: number;
+    aiCitationSeries: { date: string; value: number }[];
     onActivity: () => void;
 }) {
     const auth = useOsAuth();
@@ -237,7 +246,14 @@ export default function CompanySnapshot({
         setCash(formatMetric('money', Math.round(out.totalAvailable * 100)));
     };
 
-    const citationMetric: OsMetric = { key: 'ai_citations', label: 'AI citations', unit: 'count', kind: 'snapshot', series: [], current: aiCitations, previous: null, change: null, lastDay: null };
+    const citationPrevious = aiCitationSeries.at(-8)?.value ?? null;
+    const citationMetric: OsMetric = {
+        key: 'ai_citations', label: 'AI citations', unit: 'count', kind: 'snapshot', series: aiCitationSeries,
+        current: aiCitations,
+        previous: citationPrevious,
+        change: citationPrevious && citationPrevious > 0 ? (aiCitations - citationPrevious) / citationPrevious : null,
+        lastDay: null,
+    };
     const metrics = new Map([...(data?.metrics ?? []), citationMetric].map((metric) => [metric.key, metric]));
 
     return (

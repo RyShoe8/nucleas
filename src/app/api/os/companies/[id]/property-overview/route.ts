@@ -46,7 +46,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const profile = await getCompanyProfile(viewer, id);
   if (!profile) return NextResponse.json({ error: 'Company not found.' }, { status: 404 });
   const source = profile.domain || profile.liveUrl || profile.urls[0];
-  if (!source) return NextResponse.json({ error: 'Set a production domain before generating a Property Overview.' }, { status: 400 });
+  if (!source) return NextResponse.json({ error: 'Set a production domain before generating a Company Overview.' }, { status: 400 });
   const rootUrl = new URL(source.startsWith('http') ? source : `https://${source}`).origin + '/';
   const active = await PropertyOverview.findOne({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(id), status: { $in: ['queued', 'crawling'] } }).lean();
   if (active) return NextResponse.json({ error: 'A property crawl is already running.' }, { status: 409 });

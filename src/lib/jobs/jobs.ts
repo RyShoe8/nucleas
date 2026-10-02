@@ -492,7 +492,7 @@ export async function sweepJobs(now = new Date()): Promise<{ runsFailed: number;
   const external = stale.filter((run) => run.propertyOverviewId);
   if (external.length) {
     await Promise.all([
-      Job.updateMany({ _id: { $in: external.map((run) => run.jobId) }, status: 'active' }, { $set: { status: 'failed', error: 'The Property Overview stopped reporting progress and timed out.' } }),
+      Job.updateMany({ _id: { $in: external.map((run) => run.jobId) }, status: 'active' }, { $set: { status: 'failed', error: 'The Company Overview stopped reporting progress and timed out.' } }),
       PropertyOverview.updateMany({ _id: { $in: external.map((run) => run.propertyOverviewId!) }, status: { $in: ['queued', 'crawling'] } }, { $set: { status: 'failed', completedAt: now, progress: 'Timed out', error: 'The VPS crawl stopped reporting progress.' } }),
     ]);
   }

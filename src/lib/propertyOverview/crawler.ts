@@ -2,7 +2,7 @@ import 'server-only';
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 import { getAppBaseUrl } from '@/lib/utils/appBaseUrl';
 
-/** Hand a long-running Property Overview crawl to the VPS and return as soon as it accepts the job. */
+/** Hand a long-running Company Overview crawl to the VPS and return as soon as it accepts the job. */
 export async function dispatchPropertyOverview(input: { overviewId: string; rootUrl: string }): Promise<void> {
   const base = process.env.NUCLEAS_EXECUTION_WORKER_URL?.trim().replace(/\/+$/, '');
   const token = process.env.NUCLEAS_EXECUTION_WORKER_TOKEN?.trim();
@@ -18,6 +18,9 @@ export async function dispatchPropertyOverview(input: { overviewId: string; root
   });
   if (!response.ok) {
     const detail = (await response.text().catch(() => '')).slice(0, 300);
+    if (response.status === 400 && detail.includes('Invalid property crawl request')) {
+      throw new Error('The VPS crawl worker is out of date. Rebuild it from the latest main branch before starting a full-site Company Overview.');
+    }
     throw new Error(`VPS crawl worker returned HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
   }
 }

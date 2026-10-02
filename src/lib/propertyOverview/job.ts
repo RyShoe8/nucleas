@@ -9,7 +9,7 @@ const PROPERTY_OVERVIEW_OWNER = 'vps:property-overview';
 export function propertyOverviewJobDesign(companyName: string, rootUrl: string): JobDesign {
   return {
     skill: 'property_overview',
-    title: `Property overview · ${companyName}`,
+    title: `Company overview · ${companyName}`,
     category: 'data',
     instructions: `Crawl and archive the complete public site at ${rootUrl}. Audit technical SEO, group page templates, and map internal links.`,
     fields: [
@@ -24,7 +24,7 @@ export function propertyOverviewJobDesign(companyName: string, rootUrl: string):
       { key: 'competitors', label: 'Competitors', type: 'list', required: false, description: 'Up to ten likely direct competitors; uncertain candidates are omitted.' },
     ],
     sourcePolicy: 'First-party pages from the selected production property. Every archived page retains its URL and crawl evidence.',
-    delivery: { method: 'nucleas', detail: 'Saved as a browsable Property Overview in Nucleas.', setupSteps: [] },
+    delivery: { method: 'nucleas', detail: 'Saved as a browsable Company Overview in Nucleas.', setupSteps: [] },
     schedule: { kind: 'once' },
     recordsPerRun: 1,
     safeguards: ['Read-only crawl; never submit forms or change the property.', 'Stay on the selected production hostname.', 'Keep crawl evidence auditable.'],
@@ -41,7 +41,7 @@ export async function createPropertyOverviewJob(input: { organizationId: Types.O
     companyId: input.companyId,
     createdByUserId: new Types.ObjectId(input.userId),
     status: 'active',
-    request: `Generate a complete Property Overview for ${input.rootUrl}.`,
+    request: `Generate a complete Company Overview for ${input.rootUrl}.`,
     design: propertyOverviewJobDesign(input.companyName, input.rootUrl),
     completion: 'automatic',
     level: 'free',
@@ -81,7 +81,7 @@ export async function completePropertyOverviewJob(input: { jobId?: Types.ObjectI
     gaps: [],
   };
   await Promise.all([
-    JobRun.updateOne({ _id: input.runId, status: 'running', leaseOwner: PROPERTY_OVERVIEW_OWNER }, { $set: { status: 'completed', output, finishedAt: now, progressState: { stage: 'complete', label: 'Property Overview complete', percent: 100, updatedAt: now } }, $unset: { leaseExpiresAt: '' }, $push: { progress: 'Property Overview complete' } }),
+    JobRun.updateOne({ _id: input.runId, status: 'running', leaseOwner: PROPERTY_OVERVIEW_OWNER }, { $set: { status: 'completed', output, finishedAt: now, progressState: { stage: 'complete', label: 'Company Overview complete', percent: 100, updatedAt: now } }, $unset: { leaseExpiresAt: '' }, $push: { progress: 'Company Overview complete' } }),
     Job.updateOne({ _id: input.jobId, status: 'active' }, { $set: { status: 'done' }, $push: { events: { at: now, action: 'property_crawl_completed' } } }),
   ]);
 }
@@ -89,7 +89,7 @@ export async function completePropertyOverviewJob(input: { jobId?: Types.ObjectI
 export async function failPropertyOverviewJob(input: { jobId?: Types.ObjectId; runId?: Types.ObjectId; error: string }): Promise<void> {
   const now = new Date();
   await Promise.all([
-    input.runId ? JobRun.updateOne({ _id: input.runId, status: 'running', leaseOwner: PROPERTY_OVERVIEW_OWNER }, { $set: { status: 'failed', error: input.error.slice(0, 1000), finishedAt: now, progressState: { stage: 'complete', label: 'Property Overview failed', percent: 100, updatedAt: now } }, $unset: { leaseExpiresAt: '' } }) : Promise.resolve(),
+    input.runId ? JobRun.updateOne({ _id: input.runId, status: 'running', leaseOwner: PROPERTY_OVERVIEW_OWNER }, { $set: { status: 'failed', error: input.error.slice(0, 1000), finishedAt: now, progressState: { stage: 'complete', label: 'Company Overview failed', percent: 100, updatedAt: now } }, $unset: { leaseExpiresAt: '' } }) : Promise.resolve(),
     input.jobId ? Job.updateOne({ _id: input.jobId, status: 'active' }, { $set: { status: 'failed', error: input.error.slice(0, 1000) }, $push: { events: { at: now, action: 'property_crawl_failed', note: input.error.slice(0, 500) } } }) : Promise.resolve(),
   ]);
 }
