@@ -18,6 +18,6 @@ describe('link-building skill', () => {
     expect(design.delivery.method).toBe('nucleas');
     expect(design.instructions).toContain('browser_navigate');
     expect(design.instructions).toContain('Do not submit');
-    expect(design.fields.map((field) => field.key)).toEqual(expect.arrayContaining(['strategic_reason', 'relevance_score', 'relevance_evidence', 'estimated_authority', 'target_keywords', 'target_url', 'submission_copy']));
+    expect(design.fields.map((field) => field.key)).toEqual(expect.arrayContaining(['strategic_reason', 'strategy_evidence', 'relevance_score', 'relevance_evidence', 'estimated_authority', 'target_keywords', 'target_url', 'submission_copy']));
   });
 });

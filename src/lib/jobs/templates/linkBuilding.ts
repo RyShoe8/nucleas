@@ -30,7 +30,7 @@ export function linkBuildingDesign(config: LinkBuildingConfig): JobDesign {
     category: 'marketing',
     instructions: [
       `Find the ${config.recordsPerRun === 1 ? 'single best' : `${config.recordsPerRun} best`} legitimate, free, self-service link-building ${config.recordsPerRun === 1 ? 'opportunity' : 'opportunities'} for this property in ${config.country}, using ${config.language}.`,
-      'Begin by diagnosing what would create the most strategic value now. Use connected search/SEO/analytics data to detect weak domain or homepage authority, newly launched pages, ranking or traffic declines, high-impression near-ranking pages, commercially important pages, topic-authority gaps, and competitor backlink gaps. Select the target page, keywords, tactic, and natural anchor from that evidence; do not rotate mechanically through tactics.',
+      'Begin by diagnosing what would create the most strategic value now. Consider weak domain or homepage authority, newly launched pages, ranking or traffic declines, high-impression near-ranking pages, commercially important pages, topic-authority gaps, and competitor backlink gaps. These are candidate diagnoses, not a checklist: choose the single strongest strategy the available evidence actually supports. Never claim a ranking decline, traffic decline, or competitor gap without exact supporting data. If those signals are unavailable, choose a different, provable rationale and state the limitation.',
       'Call list_companies first to see which data providers are connected. Use company_metrics and all relevant connected search, analytics, and SEO read tools before public research. If no SEO or keyword provider is available, compensate with free public evidence: search for indexed pages, rankings, competitors, competitor citations/backlinks, niche directories, resource pages, and comparable listings. Use web_search and web_fetch first, then browser_navigate through the Playwright worker for JavaScript-rendered or thin pages and free public tools. Never bypass a login, CAPTCHA, rate limit, robots restriction, or site terms. Clearly label authority as an estimate unless a connected provider returned the metric directly.',
       'Prioritize relevant niche/business/software/local directories, public resource databases, legitimate industry profiles, partner or technology directories available to the property, useful forum or Q&A contributions, competitor-linked self-service listings, and broken/outdated resources with a direct submission mechanism.',
       'Treat direct audience and topical overlap as mandatory, not a bonus. Reject broad directories whose actual inventory, visitors, or category structure does not directly serve the approved audience and topics. A site being indexable or authoritative is never enough by itself.',
@@ -40,6 +40,7 @@ export function linkBuildingDesign(config: LinkBuildingConfig): JobDesign {
     ].filter(Boolean).join('\n\n'),
     fields: [
       { key: 'strategic_reason', label: 'Why now', type: 'long_text', required: true, description: 'The diagnosed weakness or opportunity and evidence behind this priority.' },
+      { key: 'strategy_evidence', label: 'Strategy evidence', type: 'long_text', required: true, description: 'Specific metric, date range, page observation, named competitor, or other sourced fact proving the chosen diagnosis. Never use a generic claim.' },
       { key: 'opportunity_url', label: 'Opportunity', type: 'url', required: true, description: 'Exact public page where the listing, profile, resource, or contribution can be submitted.' },
       { key: 'opportunity_type', label: 'Type', type: 'text', required: true, description: 'Directory, resource page, profile, forum, Q&A, competitor gap, or another legitimate self-service type.' },
       { key: 'relevance_score', label: 'Relevance score', type: 'number', required: true, description: '0–100 direct relevance to the approved audience, topics, and target page; only 75+ qualifies.' },
@@ -52,7 +53,7 @@ export function linkBuildingDesign(config: LinkBuildingConfig): JobDesign {
       { key: 'submission_copy', label: 'Submission copy', type: 'long_text', required: true, description: 'Useful, truthful, ready-to-use listing, profile, forum, or resource submission text.' },
       { key: 'requirements', label: 'Requirements', type: 'long_text', required: true, description: 'Account, moderation, fields, assets, and exact self-service submission steps.' },
       { key: 'link_attribute', label: 'Link attribute', type: 'text', required: true, description: 'Follow, nofollow, sponsored, or unknown, with uncertainty preserved.' },
-      { key: 'competitor_evidence', label: 'Competitor evidence', type: 'long_text', required: false, description: 'Comparable competitor listing or backlink when found.' },
+      { key: 'competitor_evidence', label: 'Competitor evidence', type: 'long_text', required: false, description: 'A specifically named real competitor and its exact listing/backlink URL when found. Leave empty rather than using a placeholder.' },
       { key: 'quality_risk', label: 'Quality and risk', type: 'long_text', required: true, description: 'Relevance, spam indicators, moderation, and reasons the opportunity passed the safeguards.' },
       { key: 'confidence', label: 'Confidence', type: 'text', required: true, description: 'High, medium, or low with a short reason.' },
       { key: 'next_action', label: 'Next action', type: 'long_text', required: true, description: 'The next concrete action a person should take.' },
@@ -68,6 +69,7 @@ export function linkBuildingDesign(config: LinkBuildingConfig): JobDesign {
       'Never call an authority estimate Ahrefs DR unless Ahrefs returned that value.',
       'Do not repeat previously recommended, rejected, submitted, or live opportunities.',
       'Reject anything below 75/100 direct relevance to the approved SEO brief.',
+      'Never use placeholders such as “Competitor X.” If competitor evidence is unavailable, leave it empty and do not claim a competitor gap.',
     ],
     recommendedCompletion: 'review',
     findings: [

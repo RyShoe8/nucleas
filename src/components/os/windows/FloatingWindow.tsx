@@ -1,16 +1,9 @@
 'use client';
 
-import { type ReactNode, useCallback, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useState } from 'react';
 import type { ModuleDefinition, WindowState } from '@/lib/os/types';
 import { clampToViewport } from '@/lib/os/clampToViewport';
 import { windowLabel } from '@/lib/os/windowLabel';
-import {
-    isNearPopoutEdge,
-    isPointerOutsideOsViewport,
-    pointerToScreenPlacement,
-    shouldTriggerTearOffPopout,
-    windowToScreenPlacement,
-} from '@/lib/os/tearOffPopout';
 import { getOsCanvasBounds } from '@/lib/os/viewportBounds';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import { useDraggable } from './useDraggable';
@@ -25,9 +18,6 @@ interface FloatingWindowProps {
 export default function FloatingWindow({ window: w, module, children }: FloatingWindowProps) {
     const wm = useWindowManager();
     const [popoutError, setPopoutError] = useState<string | null>(null);
-    const [nearEdge, setNearEdge] = useState(false);
-    const nearEdgeRef = useRef(false);
-    const grabOffsetRef = useRef({ x: 0, y: 0 });
 
     const handleDrag = useCallback(
         (x: number, y: number) => {
@@ -36,60 +26,13 @@ export default function FloatingWindow({ window: w, module, children }: Floating
                 getOsCanvasBounds()
             );
             wm.move(w.id, clamped.x, clamped.y);
-            if (module.canPopout && !w.poppedOut) {
-                const edge = isNearPopoutEdge(clamped.x, clamped.y, w.width, w.height);
-                nearEdgeRef.current = edge;
-                setNearEdge(edge);
-            }
         },
-        [wm, w.id, w.width, w.height, w.poppedOut, module.canPopout]
+        [wm, w.id, w.width, w.height]
     );
 
     const handleDragStart = useCallback(() => {
         wm.focus(w.id);
-        nearEdgeRef.current = false;
-        setNearEdge(false);
     }, [wm, w.id]);
-
-    const handleDragEnd = useCallback(
-        (x: number, y: number, event: PointerEvent) => {
-            const wasNearEdge = nearEdgeRef.current;
-            nearEdgeRef.current = false;
-            setNearEdge(false);
-            if (!module.canPopout || w.poppedOut || w.maximized) return;
-
-            const clamped = clampToViewport(
-                { x, y, width: w.width, height: w.height },
-                getOsCanvasBounds()
-            );
-
-            if (
-                !shouldTriggerTearOffPopout(
-                    event.clientX,
-                    event.clientY,
-                    clamped.x,
-                    clamped.y,
-                    w.width,
-                    w.height,
-                    wasNearEdge
-                )
-            ) {
-                return;
-            }
-
-            const placement = isPointerOutsideOsViewport(event.clientX, event.clientY)
-                ? pointerToScreenPlacement(
-                      event.clientX,
-                      event.clientY,
-                      grabOffsetRef.current.x,
-                      grabOffsetRef.current.y
-                  )
-                : windowToScreenPlacement(clamped.x, clamped.y);
-            const ok = wm.popOut(w.id, { placement });
-            setPopoutError(ok ? null : 'Allow pop-ups for this site to pop out modules.');
-        },
-        [wm, w.id, w.poppedOut, w.maximized, w.width, w.height, module.canPopout]
-    );
 
     const handleResize = useCallback(
         (width: number, height: number) => {
@@ -108,20 +51,8 @@ export default function FloatingWindow({ window: w, module, children }: Floating
         y: w.y,
         onDragStart: handleDragStart,
         onDrag: handleDrag,
-        onDragEnd: handleDragEnd,
         disabled: w.maximized,
     });
-
-    const onHeaderPointerDown = useCallback(
-        (e: React.PointerEvent<HTMLElement>) => {
-            grabOffsetRef.current = {
-                x: e.clientX - w.x,
-                y: e.clientY - w.y,
-            };
-            draggablePointerDown(e);
-        },
-        [w.x, w.y, draggablePointerDown]
-    );
 
     const { onPointerDown: onResizePointerDown, resizing } = useResizable({
         width: w.width,
@@ -160,9 +91,9 @@ export default function FloatingWindow({ window: w, module, children }: Floating
         <div
             role="dialog"
             aria-label={windowTitle}
-            className={`absolute ${w.maximized ? '' : 'top-0 left-0'} bg-background-card border rounded-lg shadow-2xl flex flex-col overflow-hidden ${
+            className={`ui-panel absolute ${w.maximized ? '' : 'top-0 left-0'} flex flex-col overflow-hidden ${
                 isActive ? 'border-primary/40' : 'border-border'
-            } ${nearEdge && dragging ? 'ring-2 ring-primary/50 ring-offset-1 ring-offset-transparent' : ''} ${
+            } ${
                 // Content stays selectable/copyable; selection is only suppressed mid-drag or mid-resize.
                 dragging || resizing ? 'select-none' : 'transition-shadow'
             }`}
@@ -170,7 +101,7 @@ export default function FloatingWindow({ window: w, module, children }: Floating
             onPointerDown={focusOnInteraction}
         >
             <div
-                onPointerDown={onHeaderPointerDown}
+                onPointerDown={draggablePointerDown}
                 onDoubleClick={() => wm.maximize(w.id)}
                 className={`flex items-center gap-2 px-3 h-9 border-b border-border select-none ${
                     w.maximized ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'

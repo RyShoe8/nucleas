@@ -40,6 +40,8 @@ interface Turn {
     attachments?: { name: string; kind?: string; size: number; error?: string | null }[];
     /** While answering: what Nucleas has done so far, newest last. */
     progress?: string[];
+    /** Company/data sources used to ground this answer. */
+    contextSources?: string[];
     startedAt?: number;
 }
 
@@ -316,12 +318,12 @@ export default function AssistantModule() {
                 {turns?.map((t) => (
                     <div key={t.id} className={t.role === 'user' ? 'flex justify-end' : ''}>
                         <div
-                            className={`rounded-lg px-3 py-2 text-sm max-w-[90%] ${
+                            className={`rounded-xl px-4 py-3 text-sm max-w-[92%] shadow-sm ${
                                 t.role === 'user'
-                                    ? 'bg-primary/20 border border-primary/30'
+                                    ? 'bg-primary/15 border border-primary/35'
                                     : t.role === 'status'
-                                      ? 'border border-amber-400/40 text-amber-300'
-                                      : 'border border-border'
+                                      ? 'border border-warning/40 bg-warning-light text-warning'
+                                      : 'ui-card'
                             } ${t.pending ? 'min-w-[260px]' : ''}`}
                         >
                             {t.pending ? (
@@ -379,6 +381,17 @@ export default function AssistantModule() {
                                 </div>
                             ) : null}
                             {t.role !== 'user' && !t.pending ? <StageLine turn={t} /> : null}
+                            {t.role === 'assistant' && t.contextSources?.length ? (
+                                <details className="mt-2 border-t border-border pt-2">
+                                    <summary className="cursor-pointer text-[11px] text-text-secondary">AI citations · {t.contextSources.length}</summary>
+                                    <ul className="mt-1 space-y-1 text-[11px]">
+                                        {t.contextSources.map((source, index) => {
+                                            const isUrl = /^https?:\/\//i.test(source);
+                                            return <li key={`${source}-${index}`} className="break-all">{isUrl ? <a href={source} target="_blank" rel="noreferrer" className="text-primary hover:underline">{source}</a> : <span className="text-text-secondary">{source}</span>}</li>;
+                                        })}
+                                    </ul>
+                                </details>
+                            ) : null}
                         </div>
                     </div>
                 ))}

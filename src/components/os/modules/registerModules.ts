@@ -134,7 +134,7 @@ export function registerOsModules(): void {
             minSize: { width: 460, height: 320 },
             canPopout: true,
             permissions: 'member',
-            render: () => createElement(JobsModule, { categories: ['marketing', 'outreach'], title: 'Marketing' }),
+            render: (ctx) => createElement(JobsModule, { categories: ['marketing', 'outreach'], title: 'Marketing', initialCompanyId: ctx.payload?.companyId, initialKind: ctx.payload?.kind }),
         },
         {
             id: 'content',

@@ -59,6 +59,23 @@ function reviewerPrompt(): string {
   ].join('\n');
 }
 
+/** Existing configured jobs keep their stored schedule/settings while receiving current safety rules. */
+function currentDesign(design: JobDesign): JobDesign {
+  if (design.skill !== 'link_building' || design.fields.some((field) => field.key === 'strategy_evidence')) return design;
+  const strategicIndex = design.fields.findIndex((field) => field.key === 'strategic_reason');
+  const fields = [...design.fields];
+  fields.splice(strategicIndex >= 0 ? strategicIndex + 1 : 0, 0, {
+    key: 'strategy_evidence', label: 'Strategy evidence', type: 'long_text', required: true,
+    description: 'Specific metric, date range, page observation, named competitor, or other sourced fact proving the chosen diagnosis.',
+  });
+  return {
+    ...design,
+    instructions: `${design.instructions}\n\nChoose one strategy the available evidence actually proves. Do not claim traffic/ranking declines or competitor gaps without exact supporting data. Never use placeholder competitors such as “Competitor X”; leave competitor evidence empty when unavailable.`,
+    fields,
+    safeguards: [...design.safeguards, 'Every diagnosis must have specific sourced evidence; placeholders are prohibited.'],
+  };
+}
+
 async function progress(runId: Types.ObjectId, text: string) {
   await JobRun.updateOne({ _id: runId }, { $push: { progress: { $each: [text.slice(0, 300)], $slice: -40 } } }).catch(() => undefined);
 }
@@ -108,6 +125,7 @@ export async function executeJobRun(runId: string): Promise<void> {
   if (!job) return fail('The job no longer exists.');
   const design = jobDesignSchema.safeParse(job.design);
   if (!design.success) return fail('The job has no valid design.');
+  const activeDesign = currentDesign(design.data);
 
   const spent = await monthSpendMicros(job._id);
   if (spent >= (job.monthlyBudgetMicros ?? 0)) return fail(`This job has reached its monthly budget ($${((job.monthlyBudgetMicros ?? 0) / 1_000_000).toFixed(2)}).`);
@@ -115,8 +133,8 @@ export async function executeJobRun(runId: string): Promise<void> {
   const viewer = await loadCompanyViewer(String(job.createdByUserId));
   const profile = viewer ? await getCompanyProfile(viewer, String(job.companyId)) : null;
   if (!viewer || !profile) return fail('The company is no longer accessible.');
-  const seoBrief = design.data.skill === 'link_building' ? await approvedSeoBrief(job.organizationId, job.companyId, job.projectId) : null;
-  if (design.data.skill === 'link_building' && !seoBrief) return fail('This project needs an approved SEO brief before link building can run.');
+  const seoBrief = activeDesign.skill === 'link_building' ? await approvedSeoBrief(job.organizationId, job.companyId, job.projectId) : null;
+  if (activeDesign.skill === 'link_building' && !seoBrief) return fail('This project needs an approved SEO brief before link building can run.');
   const org = String(job.organizationId);
   const settings = await readEngineSettings(org);
   const level = job.level ?? settings.defaultCostLevel;
@@ -128,7 +146,7 @@ export async function executeJobRun(runId: string): Promise<void> {
   const repo = await resolveCompanyRepository(viewer, String(job.companyId)).catch(() => null);
   const tools = await buildAssistantTools(viewer, [profile]);
   const today = new Date().toISOString().slice(0, 10);
-  const done = design.data.skill === 'link_building' ? await linkOpportunityMemory(job._id) : await earlierRecords(job._id, run._id);
+  const done = activeDesign.skill === 'link_building' ? await linkOpportunityMemory(job._id) : await earlierRecords(job._id, run._id);
   let cost = 0;
   const usedModels: string[] = [];
   const onProgress = (t: string) => void progress(run._id, t);
@@ -137,7 +155,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     onProgress(correction ? `Fixing the result format with ${shortModel(choice.model)}` : `Working with ${shortModel(choice.model)}`);
     usedModels.push(choice.model);
     const turn = await attemptCompanyCredentialChat({
-      systemPrompt: runnerPrompt(design.data, today),
+      systemPrompt: runnerPrompt(activeDesign, today),
       organizationId: org,
       projectId: repo?.projectId ?? assistantLedgerProjectId(org),
       userId: viewer.userId,
@@ -174,12 +192,19 @@ export async function executeJobRun(runId: string): Promise<void> {
     const output = parsed.data;
 
     onProgress('Checking the records');
-    const issues = checkRecords(design.data.fields, output);
-    if (design.data.skill === 'link_building') {
+    const issues = checkRecords(activeDesign.fields, output);
+    if (activeDesign.skill === 'link_building') {
       output.records.forEach((record, index) => {
         const score = Number(record.values.relevance_score);
+        const strategicReason = String(record.values.strategic_reason ?? '');
+        const strategyEvidence = String(record.values.strategy_evidence ?? '');
+        const competitorEvidence = String(record.values.competitor_evidence ?? '');
         if (!Number.isFinite(score) || score < 75) issues.push({ record: index, field: 'relevance_score', problem: 'Direct audience/topic relevance must score at least 75/100.' });
         if (String(record.values.relevance_evidence ?? '').trim().length < 80) issues.push({ record: index, field: 'relevance_evidence', problem: 'Relevance evidence must specifically prove audience and topical overlap.' });
+        if (strategyEvidence.trim().length < 80) issues.push({ record: index, field: 'strategy_evidence', problem: 'The chosen strategy needs specific sourced evidence, not a generic diagnosis.' });
+        if (/competitor\s*[x0-9]|example competitor|placeholder|competitor name/i.test(competitorEvidence)) issues.push({ record: index, field: 'competitor_evidence', problem: 'Competitor evidence contains a placeholder; identify a real competitor and URL or leave it empty.' });
+        if (/competitor.{0,30}(gap|backlink)/i.test(strategicReason) && !/^.{3,}\bhttps?:\/\//i.test(competitorEvidence)) issues.push({ record: index, field: 'competitor_evidence', problem: 'A competitor-gap strategy requires a named competitor and exact supporting URL.' });
+        if (/(traffic|ranking|rankings).{0,30}(declin|drop|fell|decreas)|declin.{0,30}(traffic|ranking)/i.test(strategicReason) && !/\d/.test(strategyEvidence)) issues.push({ record: index, field: 'strategy_evidence', problem: 'A traffic or ranking decline claim requires a concrete metric and date/range.' });
       });
     }
 
@@ -191,7 +216,7 @@ export async function executeJobRun(runId: string): Promise<void> {
         organizationId: org,
         projectId: repo?.projectId ?? assistantLedgerProjectId(org),
         userId: viewer.userId,
-        userText: [`# Instructions\n${design.data.instructions}`, seoBrief ? `# Approved SEO brief\n${seoBriefContext(seoBrief)}` : '', `# Source policy\n${design.data.sourcePolicy}`, `# Result\n${JSON.stringify(output).slice(0, 30000)}`, issues.length ? `# Problems found by code\n${issues.map((i) => `- ${i.problem}`).join('\n')}` : ''].join('\n\n'),
+        userText: [`# Instructions\n${activeDesign.instructions}`, seoBrief ? `# Approved SEO brief\n${seoBriefContext(seoBrief)}` : '', `# Source policy\n${activeDesign.sourcePolicy}`, `# Result\n${JSON.stringify(output).slice(0, 30000)}`, issues.length ? `# Problems found by code\n${issues.map((i) => `- ${i.problem}`).join('\n')}` : ''].join('\n\n'),
         priorTurns: [],
         modelProfileId: review.primary.profileId,
         model: review.primary.model,
@@ -226,7 +251,7 @@ export async function executeJobRun(runId: string): Promise<void> {
         },
       }
     );
-    if (design.data.skill === 'link_building') {
+    if (activeDesign.skill === 'link_building') {
       await syncLinkOpportunities({
         organizationId: job.organizationId,
         companyId: job.companyId,

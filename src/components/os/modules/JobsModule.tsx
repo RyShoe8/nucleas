@@ -20,11 +20,11 @@ const GROUPS: Group[] = [
     { key: 'closed', label: 'Rejected and archived', test: (j) => j.status === 'rejected' || j.status === 'archived' },
 ];
 
-function NewJob({ onCreated, placeholder, marketing }: { onCreated: (j: JobView) => void; placeholder: string; marketing?: boolean }) {
+function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKind }: { onCreated: (j: JobView) => void; placeholder: string; marketing?: boolean; initialCompanyId?: string; initialKind?: string }) {
     const { companies } = useOsCompanies();
-    const [companyId, setCompanyId] = useState('');
+    const [companyId, setCompanyId] = useState(initialCompanyId ?? '');
     const [request, setRequest] = useState('');
-    const [kind, setKind] = useState<'custom' | 'link_building' | 'seo_brief'>(marketing ? 'link_building' : 'custom');
+    const [kind, setKind] = useState<'custom' | 'link_building' | 'seo_brief'>(initialKind === 'seo_brief' ? 'seo_brief' : marketing ? 'link_building' : 'custom');
     const [projects, setProjects] = useState<{ projectId: string; projectName: string }[]>([]);
     const [projectId, setProjectId] = useState('');
     const [frequency, setFrequency] = useState<'daily' | 'weekly' | 'monthly'>('daily');
@@ -38,8 +38,7 @@ function NewJob({ onCreated, placeholder, marketing }: { onCreated: (j: JobView)
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     useEffect(() => {
-        setProjectId('');
-        if (!companyId || kind === 'custom') { setProjects([]); return; }
+        if (!companyId || kind === 'custom') return;
         let cancelled = false;
         void fetch(`/api/os/companies/${companyId}/code`, { cache: 'no-store' }).then(async (res) => {
             const body = (await res.json().catch(() => ({}))) as { projects?: { projectId: string; projectName: string }[] };
@@ -81,19 +80,19 @@ function NewJob({ onCreated, placeholder, marketing }: { onCreated: (j: JobView)
         onCreated(body.job);
     };
     return (
-        <div className="rounded-md border border-border p-3 space-y-2">
+        <div className="ui-card p-4 space-y-4">
             {marketing ? (
                 <div className="flex gap-1">
-                    <button type="button" onClick={() => setKind('link_building')} className={`text-[11px] px-2 py-1 rounded border ${kind === 'link_building' ? 'border-primary text-primary' : 'border-border text-text-secondary'}`}>Link building</button>
-                    <button type="button" onClick={() => setKind('seo_brief')} className={`text-[11px] px-2 py-1 rounded border ${kind === 'seo_brief' ? 'border-primary text-primary' : 'border-border text-text-secondary'}`}>SEO brief</button>
-                    <button type="button" onClick={() => setKind('custom')} className={`text-[11px] px-2 py-1 rounded border ${kind === 'custom' ? 'border-primary text-primary' : 'border-border text-text-secondary'}`}>Custom job</button>
+                    <button type="button" onClick={() => { setKind('link_building'); setProjectId(''); }} className={kind === 'link_building' ? 'ui-button-primary' : 'ui-button'}>Link building</button>
+                    <button type="button" onClick={() => { setKind('seo_brief'); setProjectId(''); }} className={kind === 'seo_brief' ? 'ui-button-primary' : 'ui-button'}>Marketing plan</button>
+                    <button type="button" onClick={() => { setKind('custom'); setProjectId(''); setProjects([]); }} className={kind === 'custom' ? 'ui-button-primary' : 'ui-button'}>Custom job</button>
                 </div>
             ) : null}
             <div className="flex gap-2">
                 <select
                     value={companyId}
-                    onChange={(e) => setCompanyId(e.target.value)}
-                    className="h-7 px-1 rounded border border-border bg-background-elevated text-xs"
+                    onChange={(e) => { setCompanyId(e.target.value); setProjectId(''); setProjects([]); }}
+                    className="ui-control"
                     aria-label="Company"
                 >
                     <option value="">Company…</option>
@@ -107,29 +106,29 @@ function NewJob({ onCreated, placeholder, marketing }: { onCreated: (j: JobView)
                     {kind === 'link_building' ? 'Uses the project’s approved SEO brief to reject irrelevant opportunities.' : kind === 'seo_brief' ? 'Nucleas researches a project and creates an editable strategy draft for approval.' : 'Describe the work; Nucleas investigates, asks what it must, and designs it for your approval.'}
                 </span>
             </div>
-            {kind !== 'custom' ? <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="h-7 w-full px-1 rounded border border-border bg-background-elevated text-xs" aria-label="Project"><option value="">Project…</option>{projects.map((p) => <option key={p.projectId} value={p.projectId}>{p.projectName}</option>)}</select> : null}
+            {kind !== 'custom' ? <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="ui-control w-full" aria-label="Project"><option value="">Project…</option>{projects.map((p) => <option key={p.projectId} value={p.projectId}>{p.projectName}</option>)}</select> : null}
             {kind === 'link_building' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
-                    <label className="space-y-1"><span className="text-text-secondary">Frequency</span><select value={frequency} onChange={(e) => setFrequency(e.target.value as typeof frequency)} className="block w-full h-7 rounded border border-border bg-background-elevated px-1"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
+                    <label className="space-y-1"><span className="text-text-secondary">Frequency</span><select value={frequency} onChange={(e) => setFrequency(e.target.value as typeof frequency)} className="ui-control block w-full"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
                     {frequency === 'weekly' ? <label className="space-y-1"><span className="text-text-secondary">Day</span><select value={weekday} onChange={(e) => setWeekday(Number(e.target.value))} className="block w-full h-7 rounded border border-border bg-background-elevated px-1">{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((d, i) => <option key={d} value={i}>{d}</option>)}</select></label> : null}
                     {frequency === 'monthly' ? <label className="space-y-1"><span className="text-text-secondary">Day of month</span><input type="number" min={1} max={28} value={dayOfMonth} onChange={(e) => setDayOfMonth(Number(e.target.value))} className="block w-full h-7 rounded border border-border bg-background-elevated px-1" /></label> : null}
-                    <label className="space-y-1"><span className="text-text-secondary">Local time</span><input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="block w-full h-7 rounded border border-border bg-background-elevated px-1" /></label>
-                    <label className="space-y-1"><span className="text-text-secondary">Recommendations</span><input type="number" min={1} max={10} value={recordsPerRun} onChange={(e) => setRecordsPerRun(Number(e.target.value))} className="block w-full h-7 rounded border border-border bg-background-elevated px-1" /></label>
-                    <label className="space-y-1"><span className="text-text-secondary">Country</span><input value={country} onChange={(e) => setCountry(e.target.value)} className="block w-full h-7 rounded border border-border bg-background-elevated px-1" /></label>
-                    <label className="space-y-1"><span className="text-text-secondary">Language</span><input value={language} onChange={(e) => setLanguage(e.target.value)} className="block w-full h-7 rounded border border-border bg-background-elevated px-1" /></label>
-                    <label className="space-y-1 col-span-2 sm:col-span-3"><span className="text-text-secondary">Optional exclusions</span><input value={exclusions} onChange={(e) => setExclusions(e.target.value)} placeholder="Sites, categories, or tactics to exclude" className="block w-full h-7 rounded border border-border bg-background-elevated px-1" /></label>
+                    <label className="space-y-1"><span className="text-text-secondary">Local time</span><input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="ui-control block w-full" /></label>
+                    <label className="space-y-1"><span className="text-text-secondary">Recommendations</span><input type="number" min={1} max={10} value={recordsPerRun} onChange={(e) => setRecordsPerRun(Number(e.target.value))} className="ui-control block w-full" /></label>
+                    <label className="space-y-1"><span className="text-text-secondary">Country</span><input value={country} onChange={(e) => setCountry(e.target.value)} className="ui-control block w-full" /></label>
+                    <label className="space-y-1"><span className="text-text-secondary">Language</span><input value={language} onChange={(e) => setLanguage(e.target.value)} className="ui-control block w-full" /></label>
+                    <label className="space-y-1 col-span-2 sm:col-span-3"><span className="text-text-secondary">Optional exclusions</span><input value={exclusions} onChange={(e) => setExclusions(e.target.value)} placeholder="Sites, categories, or tactics to exclude" className="ui-control block w-full" /></label>
                 </div>
             ) : kind === 'custom' ? (
-                <textarea value={request} onChange={(e) => setRequest(e.target.value)} placeholder={placeholder} className="w-full h-20 px-2 py-1.5 rounded border border-border bg-background-elevated text-sm resize-y" aria-label="Job request" />
+                <textarea value={request} onChange={(e) => setRequest(e.target.value)} placeholder={placeholder} className="ui-control w-full h-24 resize-y" aria-label="Job request" />
             ) : <p className="text-xs text-text-secondary">The first run produces a sourced draft. Accept the result, then edit and approve the brief from the job card.</p>}
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
             <button
                 type="button"
                 disabled={busy || !companyId || (kind !== 'custom' && !projectId) || (kind === 'custom' && request.trim().length < 10)}
                 onClick={() => void create()}
-                className="text-[11px] px-2 py-1 rounded bg-primary text-white disabled:opacity-50"
+                className="ui-button-primary"
             >
-                {busy ? 'Starting…' : kind === 'link_building' ? 'Configure link building' : kind === 'seo_brief' ? 'Create SEO brief' : 'Design this job'}
+                {busy ? 'Starting…' : kind === 'link_building' ? 'Configure link building' : kind === 'seo_brief' ? 'Generate marketing plan' : 'Design this job'}
             </button>
         </div>
     );
@@ -139,13 +138,13 @@ function NewJob({ onCreated, placeholder, marketing }: { onCreated: (j: JobView)
  * Jobs: non-code work Nucleas designs and runs for each company. The Marketing and Content windows
  * are this view filtered to their categories.
  */
-export default function JobsModule({ categories, title = 'Jobs' }: { categories?: string[]; title?: string }) {
+export default function JobsModule({ categories, title = 'Jobs', initialCompanyId, initialKind }: { categories?: string[]; title?: string; initialCompanyId?: string; initialKind?: string }) {
     const [jobs, setJobs] = useState<JobView[] | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [company, setCompany] = useState('all');
+    const [company, setCompany] = useState(initialCompanyId ?? 'all');
     const [showClosed, setShowClosed] = useState(false);
     const [open, setOpen] = useState<string | null>(null);
-    const [creating, setCreating] = useState(false);
+    const [creating, setCreating] = useState(Boolean(initialCompanyId && initialKind));
     const [reloadKey, setReloadKey] = useState(0);
     const reload = useCallback(() => setReloadKey((k) => k + 1), []);
 
@@ -194,7 +193,7 @@ export default function JobsModule({ categories, title = 'Jobs' }: { categories?
     return (
         <div className="h-full flex flex-col text-text-primary">
             <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-                <select value={company} onChange={(e) => setCompany(e.target.value)} className="h-7 px-1 rounded border border-border bg-background-elevated text-xs" aria-label="Company">
+                <select value={company} onChange={(e) => setCompany(e.target.value)} className="ui-control" aria-label="Company">
                     <option value="all">All companies</option>
                     {companies.map(([id, name]) => (
                         <option key={id} value={id}>
@@ -208,7 +207,7 @@ export default function JobsModule({ categories, title = 'Jobs' }: { categories?
                 </label>
                 <span className="flex-1" />
                 {busy ? <span className="text-[11px] text-sky-400">Working…</span> : null}
-                <button type="button" onClick={() => setCreating((v) => !v)} className="text-[11px] px-2 py-0.5 rounded bg-primary text-white">
+                <button type="button" onClick={() => setCreating((v) => !v)} className="ui-button-primary">
                     {creating ? 'Close' : 'New job'}
                 </button>
             </div>
@@ -218,6 +217,8 @@ export default function JobsModule({ categories, title = 'Jobs' }: { categories?
                     <NewJob
                         placeholder={placeholder}
                         marketing={title === 'Marketing'}
+                        initialCompanyId={initialCompanyId}
+                        initialKind={initialKind}
                         onCreated={(j) => {
                             setCreating(false);
                             setJobs((list) => [j, ...(list ?? [])]);
@@ -235,7 +236,7 @@ export default function JobsModule({ categories, title = 'Jobs' }: { categories?
                     if (!items.length) return null;
                     return (
                         <section key={g.key}>
-                            <h3 className="text-[11px] uppercase tracking-wider text-text-secondary mb-2">
+                            <h3 className="ui-kicker mb-2">
                                 {g.label} · {items.length}
                             </h3>
                             <ul className="space-y-2">
@@ -252,7 +253,7 @@ export default function JobsModule({ categories, title = 'Jobs' }: { categories?
                                             <button
                                                 type="button"
                                                 onClick={() => setOpen(j.id)}
-                                                className="w-full rounded-md border border-border px-3 py-2 flex items-center gap-2 text-left hover:bg-background-card"
+                                                className="ui-card-interactive w-full px-3 py-2.5 flex items-center gap-2 text-left"
                                             >
                                                 <span className="min-w-0 flex-1">
                                                     <span className="block text-sm truncate">{j.design?.title ?? j.request}</span>

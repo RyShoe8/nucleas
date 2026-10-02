@@ -61,7 +61,7 @@ export default function CompaniesModule() {
                                                 e.stopPropagation();
                                                 wm.open('company', { payload: { companyId: c.id, companyName: c.name } });
                                             }}
-                                            className="w-full px-4 py-2 hover:bg-background-card cursor-pointer flex items-center gap-3 text-left"
+                                            className="w-full px-4 py-3 hover:bg-background-card cursor-pointer flex items-center gap-3 text-left"
                                         >
                                             <span
                                                 aria-hidden

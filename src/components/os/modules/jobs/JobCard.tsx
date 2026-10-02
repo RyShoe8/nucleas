@@ -139,8 +139,8 @@ export function scheduleLabel(s: JobDesign['schedule'] | undefined): string {
 }
 
 const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(micros < 100_000 ? 3 : 2)}`;
-const BUTTON = 'text-[11px] px-2 py-1 rounded border border-border hover:bg-background-card disabled:opacity-50';
-const PRIMARY = 'text-[11px] px-2 py-1 rounded bg-primary text-white hover:opacity-90 disabled:opacity-50';
+const BUTTON = 'ui-button';
+const PRIMARY = 'ui-button-primary';
 
 async function post(id: string, body: Record<string, unknown>): Promise<{ job?: JobView; error?: string }> {
     const res = await fetch(`/api/os/jobs/${id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -334,55 +334,38 @@ function Results({ job, run }: { job: JobView; run: JobRunView }) {
     const fields = job.design?.fields ?? [];
     const records = run.output?.records ?? [];
     return (
-        <div className="space-y-2 text-xs">
-            {run.output?.summary ? <p>{run.output.summary}</p> : null}
-            {records.length ? (
-                <div className="overflow-x-auto rounded border border-border">
-                    <table className="w-full text-[11px]">
-                        <thead>
-                            <tr className="text-left text-text-secondary">
-                                {fields.map((f) => (
-                                    <th key={f.key} className="px-2 py-1 font-normal whitespace-nowrap">
-                                        {f.label}
-                                    </th>
-                                ))}
-                                <th className="px-2 py-1 font-normal">Sources</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {records.map((r, i) => (
-                                <tr key={i} className="border-t border-border align-top">
-                                    {fields.map((f) => {
+        <div className="space-y-5 text-sm">
+            {run.output?.summary ? <section className="rounded-lg border border-border bg-background-elevated/40 p-4"><h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-secondary">Summary</h3><p className="whitespace-pre-wrap leading-6">{run.output.summary}</p></section> : null}
+            {records.map((r, i) => (
+                <article key={i} className="overflow-hidden rounded-lg border border-border">
+                    <header className="border-b border-border bg-background-elevated px-4 py-3"><h3 className="text-base font-semibold">{records.length === 1 ? 'Opportunity details' : `Opportunity ${i + 1}`}</h3></header>
+                    <dl className="divide-y divide-border">
+                        {fields.map((f) => {
                                         const v = r.values[f.key];
                                         const text = Array.isArray(v) ? v.join(', ') : v === undefined || v === null ? '' : String(v);
                                         const problem = run.issues.find((x) => x.record === i && x.field === f.key);
                                         return (
-                                            <td key={f.key} className={`px-2 py-1 max-w-[260px] ${problem ? 'text-amber-400' : ''}`} title={problem?.problem}>
+                                            <div key={f.key} className={`grid gap-1 px-4 py-3 sm:grid-cols-[180px_minmax(0,1fr)] sm:gap-5 ${problem ? 'bg-amber-400/5' : ''}`} title={problem?.problem}>
+                                                <dt className="text-xs font-semibold uppercase tracking-wide text-text-secondary">{f.label}</dt>
+                                                <dd className={`min-w-0 text-sm leading-6 ${problem ? 'text-amber-300' : 'text-text-primary'}`}>
                                                 {f.type === 'url' && text ? (
-                                                    <a href={text} target="_blank" rel="noreferrer" className="underline break-all">
+                                                    <a href={text} target="_blank" rel="noreferrer" className="text-primary underline break-all">
                                                         {text}
                                                     </a>
                                                 ) : (
                                                     <span className="whitespace-pre-wrap break-words leading-relaxed">{text || '—'}</span>
                                                 )}
-                                            </td>
+                                                {problem ? <span className="mt-1 block text-xs">Check: {problem.problem}</span> : null}
+                                                </dd>
+                                            </div>
                                         );
-                                    })}
-                                    <td className="px-2 py-1">
-                                        {r.sources.slice(0, 4).map((s, j) => (
-                                            <a key={j} href={s} target="_blank" rel="noreferrer" className="block underline truncate max-w-[160px]" title={s}>
-                                                {s.replace(/^https?:\/\/(www\.)?/, '')}
-                                            </a>
-                                        ))}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            ) : null}
+                        })}
+                        <div className="grid gap-2 bg-background-elevated/30 px-4 py-3 sm:grid-cols-[180px_minmax(0,1fr)] sm:gap-5"><dt className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Sources</dt><dd><ul className="space-y-1.5">{r.sources.map((s, j) => <li key={j}><a href={s} target="_blank" rel="noreferrer" className="text-sm text-primary underline break-all">{s}</a></li>)}</ul></dd></div>
+                    </dl>
+                </article>
+            ))}
             {run.issues.length ? (
-                <div className="text-amber-400">
+                <div className="rounded-lg border border-amber-400/40 bg-amber-400/5 p-4 text-amber-300">
                     <p className="font-medium">Checks that did not pass</p>
                     <ul className="list-disc pl-4">
                         {run.issues.slice(0, 10).map((x, i) => (
@@ -395,9 +378,7 @@ function Results({ job, run }: { job: JobView; run: JobRunView }) {
                 </div>
             ) : null}
             {run.review ? (
-                <p className={run.review.verdict === 'pass' ? 'text-emerald-400' : 'text-amber-400'}>
-                    Reviewer ({run.review.model.split('/').pop()}): {run.review.verdict === 'pass' ? 'looks right' : 'has concerns'} — {run.review.notes}
-                </p>
+                <section className={`rounded-lg border p-4 ${run.review.verdict === 'pass' ? 'border-emerald-400/40 bg-emerald-400/5 text-emerald-300' : 'border-amber-400/40 bg-amber-400/5 text-amber-300'}`}><h3 className="mb-2 text-xs font-semibold uppercase tracking-wider">Reviewer · {run.review.model.split('/').pop()}</h3><p className="leading-6">{run.review.notes}</p></section>
             ) : null}
             {run.output?.gaps.length ? <p className="text-text-secondary">Could not find: {run.output.gaps.join('; ')}</p> : null}
             <p className="text-[10px] text-text-secondary">Cost {usd(run.costMicros)}</p>
@@ -561,7 +542,7 @@ function SeoBriefEditor({ job }: { job: JobView }) {
     const textarea = (key: string, label: string, rows = 3) => <label className="block space-y-1"><span className="text-xs font-medium">{label}</span><textarea value={form[key] ?? ''} onChange={(e) => setForm((v) => ({ ...v, [key]: e.target.value }))} rows={rows} className="w-full rounded border border-border bg-background-elevated px-2 py-1.5 text-sm" /></label>;
     return <>
         <div className="rounded border border-border p-2 flex items-center gap-2"><div className="min-w-0 flex-1"><p className="text-xs font-medium">SEO brief · {brief.projectName}</p><p className="text-[11px] text-text-secondary">{brief.status === 'approved' ? `Approved · revision ${brief.revision}` : `Draft · revision ${brief.revision}`}</p></div><button type="button" className={PRIMARY} onClick={open}>{brief.status === 'approved' ? 'View or edit brief' : 'Edit and approve'}</button></div>
-        <Modal isOpen={editing} onClose={() => setEditing(false)} title={`SEO brief · ${brief.projectName}`} maxWidth="4xl">
+            <Modal isOpen={editing} onClose={() => setEditing(false)} title={`SEO brief · ${brief.projectName}`} maxWidth="4xl" appearance="theme">
             <div className="space-y-4">
                 <p className="text-xs text-text-secondary">Edits return the brief to draft unless you approve it. Approved content becomes hard context for this project’s SEO marketing work.</p>
                 {textarea('summary', 'Property and offering', 4)}{textarea('audience', 'Target audience', 4)}
@@ -618,7 +599,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
     const doneRuns = job.runs.filter((r) => r.status === 'completed');
 
     return (
-        <div className="rounded-md border border-border bg-background-card/40 p-3 space-y-3 text-sm">
+        <div className="ui-card p-4 space-y-4 text-sm">
             <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                     <p className="font-medium leading-snug">{d?.title ?? 'New job'}</p>
@@ -708,7 +689,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                     {job.nextRunAt ? `Next scheduled run: ${new Date(job.nextRunAt).toLocaleString()}` : 'Scheduling resumes when this job is active.'}
                 </p>
             ) : null}
-            <Modal isOpen={Boolean(resultRun)} onClose={() => setResultRun(null)} title={`${d?.title ?? 'Job'} results`} maxWidth="5xl">
+            <Modal isOpen={Boolean(resultRun)} onClose={() => setResultRun(null)} title={`${d?.title ?? 'Job'} results`} maxWidth="5xl" appearance="theme">
                 {resultRun ? <Results job={job} run={resultRun} /> : null}
             </Modal>
         </div>

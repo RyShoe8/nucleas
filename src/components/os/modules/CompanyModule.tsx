@@ -40,7 +40,7 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
     const { company, projects, connections } = detail;
 
     return (
-        <div className="h-full overflow-y-auto p-4 space-y-5 text-text-primary">
+        <div className="h-full overflow-y-auto p-5 space-y-5 text-text-primary">
             <header className="flex items-start gap-3">
                 <span
                     aria-hidden
@@ -66,7 +66,10 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                         <p className="mt-1 text-sm text-text-secondary line-clamp-2">{company.description}</p>
                     ) : null}
                 </div>
-                <AskButton companyId={company.id} companyName={company.name} />
+                <div className="flex flex-col sm:flex-row gap-2">
+                    <MarketingPlanButton companyId={company.id} companyName={company.name} />
+                    <AskButton companyId={company.id} companyName={company.name} />
+                </div>
             </header>
 
             <CompanySnapshot
@@ -162,11 +165,16 @@ function AskButton({ companyId, companyName }: { companyId: string; companyName:
                 setAssistantFocus({ companyId, companyName });
                 wm.open('assistant');
             }}
-            className="flex-shrink-0 text-xs px-3 py-1.5 rounded-md bg-primary text-white hover:opacity-90"
+            className="ui-button-primary flex-shrink-0"
         >
             ✨ Ask Nucleas
         </button>
     );
+}
+
+function MarketingPlanButton({ companyId, companyName }: { companyId: string; companyName: string }) {
+    const wm = useWindowManager();
+    return <button type="button" onClick={(e) => { e.stopPropagation(); wm.open('marketing', { payload: { companyId, companyName, kind: 'seo_brief' } }); }} className="ui-button flex-shrink-0">Marketing plan</button>;
 }
 
 /** One line: connection counts, problems highlighted, and a link to the Integrations window. */
@@ -207,11 +215,11 @@ function ProjectsSection({ projects }: { projects: OsCompanyDetail['projects'] }
     const wm = useWindowManager();
     return (
         <section>
-            <h3 className="text-[11px] uppercase tracking-wider text-text-secondary mb-2">Projects</h3>
+            <h3 className="ui-kicker mb-2">Projects</h3>
             {projects.length === 0 ? (
                 <p className="text-sm text-text-secondary">No projects linked.</p>
             ) : (
-                <ul className="rounded-md border border-border divide-y divide-border">
+                <ul className="ui-card ui-divider-list overflow-hidden">
                     {projects.map((p) => (
                         <li key={p.id}>
                             <button

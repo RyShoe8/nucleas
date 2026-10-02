@@ -43,7 +43,7 @@ export function buildSystemPrompt(contextBlock: string, today: string, focusName
 }
 
 export interface AssistantReply {
-  turn: { id: string; role: 'assistant' | 'status'; text: string; createdAt: string; costMicros?: number | null; mode: 'orchestrated' | 'direct'; stages?: StageRecord[]; build?: BuildView | null; job?: JobView | null };
+  turn: { id: string; role: 'assistant' | 'status'; text: string; createdAt: string; costMicros?: number | null; mode: 'orchestrated' | 'direct'; stages?: StageRecord[]; build?: BuildView | null; job?: JobView | null; contextSources?: string[] };
   actions: (InvocationView & { companyName?: string })[];
   focused: { id: string; name: string }[];
   contextSources: string[];
@@ -129,7 +129,7 @@ export async function askAssistant(
     return {
       ok: true,
       reply: {
-        turn: { id: String(saved._id), role: result.role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: result.costMicros, mode, stages: result.stages, build: result.build ?? null, job: result.job ?? null },
+        turn: { id: String(saved._id), role: result.role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: result.costMicros, mode, stages: result.stages, build: result.build ?? null, job: result.job ?? null, contextSources: context.sources },
         actions: await actionViews(result.invocationIds, context.companies),
         focused: focusedCompanies.map((c) => ({ id: c.id, name: c.name })),
         contextSources: context.sources,
@@ -208,7 +208,7 @@ export async function askAssistant(
   return {
     ok: true,
     reply: {
-      turn: { id: String(saved._id), role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: (turn.costMicros ?? 0) + (files?.costMicros ?? 0), mode, build: actionTools.results.build ?? null, job: actionTools.results.job ?? null },
+      turn: { id: String(saved._id), role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: (turn.costMicros ?? 0) + (files?.costMicros ?? 0), mode, build: actionTools.results.build ?? null, job: actionTools.results.job ?? null, contextSources: context.sources },
       actions,
       focused: focusedCompanies.map((c) => ({ id: c.id, name: c.name })),
       contextSources: context.sources,
@@ -230,8 +230,8 @@ export async function listAssistantTurns(viewer: CompanyViewer, limit = 40) {
   const rows = await CompanyAssistantTurn.find({ organizationId: viewer.organizationId, userId: new Types.ObjectId(viewer.userId) })
     .sort({ createdAt: -1 })
     .limit(Math.min(limit, 100))
-    .select('role text createdAt invocationIds costMicros mode stages buildRequestId jobId attachments.name attachments.kind attachments.size attachments.error')
-    .lean<{ _id: Types.ObjectId; role: string; text: string; createdAt: Date; invocationIds?: Types.ObjectId[]; costMicros?: number; mode?: string; stages?: StageRecord[]; buildRequestId?: Types.ObjectId; jobId?: Types.ObjectId; attachments?: { name: string; kind: string; size: number; error?: string }[] }[]>();
+    .select('role text createdAt invocationIds costMicros contextSources mode stages buildRequestId jobId attachments.name attachments.kind attachments.size attachments.error')
+    .lean<{ _id: Types.ObjectId; role: string; text: string; createdAt: Date; invocationIds?: Types.ObjectId[]; costMicros?: number; contextSources?: string[]; mode?: string; stages?: StageRecord[]; buildRequestId?: Types.ObjectId; jobId?: Types.ObjectId; attachments?: { name: string; kind: string; size: number; error?: string }[] }[]>();
   // Proposed builds show their current state (approved, building, …) wherever they appear.
   const builds = new Map<string, BuildView | null>();
   for (const r of rows) {
@@ -251,6 +251,7 @@ export async function listAssistantTurns(viewer: CompanyViewer, limit = 40) {
     costMicros: r.costMicros ?? null,
     mode: r.mode ?? 'direct',
     stages: r.stages ?? [],
+    contextSources: r.contextSources ?? [],
     build: r.buildRequestId ? builds.get(String(r.buildRequestId)) ?? null : null,
     job: r.jobId ? jobs.get(String(r.jobId)) ?? null : null,
     attachments: (r.attachments ?? []).map((a) => ({ name: a.name, kind: a.kind, size: a.size, error: a.error ?? null })),

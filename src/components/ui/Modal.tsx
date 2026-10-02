@@ -23,6 +23,8 @@ interface ModalProps {
   stackAboveLightbox?: boolean;
   /** When false, body padding is omitted (content supplies its own). */
   bodyPadding?: boolean;
+  /** Theme colors from the opening surface; light preserves legacy inspector modals. */
+  appearance?: 'light' | 'theme';
 }
 
 const maxWidthClass = (maxWidth: ModalProps['maxWidth']) => {
@@ -75,6 +77,7 @@ export default function Modal({
   stackAboveOverlays = false,
   stackAboveLightbox = false,
   bodyPadding = true,
+  appearance = 'light',
 }: ModalProps) {
   const mounted = useClientReady();
   const scrollLocked = useRef(false);
@@ -108,8 +111,9 @@ export default function Modal({
         ? 'z-[80]'
         : 'z-[70]';
 
+  const themeClass = appearance === 'light' ? 'inspector-light' : '';
   const panelClass =
-    'inspector-light bg-background-card border border-border shadow-xl overflow-hidden flex flex-col animate-fade-in animate-in slide-in-from-bottom-2 duration-200 ease-out';
+    `${themeClass} ui-panel bg-background-card overflow-hidden flex flex-col animate-fade-in animate-in slide-in-from-bottom-2 duration-200 ease-out`;
 
   const header = title ? (
     <div className="flex items-center justify-between p-4 sm:p-6 border-b border-border flex-shrink-0">
@@ -122,8 +126,8 @@ export default function Modal({
   ) : null;
 
   const bodyClass = bodyPadding
-    ? 'inspector-light flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6'
-    : 'inspector-light flex-1 min-h-0 overflow-y-auto overscroll-contain';
+    ? 'flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6'
+    : 'flex-1 min-h-0 overflow-y-auto overscroll-contain';
 
   const content =
     maxWidth === 'full' ? (
@@ -139,7 +143,7 @@ export default function Modal({
           onClick={(e) => e.stopPropagation()}
         >
           {header}
-          <div className="inspector-light flex-1 min-h-0 overflow-hidden flex flex-col">{children}</div>
+          <div className={`${themeClass} flex-1 min-h-0 overflow-hidden flex flex-col`}>{children}</div>
         </div>
       </div>
     ) : (
@@ -154,7 +158,7 @@ export default function Modal({
           onClick={(e) => e.stopPropagation()}
         >
           {header}
-          <div className={bodyClass}>{children}</div>
+          <div className={`${themeClass} ${bodyClass}`}>{children}</div>
         </div>
       </div>
     );

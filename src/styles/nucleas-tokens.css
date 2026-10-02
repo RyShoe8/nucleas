@@ -40,6 +40,14 @@
   --border: #3d4659;
   --border-dark: #4a556d;
 
+  /* Shared surface geometry and depth */
+  --radius-control: 0.5rem;
+  --radius-card: 0.75rem;
+  --radius-panel: 1rem;
+  --shadow-card: 0 10px 30px rgb(5 10 24 / 0.16);
+  --shadow-panel: 0 24px 70px rgb(5 10 24 / 0.38);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 24%, transparent);
+
   --primary: var(--nucleas-primary);
   --primary-hover: var(--nucleas-primary-hover);
   --primary-light: var(--nucleas-primary-light);
@@ -85,6 +93,9 @@ body.nucleas-os {
 
   --border: #3d4659;
   --border-dark: #4a556d;
+
+  --shadow-card: 0 12px 34px rgb(3 7 18 / 0.2);
+  --shadow-panel: 0 28px 80px rgb(3 7 18 / 0.5);
 
   color-scheme: dark;
 }
