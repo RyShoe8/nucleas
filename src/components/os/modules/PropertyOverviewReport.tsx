@@ -2,16 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Modal from '@/components/ui/Modal';
+import { useWindowManager } from '@/hooks/os/useWindowManager';
 
-type Overview = { id: string; rootUrl: string; status: 'queued' | 'crawling' | 'complete' | 'failed'; progress?: string; error?: string; pageCount: number; edgeCount: number; issueCount: number; clusters: { templateKey: string; count: number; sampleRoutes: string[] }[]; summary: { orphanPages?: number; errorPages?: number; templates?: number }; createdAt: string; completedAt?: string };
+type Overview = { id: string; jobId?: string; rootUrl: string; status: 'queued' | 'crawling' | 'complete' | 'failed'; progress?: string; error?: string; pageCount: number; edgeCount: number; issueCount: number; clusters: { templateKey: string; count: number; sampleRoutes: string[] }[]; summary: { orphanPages?: number; errorPages?: number; templates?: number }; createdAt: string; completedAt?: string };
 type Page = { id: string; url: string; routePattern: string; statusCode?: number; title?: string; description?: string; canonical?: string; robots?: string; language?: string; h1?: string[]; h2?: string[]; h3?: string[]; wordCount?: number; internalLinks?: string[]; externalLinks?: string[]; incomingLinks?: number; imageCount?: number; imagesMissingAlt?: number; structuredDataTypes?: string[]; templateKey?: string; issues?: string[]; indexable?: boolean; datePublished?: string; dateModified?: string; renderMode?: 'html' | 'rendered'; renderedText?: string };
 
 export default function PropertyOverviewButton({ companyId, companyName, canManage }: { companyId: string; companyName: string; canManage: boolean }) {
+  const wm = useWindowManager();
   const [open, setOpen] = useState(false);
-  return <><button type="button" onClick={(event) => { event.stopPropagation(); setOpen(true); }} className="ui-button flex-shrink-0">Property overview</button>{open ? <PropertyOverviewModal companyId={companyId} companyName={companyName} canManage={canManage} onClose={() => setOpen(false)} /> : null}</>;
+  const started = () => { setOpen(false); window.dispatchEvent(new Event('nucleas:jobs-changed')); wm.open('jobs'); };
+  return <><button type="button" onClick={(event) => { event.stopPropagation(); setOpen(true); }} className="ui-button flex-shrink-0">Property overview</button>{open ? <PropertyOverviewModal companyId={companyId} companyName={companyName} canManage={canManage} onClose={() => setOpen(false)} onStarted={started} /> : null}</>;
 }
 
-function PropertyOverviewModal({ companyId, companyName, canManage, onClose }: { companyId: string; companyName: string; canManage: boolean; onClose: () => void }) {
+function PropertyOverviewModal({ companyId, companyName, canManage, onClose, onStarted }: { companyId: string; companyName: string; canManage: boolean; onClose: () => void; onStarted: () => void }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [pages, setPages] = useState<Page[]>([]);
   const [busy, setBusy] = useState(false);
@@ -37,10 +40,10 @@ function PropertyOverviewModal({ companyId, companyName, canManage, onClose }: {
   async function run() {
     setBusy(true); setError(null);
     const response = await fetch(`/api/os/companies/${companyId}/property-overview`, { method: 'POST' });
-    const data = await response.json().catch(() => ({})) as { overview?: Overview; error?: string };
+    const data = await response.json().catch(() => ({})) as { overview?: Overview; jobId?: string; error?: string };
     setBusy(false);
     if (!response.ok || !data.overview) return setError(data.error ?? `Failed (${response.status})`);
-    setOverview(data.overview); setPages([]);
+    setOverview(data.overview); setPages([]); onStarted();
   }
   const filtered = useMemo(() => pages.filter((page) => `${page.url} ${page.title ?? ''} ${(page.issues ?? []).join(' ')}`.toLowerCase().includes(query.toLowerCase())), [pages, query]);
   const issuePages = pages.filter((page) => page.issues?.length).length;
@@ -49,11 +52,11 @@ function PropertyOverviewModal({ companyId, companyName, canManage, onClose }: {
       <div className="flex flex-wrap items-center gap-2">
         {(['summary', 'pages', 'templates', 'links'] as const).map((item) => <button key={item} type="button" onClick={() => setTab(item)} className={tab === item ? 'ui-button-primary' : 'ui-button'}>{item === 'summary' ? 'Overview' : item[0].toUpperCase() + item.slice(1)}</button>)}
         <span className="flex-1" />
-        {canManage ? <button type="button" onClick={() => void run()} disabled={busy || overview?.status === 'queued' || overview?.status === 'crawling'} className="ui-button-primary">{overview ? 'Run new crawl' : 'Generate report'}</button> : null}
+        {canManage ? <button type="button" onClick={() => void run()} disabled={busy || overview?.status === 'queued' || overview?.status === 'crawling'} className="ui-button-primary">{busy ? 'Starting job…' : overview ? 'Run new crawl as job' : 'Generate report as job'}</button> : null}
       </div>
       {error ? <p className="rounded border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">{error}</p> : null}
       {!overview ? <div className="ui-card p-8 text-center"><h3 className="font-medium">No property report yet</h3><p className="mt-2 text-sm text-text-secondary">Crawl the production website to archive its pages, audit technical SEO, group templates, and map internal links.</p></div> : null}
-      {overview && ['queued', 'crawling'].includes(overview.status) ? <div className="ui-card p-5"><p className="font-medium">Crawling {overview.rootUrl}</p><p className="mt-1 text-sm text-text-secondary">{overview.progress ?? 'Starting…'}</p><div className="mt-3 h-1.5 overflow-hidden rounded bg-background"><div className="h-full w-2/3 animate-pulse rounded bg-primary" /></div></div> : null}
+      {overview && ['queued', 'crawling'].includes(overview.status) ? <div className="ui-card p-5"><p className="font-medium">Crawling {overview.rootUrl}</p><p className="mt-1 text-sm text-text-secondary">This crawl is running as a background job. You can close this window and follow it in Jobs.</p><p className="mt-2 text-sm text-text-secondary">{overview.progress ?? 'Starting…'}</p></div> : null}
       {overview?.status === 'failed' ? <div className="ui-card p-4"><p className="font-medium text-red-300">Crawl failed</p><p className="mt-1 text-sm text-text-secondary">{overview.error}</p></div> : null}
       {overview?.status === 'complete' && tab === 'summary' ? <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">{[[overview.pageCount, 'Pages archived'], [overview.edgeCount, 'Internal links'], [overview.issueCount, 'SEO findings'], [overview.summary.templates ?? 0, 'Templates'], [overview.summary.orphanPages ?? 0, 'Orphan pages']].map(([value, label]) => <div key={String(label)} className="ui-card p-4"><p className="text-2xl font-semibold">{value}</p><p className="mt-1 text-xs text-text-secondary">{label}</p></div>)}</div>

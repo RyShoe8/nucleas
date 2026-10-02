@@ -74,17 +74,10 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                 </div>
             </header>
 
-            <section aria-label="Company statistics" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                <div className="ui-card p-3">
-                    <p className="ui-kicker">AI citations</p>
-                    <p className="mt-1 text-2xl font-semibold tabular-nums">{detail.stats?.aiCitations ?? 0}</p>
-                    <p className="mt-1 text-[11px] text-text-secondary">Unique sources used to ground this company’s AI answers</p>
-                </div>
-            </section>
-
             <CompanySnapshot
                 companyId={company.id}
                 connections={connections.filter((c) => c.status === 'connected')}
+                aiCitations={detail.stats?.aiCitations ?? 0}
                 onActivity={() => setActivityKey((k) => k + 1)}
             />
             <ProjectsSection projects={projects} />

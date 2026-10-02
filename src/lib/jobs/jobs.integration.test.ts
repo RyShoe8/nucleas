@@ -26,10 +26,13 @@ import { Job, JobRun } from '@/lib/models/Job';
 import { LinkOpportunity } from '@/lib/models/LinkOpportunity';
 import Project from '@/lib/models/Project';
 import { SeoBrief } from '@/lib/models/SeoBrief';
+import { PropertyOverview } from '@/lib/models/PropertyOverview';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
-import { answerQuestions, approveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, runDesign, runNow, sweepJobs } from './jobs';
+import { answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, runDesign, runNow, sweepJobs } from './jobs';
 import type { JobDesign } from './schema';
 import { updateLinkOpportunity, verifyLinkOpportunity } from './linkOpportunities';
+import { completePropertyOverviewJob, createPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
+import { claimJobRunExecution, heartbeatJobRun, initialRunLease } from './runLifecycle';
 
 let replica: MongoMemoryReplSet;
 const org = new Types.ObjectId();
@@ -82,7 +85,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await Promise.all([Client.deleteMany({}), User.deleteMany({}), Employee.collection.deleteMany({}), Project.deleteMany({}), SeoBrief.deleteMany({}), Job.deleteMany({}), JobRun.deleteMany({}), LinkOpportunity.deleteMany({})]);
+  await Promise.all([Client.deleteMany({}), User.deleteMany({}), Employee.collection.deleteMany({}), Project.deleteMany({}), SeoBrief.deleteMany({}), Job.deleteMany({}), JobRun.deleteMany({}), LinkOpportunity.deleteMany({}), PropertyOverview.deleteMany({})]);
   const user = await User.create({ email: 'owner@example.invalid', password: 'synthetic-pass', organizationId: String(org) });
   // Runs act as the job's creator, resolved from their employee record.
   await Employee.collection.insertOne({ userId: user._id, organizationId: String(org), role: 'Administrator', name: 'Owner', email: 'owner@example.invalid' });
@@ -229,6 +232,19 @@ describe('approving and the dry run', () => {
 });
 
 describe('real runs', () => {
+  it('tracks a VPS Property Overview as a durable background job', async () => {
+    const overview = await PropertyOverview.create({ organizationId: org, companyId: new Types.ObjectId(companyId), rootUrl: 'https://playbound.club/', status: 'queued' });
+    const linked = await createPropertyOverviewJob({ organizationId: org, companyId: new Types.ObjectId(companyId), userId: admin.userId, companyName: 'Playbound.club', overviewId: overview._id, rootUrl: overview.rootUrl });
+    await PropertyOverview.updateOne({ _id: overview._id }, { $set: { jobId: linked.jobId, runId: linked.runId } });
+
+    await updatePropertyOverviewJob({ ...linked, message: 'Archived 25 of 100 discovered pages…', processed: 25, discovered: 100 });
+    expect(await JobRun.findById(linked.runId).lean()).toMatchObject({ status: 'running', progressState: { stage: 'researching', percent: 31 } });
+
+    await completePropertyOverviewJob({ ...linked, rootUrl: overview.rootUrl, pageCount: 100, edgeCount: 450, issueCount: 12, templates: 4, orphanPages: 3 });
+    expect(await Job.findById(linked.jobId).lean()).toMatchObject({ status: 'done', design: { skill: 'property_overview' } });
+    expect(await JobRun.findById(linked.runId).lean()).toMatchObject({ status: 'completed', output: { records: [{ values: { pages_archived: 100, internal_links: 450, seo_findings: 12, templates: 4, orphan_pages: 3 } }] }, progressState: { percent: 100 } });
+  });
+
   it('claims a due recurring job once and advances its next run', async () => {
     const id = await ready({ ...DESIGN, schedule: { kind: 'daily', time: '09:00', timezone: 'UTC' } });
     await Job.updateOne({ _id: id }, { $set: { nextRunAt: new Date('2026-09-30T09:00:00Z') } });
@@ -239,6 +255,23 @@ describe('real runs', () => {
     expect(first).toHaveLength(1);
     expect(second).toHaveLength(0);
     expect(await Job.findById(id).lean()).toMatchObject({ status: 'active', nextRunAt: new Date('2026-10-01T09:00:00Z') });
+  });
+
+  it('leases one executor at a time and reclaims only expired work', async () => {
+    const job = await Job.create({ organizationId: org, companyId: new Types.ObjectId(companyId), createdByUserId: new Types.ObjectId(admin.userId), status: 'active', request: 'Test durable execution ownership' });
+    const startedAt = new Date();
+    const run = await JobRun.create({ organizationId: org, jobId: job._id, companyId: new Types.ObjectId(companyId), status: 'running', dryRun: false, startedAt, ...initialRunLease(undefined, startedAt) });
+
+    const first = await claimJobRunExecution(String(run._id));
+    expect(first).not.toBeNull();
+    expect(await claimJobRunExecution(String(run._id))).toBeNull();
+    expect(await heartbeatJobRun(run._id, first!.owner, { text: 'Still working', milestone: { stage: 'researching', percent: 25 } })).toBe(true);
+    expect(await JobRun.findById(run._id).lean()).toMatchObject({ attempt: 1, leaseOwner: first!.owner, progressState: { percent: 25 } });
+
+    await JobRun.updateOne({ _id: run._id }, { $set: { leaseExpiresAt: new Date(Date.now() - 1) } });
+    const recovered = await claimJobRunExecution(String(run._id));
+    expect(recovered?.owner).not.toBe(first!.owner);
+    expect(await JobRun.findById(run._id).lean()).toMatchObject({ attempt: 2, progress: expect.arrayContaining(['Recovered an interrupted run']) });
   });
 
   async function ready(design: JobDesign) {
@@ -299,5 +332,42 @@ describe('real runs', () => {
     expect(await sweepJobs()).toEqual({ runsFailed: 1, designsFailed: 1 });
     expect(await Job.findById(sampleJob.insertedId).lean()).toMatchObject({ status: 'proposed' });
     expect(await JobRun.findOne({ jobId: sampleJob.insertedId }).lean()).toMatchObject({ status: 'failed', error: expect.stringContaining('stopped reporting progress'), progressState: { percent: 100 } });
+  });
+
+  it('uses the explicit lease instead of unrelated document updates when reconciling runs', async () => {
+    const sampleJob = await Job.collection.insertOne({ organizationId: org, companyId: new Types.ObjectId(companyId), createdByUserId: new Types.ObjectId(admin.userId), status: 'active', request: 'x'.repeat(20), updatedAt: new Date(), createdAt: new Date() });
+    const live = await JobRun.create({ organizationId: org, jobId: sampleJob.insertedId, companyId: new Types.ObjectId(companyId), status: 'running', dryRun: false, startedAt: new Date(Date.now() - 3600_000), ...initialRunLease('worker:live') });
+    const expired = await JobRun.create({ organizationId: org, jobId: sampleJob.insertedId, companyId: new Types.ObjectId(companyId), status: 'running', dryRun: false, startedAt: new Date(), ...initialRunLease('worker:gone'), leaseExpiresAt: new Date(Date.now() - 1) });
+
+    expect(await sweepJobs()).toMatchObject({ runsFailed: 1 });
+    expect(await JobRun.findById(live._id).lean()).toMatchObject({ status: 'running' });
+    expect(await JobRun.findById(expired._id).lean()).toMatchObject({ status: 'failed', progressState: { label: 'Worker lease expired' } });
+  });
+
+  it('recovers a context-window rejection with a compact evidence-only request', async () => {
+    const job = await proposed();
+    let workCalls = 0;
+    mocks.chat.mockImplementation(async (input: { systemPrompt: string }) => {
+      if (input.systemPrompt.startsWith('You check one run')) return { requestId: 'r', role: 'assistant', text: '{"verdict":"pass","notes":"Sourced."}', costMicros: 0 };
+      workCalls += 1;
+      return workCalls === 1
+        ? { requestId: 'failed', role: 'status', text: "The model rejected the request because it exceeded that deployment’s context window. Rogly returned HTTP 400: maximum context length is 9216 tokens.", costMicros: 0 }
+        : { requestId: 'compact', role: 'assistant', text: GOOD, costMicros: 0 };
+    });
+
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+
+    expect((await getJob(admin, job.id))?.runs[0]).toMatchObject({ status: 'needs_review', progressState: { percent: 100 } });
+    const compact = mocks.chat.mock.calls[1][0] as { forcePlain: boolean; forceToolLoop: boolean; includeRepoTools: boolean; toolProfile: string; maxOutputTokensOverride: number };
+    expect(compact).toMatchObject({ forcePlain: true, forceToolLoop: false, includeRepoTools: false, toolProfile: 'none', maxOutputTokensOverride: 1800 });
+  });
+
+  it('clears a failed legacy dry run but refuses to archive an active one', async () => {
+    const job = await proposed();
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    expect(await archiveJob(admin, job.id)).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('still active') });
+    await JobRun.updateOne({ _id: approved.dryRunId }, { $set: { status: 'failed', error: 'Previous deployment timed out.', finishedAt: new Date() } });
+    expect(await archiveJob(admin, job.id)).toMatchObject({ ok: true, job: { status: 'archived' } });
   });
 });

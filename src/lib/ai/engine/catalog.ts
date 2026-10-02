@@ -360,6 +360,29 @@ export function outputBudgetTokens(contextTokens: number, requestedTokens: numbe
   return Math.max(256, Math.min(requestedTokens, Math.floor(contextTokens * 0.25)));
 }
 
+/** Extracts the authoritative deployment limit LiteLLM/vLLM includes in context errors. */
+export function contextWindowFromProviderMessage(message: string | undefined): number | null {
+  if (!message) return null;
+  const match = message.match(/(?:maximum|max(?:imum)?)[ _-]?context(?: (?:length|window))?\s*(?:is|[:=])\s*([\d,]+)\s*tokens?/i)
+    ?? message.match(/context(?: (?:length|window))?[^\d]{0,40}([\d,]+)\s*tokens?/i);
+  if (!match) return null;
+  const tokens = Number(match[1].replace(/,/g, ''));
+  return Number.isInteger(tokens) && tokens >= 1_024 && tokens <= 4_000_000 ? tokens : null;
+}
+
+/** Learns a provider-reported limit so later requests are correctly budgeted without manual setup. */
+export async function recordObservedContextWindow(profileId: string, model: string, tokens: number): Promise<void> {
+  if (!Types.ObjectId.isValid(profileId) || mongoose.connection.readyState !== 1 || tokens < 1_024) return;
+  const id = new Types.ObjectId(profileId);
+  const current = await AiModelCatalogSnapshot.findOne({ profileId: id }).lean<{ modelIds?: string[]; contextWindows?: { model: string; tokens: number }[] }>();
+  const contextWindows = [...(current?.contextWindows ?? []).filter((entry) => entry.model !== model), { model, tokens }];
+  await AiModelCatalogSnapshot.updateOne(
+    { profileId: id },
+    { $set: { modelIds: current?.modelIds?.length ? current.modelIds : [model], contextWindows, fetchedAt: new Date() }, $unset: { error: '' } },
+    { upsert: true }
+  );
+}
+
 /**
  * Characters of message content a model can take, leaving room for its answer plus tool schemas,
  * chat framing and tokenizer variance. 2.5 characters/token is deliberately conservative for code.

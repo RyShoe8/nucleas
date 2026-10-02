@@ -24,7 +24,7 @@ interface JobQuestion {
 }
 
 interface JobDesign {
-    skill?: 'link_building' | 'seo_brief';
+    skill?: 'link_building' | 'seo_brief' | 'property_overview';
     title: string;
     category: string;
     instructions: string;
@@ -61,8 +61,10 @@ export interface JobRunView {
     id: string;
     dryRun: boolean;
     status: 'running' | 'needs_review' | 'completed' | 'rejected' | 'failed';
+    attempt: number;
     startedAt: string;
     finishedAt: string | null;
+    heartbeatAt: string | null;
     progress: string[];
     progressState: { stage: 'preparing' | 'researching' | 'validating' | 'reviewing' | 'saving' | 'complete'; label: string; percent: number; updatedAt: string };
     output: { records: { values: Record<string, unknown>; sources: string[] }[]; summary: string; gaps: string[] } | null;
@@ -417,7 +419,7 @@ function RunBlock({ job, run, onChange, onView }: { job: JobView; run: JobRunVie
                     </div>
                     <div className="mt-2 flex items-center justify-between gap-3 text-[10px] text-text-secondary">
                         <span className="capitalize">{run.progressState.stage} · milestone progress</span>
-                        <span>Updated {new Date(run.progressState.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                        <span>Worker active {new Date(run.heartbeatAt ?? run.progressState.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}{run.attempt > 1 ? ` · recovery attempt ${run.attempt}` : ''}</span>
                     </div>
                     {run.progress.length > 1 ? <details className="mt-2"><summary className="cursor-pointer text-[10px] text-text-secondary hover:text-text-primary">Activity log</summary><ul className="mt-1 space-y-0.5 text-[11px] text-text-secondary">{run.progress.slice(-8).map((p, i, list) => <li key={`${p}-${i}`} className={i === list.length - 1 ? 'text-text-primary' : ''}>{i === list.length - 1 ? '● ' : '✓ '}{p}</li>)}</ul></details> : null}
                     <p className="mt-2 text-[10px] text-text-secondary">Research time varies with the number of sources and tools needed.</p>
@@ -606,6 +608,9 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
     const reviewRun = job.runs.find((r) => r.status === 'needs_review' || r.status === 'running')
         ?? (job.status === 'testing' || job.status === 'proposed' ? job.runs.find((r) => r.status === 'failed') : undefined);
     const doneRuns = job.runs.filter((r) => r.status === 'completed');
+    const failedAttempt = job.runs.some((r) => r.status === 'failed');
+    const canArchive = ['proposed', 'ready', 'active', 'paused', 'done', 'failed', 'needs_answers'].includes(job.status)
+        || (job.status === 'testing' && !job.runs.some((r) => r.status === 'running'));
 
     return (
         <div className="ui-card p-4 space-y-4 text-sm">
@@ -682,9 +687,9 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                         Download CSV
                     </a>
                 ) : null}
-                {!compact && job.canManage && ['proposed', 'ready', 'active', 'paused', 'done', 'failed', 'needs_answers'].includes(job.status) ? (
-                    <button type="button" className={BUTTON} disabled={busy !== null} onClick={() => window.confirm('Archive this job?') && void act('archive')}>
-                        Archive
+                {!compact && job.canManage && canArchive ? (
+                    <button type="button" className={BUTTON} disabled={busy !== null} onClick={() => window.confirm(failedAttempt ? 'Clear this failed job? It will remain available under Show rejected and archived.' : 'Archive this job?') && void act('archive')}>
+                        {failedAttempt ? 'Clear failed job' : 'Archive'}
                     </button>
                 ) : null}
                 {compact && onOpenJobs ? (

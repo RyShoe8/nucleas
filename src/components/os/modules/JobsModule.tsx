@@ -154,6 +154,11 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
     const reload = useCallback(() => setReloadKey((k) => k + 1), []);
 
     useEffect(() => {
+        window.addEventListener('nucleas:jobs-changed', reload);
+        return () => window.removeEventListener('nucleas:jobs-changed', reload);
+    }, [reload]);
+
+    useEffect(() => {
         let cancelled = false;
         void (async () => {
             const res = await fetch(`/api/os/jobs${showClosed ? '?all=1' : ''}`, { cache: 'no-store' });

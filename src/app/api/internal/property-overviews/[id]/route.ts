@@ -4,6 +4,7 @@ import { Types } from 'mongoose';
 import { z } from 'zod';
 import connectDB from '@/lib/db/mongodb';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
+import { completePropertyOverviewJob, failPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -30,6 +31,7 @@ function authorized(request: NextRequest): boolean {
 }
 
 async function finalize(id: Types.ObjectId): Promise<void> {
+  const overview = await PropertyOverview.findById(id).select('jobId runId rootUrl').lean<{ jobId?: Types.ObjectId; runId?: Types.ObjectId; rootUrl: string }>();
   const pages = await PropertyPage.find({ overviewId: id }).select('url templateKey routePattern issues internalLinks statusCode').lean();
   const incoming = new Map<string, number>(); const clusters = new Map<string, string[]>();
   let issueCount = 0; let edgeCount = 0;
@@ -40,7 +42,9 @@ async function finalize(id: Types.ObjectId): Promise<void> {
   }
   if (incoming.size) await PropertyPage.bulkWrite([...incoming].map(([url, count]) => ({ updateOne: { filter: { overviewId: id, url }, update: { $set: { incomingLinks: count } } } })), { ordered: false });
   const orphanPages = pages.filter((page) => page.routePattern !== '/' && !(incoming.get(page.url) ?? 0)).length;
-  await PropertyOverview.updateOne({ _id: id, status: { $in: ['queued', 'crawling'] } }, { $set: { status: 'complete', completedAt: new Date(), progress: 'Complete', pageCount: pages.length, edgeCount, issueCount, clusters: [...clusters].map(([templateKey, routes]) => ({ templateKey, count: routes.length, sampleRoutes: [...new Set(routes)].slice(0, 8) })).sort((a, b) => b.count - a.count), summary: { orphanPages, errorPages: pages.filter((page) => (page.statusCode ?? 0) >= 400).length, templates: clusters.size } } });
+  const clusterRows = [...clusters].map(([templateKey, routes]) => ({ templateKey, count: routes.length, sampleRoutes: [...new Set(routes)].slice(0, 8) })).sort((a, b) => b.count - a.count);
+  await PropertyOverview.updateOne({ _id: id, status: { $in: ['queued', 'crawling'] } }, { $set: { status: 'complete', completedAt: new Date(), progress: 'Complete', pageCount: pages.length, edgeCount, issueCount, clusters: clusterRows, summary: { orphanPages, errorPages: pages.filter((page) => (page.statusCode ?? 0) >= 400).length, templates: clusters.size } } });
+  if (overview) await completePropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, rootUrl: overview.rootUrl, pageCount: pages.length, edgeCount, issueCount, templates: clusters.size, orphanPages });
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -49,7 +53,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!Types.ObjectId.isValid(id)) return NextResponse.json({ error: 'Report not found.' }, { status: 404 });
   await connectDB();
   const overviewId = new Types.ObjectId(id);
-  const overview = await PropertyOverview.findOne({ _id: overviewId, status: { $in: ['queued', 'crawling'] } }).select('_id organizationId companyId').lean();
+  const overview = await PropertyOverview.findOne({ _id: overviewId, status: { $in: ['queued', 'crawling'] } }).select('_id organizationId companyId jobId runId rootUrl').lean<{ _id: Types.ObjectId; organizationId: Types.ObjectId; companyId: Types.ObjectId; jobId?: Types.ObjectId; runId?: Types.ObjectId; rootUrl: string }>();
   if (!overview) return NextResponse.json({ error: 'Active report not found.' }, { status: 404 });
   const raw = await request.json().catch(() => null);
   const action = raw && typeof raw === 'object' ? (raw as { action?: unknown }).action : null;
@@ -58,13 +62,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Invalid page record.' }, { status: 400 });
     const { page } = parsed.data;
     await PropertyPage.updateOne({ overviewId, url: page.url }, { $set: { ...page, datePublished: page.datePublished ? new Date(page.datePublished) : undefined, dateModified: page.dateModified ? new Date(page.dateModified) : undefined, organizationId: overview.organizationId, companyId: overview.companyId } }, { upsert: true });
-    await PropertyOverview.updateOne({ _id: overviewId }, { $set: { status: 'crawling', progress: `Archived ${parsed.data.processed} of ${parsed.data.discovered} discovered pages…`, pageCount: parsed.data.processed } });
+    const message = `Archived ${parsed.data.processed} of ${parsed.data.discovered} discovered pages…`;
+    await PropertyOverview.updateOne({ _id: overviewId }, { $set: { status: 'crawling', progress: message, pageCount: parsed.data.processed } });
+    await updatePropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, message, processed: parsed.data.processed, discovered: parsed.data.discovered });
   } else if (action === 'progress') {
     const parsed = progressSchema.safeParse(raw); if (!parsed.success) return NextResponse.json({ error: 'Invalid progress update.' }, { status: 400 });
     await PropertyOverview.updateOne({ _id: overviewId }, { $set: { status: 'crawling', progress: parsed.data.message, pageCount: parsed.data.processed } });
+    await updatePropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, message: parsed.data.message, processed: parsed.data.processed, discovered: parsed.data.discovered });
   } else {
     const parsed = terminalSchema.safeParse(raw); if (!parsed.success) return NextResponse.json({ error: 'Invalid terminal update.' }, { status: 400 });
-    if (parsed.data.action === 'failed') await PropertyOverview.updateOne({ _id: overviewId }, { $set: { status: 'failed', completedAt: new Date(), progress: 'Failed', error: parsed.data.error } });
+    if (parsed.data.action === 'failed') {
+      await PropertyOverview.updateOne({ _id: overviewId }, { $set: { status: 'failed', completedAt: new Date(), progress: 'Failed', error: parsed.data.error } });
+      await failPropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, error: parsed.data.error });
+    }
     else await finalize(overviewId);
   }
   return NextResponse.json({ ok: true });

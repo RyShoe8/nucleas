@@ -13,6 +13,8 @@ import { seoBriefConfigSchema, seoBriefDesign } from './templates/seoBrief';
 import { approvedSeoBrief, saveGeneratedSeoBrief } from './seoBriefs';
 import Project from '@/lib/models/Project';
 import { bulkDecideRunOpportunities, listLinkOpportunities, type LinkOpportunityView } from './linkOpportunities';
+import { PropertyOverview } from '@/lib/models/PropertyOverview';
+import { initialRunLease } from './runLifecycle';
 
 /**
  * Jobs: Nucleas designs them, a manager approves them (choosing review or automatic completion and
@@ -20,15 +22,17 @@ import { bulkDecideRunOpportunities, listLinkOpportunities, type LinkOpportunity
  */
 
 const OPEN: JobStatus[] = ['designing', 'needs_answers', 'proposed', 'testing', 'ready', 'active', 'paused', 'failed'];
-/** No persisted heartbeat for this long means the hosting process is gone, not merely researching. */
+/** Backward-compatible timeout for runs created before explicit leases were introduced. */
 const STUCK_MS = 20 * 60 * 1000;
 
 export interface JobRunView {
   id: string;
   dryRun: boolean;
   status: JobRunStatus;
+  attempt: number;
   startedAt: string;
   finishedAt: string | null;
+  heartbeatAt: string | null;
   progress: string[];
   progressState: { stage: JobRunProgressStage; label: string; percent: number; updatedAt: string };
   output: JobRunOutput | null;
@@ -90,8 +94,10 @@ type RunLean = {
   jobId: Types.ObjectId;
   dryRun: boolean;
   status: JobRunStatus;
+  attempt?: number;
   startedAt: Date;
   finishedAt?: Date;
+  heartbeatAt?: Date;
   progress?: string[];
   progressState?: { stage: JobRunProgressStage; label: string; percent: number; updatedAt: Date };
   output?: JobRunOutput;
@@ -109,8 +115,10 @@ function runView(r: RunLean): JobRunView {
     id: String(r._id),
     dryRun: r.dryRun,
     status: r.status,
+    attempt: r.attempt ?? 1,
     startedAt: r.startedAt.toISOString(),
     finishedAt: r.finishedAt?.toISOString() ?? null,
+    heartbeatAt: r.heartbeatAt?.toISOString() ?? null,
     progress: r.progress ?? [],
     progressState: { ...progressState, updatedAt: progressState.updatedAt.toISOString() },
     output: r.output ?? null,
@@ -335,7 +343,7 @@ export async function approveJob(viewer: CompanyViewer, id: string, input: { com
   const result = await transition(viewer, found.job, ['proposed'], { status: 'testing', completion: input.completion, monthlyBudgetMicros: budget }, 'approved', input.completion);
   if (!result.ok) return result;
   const startedAt = new Date();
-  const run = await JobRun.create({ organizationId: found.job.organizationId, jobId: found.job._id, companyId: found.job.companyId, dryRun: true, status: 'running', startedAt, progress: ['Starting the dry run'], progressState: { stage: 'preparing', label: 'Preparing the dry run', percent: 5, updatedAt: startedAt } });
+  const run = await JobRun.create({ organizationId: found.job.organizationId, jobId: found.job._id, companyId: found.job.companyId, dryRun: true, status: 'running', startedAt, ...initialRunLease(undefined, startedAt), progress: ['Starting the dry run'], progressState: { stage: 'preparing', label: 'Preparing the dry run', percent: 5, updatedAt: startedAt } });
   return { ...result, dryRunId: String(run._id) };
 }
 
@@ -355,7 +363,7 @@ export async function runNow(viewer: CompanyViewer, id: string): Promise<ActionR
   }
   if (await JobRun.exists({ jobId: found.job._id, status: 'running' })) return { ok: false, status: 409, error: 'A run is already in progress.' };
   const startedAt = new Date();
-  const run = await JobRun.create({ organizationId: found.job.organizationId, jobId: found.job._id, companyId: found.job.companyId, dryRun: false, status: 'running', startedAt, progress: ['Starting'], progressState: { stage: 'preparing', label: 'Preparing the run', percent: 5, updatedAt: startedAt } });
+  const run = await JobRun.create({ organizationId: found.job.organizationId, jobId: found.job._id, companyId: found.job.companyId, dryRun: false, status: 'running', startedAt, ...initialRunLease(undefined, startedAt), progress: ['Starting'], progressState: { stage: 'preparing', label: 'Preparing the run', percent: 5, updatedAt: startedAt } });
   await Job.updateOne({ _id: found.job._id }, { $set: { lastRunAt: new Date() }, $push: { events: event(viewer, 'run_started') } });
   const view = await done(viewer, id);
   return view.ok ? { ...view, runId: String(run._id) } : view;
@@ -415,8 +423,13 @@ export async function resumeJob(viewer: CompanyViewer, id: string): Promise<Acti
   return transition(viewer, found.job, ['paused'], { status: 'active', ...(nextRunAt ? { nextRunAt } : {}) }, 'resumed');
 }
 
-export function archiveJob(viewer: CompanyViewer, id: string): Promise<ActionResult> {
-  return managed(viewer, id).then((f) => (f.ok ? transition(viewer, f.job, ['proposed', 'ready', 'active', 'paused', 'done', 'failed', 'needs_answers'], { status: 'archived' }, 'archived') : f));
+export async function archiveJob(viewer: CompanyViewer, id: string): Promise<ActionResult> {
+  const found = await managed(viewer, id);
+  if (!found.ok) return found;
+  if (found.job.status === 'testing' && await JobRun.exists({ jobId: found.job._id, status: 'running' })) {
+    return { ok: false, status: 409, error: 'This dry run is still active. Wait for it to finish or time out before clearing the job.' };
+  }
+  return transition(viewer, found.job, ['proposed', 'testing', 'ready', 'active', 'paused', 'done', 'failed', 'needs_answers'], { status: 'archived' }, 'archived');
 }
 
 // ---------- Background ----------
@@ -449,6 +462,7 @@ export async function claimDueJobRuns(now = new Date(), limit = 2): Promise<stri
       dryRun: false,
       status: 'running',
       startedAt,
+      ...initialRunLease(undefined, startedAt),
       progress: ['Starting scheduled run'],
       progressState: { stage: 'preparing', label: 'Preparing the scheduled run', percent: 5, updatedAt: startedAt },
     });
@@ -457,18 +471,31 @@ export async function claimDueJobRuns(now = new Date(), limit = 2): Promise<stri
   return runIds;
 }
 
-/** Cron: fails runs and designs that have been stuck too long. */
+/** Reconciles expired run leases and legacy runs that predate leases. */
 export async function sweepJobs(now = new Date()): Promise<{ runsFailed: number; designsFailed: number }> {
   const cutoff = new Date(now.getTime() - STUCK_MS);
-  const stale = await JobRun.find({ status: 'running', updatedAt: { $lt: cutoff } }).select('_id jobId dryRun').lean<{ _id: Types.ObjectId; jobId: Types.ObjectId; dryRun: boolean }[]>();
+  const stale = await JobRun.find({
+    status: 'running',
+    $or: [
+      { leaseExpiresAt: { $lte: now } },
+      { leaseExpiresAt: { $exists: false }, updatedAt: { $lt: cutoff } },
+    ],
+  }).select('_id jobId dryRun propertyOverviewId leaseOwner attempt').lean<{ _id: Types.ObjectId; jobId: Types.ObjectId; dryRun: boolean; propertyOverviewId?: Types.ObjectId; leaseOwner?: string; attempt?: number }[]>();
   const runs = stale.length
     ? await JobRun.updateMany(
         { _id: { $in: stale.map((run) => run._id) }, status: 'running' },
-        { $set: { status: 'failed', error: 'The run stopped reporting progress and timed out. You can retry it.', finishedAt: now, progressState: { stage: 'complete', label: 'Run timed out', percent: 100, updatedAt: now } } }
+        { $set: { status: 'failed', error: 'The worker stopped reporting progress and its run lease expired. You can retry it.', finishedAt: now, progressState: { stage: 'complete', label: 'Worker lease expired', percent: 100, updatedAt: now } }, $unset: { leaseExpiresAt: '' } }
       )
     : { modifiedCount: 0 };
   const failedSamples = stale.filter((run) => run.dryRun).map((run) => run.jobId);
   if (failedSamples.length) await Job.updateMany({ _id: { $in: failedSamples }, status: 'testing' }, { $set: { status: 'proposed' } });
+  const external = stale.filter((run) => run.propertyOverviewId);
+  if (external.length) {
+    await Promise.all([
+      Job.updateMany({ _id: { $in: external.map((run) => run.jobId) }, status: 'active' }, { $set: { status: 'failed', error: 'The Property Overview stopped reporting progress and timed out.' } }),
+      PropertyOverview.updateMany({ _id: { $in: external.map((run) => run.propertyOverviewId!) }, status: { $in: ['queued', 'crawling'] } }, { $set: { status: 'failed', completedAt: now, progress: 'Timed out', error: 'The VPS crawl stopped reporting progress.' } }),
+    ]);
+  }
   const designs = await Job.updateMany({ status: 'designing', updatedAt: { $lt: cutoff } }, { $set: { status: 'failed', error: 'Designing the job timed out. Try again.' } });
   return { runsFailed: runs.modifiedCount ?? 0, designsFailed: designs.modifiedCount ?? 0 };
 }

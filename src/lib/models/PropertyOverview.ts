@@ -4,6 +4,8 @@ const overviewSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, required: true, index: true },
     companyId: { type: Schema.Types.ObjectId, required: true, index: true },
+    jobId: { type: Schema.Types.ObjectId, ref: 'Job' },
+    runId: { type: Schema.Types.ObjectId, ref: 'JobRun' },
     rootUrl: { type: String, required: true },
     status: { type: String, enum: ['queued', 'crawling', 'complete', 'failed'], default: 'queued' },
     startedAt: Date,

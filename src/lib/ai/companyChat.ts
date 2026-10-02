@@ -179,7 +179,7 @@ import { companyChatAdmissionMessage } from '@/lib/ai/companyChatAdmission';
 import { recordModelFailure, recordModelSuccess } from '@/lib/ai/engine/health';
 import type { RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 import { describeToolCall, type ProgressFn } from '@/lib/ai/progress';
-import { contextBudgetChars, contextWindowFor, outputBudgetTokens } from '@/lib/ai/engine/catalog';
+import { contextBudgetChars, contextWindowFor, contextWindowFromProviderMessage, outputBudgetTokens, recordObservedContextWindow } from '@/lib/ai/engine/catalog';
 
 /**
  * Governed IDE chat via a company credential (Direct or AI Team Worker binding).
@@ -1058,12 +1058,16 @@ export async function attemptCompanyCredentialChat(input: {
         );
       }
       const contextWindowFailure = isContextWindowFailure(error);
+      if (contextWindowFailure) {
+        const observed = contextWindowFromProviderMessage(error.details?.providerMessage);
+        if (observed) await recordObservedContextWindow(input.modelProfileId, gateway.model, observed).catch(() => undefined);
+      }
       const messagesByCode: Record<GatewayError['code'], string> = {
         configuration: 'Inference is not configured for this chat.',
         credentials: 'Remote authentication was rejected.',
         rate_limit: 'The remote provider rate-limited this request.',
         unavailable: contextWindowFailure
-          ? 'The model rejected the request because it exceeded that deployment’s context window. Nucleas will refresh the live model catalog and route the retry to another eligible model.'
+          ? 'The model rejected the request because it exceeded that deployment’s context window. Nucleas recorded the reported limit so the retry can use a smaller request.'
           : error.details?.kind === 'timeout'
           ? `${gateway.model.split('/').pop()} took longer than ${Math.round((gateway.timeoutMs ?? 60000) / 1000)} seconds to answer and was stopped.`
           : freeCredential

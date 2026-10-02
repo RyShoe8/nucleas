@@ -11,6 +11,7 @@ import { assistantLedgerProjectId } from '@/lib/ai/company/assistantLedger';
 import { loadCompanyViewer, getCompanyProfile } from '@/lib/companies/companyProfile';
 import { resolveCompanyRepository } from '@/lib/building/companyCode';
 import { Job, JobRun, type JobRunProgressStage } from '@/lib/models/Job';
+import { claimJobRunExecution, heartbeatJobRun, startJobRunHeartbeat } from './runLifecycle';
 import { checkRecords, jobDesignSchema, jobRunOutputSchema, type JobDesign, type JobRunOutput } from './schema';
 import { linkOpportunityMemory, syncLinkOpportunities } from './linkOpportunities';
 import { approvedSeoBrief, seoBriefContext } from './seoBriefs';
@@ -27,7 +28,8 @@ import { nextScheduledAt } from './schedule';
  * automatic and every check passes; anything else waits for review.
  */
 
-const RUN_MAX_TOKENS = 6000;
+const RUN_MAX_TOKENS = 3000;
+const COMPACT_RUN_MAX_TOKENS = 1800;
 /** Earlier records shown to a run so repeating jobs do not redo work. */
 const MEMORY_RECORDS = 40;
 
@@ -110,16 +112,8 @@ export function seoBriefIssues(output: JobRunOutput, propertyHost: string | null
   return issues;
 }
 
-async function progress(runId: Types.ObjectId, text: string, milestone?: { stage: JobRunProgressStage; percent: number }) {
-  await JobRun.updateOne(
-    milestone
-      ? { _id: runId, $or: [{ 'progressState.percent': { $exists: false } }, { 'progressState.percent': { $lte: milestone.percent } }] }
-      : { _id: runId },
-    {
-      $push: { progress: { $each: [text.slice(0, 300)], $slice: -40 } },
-      ...(milestone ? { $set: { progressState: { ...milestone, label: text.slice(0, 300), updatedAt: new Date() } } } : {}),
-    }
-  ).catch(() => undefined);
+async function progress(runId: Types.ObjectId, owner: string, text: string, milestone?: { stage: JobRunProgressStage; percent: number }) {
+  await heartbeatJobRun(runId, owner, { text, milestone }).catch(() => undefined);
 }
 
 /** AI spent on this job this calendar month (design plus runs). */
@@ -148,8 +142,11 @@ async function earlierRecords(jobId: Types.ObjectId, excludeRun: Types.ObjectId)
 
 /** Executes a run that is in 'running'. Safe to call once per run; the caller claimed it. */
 export async function executeJobRun(runId: string): Promise<void> {
-  const run = await JobRun.findById(runId).lean<{ _id: Types.ObjectId; jobId: Types.ObjectId; dryRun: boolean; status: string }>();
-  if (!run || run.status !== 'running') return;
+  const claim = await claimJobRunExecution(runId);
+  if (!claim) return;
+  const { run, owner } = claim;
+  const heartbeat = startJobRunHeartbeat(run._id, owner);
+  try {
   const job = await Job.findById(run.jobId).lean<{
     _id: Types.ObjectId;
     organizationId: Types.ObjectId;
@@ -163,7 +160,8 @@ export async function executeJobRun(runId: string): Promise<void> {
   }>();
   const fail = async (error: string, details: { costMicros?: number; models?: string[] } = {}) => {
     const now = new Date();
-    await JobRun.updateOne({ _id: run._id }, { $set: { status: 'failed', error: error.slice(0, 1000), finishedAt: now, progressState: { stage: 'complete', label: 'Run stopped', percent: 100, updatedAt: now }, ...details } });
+    const failed = await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { status: 'failed', error: error.slice(0, 1000), finishedAt: now, progressState: { stage: 'complete', label: 'Run stopped', percent: 100, updatedAt: now }, ...details }, $unset: { leaseExpiresAt: '' } });
+    if (!failed.modifiedCount) return;
     // A failed sample must not strand its parent in "testing" with no available action.
     // Return it to the approved-design screen so the person can inspect the error and retry.
     if (run.dryRun) await Job.updateOne({ _id: run.jobId, status: 'testing' }, { $set: { status: 'proposed' } });
@@ -172,7 +170,7 @@ export async function executeJobRun(runId: string): Promise<void> {
   const design = jobDesignSchema.safeParse(job.design);
   if (!design.success) return fail('The job has no valid design.');
   const activeDesign = currentDesign(design.data);
-  await progress(run._id, 'Preparing company, project, and model context', { stage: 'preparing', percent: 8 });
+  await progress(run._id, owner, 'Preparing company, project, and model context', { stage: 'preparing', percent: 8 });
 
   const spent = await monthSpendMicros(job._id);
   if (spent >= (job.monthlyBudgetMicros ?? 0)) return fail(`This job has reached its monthly budget ($${((job.monthlyBudgetMicros ?? 0) / 1_000_000).toFixed(2)}).`);
@@ -198,12 +196,19 @@ export async function executeJobRun(runId: string): Promise<void> {
   const facts = [`Selected project: ${project?.name ?? repo?.projectName ?? 'unknown'}`, `Project description: ${project?.description || 'not provided'}`, `Production URL: ${propertyUrl || 'not provided'}`, `Company description: ${profile.description || 'not provided'}`];
   if (repo && activeDesign.skill === 'seo_brief') {
     const snapshot = await getRepoSnapshot(org, repo.projectId).catch(() => null);
-    if (snapshot?.ok) facts.push(`# Selected repository evidence\n${projectGuide(snapshot.snapshot, 12_000)}`);
+    if (snapshot?.ok) facts.push(`# Selected repository evidence\n${projectGuide(snapshot.snapshot, 5_000)}`);
     else facts.push(`Selected repository: ${repo.repository.fullName} (snapshot unavailable)`);
   }
   if (propertyUrl && activeDesign.skill === 'seo_brief') {
     const page = await webFetch(propertyUrl).catch(() => null);
-    if (page) facts.push(`# Live first-party homepage (${page.url})\nTitle: ${page.title ?? ''}\n${page.text.slice(0, 10_000)}\nVerified links:\n${page.links.slice(0, 80).join('\n')}`);
+    if (page) {
+      const firstPartyLinks = page.links.filter((link) => {
+        try { return new URL(link).hostname.replace(/^www\./, '') === propertyHost && new URL(link).pathname !== new URL(page.url).pathname; } catch { return false; }
+      }).slice(0, 2);
+      const supportingPages = await Promise.all(firstPartyLinks.map((link) => webFetch(link).catch(() => null)));
+      facts.push(`# Live first-party homepage (${page.url})\nTitle: ${page.title ?? ''}\n${page.text.slice(0, 4_000)}\nVerified links:\n${page.links.slice(0, 25).join('\n')}`);
+      for (const supporting of supportingPages) if (supporting) facts.push(`# Live first-party page (${supporting.url})\nTitle: ${supporting.title ?? ''}\n${supporting.text.slice(0, 2_500)}`);
+    }
   }
   const groundingFacts = facts.join('\n\n');
   const tools = await buildAssistantTools(viewer, [profile]);
@@ -216,11 +221,11 @@ export async function executeJobRun(runId: string): Promise<void> {
     // Tool/model messages prove liveness. Advance slowly within the research band without
     // implying a precise time estimate; later milestones supply the meaningful completion signal.
     researchPercent = Math.min(58, researchPercent + 2);
-    void progress(run._id, t, { stage: 'researching', percent: researchPercent });
+    void progress(run._id, owner, t, { stage: 'researching', percent: researchPercent });
   };
 
-  const doWork = async (choice: typeof worker, correction?: string, researchRetry = false) => {
-    onProgress(correction ? `${researchRetry ? 'Re-researching' : 'Fixing the result format'} with ${shortModel(choice.model)}` : `Researching with ${shortModel(choice.model)}`);
+  const doWork = async (choice: typeof worker, correction?: string, researchRetry = false, compact = false) => {
+    onProgress(compact ? `Retrying within ${shortModel(choice.model)}'s context limit` : correction ? `${researchRetry ? 'Re-researching' : 'Fixing the result format'} with ${shortModel(choice.model)}` : `Researching with ${shortModel(choice.model)}`);
     usedModels.push(choice.model);
     const turn = await attemptCompanyCredentialChat({
       systemPrompt: runnerPrompt(activeDesign, today),
@@ -232,14 +237,14 @@ export async function executeJobRun(runId: string): Promise<void> {
       modelProfileId: choice.profileId,
       model: choice.model,
       projectName: profile.name,
-      includeRepoTools: Boolean(repo) && (!correction || researchRetry),
+      includeRepoTools: !compact && Boolean(repo) && (!correction || researchRetry),
       includeImageTool: false,
-      toolProfile: correction && !researchRetry ? 'none' : 'full',
-      forcePlain: Boolean(correction) && !researchRetry,
-      forceToolLoop: !correction || researchRetry,
-      extraTools: correction && !researchRetry ? undefined : tools.toolSet,
+      toolProfile: compact || (correction && !researchRetry) ? 'none' : 'full',
+      forcePlain: compact || (Boolean(correction) && !researchRetry),
+      forceToolLoop: !compact && (!correction || researchRetry),
+      extraTools: compact || (correction && !researchRetry) ? undefined : tools.toolSet,
       stopOnUpstreamFailure: true,
-      maxOutputTokensOverride: RUN_MAX_TOKENS,
+      maxOutputTokensOverride: compact ? COMPACT_RUN_MAX_TOKENS : RUN_MAX_TOKENS,
       onProgress,
     });
     cost += turn.costMicros ?? 0;
@@ -248,6 +253,9 @@ export async function executeJobRun(runId: string): Promise<void> {
 
   try {
     let turn = await doWork(worker);
+    if (turn.role !== 'assistant' && /context (?:length|window)|maximum context|context.*exceed/i.test(turn.text)) {
+      turn = await doWork(worker, 'Use only the verified evidence supplied below. Return the required JSON without additional exploration.', false, true);
+    }
     // A free worker that fails may retry on the level's paid model, as elsewhere in the engine.
     if (turn.role !== 'assistant' && work.fallback) turn = await doWork(work.fallback);
     if (turn.role !== 'assistant') return void (await fail(turn.text, { costMicros: cost, models: usedModels }));
@@ -259,7 +267,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     if (!parsed.success) return void (await fail('The run did not return usable records.', { costMicros: cost, models: usedModels }));
     let output = parsed.data;
 
-    await progress(run._id, 'Validating evidence and required fields', { stage: 'validating', percent: 68 });
+    await progress(run._id, owner, 'Validating evidence and required fields', { stage: 'validating', percent: 68 });
     let issues = checkRecords(activeDesign.fields, output);
     if (activeDesign.skill === 'seo_brief') issues.push(...seoBriefIssues(output, propertyHost, groundingFacts));
     if (activeDesign.skill === 'seo_brief' && issues.length) {
@@ -287,7 +295,7 @@ export async function executeJobRun(runId: string): Promise<void> {
 
     let verdict: { verdict: 'pass' | 'fail'; notes: string; model: string } | null = null;
     if (review.primary) {
-      await progress(run._id, `Independent review with ${shortModel(review.primary.model)}`, { stage: 'reviewing', percent: 84 });
+      await progress(run._id, owner, `Independent review with ${shortModel(review.primary.model)}`, { stage: 'reviewing', percent: 84 });
       const reviewTurn = await attemptCompanyCredentialChat({
         systemPrompt: reviewerPrompt(),
         organizationId: org,
@@ -314,9 +322,9 @@ export async function executeJobRun(runId: string): Promise<void> {
     // Dry runs always wait for a person; real runs complete by themselves only when automatic and clean.
     const clean = issues.length === 0 && verdict?.verdict !== 'fail';
     const status = !run.dryRun && job.completion === 'automatic' && clean ? 'completed' : 'needs_review';
-    await progress(run._id, 'Saving results and recommendations', { stage: 'saving', percent: 95 });
-    await JobRun.updateOne(
-      { _id: run._id, status: 'running' },
+    await progress(run._id, owner, 'Saving results and recommendations', { stage: 'saving', percent: 95 });
+    const saved = await JobRun.updateOne(
+      { _id: run._id, status: 'running', leaseOwner: owner },
       {
         $set: {
           status,
@@ -328,8 +336,11 @@ export async function executeJobRun(runId: string): Promise<void> {
           models: usedModels,
           progressState: { stage: 'complete', label: status === 'completed' ? 'Complete' : 'Ready for review', percent: 100, updatedAt: new Date() },
         },
+        $unset: { leaseExpiresAt: '' },
       }
     );
+    // A replaced or timed-out executor must not apply stale side effects after losing its lease.
+    if (!saved.modifiedCount) return;
     if (activeDesign.skill === 'link_building') {
       await syncLinkOpportunities({
         organizationId: job.organizationId,
@@ -354,5 +365,8 @@ export async function executeJobRun(runId: string): Promise<void> {
     }
   } catch (error) {
     await fail(error instanceof Error ? error.message : 'The run failed.', { costMicros: cost, models: usedModels });
+  }
+  } finally {
+    clearInterval(heartbeat);
   }
 }

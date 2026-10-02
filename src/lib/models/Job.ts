@@ -71,10 +71,19 @@ const runSchema = new Schema(
     organizationId: { type: Schema.Types.ObjectId, required: true },
     jobId: { type: Schema.Types.ObjectId, ref: 'Job', required: true },
     companyId: { type: Schema.Types.ObjectId, required: true },
+    /** External long-running work represented by this run, when applicable. */
+    propertyOverviewId: { type: Schema.Types.ObjectId, ref: 'PropertyOverview' },
     /** A dry run never applies anything; it shows what a real run would produce. */
     dryRun: { type: Boolean, default: false },
     status: { type: String, enum: JOB_RUN_STATUSES, required: true, default: 'running' },
     startedAt: { type: Date, required: true },
+    /** Monotonic execution attempt. Reconciliation increments this when an expired lease is reclaimed. */
+    attempt: { type: Number, required: true, default: 1, min: 1 },
+    /** Current executor identity and liveness. These are infrastructure state, not user progress. */
+    leaseOwner: { type: String, maxlength: 160 },
+    leaseExpiresAt: { type: Date },
+    heartbeatAt: { type: Date },
+    executionStartedAt: { type: Date },
     finishedAt: { type: Date },
     /** Live progress lines, newest last. */
     progress: { type: [String], default: [] },
@@ -94,6 +103,7 @@ const runSchema = new Schema(
 );
 runSchema.index({ jobId: 1, createdAt: -1 });
 runSchema.index({ organizationId: 1, status: 1, updatedAt: -1 });
+runSchema.index({ status: 1, leaseExpiresAt: 1 });
 
 export type JobRunDoc = InferSchemaType<typeof runSchema>;
 export const JobRun: Model<JobRunDoc> = (mongoose.models.JobRun as Model<JobRunDoc> | undefined) ?? mongoose.model<JobRunDoc>('JobRun', runSchema);

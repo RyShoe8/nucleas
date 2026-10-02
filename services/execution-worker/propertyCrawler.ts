@@ -70,7 +70,7 @@ async function enrichRendered(request: CrawlRequest, page: ReturnType<typeof ext
 }
 
 async function callback(request: CrawlRequest, payload: unknown) {
-  let last = ''; for (let attempt = 0; attempt < 4; attempt += 1) { try { const response = await fetch(await safeUrl(request.callbackUrl), { method: 'POST', signal: AbortSignal.timeout(60_000), headers: { Authorization: `Bearer ${process.env.NUCLEAS_EXECUTION_WORKER_TOKEN!.trim()}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (response.ok) return; last = `HTTP ${response.status}`; } catch (error) { last = error instanceof Error ? error.message : 'callback failed'; } await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1))); } throw new Error(`Nucleas callback failed: ${last}`);
+  let last = ''; for (let attempt = 0; attempt < 4; attempt += 1) { try { const response = await fetch(await safeUrl(request.callbackUrl), { method: 'POST', signal: AbortSignal.timeout(60_000), headers: { Authorization: `Bearer ${process.env.NUCLEAS_EXECUTION_WORKER_TOKEN!.trim()}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (response.ok) return; const detail = (await response.text().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 500); last = `HTTP ${response.status}${detail ? `: ${detail}` : ''}`; } catch (error) { last = error instanceof Error ? error.message : 'callback failed'; } await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1))); } throw new Error(`Nucleas callback failed: ${last}`);
 }
 async function discoverSitemaps(root: URL) {
   const pending = [new URL('/sitemap.xml', root).toString(), new URL('/sitemap_index.xml', root).toString()]; const seen = new Set<string>(); const pages: string[] = [];

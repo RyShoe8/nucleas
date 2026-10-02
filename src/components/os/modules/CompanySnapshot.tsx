@@ -78,7 +78,7 @@ export function Sparkline({ series, label }: { series: { value: number }[]; labe
 }
 
 /** Display order; metrics without data are skipped. */
-const ORDER = ['sessions', 'new_visitors', 'search_clicks', 'search_impressions', 'leads_new', 'contacts_total', 'users_new', 'customers_new', 'payments', 'revenue_total', 'revenue_net', 'ad_revenue', 'subscribers_active', 'mrr'];
+const ORDER = ['sessions', 'new_visitors', 'search_clicks', 'search_impressions', 'leads_new', 'contacts_total', 'users_new', 'customers_new', 'payments', 'revenue_total', 'revenue_net', 'ad_revenue', 'subscribers_active', 'mrr', 'ai_citations'];
 
 function MetricCard({ m }: { m: OsMetric }) {
     return (
@@ -120,14 +120,17 @@ export function timeAgo(iso: string | null): string {
 export default function CompanySnapshot({
     companyId,
     connections,
+    aiCitations,
     onActivity,
 }: {
     companyId: string;
     connections: OsConnection[];
+    aiCitations: number;
     onActivity: () => void;
 }) {
     const auth = useOsAuth();
     const has = (provider: string) => connections.some((c) => c.provider === provider);
+    const hasPerformanceConnection = ['ga4', 'gsc', 'brevo', 'stripe', 'adsense', 'ahrefs', 'mercury', 'signups'].some(has);
     const [data, setData] = useState<{ lastSyncedAt: string | null; metrics: OsMetric[]; changes: string[] } | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
     const [syncing, setSyncing] = useState(false);
@@ -146,8 +149,6 @@ export default function CompanySnapshot({
             cancelled = true;
         };
     }, [companyId, reloadKey]);
-
-    if (!['ga4', 'gsc', 'brevo', 'stripe', 'adsense', 'ahrefs', 'mercury', 'signups'].some(has)) return null;
 
     const syncNow = async () => {
         setSyncing(true);
@@ -187,13 +188,14 @@ export default function CompanySnapshot({
         setCash(formatMetric('money', Math.round(out.totalAvailable * 100)));
     };
 
-    const metrics = (data?.metrics ?? []).filter((m) => ORDER.includes(m.key)).sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key));
+    const citationMetric: OsMetric = { key: 'ai_citations', label: 'AI citations', unit: 'count', kind: 'snapshot', series: [], current: aiCitations, previous: null, change: null, lastDay: null };
+    const metrics = [...(data?.metrics ?? []), citationMetric].filter((m) => ORDER.includes(m.key)).sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key));
 
     return (
         <section className="space-y-2">
             <div className="flex items-center justify-between gap-2">
                 <h3 className="text-[11px] uppercase tracking-wider text-text-secondary">Performance</h3>
-                <div className="flex items-center gap-2">
+                {hasPerformanceConnection ? <div className="flex items-center gap-2">
                     <span className="text-[11px] text-text-secondary">Synced {timeAgo(data?.lastSyncedAt ?? null)}</span>
                     {auth.isManagerOrAdmin ? (
                         <button
@@ -205,7 +207,7 @@ export default function CompanySnapshot({
                             {syncing ? 'Syncing…' : 'Sync now'}
                         </button>
                     ) : null}
-                </div>
+                </div> : null}
             </div>
             {message ? <p className="text-[11px] text-amber-400">{message}</p> : null}
 
@@ -219,19 +221,10 @@ export default function CompanySnapshot({
                 </ul>
             ) : null}
 
-            {data === null ? (
-                <p className="text-xs text-text-secondary">Loading…</p>
-            ) : metrics.length === 0 ? (
-                <p className="text-xs text-text-secondary">
-                    No history yet. The first sync backfills 90 days{auth.isManagerOrAdmin ? '; use Sync now to start it.' : '.'}
-                </p>
-            ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {metrics.map((m) => (
-                        <MetricCard key={m.key} m={m} />
-                    ))}
-                </div>
-            )}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {metrics.map((m) => <MetricCard key={m.key} m={m} />)}
+            </div>
+            {hasPerformanceConnection && data === null ? <p className="text-xs text-text-secondary">Loading connected performance data…</p> : data && data.metrics.length === 0 && hasPerformanceConnection ? <p className="text-xs text-text-secondary">No connected performance history yet. The first sync backfills 90 days{auth.isManagerOrAdmin ? '; use Sync now to start it.' : '.'}</p> : null}
 
             {has('ahrefs') || (has('mercury') && auth.isManagerOrAdmin) ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
