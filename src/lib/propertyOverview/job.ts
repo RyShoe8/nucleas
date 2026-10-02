@@ -2,9 +2,10 @@ import 'server-only';
 import { Types } from 'mongoose';
 import { Job, JobRun } from '@/lib/models/Job';
 import type { JobDesign, JobRunOutput } from '@/lib/jobs/schema';
-import { heartbeatJobRun, initialRunLease } from '@/lib/jobs/runLifecycle';
+import { heartbeatJobRun, initialRunLease, leaseExpiry } from '@/lib/jobs/runLifecycle';
 
-const PROPERTY_OVERVIEW_OWNER = 'vps:property-overview';
+export const PROPERTY_OVERVIEW_OWNER = 'vps:property-overview';
+export const PROPERTY_OVERVIEW_QUEUE_OWNER = 'queue:property-overview';
 
 export function propertyOverviewJobDesign(companyName: string, rootUrl: string): JobDesign {
   return {
@@ -57,11 +58,50 @@ export async function createPropertyOverviewJob(input: { organizationId: Types.O
     dryRun: false,
     status: 'running',
     startedAt: now,
-    ...initialRunLease(PROPERTY_OVERVIEW_OWNER, now),
-    progress: ['Queued on the VPS crawl worker'],
-    progressState: { stage: 'preparing', label: 'Queued on the VPS crawl worker', percent: 5, updatedAt: now },
+    ...initialRunLease(PROPERTY_OVERVIEW_QUEUE_OWNER, now),
+    progress: ['Queued · waiting for the VPS crawl worker'],
+    progressState: { stage: 'preparing', label: 'Queued · waiting for the VPS crawl worker', percent: 5, updatedAt: now },
   });
   return { jobId: job._id, runId: run._id };
+}
+
+export async function startPropertyOverviewJob(input: { jobId?: Types.ObjectId; runId?: Types.ObjectId; now?: Date }): Promise<void> {
+  if (!input.runId) return;
+  const now = input.now ?? new Date();
+  const started = await JobRun.updateOne(
+    { _id: input.runId, status: 'running', leaseOwner: PROPERTY_OVERVIEW_QUEUE_OWNER },
+    {
+      $set: {
+        leaseOwner: PROPERTY_OVERVIEW_OWNER,
+        executionStartedAt: now,
+        heartbeatAt: now,
+        leaseExpiresAt: leaseExpiry(now),
+        progressState: { stage: 'preparing', label: 'VPS worker is discovering pages…', percent: 5, updatedAt: now },
+      },
+      $push: { progress: 'VPS worker accepted the crawl' },
+    }
+  );
+  if (started.modifiedCount && input.jobId) {
+    await Job.updateOne({ _id: input.jobId, status: 'active' }, { $set: { lastRunAt: now }, $push: { events: { at: now, action: 'property_crawl_dispatched' } } });
+  }
+}
+
+export async function queuePropertyOverviewJob(input: { runId?: Types.ObjectId; now?: Date }): Promise<void> {
+  if (!input.runId) return;
+  const now = input.now ?? new Date();
+  await JobRun.updateOne(
+    { _id: input.runId, status: 'running', leaseOwner: { $in: [PROPERTY_OVERVIEW_OWNER, PROPERTY_OVERVIEW_QUEUE_OWNER] } },
+    {
+      $set: {
+        leaseOwner: PROPERTY_OVERVIEW_QUEUE_OWNER,
+        heartbeatAt: now,
+        leaseExpiresAt: leaseExpiry(now),
+        progressState: { stage: 'preparing', label: 'Queued · waiting for the VPS crawl worker', percent: 5, updatedAt: now },
+      },
+      $unset: { executionStartedAt: '' },
+      $push: { progress: { $each: ['Queued · waiting for the VPS crawl worker'], $slice: -40 } },
+    }
+  );
 }
 
 export async function updatePropertyOverviewJob(input: { jobId?: Types.ObjectId; runId?: Types.ObjectId; message: string; processed: number; discovered: number }): Promise<void> {
@@ -89,7 +129,7 @@ export async function completePropertyOverviewJob(input: { jobId?: Types.ObjectI
 export async function failPropertyOverviewJob(input: { jobId?: Types.ObjectId; runId?: Types.ObjectId; error: string }): Promise<void> {
   const now = new Date();
   await Promise.all([
-    input.runId ? JobRun.updateOne({ _id: input.runId, status: 'running', leaseOwner: PROPERTY_OVERVIEW_OWNER }, { $set: { status: 'failed', error: input.error.slice(0, 1000), finishedAt: now, progressState: { stage: 'complete', label: 'Company Overview failed', percent: 100, updatedAt: now } }, $unset: { leaseExpiresAt: '' } }) : Promise.resolve(),
+    input.runId ? JobRun.updateOne({ _id: input.runId, status: 'running', leaseOwner: { $in: [PROPERTY_OVERVIEW_OWNER, PROPERTY_OVERVIEW_QUEUE_OWNER] } }, { $set: { status: 'failed', error: input.error.slice(0, 1000), finishedAt: now, progressState: { stage: 'complete', label: 'Company Overview failed', percent: 100, updatedAt: now } }, $unset: { leaseExpiresAt: '' } }) : Promise.resolve(),
     input.jobId ? Job.updateOne({ _id: input.jobId, status: 'active' }, { $set: { status: 'failed', error: input.error.slice(0, 1000) }, $push: { events: { at: now, action: 'property_crawl_failed', note: input.error.slice(0, 500) } } }) : Promise.resolve(),
   ]);
 }

@@ -14,6 +14,7 @@ import { approvedSeoBrief, saveGeneratedSeoBrief } from './seoBriefs';
 import Project from '@/lib/models/Project';
 import { bulkDecideRunOpportunities, listLinkOpportunities, type LinkOpportunityView } from './linkOpportunities';
 import { PropertyOverview } from '@/lib/models/PropertyOverview';
+import { PROPERTY_OVERVIEW_QUEUE_OWNER } from '@/lib/propertyOverview/job';
 import { initialRunLease } from './runLifecycle';
 
 /**
@@ -476,6 +477,7 @@ export async function sweepJobs(now = new Date()): Promise<{ runsFailed: number;
   const cutoff = new Date(now.getTime() - STUCK_MS);
   const stale = await JobRun.find({
     status: 'running',
+    leaseOwner: { $ne: PROPERTY_OVERVIEW_QUEUE_OWNER },
     $or: [
       { leaseExpiresAt: { $lte: now } },
       { leaseExpiresAt: { $exists: false }, updatedAt: { $lt: cutoff } },
@@ -493,7 +495,7 @@ export async function sweepJobs(now = new Date()): Promise<{ runsFailed: number;
   if (external.length) {
     await Promise.all([
       Job.updateMany({ _id: { $in: external.map((run) => run.jobId) }, status: 'active' }, { $set: { status: 'failed', error: 'The Company Overview stopped reporting progress and timed out.' } }),
-      PropertyOverview.updateMany({ _id: { $in: external.map((run) => run.propertyOverviewId!) }, status: { $in: ['queued', 'crawling'] } }, { $set: { status: 'failed', completedAt: now, progress: 'Timed out', error: 'The VPS crawl stopped reporting progress.' } }),
+      PropertyOverview.updateMany({ _id: { $in: external.map((run) => run.propertyOverviewId!) }, status: { $in: ['dispatching', 'crawling'] } }, { $set: { status: 'failed', completedAt: now, progress: 'Timed out', error: 'The VPS crawl stopped reporting progress.' } }),
     ]);
   }
   const designs = await Job.updateMany({ status: 'designing', updatedAt: { $lt: cutoff } }, { $set: { status: 'failed', error: 'Designing the job timed out. Try again.' } });

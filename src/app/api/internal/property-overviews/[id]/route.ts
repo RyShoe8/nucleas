@@ -1,10 +1,11 @@
 import { timingSafeEqual } from 'node:crypto';
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { Types } from 'mongoose';
 import { z } from 'zod';
 import connectDB from '@/lib/db/mongodb';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
-import { completePropertyOverviewJob, failPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
+import { completePropertyOverviewJob, failPropertyOverviewJob, startPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
+import { processPropertyOverviewQueue } from '@/lib/propertyOverview/crawler';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -73,7 +74,7 @@ async function finalize(id: Types.ObjectId): Promise<void> {
   if (incoming.size) await PropertyPage.bulkWrite([...incoming].map(([url, count]) => ({ updateOne: { filter: { overviewId: id, url }, update: { $set: { incomingLinks: count } } } })), { ordered: false });
   const orphanPages = pages.filter((page) => page.routePattern !== '/' && !(incoming.get(page.url) ?? 0)).length;
   const clusterRows = [...clusters].map(([templateKey, routes]) => { const uniqueRoutes = [...new Set(routes)]; return { templateKey, name: templateName(uniqueRoutes), count: routes.length, sampleRoutes: uniqueRoutes.slice(0, 8) }; }).sort((a, b) => b.count - a.count);
-  await PropertyOverview.updateOne({ _id: id, status: { $in: ['queued', 'crawling'] } }, { $set: { status: 'complete', completedAt: new Date(), progress: 'Complete', pageCount: pages.length, edgeCount, issueCount, clusters: clusterRows, summary: { orphanPages, issuePages: pages.filter((page) => (page.issues?.length ?? 0) > 0).length, errorPages: pages.filter((page) => (page.statusCode ?? 0) >= 400).length, templates: clusters.size } } });
+  await PropertyOverview.updateOne({ _id: id, status: { $in: ['queued', 'dispatching', 'crawling'] } }, { $set: { status: 'complete', completedAt: new Date(), progress: 'Complete', pageCount: pages.length, edgeCount, issueCount, clusters: clusterRows, summary: { orphanPages, issuePages: pages.filter((page) => (page.issues?.length ?? 0) > 0).length, errorPages: pages.filter((page) => (page.statusCode ?? 0) >= 400).length, templates: clusters.size } } });
   if (overview) await completePropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, rootUrl: overview.rootUrl, pageCount: pages.length, edgeCount, issueCount, templates: clusters.size, orphanPages, propertyDescription: overview.propertyDescription, primaryKeywords: overview.primaryKeywords, demographicTarget: overview.demographicTarget, competitors: overview.competitors });
 }
 
@@ -83,8 +84,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!Types.ObjectId.isValid(id)) return NextResponse.json({ error: 'Report not found.' }, { status: 404 });
   await connectDB();
   const overviewId = new Types.ObjectId(id);
-  const overview = await PropertyOverview.findOne({ _id: overviewId, status: { $in: ['queued', 'crawling'] } }).select('_id organizationId companyId jobId runId rootUrl').lean<{ _id: Types.ObjectId; organizationId: Types.ObjectId; companyId: Types.ObjectId; jobId?: Types.ObjectId; runId?: Types.ObjectId; rootUrl: string }>();
+  const overview = await PropertyOverview.findOne({ _id: overviewId, status: { $in: ['queued', 'dispatching', 'crawling'] } }).select('_id organizationId companyId jobId runId rootUrl status').lean<{ _id: Types.ObjectId; organizationId: Types.ObjectId; companyId: Types.ObjectId; jobId?: Types.ObjectId; runId?: Types.ObjectId; rootUrl: string; status: string }>();
   if (!overview) return NextResponse.json({ error: 'Active report not found.' }, { status: 404 });
+  if (overview.status !== 'crawling') {
+    const now = new Date();
+    await Promise.all([
+      startPropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, now }),
+      PropertyOverview.updateOne({ _id: overviewId }, { $set: { status: 'crawling', startedAt: now } }),
+    ]);
+  }
   const raw = await request.json().catch(() => null);
   const action = raw && typeof raw === 'object' ? (raw as { action?: unknown }).action : null;
   if (action === 'page') {
@@ -111,6 +119,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       await failPropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, error: parsed.data.error });
     }
     else await finalize(overviewId);
+    after(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      await processPropertyOverviewQueue().catch((error) => console.error('[property-overview] queue advance failed', error instanceof Error ? error.message : 'unknown'));
+    });
   }
   return NextResponse.json({ ok: true });
 }

@@ -7,7 +7,7 @@ const overviewSchema = new Schema(
     jobId: { type: Schema.Types.ObjectId, ref: 'Job' },
     runId: { type: Schema.Types.ObjectId, ref: 'JobRun' },
     rootUrl: { type: String, required: true },
-    status: { type: String, enum: ['queued', 'crawling', 'complete', 'failed'], default: 'queued' },
+    status: { type: String, enum: ['queued', 'dispatching', 'crawling', 'complete', 'failed'], default: 'queued' },
     startedAt: Date,
     completedAt: Date,
     error: { type: String, maxlength: 1500 },

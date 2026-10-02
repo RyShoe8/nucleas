@@ -31,7 +31,8 @@ import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, runDesign, runNow, sweepJobs } from './jobs';
 import type { JobDesign } from './schema';
 import { updateLinkOpportunity, verifyLinkOpportunity } from './linkOpportunities';
-import { completePropertyOverviewJob, createPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
+import { completePropertyOverviewJob, createPropertyOverviewJob, startPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
+import { processPropertyOverviewQueue } from '@/lib/propertyOverview/crawler';
 import { claimJobRunExecution, heartbeatJobRun, initialRunLease } from './runLifecycle';
 
 let replica: MongoMemoryReplSet;
@@ -236,6 +237,7 @@ describe('real runs', () => {
     const overview = await PropertyOverview.create({ organizationId: org, companyId: new Types.ObjectId(companyId), rootUrl: 'https://playbound.club/', status: 'queued' });
     const linked = await createPropertyOverviewJob({ organizationId: org, companyId: new Types.ObjectId(companyId), userId: admin.userId, companyName: 'Playbound.club', overviewId: overview._id, rootUrl: overview.rootUrl });
     await PropertyOverview.updateOne({ _id: overview._id }, { $set: { jobId: linked.jobId, runId: linked.runId } });
+    await startPropertyOverviewJob(linked);
 
     await updatePropertyOverviewJob({ ...linked, message: 'Archived 25 of 100 discovered pages…', processed: 25, discovered: 100 });
     expect(await JobRun.findById(linked.runId).lean()).toMatchObject({ status: 'running', progressState: { stage: 'researching', percent: 31 } });
@@ -243,6 +245,38 @@ describe('real runs', () => {
     await completePropertyOverviewJob({ ...linked, rootUrl: overview.rootUrl, pageCount: 100, edgeCount: 450, issueCount: 12, templates: 4, orphanPages: 3 });
     expect(await Job.findById(linked.jobId).lean()).toMatchObject({ status: 'done', design: { skill: 'property_overview' } });
     expect(await JobRun.findById(linked.runId).lean()).toMatchObject({ status: 'completed', output: { records: [{ values: { pages_archived: 100, internal_links: 450, seo_findings: 12, templates: 4, orphan_pages: 3 } }] }, progressState: { percent: 100 } });
+  });
+
+  it('keeps Company Overview jobs queued while the VPS worker is busy and starts them oldest first', async () => {
+    const previousUrl = process.env.NUCLEAS_EXECUTION_WORKER_URL;
+    const previousToken = process.env.NUCLEAS_EXECUTION_WORKER_TOKEN;
+    process.env.NUCLEAS_EXECUTION_WORKER_URL = 'https://worker.nucleas.app';
+    process.env.NUCLEAS_EXECUTION_WORKER_TOKEN = 'x'.repeat(64);
+    try {
+      const firstOverview = await PropertyOverview.create({ organizationId: org, companyId: new Types.ObjectId(companyId), rootUrl: 'https://playbound.club/', status: 'queued', progress: 'Queued', createdAt: new Date('2026-10-01T10:00:00Z') });
+      const firstJob = await createPropertyOverviewJob({ organizationId: org, companyId: new Types.ObjectId(companyId), userId: admin.userId, companyName: 'Playbound.club', overviewId: firstOverview._id, rootUrl: firstOverview.rootUrl });
+      await PropertyOverview.updateOne({ _id: firstOverview._id }, { $set: { jobId: firstJob.jobId, runId: firstJob.runId } });
+      const secondOverview = await PropertyOverview.create({ organizationId: org, companyId: new Types.ObjectId(companyId), rootUrl: 'https://frugalgambler.club/', status: 'queued', progress: 'Queued', createdAt: new Date('2026-10-01T10:01:00Z') });
+      const secondJob = await createPropertyOverviewJob({ organizationId: org, companyId: new Types.ObjectId(companyId), userId: admin.userId, companyName: 'Frugal Gambler', overviewId: secondOverview._id, rootUrl: secondOverview.rootUrl });
+      await PropertyOverview.updateOne({ _id: secondOverview._id }, { $set: { jobId: secondJob.jobId, runId: secondJob.runId } });
+
+      const busyFetch = vi.fn(async () => new Response(JSON.stringify({ error: 'A property crawl is already running.' }), { status: 429 }));
+      expect(await processPropertyOverviewQueue({ fetchImpl: busyFetch })).toBe('busy');
+      expect(await PropertyOverview.findById(firstOverview._id).lean()).toMatchObject({ status: 'queued', progress: expect.stringContaining('waiting') });
+      expect(await PropertyOverview.findById(secondOverview._id).lean()).toMatchObject({ status: 'queued' });
+      expect(await JobRun.findById(firstJob.runId).lean()).toMatchObject({ status: 'running', leaseOwner: 'queue:property-overview' });
+
+      const acceptedFetch = vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 202 }));
+      expect(await processPropertyOverviewQueue({ fetchImpl: acceptedFetch })).toBe('started');
+      expect(await PropertyOverview.findById(firstOverview._id).lean()).toMatchObject({ status: 'crawling' });
+      expect(await PropertyOverview.findById(secondOverview._id).lean()).toMatchObject({ status: 'queued' });
+      expect(await JobRun.findById(firstJob.runId).lean()).toMatchObject({ status: 'running', leaseOwner: 'vps:property-overview' });
+    } finally {
+      if (previousUrl === undefined) delete process.env.NUCLEAS_EXECUTION_WORKER_URL;
+      else process.env.NUCLEAS_EXECUTION_WORKER_URL = previousUrl;
+      if (previousToken === undefined) delete process.env.NUCLEAS_EXECUTION_WORKER_TOKEN;
+      else process.env.NUCLEAS_EXECUTION_WORKER_TOKEN = previousToken;
+    }
   });
 
   it('claims a due recurring job once and advances its next run', async () => {

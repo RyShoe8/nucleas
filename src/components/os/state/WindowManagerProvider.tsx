@@ -107,14 +107,18 @@ export default function WindowManagerProvider({ children, userId }: WindowManage
         }
 
         const current = layoutRef.current;
-        if (options?.payload) {
-            const existing = current.windows.find(
-                (w) => w.moduleId === moduleId && payloadsMatch(w.payload, options.payload)
-            );
-            if (existing) {
+        // A module plus its payload identifies one logical window. Payload-free modules such as
+        // Jobs are singletons; opening them again should restore/focus, not create a duplicate.
+        const existing = current.windows.find(
+            (w) => w.moduleId === moduleId && payloadsMatch(w.payload, options?.payload)
+        );
+        if (existing) {
+            if (existing.poppedOut) {
+                focusPopoutWindow(existing.id, existing, mod);
+            } else {
                 dispatch({ type: 'FOCUS', windowId: existing.id });
-                return existing.id;
             }
+            return existing.id;
         }
 
         dispatch({

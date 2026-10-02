@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 
-type Overview = { id: string; jobId?: string; rootUrl: string; status: 'queued' | 'crawling' | 'complete' | 'failed'; progress?: string; error?: string; pageCount: number; edgeCount: number; issueCount: number; clusters: { templateKey: string; name?: string; count: number; sampleRoutes: string[] }[]; summary: { orphanPages?: number; issuePages?: number; errorPages?: number; templates?: number }; propertyDescription: string; primaryKeywords: string[]; demographicTarget: string; competitors: { name: string; domain: string; reason: string }[]; analysisSources: string[]; analysisModel: string | null; createdAt: string; completedAt?: string };
+type Overview = { id: string; jobId?: string; rootUrl: string; status: 'queued' | 'dispatching' | 'crawling' | 'complete' | 'failed'; progress?: string; error?: string; pageCount: number; edgeCount: number; issueCount: number; clusters: { templateKey: string; name?: string; count: number; sampleRoutes: string[] }[]; summary: { orphanPages?: number; issuePages?: number; errorPages?: number; templates?: number }; propertyDescription: string; primaryKeywords: string[]; demographicTarget: string; competitors: { name: string; domain: string; reason: string }[]; analysisSources: string[]; analysisModel: string | null; createdAt: string; completedAt?: string };
 type Page = { id: string; url: string; routePattern: string; statusCode?: number; title?: string; description?: string; canonical?: string; robots?: string; language?: string; h1?: string[]; h2?: string[]; h3?: string[]; wordCount?: number; internalLinks?: string[]; externalLinks?: string[]; incomingLinks?: number; imageCount?: number; imagesMissingAlt?: number; structuredDataTypes?: string[]; templateKey?: string; issues?: string[]; indexable?: boolean; datePublished?: string; dateModified?: string; renderMode?: 'html' | 'rendered'; renderedText?: string };
 
 export default function PropertyOverviewButton({ companyId, companyName, canManage }: { companyId: string; companyName: string; canManage: boolean }) {
@@ -34,7 +34,7 @@ function PropertyOverviewModal({ companyId, companyName, canManage, onClose, onS
     return () => window.clearTimeout(timer);
   }, [load]);
   useEffect(() => {
-    if (!overview || !['queued', 'crawling'].includes(overview.status)) return;
+    if (!overview || !['queued', 'dispatching', 'crawling'].includes(overview.status)) return;
     const timer = window.setInterval(() => void load(), 4000);
     return () => window.clearInterval(timer);
   }, [overview, load]);
@@ -53,11 +53,11 @@ function PropertyOverviewModal({ companyId, companyName, canManage, onClose, onS
       <div className="flex flex-wrap items-center gap-2">
         {(['summary', 'pages', 'templates', 'links'] as const).map((item) => <button key={item} type="button" onClick={() => setTab(item)} className={tab === item ? 'ui-button-primary' : 'ui-button'}>{item === 'summary' ? 'Overview' : item[0].toUpperCase() + item.slice(1)}</button>)}
         <span className="flex-1" />
-        {canManage ? <button type="button" onClick={() => void run()} disabled={busy || overview?.status === 'queued' || overview?.status === 'crawling'} className="ui-button-primary">{busy ? 'Starting job…' : overview ? 'Run new crawl as job' : 'Generate report as job'}</button> : null}
+        {canManage ? <button type="button" onClick={() => void run()} disabled={busy || overview?.status === 'queued' || overview?.status === 'dispatching' || overview?.status === 'crawling'} className="ui-button-primary">{busy ? 'Starting job…' : overview ? 'Run new crawl as job' : 'Generate report as job'}</button> : null}
       </div>
       {error ? <p className="rounded border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">{error}</p> : null}
       {!overview ? <div className="ui-card p-8 text-center"><h3 className="font-medium">No company overview yet</h3><p className="mt-2 text-sm text-text-secondary">Crawl the production website to archive its pages, audit technical SEO, group templates, and map internal links.</p></div> : null}
-      {overview && ['queued', 'crawling'].includes(overview.status) ? <div className="ui-card p-5"><p className="font-medium">Crawling {overview.rootUrl}</p><p className="mt-1 text-sm text-text-secondary">This crawl is running as a background job. You can close this window and follow it in Jobs.</p><p className="mt-2 text-sm text-text-secondary">{overview.progress ?? 'Starting…'}</p></div> : null}
+      {overview && ['queued', 'dispatching', 'crawling'].includes(overview.status) ? <div className="ui-card p-5"><p className="font-medium">{overview.status === 'queued' ? 'Queued' : overview.status === 'dispatching' ? 'Starting crawl' : 'Crawling'} · {overview.rootUrl}</p><p className="mt-1 text-sm text-text-secondary">This crawl is a background job. You can close this window and follow it in Jobs.</p><p className="mt-2 text-sm text-text-secondary">{overview.progress ?? 'Starting…'}</p></div> : null}
       {overview?.status === 'failed' ? <div className="ui-card p-4"><p className="font-medium text-red-300">Crawl failed</p><p className="mt-1 text-sm text-text-secondary">{overview.error}</p></div> : null}
       {overview?.status === 'complete' && tab === 'summary' ? <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">{[[overview.pageCount, 'Pages archived'], [overview.edgeCount, 'Internal links'], [overview.issueCount, 'SEO findings'], [overview.summary.templates ?? 0, 'Templates'], [overview.summary.orphanPages ?? 0, 'Orphan pages']].map(([value, label]) => <div key={String(label)} className="ui-card p-4"><p className="text-2xl font-semibold">{value}</p><p className="mt-1 text-xs text-text-secondary">{label}</p></div>)}</div>

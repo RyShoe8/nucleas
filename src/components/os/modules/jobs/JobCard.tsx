@@ -688,7 +688,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                     </a>
                 ) : null}
                 {!compact && job.canManage && canArchive ? (
-                    <button type="button" className={BUTTON} disabled={busy !== null} onClick={() => window.confirm(failedAttempt ? 'Clear this failed job? It will remain available under Show rejected and archived.' : 'Archive this job?') && void act('archive')}>
+                    <button type="button" className={BUTTON} disabled={busy !== null} onClick={() => void act('archive')}>
                         {failedAttempt ? 'Clear failed job' : 'Archive'}
                     </button>
                 ) : null}
