@@ -7,6 +7,7 @@ import { listCompanyConnections } from '@/lib/integrations/connections';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { normalizeProductionDomain } from '@/lib/companies/productionDomain';
 import { recordActivity } from '@/lib/companies/activityLog';
+import { CompanyAssistantTurn } from '@/lib/models/CompanyAssistantTurn';
 
 /** Company overview: resolved profile, its projects and its integrations. */
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const profile = await getCompanyProfile(viewer, id);
     if (!profile) return NextResponse.json({ error: 'Company not found' }, { status: 404 });
 
-    const [projects, connections] = await Promise.all([
+    const [projects, connections, citationRows] = await Promise.all([
       Project.aggregate<{ _id: Types.ObjectId; name: string; status: string; projectType: string; openTasks: number; totalTasks: number }>([
         { $match: { clientId: new Types.ObjectId(id) } },
         {
@@ -37,6 +38,13 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         { $sort: { name: 1 } },
       ]),
       listCompanyConnections(viewer, id),
+      CompanyAssistantTurn.aggregate<{ count: number }>([
+        { $match: { organizationId: viewer.organizationId, companyIds: new Types.ObjectId(id), role: 'assistant', 'contextSources.0': { $exists: true } } },
+        { $unwind: '$contextSources' },
+        { $match: { contextSources: { $type: 'string', $ne: '' } } },
+        { $group: { _id: '$contextSources' } },
+        { $count: 'count' },
+      ]),
     ]);
 
     return NextResponse.json({
@@ -51,6 +59,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         totalTasks: p.totalTasks,
       })),
       connections: connections ?? [],
+      stats: { aiCitations: citationRows[0]?.count ?? 0 },
     });
   } catch (error) {
     console.error('[os/companies/:id] failed', error);

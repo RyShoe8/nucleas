@@ -294,7 +294,10 @@ describe('real runs', () => {
 
   it('the sweep fails runs and designs stuck for too long', async () => {
     await Job.collection.insertOne({ organizationId: org, companyId: new Types.ObjectId(companyId), createdByUserId: new Types.ObjectId(admin.userId), status: 'designing', request: 'x'.repeat(20), updatedAt: new Date(Date.now() - 3600_000), createdAt: new Date() });
-    await JobRun.collection.insertOne({ organizationId: org, jobId: new Types.ObjectId(), companyId: new Types.ObjectId(companyId), status: 'running', dryRun: false, startedAt: new Date(Date.now() - 3600_000) });
+    const sampleJob = await Job.collection.insertOne({ organizationId: org, companyId: new Types.ObjectId(companyId), createdByUserId: new Types.ObjectId(admin.userId), status: 'testing', request: 'x'.repeat(20), updatedAt: new Date(), createdAt: new Date() });
+    await JobRun.collection.insertOne({ organizationId: org, jobId: sampleJob.insertedId, companyId: new Types.ObjectId(companyId), status: 'running', dryRun: true, startedAt: new Date(Date.now() - 3600_000), updatedAt: new Date(Date.now() - 3600_000), createdAt: new Date(Date.now() - 3600_000) });
     expect(await sweepJobs()).toEqual({ runsFailed: 1, designsFailed: 1 });
+    expect(await Job.findById(sampleJob.insertedId).lean()).toMatchObject({ status: 'proposed' });
+    expect(await JobRun.findOne({ jobId: sampleJob.insertedId }).lean()).toMatchObject({ status: 'failed', error: expect.stringContaining('stopped reporting progress'), progressState: { percent: 100 } });
   });
 });

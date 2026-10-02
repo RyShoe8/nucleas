@@ -18,7 +18,9 @@ import { updateLinkOpportunity, verifyLinkOpportunity, viewerOwnsOpportunity } f
 
 export const dynamic = 'force-dynamic';
 // Runs and redesigns continue after the response.
-export const maxDuration = 300;
+// Research jobs may need several source/tool rounds. Fluid Compute supports this ceiling;
+// progress is persisted throughout and the idle-run sweeper still recovers abandoned work.
+export const maxDuration = 800;
 type Context = { params: Promise<{ id: string }> };
 
 export async function GET(request: NextRequest, { params }: Context) {

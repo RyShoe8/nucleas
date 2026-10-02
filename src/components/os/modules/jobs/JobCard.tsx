@@ -603,7 +603,8 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
     };
 
     const d = job.design;
-    const reviewRun = job.runs.find((r) => r.status === 'needs_review' || r.status === 'running');
+    const reviewRun = job.runs.find((r) => r.status === 'needs_review' || r.status === 'running')
+        ?? (job.status === 'testing' || job.status === 'proposed' ? job.runs.find((r) => r.status === 'failed') : undefined);
     const doneRuns = job.runs.filter((r) => r.status === 'completed');
 
     return (

@@ -161,8 +161,12 @@ export async function executeJobRun(runId: string): Promise<void> {
     level?: 'low' | 'medium' | 'high';
     monthlyBudgetMicros?: number;
   }>();
-  const fail = async (error: string) => {
-    await JobRun.updateOne({ _id: run._id }, { $set: { status: 'failed', error: error.slice(0, 1000), finishedAt: new Date() } });
+  const fail = async (error: string, details: { costMicros?: number; models?: string[] } = {}) => {
+    const now = new Date();
+    await JobRun.updateOne({ _id: run._id }, { $set: { status: 'failed', error: error.slice(0, 1000), finishedAt: now, progressState: { stage: 'complete', label: 'Run stopped', percent: 100, updatedAt: now }, ...details } });
+    // A failed sample must not strand its parent in "testing" with no available action.
+    // Return it to the approved-design screen so the person can inspect the error and retry.
+    if (run.dryRun) await Job.updateOne({ _id: run.jobId, status: 'testing' }, { $set: { status: 'proposed' } });
   };
   if (!job) return fail('The job no longer exists.');
   const design = jobDesignSchema.safeParse(job.design);
@@ -246,13 +250,13 @@ export async function executeJobRun(runId: string): Promise<void> {
     let turn = await doWork(worker);
     // A free worker that fails may retry on the level's paid model, as elsewhere in the engine.
     if (turn.role !== 'assistant' && work.fallback) turn = await doWork(work.fallback);
-    if (turn.role !== 'assistant') return void (await JobRun.updateOne({ _id: run._id }, { $set: { status: 'failed', error: turn.text.slice(0, 1000), finishedAt: new Date(), costMicros: cost, models: usedModels } }));
+    if (turn.role !== 'assistant') return void (await fail(turn.text, { costMicros: cost, models: usedModels }));
     let parsed = jobRunOutputSchema.safeParse(extractJson(turn.text));
     if (!parsed.success) {
       const again = await doWork(worker, `Your previous reply was not the required JSON. Reply with ONLY the JSON object. Previous reply:\n${turn.text.slice(0, 12000)}`);
       parsed = jobRunOutputSchema.safeParse(extractJson(again.text));
     }
-    if (!parsed.success) return void (await JobRun.updateOne({ _id: run._id }, { $set: { status: 'failed', error: 'The run did not return usable records.', finishedAt: new Date(), costMicros: cost, models: usedModels } }));
+    if (!parsed.success) return void (await fail('The run did not return usable records.', { costMicros: cost, models: usedModels }));
     let output = parsed.data;
 
     await progress(run._id, 'Validating evidence and required fields', { stage: 'validating', percent: 68 });
@@ -349,6 +353,6 @@ export async function executeJobRun(runId: string): Promise<void> {
       }
     }
   } catch (error) {
-    await JobRun.updateOne({ _id: run._id }, { $set: { status: 'failed', error: error instanceof Error ? error.message.slice(0, 1000) : 'The run failed.', finishedAt: new Date(), costMicros: cost, models: usedModels } });
+    await fail(error instanceof Error ? error.message : 'The run failed.', { costMicros: cost, models: usedModels });
   }
 }

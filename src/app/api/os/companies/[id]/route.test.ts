@@ -6,6 +6,10 @@ const mocks = vi.hoisted(() => ({
   findCompany: vi.fn(),
   save: vi.fn(),
   activity: vi.fn(),
+  profile: vi.fn(),
+  projects: vi.fn(),
+  connections: vi.fn(),
+  citations: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -13,15 +17,16 @@ vi.mock('@/lib/companies/osRouteContext', () => ({
   requireCompanyViewer: async () => ({ userId: 'a'.repeat(24), organizationId: 'b'.repeat(24), employeeId: 'c'.repeat(24), role: mocks.role }),
 }));
 vi.mock('@/lib/companies/companyProfile', () => ({
-  getCompanyProfile: vi.fn(),
+  getCompanyProfile: (...args: unknown[]) => mocks.profile(...args),
   isCompanyManager: (viewer: { role: string }) => viewer.role === 'Administrator' || viewer.role === 'Manager',
 }));
 vi.mock('@/lib/models/Client', () => ({ default: { findOne: (...args: unknown[]) => mocks.findCompany(...args) } }));
-vi.mock('@/lib/models/Project', () => ({ default: { aggregate: vi.fn() } }));
-vi.mock('@/lib/integrations/connections', () => ({ listCompanyConnections: vi.fn() }));
+vi.mock('@/lib/models/Project', () => ({ default: { aggregate: (...args: unknown[]) => mocks.projects(...args) } }));
+vi.mock('@/lib/models/CompanyAssistantTurn', () => ({ CompanyAssistantTurn: { aggregate: (...args: unknown[]) => mocks.citations(...args) } }));
+vi.mock('@/lib/integrations/connections', () => ({ listCompanyConnections: (...args: unknown[]) => mocks.connections(...args) }));
 vi.mock('@/lib/companies/activityLog', () => ({ recordActivity: (...args: unknown[]) => mocks.activity(...args) }));
 
-import { PATCH } from './route';
+import { GET, PATCH } from './route';
 
 const companyId = 'd'.repeat(24);
 const request = (domain: unknown) => new NextRequest(`https://os.nucleas.test/api/os/companies/${companyId}`, {
@@ -34,6 +39,10 @@ describe('company production domain', () => {
     mocks.role = 'Administrator';
     mocks.save.mockResolvedValue(undefined);
     mocks.activity.mockResolvedValue(undefined);
+    mocks.profile.mockResolvedValue({ id: companyId, name: 'PlayBound', relationship: 'owned' });
+    mocks.projects.mockResolvedValue([]);
+    mocks.connections.mockResolvedValue([]);
+    mocks.citations.mockResolvedValue([{ count: 17 }]);
   });
 
   it('normalizes and saves a production URL as the canonical hostname', async () => {
@@ -58,5 +67,15 @@ describe('company production domain', () => {
     const response = await PATCH(request('seniorbydesign.com'), { params: Promise.resolve({ id: companyId }) });
     expect(response.status).toBe(403);
     expect(mocks.findCompany).not.toHaveBeenCalled();
+  });
+
+  it('returns the company AI citation count for its stat card', async () => {
+    const response = await GET(new NextRequest(`https://os.nucleas.test/api/os/companies/${companyId}`), { params: Promise.resolve({ id: companyId }) });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ stats: { aiCitations: 17 } });
+    expect(mocks.citations).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ $match: expect.objectContaining({ role: 'assistant' }) }),
+      { $count: 'count' },
+    ]));
   });
 });

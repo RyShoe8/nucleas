@@ -42,6 +42,7 @@ export interface OsCompanyDetail {
     };
     projects: { id: string; name: string; status: string; isHub: boolean; openTasks: number; totalTasks: number }[];
     connections: OsConnection[];
+    stats: { aiCitations: number };
 }
 
 export const RELATIONSHIP_LABEL: Record<OsCompanySummary['relationship'], string> = {

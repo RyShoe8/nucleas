@@ -20,6 +20,7 @@ import { bulkDecideRunOpportunities, listLinkOpportunities, type LinkOpportunity
  */
 
 const OPEN: JobStatus[] = ['designing', 'needs_answers', 'proposed', 'testing', 'ready', 'active', 'paused', 'failed'];
+/** No persisted heartbeat for this long means the hosting process is gone, not merely researching. */
 const STUCK_MS = 20 * 60 * 1000;
 
 export interface JobRunView {
@@ -459,7 +460,15 @@ export async function claimDueJobRuns(now = new Date(), limit = 2): Promise<stri
 /** Cron: fails runs and designs that have been stuck too long. */
 export async function sweepJobs(now = new Date()): Promise<{ runsFailed: number; designsFailed: number }> {
   const cutoff = new Date(now.getTime() - STUCK_MS);
-  const runs = await JobRun.updateMany({ status: 'running', startedAt: { $lt: cutoff } }, { $set: { status: 'failed', error: 'The run timed out.', finishedAt: now } });
+  const stale = await JobRun.find({ status: 'running', updatedAt: { $lt: cutoff } }).select('_id jobId dryRun').lean<{ _id: Types.ObjectId; jobId: Types.ObjectId; dryRun: boolean }[]>();
+  const runs = stale.length
+    ? await JobRun.updateMany(
+        { _id: { $in: stale.map((run) => run._id) }, status: 'running' },
+        { $set: { status: 'failed', error: 'The run stopped reporting progress and timed out. You can retry it.', finishedAt: now, progressState: { stage: 'complete', label: 'Run timed out', percent: 100, updatedAt: now } } }
+      )
+    : { modifiedCount: 0 };
+  const failedSamples = stale.filter((run) => run.dryRun).map((run) => run.jobId);
+  if (failedSamples.length) await Job.updateMany({ _id: { $in: failedSamples }, status: 'testing' }, { $set: { status: 'proposed' } });
   const designs = await Job.updateMany({ status: 'designing', updatedAt: { $lt: cutoff } }, { $set: { status: 'failed', error: 'Designing the job timed out. Try again.' } });
   return { runsFailed: runs.modifiedCount ?? 0, designsFailed: designs.modifiedCount ?? 0 };
 }

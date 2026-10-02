@@ -7,7 +7,7 @@ import { verifyDueLinkOpportunities } from '@/lib/jobs/linkOpportunities';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 /** Fails job runs and designs that have been stuck too long, and finishes any queued free-model checks. */
 export async function GET(request: NextRequest) {
