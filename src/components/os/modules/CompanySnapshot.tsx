@@ -77,22 +77,71 @@ export function Sparkline({ series, label }: { series: { value: number }[]; labe
     );
 }
 
-/** Display order; metrics without data are skipped. */
-const ORDER = ['sessions', 'new_visitors', 'search_clicks', 'search_impressions', 'leads_new', 'contacts_total', 'users_new', 'customers_new', 'payments', 'revenue_total', 'revenue_net', 'ad_revenue', 'subscribers_active', 'mrr', 'ai_citations'];
+interface MetricSlot {
+    key: string;
+    label: string;
+    unit: OsMetric['unit'];
+    kind: OsMetric['kind'];
+}
 
-function MetricCard({ m }: { m: OsMetric }) {
+const METRIC_GROUPS: { title: string; metrics: MetricSlot[] }[] = [
+    {
+        title: 'Traffic',
+        metrics: [
+            { key: 'sessions', label: 'Sessions', unit: 'count', kind: 'daily' },
+            { key: 'new_visitors', label: 'New visitors', unit: 'count', kind: 'daily' },
+            { key: 'total_visitors', label: 'Total visitors', unit: 'count', kind: 'daily' },
+            { key: 'search_clicks', label: 'Search clicks', unit: 'count', kind: 'daily' },
+            { key: 'search_impressions', label: 'Search impressions', unit: 'count', kind: 'daily' },
+            { key: 'ai_citations', label: 'AI citations', unit: 'count', kind: 'snapshot' },
+            { key: 'ai_clicks', label: 'AI clicks', unit: 'count', kind: 'daily' },
+        ],
+    },
+    {
+        title: 'Audience',
+        metrics: [
+            { key: 'leads_new', label: 'New leads', unit: 'count', kind: 'daily' },
+            { key: 'contacts_total', label: 'Email contacts', unit: 'count', kind: 'snapshot' },
+            { key: 'customers_new', label: 'New customers', unit: 'count', kind: 'daily' },
+            { key: 'subscribers_active', label: 'Subscribers', unit: 'count', kind: 'snapshot' },
+        ],
+    },
+    {
+        title: 'Revenue',
+        metrics: [
+            { key: 'revenue_total', label: 'Revenue', unit: 'money', kind: 'daily' },
+            { key: 'subscriber_revenue', label: 'Subscriber revenue', unit: 'money', kind: 'daily' },
+            { key: 'ad_revenue', label: 'Ad revenue', unit: 'money', kind: 'daily' },
+            { key: 'mrr', label: 'MRR', unit: 'money', kind: 'snapshot' },
+            { key: 'yrr', label: 'YRR', unit: 'money', kind: 'snapshot' },
+        ],
+    },
+];
+
+function MetricCard({ m, slot }: { m?: OsMetric; slot: MetricSlot }) {
     return (
         <div className="rounded-md border border-border p-2.5 min-w-0">
             <div className="flex items-baseline justify-between gap-2">
-                <span className="text-[11px] text-text-secondary truncate">{m.label}</span>
-                <ChangeBadge change={m.change} />
+                <span className="text-[11px] text-text-secondary truncate">{slot.label}</span>
+                <ChangeBadge change={m?.change ?? null} />
             </div>
-            <div className="text-lg font-semibold tabular-nums leading-tight">{formatMetric(m.unit, m.current)}</div>
+            <div className="text-lg font-semibold tabular-nums leading-tight">{formatMetric(m?.unit ?? slot.unit, m?.current)}</div>
             <div className="text-[10px] text-text-secondary">
-                {m.kind === 'daily' ? `last 7 days${m.lastDay ? ` · ${formatMetric(m.unit, m.lastDay.value)} on ${m.lastDay.date.slice(5)}` : ''}` : 'current'}
+                {!m ? 'Connect a data source' : m.kind === 'daily' ? `last 7 days${m.lastDay ? ` · ${formatMetric(m.unit, m.lastDay.value)} on ${m.lastDay.date.slice(5)}` : ''}` : 'current'}
             </div>
-            {m.kind === 'daily' ? <Sparkline series={m.series} label={m.label} /> : null}
+            {m?.kind === 'daily' ? <Sparkline series={m.series} label={slot.label} /> : null}
         </div>
+    );
+}
+
+function MetricGroup({ title, slots, metrics }: { title: string; slots: MetricSlot[]; metrics: Map<string, OsMetric> }) {
+    return (
+        <section className="space-y-2" aria-labelledby={`metric-group-${title.toLowerCase()}`}>
+            <h3 id={`metric-group-${title.toLowerCase()}`} className="text-[11px] uppercase tracking-wider text-text-secondary">{title}</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {slots.map((slot) => <MetricCard key={slot.key} m={metrics.get(slot.key)} slot={slot} />)}
+            </div>
+        </section>
     );
 }
 
@@ -189,13 +238,11 @@ export default function CompanySnapshot({
     };
 
     const citationMetric: OsMetric = { key: 'ai_citations', label: 'AI citations', unit: 'count', kind: 'snapshot', series: [], current: aiCitations, previous: null, change: null, lastDay: null };
-    const metrics = [...(data?.metrics ?? []), citationMetric].filter((m) => ORDER.includes(m.key)).sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key));
+    const metrics = new Map([...(data?.metrics ?? []), citationMetric].map((metric) => [metric.key, metric]));
 
     return (
         <section className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-                <h3 className="text-[11px] uppercase tracking-wider text-text-secondary">Performance</h3>
-                {hasPerformanceConnection ? <div className="flex items-center gap-2">
+            {hasPerformanceConnection ? <div className="flex items-center justify-end gap-2">
                     <span className="text-[11px] text-text-secondary">Synced {timeAgo(data?.lastSyncedAt ?? null)}</span>
                     {auth.isManagerOrAdmin ? (
                         <button
@@ -208,7 +255,6 @@ export default function CompanySnapshot({
                         </button>
                     ) : null}
                 </div> : null}
-            </div>
             {message ? <p className="text-[11px] text-amber-400">{message}</p> : null}
 
             {data && data.changes.length ? (
@@ -221,9 +267,7 @@ export default function CompanySnapshot({
                 </ul>
             ) : null}
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {metrics.map((m) => <MetricCard key={m.key} m={m} />)}
-            </div>
+            {METRIC_GROUPS.map((group) => <MetricGroup key={group.title} title={group.title} slots={group.metrics} metrics={metrics} />)}
             {hasPerformanceConnection && data === null ? <p className="text-xs text-text-secondary">Loading connected performance data…</p> : data && data.metrics.length === 0 && hasPerformanceConnection ? <p className="text-xs text-text-secondary">No connected performance history yet. The first sync backfills 90 days{auth.isManagerOrAdmin ? '; use Sync now to start it.' : '.'}</p> : null}
 
             {has('ahrefs') || (has('mercury') && auth.isManagerOrAdmin) ? (

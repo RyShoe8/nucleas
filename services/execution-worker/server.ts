@@ -192,11 +192,12 @@ export const server = createServer(async (req, res) => {
       if (propertyCrawlBusy) { res.statusCode = 429; res.end(JSON.stringify({ error: 'A property crawl is already running.' })); return; }
       const input = await body(req) as Record<string, unknown>;
       const browserWorker = input.browserWorker && typeof input.browserWorker === 'object' ? input.browserWorker as Record<string, unknown> : null;
-      if (input.protocolVersion !== 1 || typeof input.requestId !== 'string' || !/^[a-f0-9]{24}$/i.test(input.requestId) || typeof input.rootUrl !== 'string' || typeof input.callbackUrl !== 'string' || !Number.isInteger(input.maxPages) || Number(input.maxPages) < 1 || Number(input.maxPages) > 250 || (browserWorker && (typeof browserWorker.url !== 'string' || !browserWorker.url.startsWith('https://') || typeof browserWorker.secret !== 'string' || browserWorker.secret.length < 16 || browserWorker.secret.length > 4096))) {
+      const maxPages = input.maxPages === undefined ? undefined : Number(input.maxPages);
+      if (input.protocolVersion !== 1 || typeof input.requestId !== 'string' || !/^[a-f0-9]{24}$/i.test(input.requestId) || typeof input.rootUrl !== 'string' || typeof input.callbackUrl !== 'string' || (maxPages !== undefined && (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 1_000_000)) || (browserWorker && (typeof browserWorker.url !== 'string' || !browserWorker.url.startsWith('https://') || typeof browserWorker.secret !== 'string' || browserWorker.secret.length < 16 || browserWorker.secret.length > 4096))) {
         res.statusCode = 400; res.end(JSON.stringify({ error: 'Invalid property crawl request.' })); return;
       }
       propertyCrawlBusy = true;
-      void runPropertyCrawl({ requestId: input.requestId, rootUrl: input.rootUrl, callbackUrl: input.callbackUrl, maxPages: Number(input.maxPages), ...(browserWorker ? { browserWorker: { url: String(browserWorker.url), secret: String(browserWorker.secret) } } : {}) }).finally(() => { propertyCrawlBusy = false; });
+      void runPropertyCrawl({ requestId: input.requestId, rootUrl: input.rootUrl, callbackUrl: input.callbackUrl, ...(maxPages === undefined ? {} : { maxPages }), ...(browserWorker ? { browserWorker: { url: String(browserWorker.url), secret: String(browserWorker.secret) } } : {}) }).finally(() => { propertyCrawlBusy = false; });
       res.statusCode = 202; res.end(JSON.stringify({ accepted: true, requestId: input.requestId })); return;
     }
     if (req.method !== 'POST' || req.url !== '/v1/execute') { res.statusCode = 404; res.end(JSON.stringify({ error: 'Not found.' })); return; }

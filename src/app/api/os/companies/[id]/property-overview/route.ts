@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 function view(row: Record<string, unknown>) {
-  return { id: String(row._id), jobId: row.jobId ? String(row.jobId) : undefined, rootUrl: row.rootUrl, status: row.status, progress: row.progress, error: row.error, pageCount: row.pageCount ?? 0, edgeCount: row.edgeCount ?? 0, issueCount: row.issueCount ?? 0, clusters: row.clusters ?? [], summary: row.summary ?? {}, createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt, completedAt: row.completedAt instanceof Date ? row.completedAt.toISOString() : row.completedAt };
+  return { id: String(row._id), jobId: row.jobId ? String(row.jobId) : undefined, rootUrl: row.rootUrl, status: row.status, progress: row.progress, error: row.error, pageCount: row.pageCount ?? 0, edgeCount: row.edgeCount ?? 0, issueCount: row.issueCount ?? 0, clusters: row.clusters ?? [], summary: row.summary ?? {}, propertyDescription: row.propertyDescription ?? '', primaryKeywords: row.primaryKeywords ?? [], demographicTarget: row.demographicTarget ?? '', competitors: row.competitors ?? [], analysisSources: row.analysisSources ?? [], analysisModel: row.analysisModel ?? null, createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt, completedAt: row.completedAt instanceof Date ? row.completedAt.toISOString() : row.completedAt };
 }
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -21,19 +21,21 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (!profile) return NextResponse.json({ error: 'Company not found.' }, { status: 404 });
   const overview = await PropertyOverview.findOne({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(id) }).sort({ createdAt: -1 }).lean<Record<string, unknown>>();
   if (!overview) return NextResponse.json({ overview: null, pages: [] });
-  // Never ask MongoDB to sort the large archived page documents. Even though snapshots are
-  // projected out of the response, a server-side sort can materialize them before projection
-  // and exceed Atlas's 32 MB in-memory sort limit. Read through the overview index, project the
-  // report fields, then apply this small presentation-only ordering in application memory.
-  const pages = await PropertyPage.find({ overviewId: overview._id })
-    .select('-htmlSnapshot -renderedText -organizationId -companyId -__v')
-    .limit(500)
-    .lean();
-  pages.sort((left, right) => {
-    const issueDifference = (right.issues?.length ?? 0) - (left.issues?.length ?? 0);
-    return issueDifference || String(left.url).localeCompare(String(right.url));
-  });
-  return NextResponse.json({ overview: view(overview), pages: pages.map((page) => ({ ...page, id: String(page._id), _id: undefined, overviewId: undefined })) }, { headers: { 'Cache-Control': 'no-store' } });
+  const requestedOffset = Number(new URL(request.url).searchParams.get('offset') ?? 0);
+  const offset = Number.isInteger(requestedOffset) ? Math.max(0, Math.min(requestedOffset, 1_000_000)) : 0;
+  const pageSize = 200;
+  // URL ordering is covered by the { overviewId, url } index, so MongoDB never materializes and
+  // sorts the large archived snapshots. Pagination keeps complete-site reports below response limits.
+  const [pages, pageTotal] = await Promise.all([
+    PropertyPage.find({ overviewId: overview._id })
+      .select('-htmlSnapshot -renderedText -organizationId -companyId -__v')
+      .sort({ url: 1 })
+      .skip(offset)
+      .limit(pageSize)
+      .lean(),
+    PropertyPage.countDocuments({ overviewId: overview._id }),
+  ]);
+  return NextResponse.json({ overview: view(overview), pageTotal, pages: pages.map((page) => ({ ...page, id: String(page._id), _id: undefined, overviewId: undefined })) }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {

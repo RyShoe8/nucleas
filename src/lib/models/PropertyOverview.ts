@@ -17,6 +17,12 @@ const overviewSchema = new Schema(
     issueCount: { type: Number, default: 0 },
     clusters: { type: Schema.Types.Mixed, default: [] },
     summary: { type: Schema.Types.Mixed, default: {} },
+    propertyDescription: { type: String, maxlength: 2_000 },
+    primaryKeywords: { type: [String], default: [] },
+    demographicTarget: { type: String, maxlength: 2_000 },
+    competitors: { type: Schema.Types.Mixed, default: [] },
+    analysisSources: { type: [String], default: [] },
+    analysisModel: { type: String, maxlength: 200 },
   },
   { timestamps: true }
 );

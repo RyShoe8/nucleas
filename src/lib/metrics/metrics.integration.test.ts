@@ -47,7 +47,7 @@ function fakeProviders(requestedDays: number[] = []) {
     if (url.includes('oauth2.googleapis.com/token')) return json({ access_token: 'at' });
     if (url.includes(':runReport')) {
       const body = JSON.parse(String(init?.body));
-      if (body.dimensions[0].name !== 'date') return json({ rows: [] });
+      if (body.dimensions.length !== 1 || body.dimensions[0].name !== 'date') return json({ rows: [] });
       const { startDate, endDate } = body.dateRanges[0];
       const start = new Date(`${startDate}T00:00:00Z`);
       const end = new Date(`${endDate}T00:00:00Z`);

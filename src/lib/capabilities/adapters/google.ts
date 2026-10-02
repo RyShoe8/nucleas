@@ -30,6 +30,7 @@ export interface TrafficDay {
   users: number;
   newUsers: number;
   pageViews: number;
+  aiClicks: number;
 }
 export interface TrafficOutput {
   propertyId: string;
@@ -41,6 +42,17 @@ export interface TrafficOutput {
 }
 
 type RunReport = { rows?: { dimensionValues: { value: string }[]; metricValues: { value: string }[] }[] };
+
+/** Referral sources that represent a visit from a generative-AI answer surface. */
+export const AI_REFERRAL_SOURCES = [
+  'chatgpt.com',
+  'chat.openai.com',
+  'claude.ai',
+  'perplexity.ai',
+  'gemini.google.com',
+  'copilot.microsoft.com',
+  'you.com',
+] as const;
 
 export async function ga4Traffic(ctx: CapabilityRunContext, range: { startDate: string; endDate: string }): Promise<TrafficOutput> {
   const propertyId = ctx.access.resource!.externalId;
@@ -80,15 +92,45 @@ export async function ga4Traffic(ctx: CapabilityRunContext, range: { startDate: 
     },
     'Google Analytics'
   );
+  const aiReferrals = await providerJson<RunReport>(
+    ctx,
+    url,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        dateRanges: [range],
+        dimensions: [{ name: 'date' }, { name: 'sessionSource' }],
+        metrics: [{ name: 'sessions' }],
+        dimensionFilter: {
+          filter: {
+            fieldName: 'sessionSource',
+            inListFilter: { values: AI_REFERRAL_SOURCES, caseSensitive: false },
+          },
+        },
+        limit: 1_000,
+      }),
+    },
+    'Google Analytics'
+  ).catch(() => ({ rows: [] }));
+
+  const aiClicksByDate = new Map<string, number>();
+  for (const row of aiReferrals.rows ?? []) {
+    const rawDate = row.dimensionValues[0]?.value ?? '';
+    if (rawDate.length !== 8) continue;
+    const date = `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6, 8)}`;
+    aiClicksByDate.set(date, (aiClicksByDate.get(date) ?? 0) + (Number(row.metricValues[0]?.value) || 0));
+  }
 
   const days: TrafficDay[] = (daily.rows ?? []).map((r) => {
     const d = r.dimensionValues[0].value;
     const [sessions, users, newUsers, pageViews] = r.metricValues.map((m) => Number(m.value) || 0);
-    return { date: `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`, sessions, users, newUsers, pageViews };
+    const date = `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
+    return { date, sessions, users, newUsers, pageViews, aiClicks: aiClicksByDate.get(date) ?? 0 };
   });
   const totals = days.reduce(
-    (t, d) => ({ sessions: t.sessions + d.sessions, users: t.users + d.users, newUsers: t.newUsers + d.newUsers, pageViews: t.pageViews + d.pageViews }),
-    { sessions: 0, users: 0, newUsers: 0, pageViews: 0 }
+    (t, d) => ({ sessions: t.sessions + d.sessions, users: t.users + d.users, newUsers: t.newUsers + d.newUsers, pageViews: t.pageViews + d.pageViews, aiClicks: t.aiClicks + d.aiClicks }),
+    { sessions: 0, users: 0, newUsers: 0, pageViews: 0, aiClicks: 0 }
   );
   return {
     propertyId,

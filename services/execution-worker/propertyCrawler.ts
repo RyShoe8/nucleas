@@ -1,8 +1,10 @@
 import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
 import net from 'node:net';
+import { analyzeProperty } from './propertyAnalyzer';
 
-type CrawlRequest = { requestId: string; rootUrl: string; callbackUrl: string; maxPages: number; browserWorker?: { url: string; secret: string } };
+type CrawlRequest = { requestId: string; rootUrl: string; callbackUrl: string; maxPages?: number; browserWorker?: { url: string; secret: string } };
+type CrawlEvidence = { url: string; title: string; description: string; h1: string[]; routePattern: string };
 const MAX_HTML = 700_000; const TIMEOUT = 30_000; const DELAY_MS = 250;
 const SKIP = /\.(?:avif|bmp|css|csv|docx?|gif|ico|jpe?g|js|json|mp3|mp4|pdf|png|pptx?|svg|webp|xlsx?|xml|zip)$/i;
 const DYNAMIC = /^(?:\d+|[0-9a-f]{12,}|[0-9a-f]{8}-[0-9a-f-]{27,}|(?=.*\d)[\w-]{16,})$/i;
@@ -37,7 +39,28 @@ function attr(tag: string, name: string) { return tag.match(new RegExp(`\\b${nam
 function all(html: string, regex: RegExp) { return [...html.matchAll(regex)].map((match) => clean(match[1])).filter(Boolean); }
 function sameSite(a: string, b: string) { return a.toLowerCase().replace(/^www\./, '') === b.toLowerCase().replace(/^www\./, ''); }
 function absolute(raw: string, base: URL) { try { const url = new URL(raw, base); url.hash = ''; if (url.protocol !== 'https:' || SKIP.test(url.pathname)) return null; [...url.searchParams.keys()].forEach((key) => { if (/^(?:utm_|fbclid|gclid)/i.test(key)) url.searchParams.delete(key); }); return url.toString(); } catch { return null; } }
-function route(url: URL) { return '/' + url.pathname.split('/').filter(Boolean).map((part) => DYNAMIC.test(decodeURIComponent(part)) ? ':id' : part).join('/'); }
+const SEMANTIC_COLLECTIONS: Record<string, string> = { games: 'game', hosting: 'game', guides: 'guide', blog: 'post', deals: 'deal' };
+
+export function routePattern(url: URL) {
+  const parts = url.pathname.split('/').filter(Boolean).map((part) => decodeURIComponent(part));
+  return '/' + parts.map((part, index) => {
+    if (index === 1 && SEMANTIC_COLLECTIONS[parts[0]]) return `:${SEMANTIC_COLLECTIONS[parts[0]]}`;
+    if (DYNAMIC.test(part)) return ':id';
+    return part;
+  }).join('/');
+}
+
+function structuralFingerprint(html: string): string {
+  const landmarks = [...html.toLowerCase().replace(/<!--[\s\S]*?-->/g, '').replace(/<(?:script|style|svg)[\s\S]*?<\/(?:script|style|svg)>/g, '').matchAll(/<\/?(header|nav|main|aside|footer|article|section|form|table|h1|h2|ul|ol|li)\b[^>]*>/g)]
+    .map((match) => `${match[0].startsWith('</') ? '/' : ''}${match[1]}`)
+    .filter((tag, index, rows) => tag !== rows[index - 1]);
+  return crypto.createHash('sha1').update(landmarks.slice(0, 2_000).join('|')).digest('hex').slice(0, 12);
+}
+
+export function templateIdentity(html: string, url: URL): string {
+  const pattern = routePattern(url);
+  return pattern.includes(':') ? `route:${pattern}` : `structure:${structuralFingerprint(html)}`;
+}
 
 export function extractPage(html: string, url: URL, statusCode: number, contentType: string) {
   const title = clean(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]); const h1 = all(html, /<h1[^>]*>([\s\S]*?)<\/h1>/gi); const h2 = all(html, /<h2[^>]*>([\s\S]*?)<\/h2>/gi); const h3 = all(html, /<h3[^>]*>([\s\S]*?)<\/h3>/gi);
@@ -47,10 +70,10 @@ export function extractPage(html: string, url: URL, statusCode: number, contentT
   const internalLinks = [...new Set(anchors.filter((value) => sameSite(new URL(value).hostname, url.hostname)))]; const externalLinks = [...new Set(anchors.filter((value) => !sameSite(new URL(value).hostname, url.hostname)))];
   const images = [...html.matchAll(/<img\b[^>]*>/gi)].map((match) => match[0]); const description = meta('description'); const robots = meta('robots'); const canonical = absolute(link('canonical'), url) ?? ''; const language = attr(html.match(/<html\b[^>]*>/i)?.[0] ?? '', 'lang');
   const body = clean((html.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? '').replace(/<(?:script|style|svg)[^>]*>[\s\S]*?<\/(?:script|style|svg)>/gi, '')); const wordCount = body.split(/\s+/).filter(Boolean).length;
-  const structuredDataTypes = [...new Set([...html.matchAll(/["']@type["']\s*:\s*["']([^"']+)["']/gi)].map((match) => match[1]))]; const skeleton = html.toLowerCase().replace(/<script[\s\S]*?<\/script>/g, '').replace(/>[^<]+</g, '><').match(/<(?:header|nav|main|aside|footer|article|section)\b[^>]*>/g)?.join('|') ?? route(url);
+  const structuredDataTypes = [...new Set([...html.matchAll(/["']@type["']\s*:\s*["']([^"']+)["']/gi)].map((match) => match[1]))];
   const issues: string[] = []; if (statusCode >= 400) issues.push(`HTTP ${statusCode}`); if (!title) issues.push('Missing title'); else if (title.length < 30 || title.length > 60) issues.push(`Title length ${title.length}`); if (!description) issues.push('Missing meta description'); else if (description.length < 70 || description.length > 160) issues.push(`Meta description length ${description.length}`); if (!h1.length) issues.push('Missing H1'); else if (h1.length > 1) issues.push(`${h1.length} H1 headings`); if (!canonical) issues.push('Missing canonical'); if (!language) issues.push('Missing HTML language'); const imagesMissingAlt = images.filter((tag) => !/\balt\s*=\s*["'][^"']*["']/i.test(tag)).length; if (imagesMissingAlt) issues.push(`${imagesMissingAlt} images missing alt text`); if (wordCount < 100) issues.push('Thin content');
   const published = meta('article:published_time') || html.match(/["']datePublished["']\s*:\s*["']([^"']+)/i)?.[1]; const modified = meta('article:modified_time') || html.match(/["']dateModified["']\s*:\s*["']([^"']+)/i)?.[1];
-  return { url: url.toString(), routePattern: route(url), statusCode, contentType, title, description, canonical, robots, language, h1, h2, h3, metaKeywords: meta('keywords').split(',').map((item) => item.trim()).filter(Boolean), wordCount, internalLinks, externalLinks, imageCount: images.length, imagesMissingAlt, structuredDataTypes, ...(published && !Number.isNaN(Date.parse(published)) ? { datePublished: new Date(published).toISOString() } : {}), ...(modified && !Number.isNaN(Date.parse(modified)) ? { dateModified: new Date(modified).toISOString() } : {}), indexable: !/noindex/i.test(robots), templateKey: crypto.createHash('sha1').update(skeleton.slice(0, 20_000)).digest('hex').slice(0, 12), issues, fetchedAt: new Date().toISOString(), htmlSnapshot: html, renderMode: 'html' as const };
+  return { url: url.toString(), routePattern: routePattern(url), statusCode, contentType, title, description, canonical, robots, language, h1, h2, h3, metaKeywords: meta('keywords').split(',').map((item) => item.trim()).filter(Boolean), wordCount, internalLinks, externalLinks, imageCount: images.length, imagesMissingAlt, structuredDataTypes, ...(published && !Number.isNaN(Date.parse(published)) ? { datePublished: new Date(published).toISOString() } : {}), ...(modified && !Number.isNaN(Date.parse(modified)) ? { dateModified: new Date(modified).toISOString() } : {}), indexable: !/noindex/i.test(robots), templateKey: crypto.createHash('sha1').update(templateIdentity(html, url)).digest('hex').slice(0, 12), issues, fetchedAt: new Date().toISOString(), htmlSnapshot: html, renderMode: 'html' as const };
 }
 
 async function enrichRendered(request: CrawlRequest, page: ReturnType<typeof extractPage>) {
@@ -81,19 +104,24 @@ async function discoverSitemaps(root: URL) {
 
 export async function runPropertyCrawl(request: CrawlRequest): Promise<void> {
   try {
-    const root = await safeUrl(request.rootUrl); const seeds = [root.toString(), ...(await discoverSitemaps(root))]; const queue = [...new Set(seeds)].slice(0, request.maxPages); const queued = new Set(queue); const visited = new Set<string>();
+    const root = await safeUrl(request.rootUrl); const seeds = [root.toString(), ...(await discoverSitemaps(root))]; const queue = request.maxPages ? [...new Set(seeds)].slice(0, request.maxPages) : [...new Set(seeds)]; const queued = new Set(queue); const visited = new Set<string>(); const evidence: CrawlEvidence[] = [];
+    const hasCapacity = () => request.maxPages === undefined || visited.size < request.maxPages;
+    const discovered = () => request.maxPages === undefined ? visited.size + queue.length : Math.min(request.maxPages, visited.size + queue.length);
     await callback(request, { action: 'progress', processed: 0, discovered: Math.max(1, queue.length), message: `Discovered ${queue.length} pages; beginning accuracy-first crawl…` });
-    while (queue.length && visited.size < request.maxPages) {
+    while (queue.length && hasCapacity()) {
       const target = queue.shift()!; if (visited.has(target)) continue; visited.add(target);
       try {
         const response = await fetchSafe(target); const contentType = response.headers.get('content-type') ?? ''; const finalUrl = new URL(response.url || target); if (!sameSite(finalUrl.hostname, root.hostname)) continue; const html = contentType.includes('text/html') ? await readLimited(response, MAX_HTML) : ''; const page = await enrichRendered(request, extractPage(html, finalUrl, response.status, contentType));
-        for (const link of page.internalLinks) if (!queued.has(link) && !visited.has(link) && queue.length + visited.size < request.maxPages) { queued.add(link); queue.push(link); }
-        await callback(request, { action: 'page', processed: visited.size, discovered: Math.min(request.maxPages, visited.size + queue.length), page });
+        evidence.push({ url: page.url, title: page.title, description: page.description, h1: page.h1, routePattern: page.routePattern });
+        for (const link of page.internalLinks) if (!queued.has(link) && !visited.has(link) && (request.maxPages === undefined || queue.length + visited.size < request.maxPages)) { queued.add(link); queue.push(link); }
+        await callback(request, { action: 'page', processed: visited.size, discovered: discovered(), page });
       } catch (error) {
-        const url = new URL(target); await callback(request, { action: 'page', processed: visited.size, discovered: Math.min(request.maxPages, visited.size + queue.length), page: { url: target, routePattern: route(url), h1: [], h2: [], h3: [], metaKeywords: [], wordCount: 0, internalLinks: [], externalLinks: [], imageCount: 0, imagesMissingAlt: 0, structuredDataTypes: [], indexable: false, issues: [`Fetch failed: ${error instanceof Error ? error.message : 'Unknown error'}`], fetchedAt: new Date().toISOString(), htmlSnapshot: '', renderMode: 'html' } });
+        const url = new URL(target); await callback(request, { action: 'page', processed: visited.size, discovered: discovered(), page: { url: target, routePattern: routePattern(url), h1: [], h2: [], h3: [], metaKeywords: [], wordCount: 0, internalLinks: [], externalLinks: [], imageCount: 0, imagesMissingAlt: 0, structuredDataTypes: [], indexable: false, issues: [`Fetch failed: ${error instanceof Error ? error.message : 'Unknown error'}`], fetchedAt: new Date().toISOString(), htmlSnapshot: '', renderMode: 'html' } });
       }
       await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
     }
+    await callback(request, { action: 'progress', processed: visited.size, discovered: Math.max(visited.size, discovered()), message: 'Analyzing property positioning, audience, keywords, and competitors…' });
+    await callback(request, { action: 'analysis', analysis: await analyzeProperty(evidence, root.toString()) });
     await callback(request, { action: 'complete' });
   } catch (error) {
     await callback(request, { action: 'failed', error: error instanceof Error ? error.message.slice(0, 1500) : 'Property crawl failed.' }).catch(() => undefined);

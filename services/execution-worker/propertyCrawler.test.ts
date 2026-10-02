@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractPage } from './propertyCrawler';
+import { extractPage, routePattern, templateIdentity } from './propertyCrawler';
 
 describe('VPS property crawler', () => {
   it('extracts auditable SEO and link data from a page', () => {
@@ -12,5 +12,16 @@ describe('VPS property crawler', () => {
     expect(parsed.imagesMissingAlt).toBe(1);
     expect(parsed.indexable).toBe(true);
     expect(parsed.wordCount).toBeGreaterThan(100);
+  });
+
+  it('groups semantic page families instead of splitting on content differences', () => {
+    expect(routePattern(new URL('https://playbound.club/games/8bit-killer'))).toBe('/games/:game');
+    expect(routePattern(new URL('https://playbound.club/games/castlevania-revamped'))).toBe('/games/:game');
+    expect(routePattern(new URL('https://playbound.club/games/8bit-killer/controls'))).toBe('/games/:game/controls');
+    expect(routePattern(new URL('https://playbound.club/hosting/0ad'))).toBe('/hosting/:game');
+    expect(templateIdentity('<main><h1>First game</h1></main>', new URL('https://playbound.club/games/first-game')))
+      .toBe(templateIdentity('<main><section><h1>Second game</h1></section></main>', new URL('https://playbound.club/games/second-game')));
+    expect(templateIdentity('<main><h1>Controls</h1></main>', new URL('https://playbound.club/games/first-game/controls')))
+      .not.toBe(templateIdentity('<main><h1>Game</h1></main>', new URL('https://playbound.club/games/first-game')));
   });
 });

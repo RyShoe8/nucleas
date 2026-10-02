@@ -12,7 +12,7 @@ export const maxDuration = 60;
 
 const short = z.string().max(4_000);
 const pageSchema = z.object({
-  action: z.literal('page'), processed: z.number().int().min(1).max(250), discovered: z.number().int().min(1).max(10_000),
+  action: z.literal('page'), processed: z.number().int().min(1).max(1_000_000), discovered: z.number().int().min(1).max(1_000_000),
   page: z.object({
     url: z.string().url().max(4_000), routePattern: z.string().max(2_000), statusCode: z.number().int().min(0).max(599).optional(), contentType: z.string().max(300).optional(), title: short.optional(), description: short.optional(), canonical: z.string().max(4_000).optional(), robots: z.string().max(500).optional(), language: z.string().max(100).optional(),
     h1: z.array(short).max(50).default([]), h2: z.array(short).max(100).default([]), h3: z.array(short).max(150).default([]), metaKeywords: z.array(short).max(100).default([]), wordCount: z.number().int().min(0).max(10_000_000).default(0),
@@ -20,8 +20,38 @@ const pageSchema = z.object({
     datePublished: z.string().datetime().optional(), dateModified: z.string().datetime().optional(), indexable: z.boolean().default(true), templateKey: z.string().max(100).optional(), issues: z.array(short).max(100).default([]), fetchedAt: z.string().datetime(), htmlSnapshot: z.string().max(750_000).default(''), renderMode: z.enum(['html', 'rendered']).default('html'), renderedText: z.string().max(50_000).optional(),
   }).strict(),
 }).strict();
-const progressSchema = z.object({ action: z.literal('progress'), processed: z.number().int().min(0).max(250), discovered: z.number().int().min(1).max(10_000), message: z.string().max(300) }).strict();
+const progressSchema = z.object({ action: z.literal('progress'), processed: z.number().int().min(0).max(1_000_000), discovered: z.number().int().min(1).max(1_000_000), message: z.string().max(300) }).strict();
+const analysisSchema = z.object({
+  action: z.literal('analysis'),
+  analysis: z.object({
+    description: z.string().max(2_000),
+    primaryKeywords: z.array(z.string().min(1).max(200)).max(20),
+    demographicTarget: z.string().max(2_000),
+    competitors: z.array(z.object({ name: z.string().min(1).max(160), domain: z.string().min(1).max(253), reason: z.string().min(1).max(500) }).strict()).max(10),
+    sources: z.array(z.string().url().max(4_000)).max(30),
+    model: z.string().max(200).nullable(),
+  }).strict(),
+}).strict();
 const terminalSchema = z.discriminatedUnion('action', [z.object({ action: z.literal('complete') }).strict(), z.object({ action: z.literal('failed'), error: z.string().min(1).max(1500) }).strict()]);
+
+function templateName(routes: string[]): string {
+  const pattern = routes[0] ?? '/';
+  if (routes.some((route) => /^\/games\/:[^/]+\/controls$/.test(route))) return 'Game controls';
+  if (routes.some((route) => /^\/games\/:[^/]+$/.test(route))) return 'Game details';
+  if (routes.some((route) => /^\/hosting\/:[^/]+$/.test(route))) return 'Game hosting';
+  if (routes.some((route) => /^\/guides\/:[^/]+$/.test(route))) return 'Guides';
+  if (routes.some((route) => /^\/blog\/:[^/]+$/.test(route))) return 'Blog articles';
+  if (pattern === '/') return 'Homepage';
+  const section = pattern.split('/').filter(Boolean)[0];
+  if (section === 'games') return 'Games';
+  if (section === 'hosting') return 'Hosting';
+  if (section === 'guides') return 'Guides';
+  if (section === 'blog') return 'Blog';
+  if (section === 'deals' || section === 'free-games') return 'Deals';
+  if (section === 'privacy' || section === 'terms' || section === 'standards') return 'Policy and standards';
+  if (routes.length > 1) return 'Landing pages';
+  return section ? section.replace(/-/g, ' ').replace(/^./, (letter) => letter.toUpperCase()) : 'Page';
+}
 
 function authorized(request: NextRequest): boolean {
   const secret = process.env.NUCLEAS_EXECUTION_WORKER_TOKEN?.trim();
@@ -31,7 +61,7 @@ function authorized(request: NextRequest): boolean {
 }
 
 async function finalize(id: Types.ObjectId): Promise<void> {
-  const overview = await PropertyOverview.findById(id).select('jobId runId rootUrl').lean<{ jobId?: Types.ObjectId; runId?: Types.ObjectId; rootUrl: string }>();
+  const overview = await PropertyOverview.findById(id).select('jobId runId rootUrl propertyDescription primaryKeywords demographicTarget competitors').lean<{ jobId?: Types.ObjectId; runId?: Types.ObjectId; rootUrl: string; propertyDescription?: string; primaryKeywords?: string[]; demographicTarget?: string; competitors?: { name: string; domain: string; reason: string }[] }>();
   const pages = await PropertyPage.find({ overviewId: id }).select('url templateKey routePattern issues internalLinks statusCode').lean();
   const incoming = new Map<string, number>(); const clusters = new Map<string, string[]>();
   let issueCount = 0; let edgeCount = 0;
@@ -42,9 +72,9 @@ async function finalize(id: Types.ObjectId): Promise<void> {
   }
   if (incoming.size) await PropertyPage.bulkWrite([...incoming].map(([url, count]) => ({ updateOne: { filter: { overviewId: id, url }, update: { $set: { incomingLinks: count } } } })), { ordered: false });
   const orphanPages = pages.filter((page) => page.routePattern !== '/' && !(incoming.get(page.url) ?? 0)).length;
-  const clusterRows = [...clusters].map(([templateKey, routes]) => ({ templateKey, count: routes.length, sampleRoutes: [...new Set(routes)].slice(0, 8) })).sort((a, b) => b.count - a.count);
-  await PropertyOverview.updateOne({ _id: id, status: { $in: ['queued', 'crawling'] } }, { $set: { status: 'complete', completedAt: new Date(), progress: 'Complete', pageCount: pages.length, edgeCount, issueCount, clusters: clusterRows, summary: { orphanPages, errorPages: pages.filter((page) => (page.statusCode ?? 0) >= 400).length, templates: clusters.size } } });
-  if (overview) await completePropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, rootUrl: overview.rootUrl, pageCount: pages.length, edgeCount, issueCount, templates: clusters.size, orphanPages });
+  const clusterRows = [...clusters].map(([templateKey, routes]) => { const uniqueRoutes = [...new Set(routes)]; return { templateKey, name: templateName(uniqueRoutes), count: routes.length, sampleRoutes: uniqueRoutes.slice(0, 8) }; }).sort((a, b) => b.count - a.count);
+  await PropertyOverview.updateOne({ _id: id, status: { $in: ['queued', 'crawling'] } }, { $set: { status: 'complete', completedAt: new Date(), progress: 'Complete', pageCount: pages.length, edgeCount, issueCount, clusters: clusterRows, summary: { orphanPages, issuePages: pages.filter((page) => (page.issues?.length ?? 0) > 0).length, errorPages: pages.filter((page) => (page.statusCode ?? 0) >= 400).length, templates: clusters.size } } });
+  if (overview) await completePropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, rootUrl: overview.rootUrl, pageCount: pages.length, edgeCount, issueCount, templates: clusters.size, orphanPages, propertyDescription: overview.propertyDescription, primaryKeywords: overview.primaryKeywords, demographicTarget: overview.demographicTarget, competitors: overview.competitors });
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -69,6 +99,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const parsed = progressSchema.safeParse(raw); if (!parsed.success) return NextResponse.json({ error: 'Invalid progress update.' }, { status: 400 });
     await PropertyOverview.updateOne({ _id: overviewId }, { $set: { status: 'crawling', progress: parsed.data.message, pageCount: parsed.data.processed } });
     await updatePropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, message: parsed.data.message, processed: parsed.data.processed, discovered: parsed.data.discovered });
+  } else if (action === 'analysis') {
+    const parsed = analysisSchema.safeParse(raw); if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Invalid property analysis.' }, { status: 400 });
+    const analysis = parsed.data.analysis;
+    await PropertyOverview.updateOne({ _id: overviewId }, { $set: { propertyDescription: analysis.description, primaryKeywords: analysis.primaryKeywords, demographicTarget: analysis.demographicTarget, competitors: analysis.competitors, analysisSources: analysis.sources, ...(analysis.model ? { analysisModel: analysis.model } : {}) } });
+    await updatePropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, message: 'Property analysis complete; finalizing report…', processed: 1, discovered: 1 });
   } else {
     const parsed = terminalSchema.safeParse(raw); if (!parsed.success) return NextResponse.json({ error: 'Invalid terminal update.' }, { status: 400 });
     if (parsed.data.action === 'failed') {

@@ -94,8 +94,10 @@ export interface RevenueOutput {
   activeSubscriptions: number;
   /** Monthly recurring revenue per currency, minor units. */
   mrr: Record<string, number>;
-  /** Per-day net revenue (minor units, per currency), payments and new customers. */
-  days: { date: string; net: Record<string, number>; payments: number; newCustomers: number }[];
+  /** Revenue collected from paid subscription invoices, in minor units per currency. */
+  subscriberRevenue: Record<string, number>;
+  /** Per-day net and subscription revenue (minor units, per currency), payments and new customers. */
+  days: { date: string; net: Record<string, number>; subscriberRevenue: Record<string, number>; payments: number; newCustomers: number }[];
   truncated: boolean;
 }
 
@@ -117,15 +119,24 @@ export async function stripeRevenue(ctx: CapabilityRunContext, range: { startDat
     id: string;
     items: { data: { quantity?: number; price?: { unit_amount?: number | null; currency: string; recurring?: { interval: string; interval_count: number } | null } }[] };
   }>(ctx, 'subscriptions', { status: 'active' });
+  const invoices = await stripeAll<{
+    id: string;
+    amount_paid: number;
+    currency: string;
+    created: number;
+    status: string;
+    subscription?: string | null;
+    parent?: { subscription_details?: { subscription?: string | null } | null } | null;
+  }>(ctx, 'invoices', { status: 'paid', 'created[gte]': gte, 'created[lte]': lte });
 
   const gross: Record<string, number> = {};
   const refunded: Record<string, number> = {};
   let payments = 0;
-  const dayMap = new Map<string, { net: Record<string, number>; payments: number; newCustomers: number }>();
+  const dayMap = new Map<string, { net: Record<string, number>; subscriberRevenue: Record<string, number>; payments: number; newCustomers: number }>();
   const dayOf = (unix: number) => new Date(unix * 1000).toISOString().slice(0, 10);
   const bucket = (date: string) => {
     let b = dayMap.get(date);
-    if (!b) dayMap.set(date, (b = { net: {}, payments: 0, newCustomers: 0 }));
+    if (!b) dayMap.set(date, (b = { net: {}, subscriberRevenue: {}, payments: 0, newCustomers: 0 }));
     return b;
   };
   for (const c of charges.items) {
@@ -142,6 +153,14 @@ export async function stripeRevenue(ctx: CapabilityRunContext, range: { startDat
   for (const cu of customers.items) if (typeof cu.created === 'number') bucket(dayOf(cu.created)).newCustomers += 1;
   const net: Record<string, number> = {};
   for (const cur of Object.keys(gross)) net[cur] = gross[cur] - (refunded[cur] ?? 0);
+
+  const subscriberRevenue: Record<string, number> = {};
+  for (const invoice of invoices.items) {
+    const subscriptionId = invoice.subscription ?? invoice.parent?.subscription_details?.subscription;
+    if (invoice.status !== 'paid' || !subscriptionId || invoice.amount_paid <= 0) continue;
+    add(subscriberRevenue, invoice.currency, invoice.amount_paid);
+    if (typeof invoice.created === 'number') add(bucket(dayOf(invoice.created)).subscriberRevenue, invoice.currency, invoice.amount_paid);
+  }
 
   const perMonth: Record<string, number> = { day: 30, week: 52 / 12, month: 1, year: 1 / 12 };
   const mrr: Record<string, number> = {};
@@ -163,8 +182,9 @@ export async function stripeRevenue(ctx: CapabilityRunContext, range: { startDat
     newCustomers: customers.items.length,
     activeSubscriptions: subs.items.length,
     mrr,
+    subscriberRevenue,
     days: [...dayMap.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date, ...v })),
-    truncated: charges.truncated || customers.truncated || subs.truncated,
+    truncated: charges.truncated || customers.truncated || subs.truncated || invoices.truncated,
   };
 }
 

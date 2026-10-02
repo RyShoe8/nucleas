@@ -92,7 +92,9 @@ Check that the health response lists inference and property-crawl support:
 {"ok":true,"busy":false,"propertyCrawlBusy":false,"features":["inference","definition_of_done","property_crawl"]}
 ```
 
-Property Overview crawls are asynchronous and accuracy-first. Nucleas starts the crawl, the VPS fetches up to 250 public pages during the testing phase, and authenticated callbacks archive each page in Nucleas. A crawl may run for many minutes without holding open a Vercel request. Rebuilding or restarting the worker interrupts an active crawl; wait for `propertyCrawlBusy` to be false before updating the container.
+Property Overview crawls are asynchronous and accuracy-first. Nucleas starts the crawl, the VPS follows the complete public first-party site, and authenticated callbacks archive each page in Nucleas. A crawl may run for many minutes without holding open a Vercel request. Rebuilding or restarting the worker interrupts an active crawl; wait for `propertyCrawlBusy` to be false before updating the container.
+
+After discovery, the worker uses its configured remote model to synthesize a grounded property description, primary keywords, demographic target, and up to ten likely direct competitors from representative first-party pages. If inference is unavailable, the crawl still completes with deterministic page metadata and explicitly marks audience/competitor gaps instead of inventing them.
 
 When the existing Nucleas Playwright worker is configured in Vercel, its endpoint and credential are handed to the execution worker only for the active crawl. Thin or JavaScript-shell pages are rendered automatically and marked as rendered evidence in the report. No additional Playwright setting is required in `execution-worker.env`.
 

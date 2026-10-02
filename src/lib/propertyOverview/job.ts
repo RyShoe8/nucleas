@@ -11,13 +11,17 @@ export function propertyOverviewJobDesign(companyName: string, rootUrl: string):
     skill: 'property_overview',
     title: `Property overview · ${companyName}`,
     category: 'data',
-    instructions: `Crawl and archive up to 250 pages from ${rootUrl}. Audit technical SEO, group page templates, and map internal links.`,
+    instructions: `Crawl and archive the complete public site at ${rootUrl}. Audit technical SEO, group page templates, and map internal links.`,
     fields: [
       { key: 'pages_archived', label: 'Pages archived', type: 'number', required: true, description: '' },
       { key: 'internal_links', label: 'Internal links', type: 'number', required: true, description: '' },
       { key: 'seo_findings', label: 'SEO findings', type: 'number', required: true, description: '' },
       { key: 'templates', label: 'Templates', type: 'number', required: true, description: '' },
       { key: 'orphan_pages', label: 'Orphan pages', type: 'number', required: true, description: '' },
+      { key: 'property_description', label: 'Property description', type: 'long_text', required: true, description: 'Grounded description synthesized from first-party crawl evidence.' },
+      { key: 'primary_keywords', label: 'Primary keywords', type: 'list', required: true, description: 'Primary search topics supported by crawled pages.' },
+      { key: 'demographic_target', label: 'Demographic target', type: 'long_text', required: true, description: 'Supported audience and intent, with uncertainty stated explicitly.' },
+      { key: 'competitors', label: 'Competitors', type: 'list', required: false, description: 'Up to ten likely direct competitors; uncertain candidates are omitted.' },
     ],
     sourcePolicy: 'First-party pages from the selected production property. Every archived page retains its URL and crawl evidence.',
     delivery: { method: 'nucleas', detail: 'Saved as a browsable Property Overview in Nucleas.', setupSteps: [] },
@@ -68,11 +72,11 @@ export async function updatePropertyOverviewJob(input: { jobId?: Types.ObjectId;
   if (input.jobId) await Job.updateOne({ _id: input.jobId, status: 'active' }, { $set: { updatedAt: now } });
 }
 
-export async function completePropertyOverviewJob(input: { jobId?: Types.ObjectId; runId?: Types.ObjectId; rootUrl: string; pageCount: number; edgeCount: number; issueCount: number; templates: number; orphanPages: number }): Promise<void> {
+export async function completePropertyOverviewJob(input: { jobId?: Types.ObjectId; runId?: Types.ObjectId; rootUrl: string; pageCount: number; edgeCount: number; issueCount: number; templates: number; orphanPages: number; propertyDescription?: string; primaryKeywords?: string[]; demographicTarget?: string; competitors?: { name: string; domain: string; reason: string }[] }): Promise<void> {
   if (!input.runId || !input.jobId) return;
   const now = new Date();
   const output: JobRunOutput = {
-    records: [{ values: { pages_archived: input.pageCount, internal_links: input.edgeCount, seo_findings: input.issueCount, templates: input.templates, orphan_pages: input.orphanPages }, sources: [input.rootUrl] }],
+    records: [{ values: { pages_archived: input.pageCount, internal_links: input.edgeCount, seo_findings: input.issueCount, templates: input.templates, orphan_pages: input.orphanPages, property_description: input.propertyDescription ?? '', primary_keywords: input.primaryKeywords ?? [], demographic_target: input.demographicTarget ?? '', competitors: (input.competitors ?? []).map((competitor) => `${competitor.name} (${competitor.domain})`) }, sources: [input.rootUrl] }],
     summary: `Archived ${input.pageCount} pages, mapped ${input.edgeCount} internal links, and recorded ${input.issueCount} SEO findings.`,
     gaps: [],
   };
