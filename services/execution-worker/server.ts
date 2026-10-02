@@ -7,6 +7,7 @@ import { EXECUTION_WORKER_FEATURES, executionWorkerRequestSchema, executionWorke
 import { toolCallsFromText } from '../../packages/ai-contracts/src/textToolCalls';
 import { runDefinitionOfDone } from './definitionOfDone';
 import { assertWorkspacePath, deleteWorkspaceFile, readWorkspaceFile, runCommand, setWorkspaceOwner, writeWorkspaceFile, type CommandEvidence } from './runtime';
+import { runPropertyCrawl } from './propertyCrawler';
 
 type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
 type ChatMessage = { role: 'system' | 'user' | 'assistant' | 'tool'; content?: string | null; tool_calls?: ToolCall[]; tool_call_id?: string };
@@ -14,6 +15,7 @@ const MAX_BODY = 64 * 1024;
 const SANDBOX_UID = 10001;
 const SANDBOX_GID = 10001;
 let busy = false;
+let propertyCrawlBusy = false;
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -184,7 +186,19 @@ async function execute(request: ExecutionWorkerRequest) {
 export const server = createServer(async (req, res) => {
   res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
   try {
-    if (req.method === 'GET' && req.url === '/health') { res.statusCode = 200; res.end(JSON.stringify({ ok: true, busy, features: EXECUTION_WORKER_FEATURES })); return; }
+    if (req.method === 'GET' && req.url === '/health') { res.statusCode = 200; res.end(JSON.stringify({ ok: true, busy, propertyCrawlBusy, features: [...EXECUTION_WORKER_FEATURES, 'property_crawl'] })); return; }
+    if (req.method === 'POST' && req.url === '/v1/property-crawls') {
+      if (!authorized(req.headers.authorization)) { res.statusCode = 401; res.end(JSON.stringify({ error: 'Unauthorized.' })); return; }
+      if (propertyCrawlBusy) { res.statusCode = 429; res.end(JSON.stringify({ error: 'A property crawl is already running.' })); return; }
+      const input = await body(req) as Record<string, unknown>;
+      const browserWorker = input.browserWorker && typeof input.browserWorker === 'object' ? input.browserWorker as Record<string, unknown> : null;
+      if (input.protocolVersion !== 1 || typeof input.requestId !== 'string' || !/^[a-f0-9]{24}$/i.test(input.requestId) || typeof input.rootUrl !== 'string' || typeof input.callbackUrl !== 'string' || !Number.isInteger(input.maxPages) || Number(input.maxPages) < 1 || Number(input.maxPages) > 250 || (browserWorker && (typeof browserWorker.url !== 'string' || !browserWorker.url.startsWith('https://') || typeof browserWorker.secret !== 'string' || browserWorker.secret.length < 16 || browserWorker.secret.length > 4096))) {
+        res.statusCode = 400; res.end(JSON.stringify({ error: 'Invalid property crawl request.' })); return;
+      }
+      propertyCrawlBusy = true;
+      void runPropertyCrawl({ requestId: input.requestId, rootUrl: input.rootUrl, callbackUrl: input.callbackUrl, maxPages: Number(input.maxPages), ...(browserWorker ? { browserWorker: { url: String(browserWorker.url), secret: String(browserWorker.secret) } } : {}) }).finally(() => { propertyCrawlBusy = false; });
+      res.statusCode = 202; res.end(JSON.stringify({ accepted: true, requestId: input.requestId })); return;
+    }
     if (req.method !== 'POST' || req.url !== '/v1/execute') { res.statusCode = 404; res.end(JSON.stringify({ error: 'Not found.' })); return; }
     if (!authorized(req.headers.authorization)) { res.statusCode = 401; res.end(JSON.stringify({ error: 'Unauthorized.' })); return; }
     if (busy) { res.statusCode = 429; res.end(JSON.stringify({ error: 'Worker is busy.' })); return; }

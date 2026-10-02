@@ -123,10 +123,11 @@ export async function clearProjectRepository(viewer: CompanyViewer, companyId: s
 /** The repository a company builds from: its first project with an App-connected repository. */
 export async function resolveCompanyRepository(
   viewer: CompanyViewer,
-  companyId: string
+  companyId: string,
+  projectId?: Types.ObjectId | string
 ): Promise<{ projectId: Types.ObjectId; projectName: string; repository: CodeRepository } | null> {
   const code = await getCompanyCode(viewer, companyId);
-  const hit = code?.projects.find((p) => p.repository?.appConnected);
+  const hit = code?.projects.find((p) => p.repository?.appConnected && (!projectId || p.projectId === String(projectId)));
   if (!hit?.repository) return null;
   return { projectId: new Types.ObjectId(hit.projectId), projectName: hit.projectName, repository: hit.repository };
 }

@@ -20,7 +20,7 @@ const GROUPS: Group[] = [
     { key: 'closed', label: 'Rejected and archived', test: (j) => j.status === 'rejected' || j.status === 'archived' },
 ];
 
-function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKind }: { onCreated: (j: JobView) => void; placeholder: string; marketing?: boolean; initialCompanyId?: string; initialKind?: string }) {
+function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKind, companyLocked = false }: { onCreated: (j: JobView) => void; placeholder: string; marketing?: boolean; initialCompanyId?: string; initialKind?: string; companyLocked?: boolean }) {
     const { companies } = useOsCompanies();
     const [companyId, setCompanyId] = useState(initialCompanyId ?? '');
     const [request, setRequest] = useState('');
@@ -42,7 +42,11 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
         let cancelled = false;
         void fetch(`/api/os/companies/${companyId}/code`, { cache: 'no-store' }).then(async (res) => {
             const body = (await res.json().catch(() => ({}))) as { projects?: { projectId: string; projectName: string }[] };
-            if (!cancelled) setProjects(body.projects ?? []);
+            if (!cancelled) {
+                const next = body.projects ?? [];
+                setProjects(next);
+                if (next.length === 1) setProjectId(next[0].projectId);
+            }
         });
         return () => { cancelled = true; };
     }, [companyId, kind]);
@@ -89,7 +93,7 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
                 </div>
             ) : null}
             <div className="flex gap-2">
-                <select
+                {!companyLocked ? <select
                     value={companyId}
                     onChange={(e) => { setCompanyId(e.target.value); setProjectId(''); setProjects([]); }}
                     className="ui-control"
@@ -101,12 +105,12 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
                             {c.name}
                         </option>
                     ))}
-                </select>
+                </select> : null}
                 <span className="text-[11px] text-text-secondary self-center">
                     {kind === 'link_building' ? 'Uses the project’s approved SEO brief to reject irrelevant opportunities.' : kind === 'seo_brief' ? 'Nucleas researches a project and creates an editable strategy draft for approval.' : 'Describe the work; Nucleas investigates, asks what it must, and designs it for your approval.'}
                 </span>
             </div>
-            {kind !== 'custom' ? <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="ui-control w-full" aria-label="Project"><option value="">Project…</option>{projects.map((p) => <option key={p.projectId} value={p.projectId}>{p.projectName}</option>)}</select> : null}
+            {kind !== 'custom' && projects.length > 1 ? <label className="block space-y-1"><span className="ui-kicker">Website or project</span><select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="ui-control w-full" aria-label="Website or project"><option value="">Choose a website or project…</option>{projects.map((p) => <option key={p.projectId} value={p.projectId}>{p.projectName}</option>)}</select></label> : null}
             {kind === 'link_building' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
                     <label className="space-y-1"><span className="text-text-secondary">Frequency</span><select value={frequency} onChange={(e) => setFrequency(e.target.value as typeof frequency)} className="ui-control block w-full"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
@@ -139,6 +143,7 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
  * are this view filtered to their categories.
  */
 export default function JobsModule({ categories, title = 'Jobs', initialCompanyId, initialKind }: { categories?: string[]; title?: string; initialCompanyId?: string; initialKind?: string }) {
+    const { companies: osCompanies } = useOsCompanies();
     const [jobs, setJobs] = useState<JobView[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [company, setCompany] = useState(initialCompanyId ?? 'all');
@@ -177,7 +182,11 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
         () => (jobs ?? []).filter((j) => (!categories || (j.design ? categories.includes(j.design.category) : true)) && (company === 'all' || j.companyId === company)),
         [jobs, categories, company]
     );
-    const companies = useMemo(() => [...new Map((jobs ?? []).map((j) => [j.companyId, j.companyName])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [jobs]);
+    const companies = useMemo(() => {
+        const all = new Map((jobs ?? []).map((j) => [j.companyId, j.companyName]));
+        for (const item of osCompanies ?? []) all.set(item.id, item.name);
+        return [...all.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    }, [jobs, osCompanies]);
     const replace = (next: JobView) => setJobs((list) => (list ?? []).map((j) => (j.id === next.id ? next : j)));
 
     if (error && !jobs) return <div className="p-4 text-sm text-red-400">{error}</div>;
@@ -215,10 +224,12 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
             <div className="flex-1 overflow-y-auto p-3 space-y-4">
                 {creating ? (
                     <NewJob
+                        key={`${company}-${initialKind ?? ''}`}
                         placeholder={placeholder}
                         marketing={title === 'Marketing'}
-                        initialCompanyId={initialCompanyId}
+                        initialCompanyId={company === 'all' ? initialCompanyId : company}
                         initialKind={initialKind}
+                        companyLocked={company !== 'all'}
                         onCreated={(j) => {
                             setCreating(false);
                             setJobs((list) => [j, ...(list ?? [])]);

@@ -1,5 +1,5 @@
 worker.example.com {
-	@allowed path /health /v1/execute
+	@allowed path /health /v1/execute /v1/property-crawls
 	handle @allowed {
 		reverse_proxy 127.0.0.1:8788
 	}

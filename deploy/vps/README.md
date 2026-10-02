@@ -60,7 +60,7 @@ For Caddy, copy the relevant block from `Caddyfile.example`, replace `worker.exa
 curl --fail https://worker.example.com/health
 ```
 
-Only `/health` and `/v1/execute` need to be public. `/v1/execute` requires the dedicated bearer token.
+Only `/health`, `/v1/execute`, and `/v1/property-crawls` need to be public. Both POST endpoints require the dedicated bearer token.
 
 ## Vercel handoff
 
@@ -86,11 +86,15 @@ curl --fail http://127.0.0.1:8788/health
 
 Changing models behind the LiteLLM alias does not require rebuilding or restarting this worker.
 
-Check that the health response lists the `inference` feature:
+Check that the health response lists inference and property-crawl support:
 
 ```json
-{"ok":true,"busy":false,"features":["inference"]}
+{"ok":true,"busy":false,"propertyCrawlBusy":false,"features":["inference","definition_of_done","property_crawl"]}
 ```
+
+Property Overview crawls are asynchronous and accuracy-first. Nucleas starts the crawl, the VPS fetches up to 250 public pages during the testing phase, and authenticated callbacks archive each page in Nucleas. A crawl may run for many minutes without holding open a Vercel request. Rebuilding or restarting the worker interrupts an active crawl; wait for `propertyCrawlBusy` to be false before updating the container.
+
+When the existing Nucleas Playwright worker is configured in Vercel, its endpoint and credential are handed to the execution worker only for the active crawl. Thin or JavaScript-shell pages are rendered automatically and marked as rendered evidence in the report. No additional Playwright setting is required in `execution-worker.env`.
 
 ## Models
 

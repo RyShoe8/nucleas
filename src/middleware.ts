@@ -13,9 +13,10 @@ export function middleware(request: NextRequest) {
   const { pathname } = url;
   const host = request.headers.get('host') || '';
   const isOsHost = host.startsWith('os.');
+  const isPropertyWorkerCallback = pathname.startsWith('/api/internal/property-overviews/');
 
   // Global API Rate Limiting (Edge Memory)
-  if (pathname.startsWith('/api/')) {
+  if (pathname.startsWith('/api/') && !isPropertyWorkerCallback) {
     const rateLimitResponse = enforceRateLimit({
       key: rateLimitKey(request, 'global-api'),
       limit: 150, // 150 requests
@@ -95,6 +96,11 @@ export function middleware(request: NextRequest) {
 
   // Cron routes authenticate via CRON_SECRET in the route handler, not session cookies
   if (pathname.startsWith('/api/cron/')) {
+    return NextResponse.next();
+  }
+
+  // The VPS worker authenticates these long-running crawl callbacks with its dedicated bearer token.
+  if (isPropertyWorkerCallback) {
     return NextResponse.next();
   }
 

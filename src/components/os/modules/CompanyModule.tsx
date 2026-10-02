@@ -10,6 +10,7 @@ import CompanyActivity from './CompanyActivity';
 import CodeRepositories from './CodeRepositories';
 import AdminAccount from './AdminAccount';
 import CompanyChanges from './CompanyChanges';
+import PropertyOverviewButton from './PropertyOverviewReport';
 
 export default function CompanyModule({ payload }: ModuleRenderContext) {
     const companyId = payload?.companyId;
@@ -67,6 +68,7 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                     ) : null}
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2">
+                    <PropertyOverviewButton companyId={company.id} companyName={company.name} canManage={detail.canManage} />
                     <MarketingPlanButton companyId={company.id} companyName={company.name} />
                     <AskButton companyId={company.id} companyName={company.name} />
                 </div>
