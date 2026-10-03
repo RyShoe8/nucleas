@@ -2,7 +2,8 @@ import 'server-only';
 import { Types } from 'mongoose';
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 import { getAppBaseUrl } from '@/lib/utils/appBaseUrl';
-import { PropertyOverview } from '@/lib/models/PropertyOverview';
+import { JobRun } from '@/lib/models/Job';
+import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import { failPropertyOverviewJob, queuePropertyOverviewJob, startPropertyOverviewJob } from './job';
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -36,6 +37,40 @@ export async function dispatchPropertyOverview(input: { overviewId: string; root
     }
     throw new Error(`VPS crawl worker returned HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
   }
+}
+
+async function cancelWorkerCrawl(overviewId: string, fetchImpl: FetchLike): Promise<void> {
+  const base = process.env.NUCLEAS_EXECUTION_WORKER_URL?.trim().replace(/\/+$/, '');
+  const token = process.env.NUCLEAS_EXECUTION_WORKER_TOKEN?.trim();
+  if (!base || !token) return;
+  const response = await fetchImpl(assertSafePublicHttpsUrl(`${base}/v1/property-crawls/${overviewId}`), {
+    method: 'DELETE', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(8_000),
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok && response.status !== 404) throw new Error(`VPS crawl cancellation returned HTTP ${response.status}.`);
+}
+
+/** Cancels and removes an unfinished crawl while preserving any previous completed Company Overview. */
+export async function cancelPropertyOverviewForJob(jobId: Types.ObjectId, reason: string, fetchImpl: FetchLike = fetch): Promise<boolean> {
+  const now = new Date();
+  const overview = await PropertyOverview.findOneAndUpdate(
+    { jobId, status: { $in: ['queued', 'dispatching', 'crawling'] } },
+    { $set: { status: 'failed', completedAt: now, progress: 'Cancelled', error: reason.slice(0, 1500) } },
+    { new: true }
+  ).select('_id runId').lean<{ _id: Types.ObjectId; runId?: Types.ObjectId }>();
+  if (!overview) return false;
+  await cancelWorkerCrawl(String(overview._id), fetchImpl).catch((error) => {
+    console.error('[property-overview] worker cancellation failed', error instanceof Error ? error.message : 'unknown');
+  });
+  await Promise.all([
+    PropertyPage.deleteMany({ overviewId: overview._id }),
+    overview.runId ? JobRun.updateOne(
+      { _id: overview.runId, status: 'running' },
+      { $set: { status: 'failed', error: reason.slice(0, 1000), finishedAt: now, progressState: { stage: 'complete', label: 'Cancelled', percent: 100, updatedAt: now } }, $unset: { leaseExpiresAt: '' } }
+    ) : Promise.resolve(),
+  ]);
+  await PropertyOverview.deleteOne({ _id: overview._id });
+  return true;
 }
 
 /**

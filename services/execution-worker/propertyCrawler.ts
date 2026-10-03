@@ -3,7 +3,7 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 import { analyzeProperty } from './propertyAnalyzer';
 
-type CrawlRequest = { requestId: string; rootUrl: string; callbackUrl: string; maxPages?: number; browserWorker?: { url: string; secret: string } };
+type CrawlRequest = { requestId: string; rootUrl: string; callbackUrl: string; maxPages?: number; browserWorker?: { url: string; secret: string }; signal?: AbortSignal };
 type CrawlEvidence = { url: string; title: string; description: string; h1: string[]; routePattern: string };
 const MAX_HTML = 700_000; const TIMEOUT = 30_000; const DELAY_MS = 250;
 const HEARTBEAT_MS = 60_000;
@@ -20,10 +20,13 @@ async function safeUrl(raw: string): Promise<URL> {
   const results = await dns.lookup(url.hostname, { all: true }); if (!results.length || results.some((item) => privateIp(item.address))) throw new Error('The host does not resolve exclusively to public addresses.');
   return url;
 }
-async function fetchSafe(raw: string, accept = 'text/html,application/xhtml+xml,*/*;q=0.5'): Promise<Response> {
+function timedSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+  return signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
+}
+async function fetchSafe(raw: string, accept = 'text/html,application/xhtml+xml,*/*;q=0.5', signal?: AbortSignal): Promise<Response> {
   let url = await safeUrl(raw);
   for (let redirects = 0; redirects <= 5; redirects += 1) {
-    const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT), headers: { Accept: accept, 'User-Agent': 'NucleasPropertyAudit/1.0 (+https://nucleas.app)' } });
+    const response = await fetch(url, { redirect: 'manual', signal: timedSignal(TIMEOUT, signal), headers: { Accept: accept, 'User-Agent': 'NucleasPropertyAudit/1.0 (+https://nucleas.app)' } });
     if (response.status < 300 || response.status >= 400) return response;
     const location = response.headers.get('location'); await response.body?.cancel(); if (!location) return response;
     url = await safeUrl(new URL(location, url).toString());
@@ -89,7 +92,7 @@ async function enrichRendered(request: CrawlRequest, page: ReturnType<typeof ext
   if (!request.browserWorker || (page.wordCount >= 100 && !/__NEXT_DATA__|data-reactroot|ng-app|id=["']root["']/i.test(page.htmlSnapshot))) return page;
   try {
     const endpoint = await safeUrl(`${request.browserWorker.url.replace(/\/+$/, '')}/navigate`);
-    const response = await fetch(endpoint, { method: 'POST', signal: AbortSignal.timeout(60_000), headers: { Authorization: `Bearer ${request.browserWorker.secret}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ url: page.url, maxChars: 50_000 }) });
+    const response = await fetch(endpoint, { method: 'POST', signal: timedSignal(60_000, request.signal), headers: { Authorization: `Bearer ${request.browserWorker.secret}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ url: page.url, maxChars: 50_000 }) });
     if (!response.ok) return page;
     const body = await response.json() as { url?: unknown; title?: unknown; text?: unknown; links?: unknown };
     const renderedText = typeof body.text === 'string' ? body.text.slice(0, 50_000).replace(/\s+/g, ' ').trim() : '';
@@ -98,16 +101,16 @@ async function enrichRendered(request: CrawlRequest, page: ReturnType<typeof ext
     const externalLinks = [...new Set([...page.externalLinks, ...links.filter((value) => !sameSite(new URL(value).hostname, new URL(page.url).hostname))])];
     const wordCount = Math.max(page.wordCount, renderedText.split(/\s+/).filter(Boolean).length);
     return { ...page, title: page.title || (typeof body.title === 'string' ? body.title.slice(0, 4_000) : ''), wordCount, internalLinks, externalLinks, renderedText, renderMode: 'rendered' as const, issues: page.issues.filter((issue) => issue !== 'Thin content' || wordCount < 100) };
-  } catch { return page; }
+  } catch (error) { if (request.signal?.aborted) throw error; return page; }
 }
 
 async function callback(request: CrawlRequest, payload: unknown) {
-  let last = ''; for (let attempt = 0; attempt < 4; attempt += 1) { try { const response = await fetch(await safeUrl(request.callbackUrl), { method: 'POST', signal: AbortSignal.timeout(60_000), headers: { Authorization: `Bearer ${process.env.NUCLEAS_EXECUTION_WORKER_TOKEN!.trim()}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (response.ok) return; const detail = (await response.text().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 500); last = `HTTP ${response.status}${detail ? `: ${detail}` : ''}`; } catch (error) { last = error instanceof Error ? error.message : 'callback failed'; } await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1))); } throw new Error(`Nucleas callback failed: ${last}`);
+  let last = ''; for (let attempt = 0; attempt < 4; attempt += 1) { try { const response = await fetch(await safeUrl(request.callbackUrl), { method: 'POST', signal: timedSignal(60_000, request.signal), headers: { Authorization: `Bearer ${process.env.NUCLEAS_EXECUTION_WORKER_TOKEN!.trim()}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (response.ok) return; const detail = (await response.text().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 500); last = `HTTP ${response.status}${detail ? `: ${detail}` : ''}`; } catch (error) { if (request.signal?.aborted) throw error; last = error instanceof Error ? error.message : 'callback failed'; } await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1))); } throw new Error(`Nucleas callback failed: ${last}`);
 }
-async function discoverSitemaps(root: URL) {
+async function discoverSitemaps(root: URL, signal?: AbortSignal) {
   const pending = [new URL('/sitemap.xml', root).toString(), new URL('/sitemap_index.xml', root).toString()]; const seen = new Set<string>(); const pages: string[] = [];
-  try { const robots = await fetchSafe(new URL('/robots.txt', root).toString(), 'text/plain'); if (robots.ok) for (const match of (await readLimited(robots, 1_000_000)).matchAll(/^sitemap:\s*(https:\/\/\S+)/gim)) pending.push(match[1]); } catch { /* fallback sitemap candidates remain */ }
-  while (pending.length && seen.size < 50) { const candidate = pending.shift()!; if (seen.has(candidate)) continue; seen.add(candidate); try { const response = await fetchSafe(candidate, 'application/xml,text/xml'); if (!response.ok) continue; const xml = await readLimited(response, 5_000_000); const locations = [...xml.matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi)].map((match) => { try { const value = new URL(match[1].replace(/&amp;/g, '&'), root); value.hash = ''; return value.protocol === 'https:' && sameSite(value.hostname, root.hostname) ? value.toString() : null; } catch { return null; } }).filter((value): value is string => Boolean(value)); if (/<sitemapindex\b/i.test(xml)) pending.push(...locations); else pages.push(...locations.filter((value) => !SKIP.test(new URL(value).pathname))); } catch { /* malformed sitemap does not abort link discovery */ } }
+  try { const robots = await fetchSafe(new URL('/robots.txt', root).toString(), 'text/plain', signal); if (robots.ok) for (const match of (await readLimited(robots, 1_000_000)).matchAll(/^sitemap:\s*(https:\/\/\S+)/gim)) pending.push(match[1]); } catch (error) { if (signal?.aborted) throw error; /* fallback sitemap candidates remain */ }
+  while (pending.length && seen.size < 50) { signal?.throwIfAborted(); const candidate = pending.shift()!; if (seen.has(candidate)) continue; seen.add(candidate); try { const response = await fetchSafe(candidate, 'application/xml,text/xml', signal); if (!response.ok) continue; const xml = await readLimited(response, 5_000_000); const locations = [...xml.matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi)].map((match) => { try { const value = new URL(match[1].replace(/&amp;/g, '&'), root); value.hash = ''; return value.protocol === 'https:' && sameSite(value.hostname, root.hostname) ? value.toString() : null; } catch { return null; } }).filter((value): value is string => Boolean(value)); if (/<sitemapindex\b/i.test(xml)) pending.push(...locations); else pages.push(...locations.filter((value) => !SKIP.test(new URL(value).pathname))); } catch (error) { if (signal?.aborted) throw error; /* malformed sitemap does not abort link discovery */ } }
   return [...new Set(pages)];
 }
 
@@ -129,29 +132,34 @@ export async function runPropertyCrawl(request: CrawlRequest): Promise<void> {
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
   try {
-    const root = await safeUrl(request.rootUrl); const scope = resolveCrawlScope(root.toString(), await discoverSitemaps(root)); const queue = request.maxPages ? scope.urls.slice(0, request.maxPages) : [...scope.urls]; const queued = new Set(queue); const visited = new Set<string>(); const evidence: CrawlEvidence[] = [];
+    const root = await safeUrl(request.rootUrl); const scope = resolveCrawlScope(root.toString(), await discoverSitemaps(root, request.signal)); const queue = request.maxPages ? scope.urls.slice(0, request.maxPages) : [...scope.urls]; const queued = new Set(queue); const visited = new Set<string>(); const evidence: CrawlEvidence[] = [];
     const hasCapacity = () => request.maxPages === undefined || visited.size < request.maxPages;
     const discovered = () => request.maxPages === undefined ? visited.size + queue.length : Math.min(request.maxPages, visited.size + queue.length);
     discoveredCount = Math.max(1, queue.length);
     await callback(request, { action: 'progress', processed: 0, discovered: Math.max(1, queue.length), message: scope.source === 'sitemap' ? `Found ${queue.length} submitted sitemap pages; beginning crawl…` : 'No usable sitemap pages found; discovering pages from first-party links…' });
     while (queue.length && hasCapacity()) {
-      const target = queue.shift()!; if (visited.has(target)) continue; visited.add(target);
+      request.signal?.throwIfAborted(); const target = queue.shift()!; if (visited.has(target)) continue; visited.add(target);
       processed = visited.size; discoveredCount = discovered();
       try {
-        const response = await fetchSafe(target); const contentType = response.headers.get('content-type') ?? ''; const finalUrl = new URL(response.url || target); if (!sameSite(finalUrl.hostname, root.hostname)) continue; const html = contentType.includes('text/html') ? await readLimited(response, MAX_HTML) : ''; const page = await enrichRendered(request, extractPage(html, finalUrl, response.status, contentType));
+        const response = await fetchSafe(target, undefined, request.signal); const contentType = response.headers.get('content-type') ?? ''; const finalUrl = new URL(response.url || target); if (!sameSite(finalUrl.hostname, root.hostname)) continue; const html = contentType.includes('text/html') ? await readLimited(response, MAX_HTML) : ''; const page = await enrichRendered(request, extractPage(html, finalUrl, response.status, contentType));
         evidence.push({ url: page.url, title: page.title, description: page.description, h1: page.h1, routePattern: page.routePattern });
         if (scope.followInternalLinks) for (const link of page.internalLinks) if (!queued.has(link) && !visited.has(link) && (request.maxPages === undefined || queue.length + visited.size < request.maxPages)) { queued.add(link); queue.push(link); }
         discoveredCount = discovered();
         await callback(request, { action: 'page', processed, discovered: discoveredCount, page: archivedPage(page) });
       } catch (error) {
+        if (request.signal?.aborted) throw error;
         const url = new URL(target); await callback(request, { action: 'page', processed, discovered: discoveredCount, page: { url: target, routePattern: routePattern(url), h1: [], h2: [], h3: [], metaKeywords: [], wordCount: 0, internalLinks: [], externalLinks: [], imageCount: 0, imagesMissingAlt: 0, structuredDataTypes: [], indexable: false, issues: [`Fetch failed: ${error instanceof Error ? error.message : 'Unknown error'}`], fetchedAt: new Date().toISOString(), renderMode: 'html' } });
       }
       await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
     }
     await callback(request, { action: 'progress', processed: visited.size, discovered: Math.max(visited.size, discovered()), message: 'Analyzing property positioning, audience, keywords, and competitors…' });
-    await callback(request, { action: 'analysis', analysis: await analyzeProperty(evidence, root.toString()) });
+    await callback(request, { action: 'analysis', analysis: await analyzeProperty(evidence, root.toString(), request.signal) });
     await callback(request, { action: 'complete' });
   } catch (error) {
+    if (request.signal?.aborted) {
+      console.info(`[property-crawl:${request.requestId}] cancelled`);
+      return;
+    }
     const message = error instanceof Error ? error.message.slice(0, 1500) : 'Property crawl failed.';
     console.error(`[property-crawl:${request.requestId}] ${message}`);
     await callback(request, { action: 'failed', error: message }).catch((callbackError) => {

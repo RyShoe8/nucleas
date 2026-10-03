@@ -15,7 +15,7 @@ const MAX_BODY = 64 * 1024;
 const SANDBOX_UID = 10001;
 const SANDBOX_GID = 10001;
 let busy = false;
-let propertyCrawlBusy = false;
+let activePropertyCrawl: { requestId: string; controller: AbortController } | null = null;
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -186,20 +186,28 @@ async function execute(request: ExecutionWorkerRequest) {
 export const server = createServer(async (req, res) => {
   res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
   try {
-    if (req.method === 'GET' && req.url === '/health') { res.statusCode = 200; res.end(JSON.stringify({ ok: true, busy, propertyCrawlBusy, features: [...EXECUTION_WORKER_FEATURES, 'property_crawl'] })); return; }
+    if (req.method === 'GET' && req.url === '/health') { res.statusCode = 200; res.end(JSON.stringify({ ok: true, busy, propertyCrawlBusy: Boolean(activePropertyCrawl), features: [...EXECUTION_WORKER_FEATURES, 'property_crawl'] })); return; }
+    const cancelMatch = req.method === 'DELETE' ? req.url?.match(/^\/v1\/property-crawls\/([a-f0-9]{24})$/i) : null;
+    if (cancelMatch) {
+      if (!authorized(req.headers.authorization)) { res.statusCode = 401; res.end(JSON.stringify({ error: 'Unauthorized.' })); return; }
+      if (!activePropertyCrawl || activePropertyCrawl.requestId !== cancelMatch[1]) { res.statusCode = 404; res.end(JSON.stringify({ error: 'Active property crawl not found.' })); return; }
+      activePropertyCrawl.controller.abort(new Error('Crawl cancelled by Nucleas.'));
+      res.statusCode = 202; res.end(JSON.stringify({ cancelled: true, requestId: cancelMatch[1] })); return;
+    }
     if (req.method === 'POST' && req.url === '/v1/property-crawls') {
       if (!authorized(req.headers.authorization)) { res.statusCode = 401; res.end(JSON.stringify({ error: 'Unauthorized.' })); return; }
-      if (propertyCrawlBusy) { res.statusCode = 429; res.end(JSON.stringify({ error: 'A property crawl is already running.' })); return; }
+      if (activePropertyCrawl) { res.statusCode = 429; res.end(JSON.stringify({ error: 'A property crawl is already running.' })); return; }
       const input = await body(req) as Record<string, unknown>;
       const browserWorker = input.browserWorker && typeof input.browserWorker === 'object' ? input.browserWorker as Record<string, unknown> : null;
       const maxPages = input.maxPages === undefined ? undefined : Number(input.maxPages);
       if (input.protocolVersion !== 1 || typeof input.requestId !== 'string' || !/^[a-f0-9]{24}$/i.test(input.requestId) || typeof input.rootUrl !== 'string' || typeof input.callbackUrl !== 'string' || (maxPages !== undefined && (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 1_000_000)) || (browserWorker && (typeof browserWorker.url !== 'string' || !browserWorker.url.startsWith('https://') || typeof browserWorker.secret !== 'string' || browserWorker.secret.length < 16 || browserWorker.secret.length > 4096))) {
         res.statusCode = 400; res.end(JSON.stringify({ error: 'Invalid property crawl request.' })); return;
       }
-      propertyCrawlBusy = true;
-      void runPropertyCrawl({ requestId: input.requestId, rootUrl: input.rootUrl, callbackUrl: input.callbackUrl, ...(maxPages === undefined ? {} : { maxPages }), ...(browserWorker ? { browserWorker: { url: String(browserWorker.url), secret: String(browserWorker.secret) } } : {}) })
+      const crawl = { requestId: input.requestId, controller: new AbortController() };
+      activePropertyCrawl = crawl;
+      void runPropertyCrawl({ requestId: input.requestId, rootUrl: input.rootUrl, callbackUrl: input.callbackUrl, signal: crawl.controller.signal, ...(maxPages === undefined ? {} : { maxPages }), ...(browserWorker ? { browserWorker: { url: String(browserWorker.url), secret: String(browserWorker.secret) } } : {}) })
         .catch((error) => console.error(`[property-crawl:${String(input.requestId)}] stopped`, error))
-        .finally(() => { propertyCrawlBusy = false; });
+        .finally(() => { if (activePropertyCrawl === crawl) activePropertyCrawl = null; });
       res.statusCode = 202; res.end(JSON.stringify({ accepted: true, requestId: input.requestId })); return;
     }
     if (req.method !== 'POST' || req.url !== '/v1/execute') { res.statusCode = 404; res.end(JSON.stringify({ error: 'Not found.' })); return; }

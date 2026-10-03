@@ -28,7 +28,7 @@ import Project from '@/lib/models/Project';
 import { SeoBrief } from '@/lib/models/SeoBrief';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
-import { answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, runDesign, runNow, sweepJobs } from './jobs';
+import { answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, pauseJob, runDesign, runNow, sweepJobs } from './jobs';
 import type { JobDesign } from './schema';
 import { updateLinkOpportunity, verifyLinkOpportunity } from './linkOpportunities';
 import { completePropertyOverviewJob, createPropertyOverviewJob, startPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
@@ -396,6 +396,27 @@ describe('real runs', () => {
     expect(await PropertyPage.exists({ overviewId: previous._id })).toBeNull();
     expect(await PropertyOverview.findById(replacement._id).lean()).toMatchObject({ status: 'complete', pageCount: 1 });
     expect(await PropertyPage.exists({ overviewId: replacement._id })).toBeTruthy();
+  });
+
+  it('cancels and removes an active Company Overview when its job is paused and archived', async () => {
+    vi.stubEnv('NUCLEAS_EXECUTION_WORKER_URL', 'https://worker.nucleas.app');
+    vi.stubEnv('NUCLEAS_EXECUTION_WORKER_TOKEN', 'test-worker-token');
+    const overview = await PropertyOverview.create({ organizationId: org, companyId: new Types.ObjectId(companyId), rootUrl: 'https://playbound.club/', status: 'queued' });
+    const linked = await createPropertyOverviewJob({ organizationId: org, companyId: new Types.ObjectId(companyId), userId: admin.userId, companyName: 'Playbound.club', overviewId: overview._id, rootUrl: overview.rootUrl });
+    await PropertyOverview.updateOne({ _id: overview._id }, { $set: { jobId: linked.jobId, runId: linked.runId } });
+    await startPropertyOverviewJob(linked);
+    await PropertyPage.create({ overviewId: overview._id, organizationId: org, companyId: new Types.ObjectId(companyId), url: 'https://playbound.club/partial', routePattern: '/partial', fetchedAt: new Date() });
+    const worker = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ cancelled: true }), { status: 202 }));
+
+    expect(await pauseJob(admin, String(linked.jobId))).toMatchObject({ ok: true, job: { status: 'paused' } });
+    expect(await PropertyOverview.findById(overview._id)).toBeNull();
+    expect(await PropertyPage.exists({ overviewId: overview._id })).toBeNull();
+    expect(await JobRun.findById(linked.runId).lean()).toMatchObject({ status: 'failed', error: expect.stringContaining('paused') });
+    expect(String(worker.mock.calls[0]?.[0])).toContain(`/v1/property-crawls/${overview._id}`);
+    expect(worker.mock.calls[0]?.[1]).toMatchObject({ method: 'DELETE' });
+    expect(await archiveJob(admin, String(linked.jobId))).toMatchObject({ ok: true, job: { status: 'archived' } });
+    worker.mockRestore();
+    vi.unstubAllEnvs();
   });
 
   it('uses the explicit lease instead of unrelated document updates when reconciling runs', async () => {

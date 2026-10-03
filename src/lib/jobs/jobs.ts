@@ -15,6 +15,7 @@ import Project from '@/lib/models/Project';
 import { bulkDecideRunOpportunities, listLinkOpportunities, type LinkOpportunityView } from './linkOpportunities';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import { PROPERTY_OVERVIEW_QUEUE_OWNER } from '@/lib/propertyOverview/job';
+import { cancelPropertyOverviewForJob } from '@/lib/propertyOverview/crawler';
 import { initialRunLease } from './runLifecycle';
 
 /**
@@ -410,7 +411,12 @@ export function pauseJob(viewer: CompanyViewer, id: string): Promise<ActionResul
   return managed(viewer, id).then(async (f) => {
     if (!f.ok) return f;
     const result = await transition(viewer, f.job, ['active', 'ready'], { status: 'paused' }, 'paused');
-    if (result.ok) await Job.updateOne({ _id: f.job._id }, { $unset: { nextRunAt: '' } });
+    if (result.ok) {
+      await Promise.all([
+        Job.updateOne({ _id: f.job._id }, { $unset: { nextRunAt: '' } }),
+        cancelPropertyOverviewForJob(f.job._id, 'Cancelled because the job was paused.'),
+      ]);
+    }
     return result.ok ? done(viewer, id) : result;
   });
 }
@@ -430,7 +436,9 @@ export async function archiveJob(viewer: CompanyViewer, id: string): Promise<Act
   if (found.job.status === 'testing' && await JobRun.exists({ jobId: found.job._id, status: 'running' })) {
     return { ok: false, status: 409, error: 'This dry run is still active. Wait for it to finish or time out before clearing the job.' };
   }
-  return transition(viewer, found.job, ['proposed', 'testing', 'ready', 'active', 'paused', 'done', 'failed', 'needs_answers'], { status: 'archived' }, 'archived');
+  const result = await transition(viewer, found.job, ['proposed', 'testing', 'ready', 'active', 'paused', 'done', 'failed', 'needs_answers'], { status: 'archived' }, 'archived');
+  if (result.ok) await cancelPropertyOverviewForJob(found.job._id, 'Cancelled because the job was archived.');
+  return result.ok ? done(viewer, id) : result;
 }
 
 // ---------- Background ----------

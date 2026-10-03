@@ -53,7 +53,7 @@ function cleanAnalysis(value: unknown, evidence: CrawlEvidence[], rootUrl: strin
 }
 
 /** Grounded synthesis after crawling. Failure degrades to extracted metadata; it never discards a crawl. */
-export async function analyzeProperty(evidence: CrawlEvidence[], rootUrl: string): Promise<PropertyAnalysis> {
+export async function analyzeProperty(evidence: CrawlEvidence[], rootUrl: string, signal?: AbortSignal): Promise<PropertyAnalysis> {
   const baseline = fallback(evidence, rootUrl);
   const endpoint = process.env.NUCLEAS_AI_REMOTE_ENDPOINT?.trim(); const token = process.env.NUCLEAS_AI_REMOTE_BEARER_TOKEN?.trim(); const model = process.env.NUCLEAS_AI_REMOTE_MODEL?.trim();
   if (!endpoint || !token || !model || !evidence.length) return baseline;
@@ -69,12 +69,12 @@ export async function analyzeProperty(evidence: CrawlEvidence[], rootUrl: string
   try {
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 120_000);
     try {
-      const response = await fetch(endpoint, { method: 'POST', redirect: 'error', signal: controller.signal, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, messages, temperature: 0.1, max_tokens: 2_000 }) });
+      const response = await fetch(endpoint, { method: 'POST', redirect: 'error', signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, messages, temperature: 0.1, max_tokens: 2_000 }) });
       if (!response.ok) return baseline;
       const payload = await response.json() as { model?: unknown; choices?: { message?: { content?: unknown } }[] };
       const content = payload.choices?.[0]?.message?.content;
       if (typeof content !== 'string') return baseline;
       return cleanAnalysis(jsonObject(content), evidence, rootUrl, typeof payload.model === 'string' ? payload.model : model);
     } finally { clearTimeout(timer); }
-  } catch { return baseline; }
+  } catch (error) { if (signal?.aborted) throw error; return baseline; }
 }
