@@ -13,6 +13,10 @@ services:
     environment:
       NODE_ENV: production
       PORT: "8788"
+      SEARXNG_BASE_URL: "http://searxng:8080"
+    networks:
+      - default
+      - searxng
     ports:
       - "127.0.0.1:8788:8788"
     read_only: true
@@ -45,3 +49,8 @@ services:
       options:
         max-size: 10m
         max-file: "3"
+
+networks:
+  searxng:
+    external: true
+    name: searxng_default

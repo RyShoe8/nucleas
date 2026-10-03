@@ -7,6 +7,7 @@ import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import { completePropertyOverviewJob, failPropertyOverviewJob, heartbeatPropertyOverviewJob, startPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
 import { processPropertyOverviewQueue } from '@/lib/propertyOverview/crawler';
 import { replaceCompanyOverview } from '@/lib/propertyOverview/storage';
+import { templateName } from '@/lib/propertyOverview/templates';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -36,25 +37,6 @@ const analysisSchema = z.object({
   }).strict(),
 }).strict();
 const terminalSchema = z.discriminatedUnion('action', [z.object({ action: z.literal('complete') }).strict(), z.object({ action: z.literal('failed'), error: z.string().min(1).max(1500) }).strict()]);
-
-function templateName(routes: string[]): string {
-  const pattern = routes[0] ?? '/';
-  if (routes.some((route) => /^\/games\/:[^/]+\/controls$/.test(route))) return 'Game controls';
-  if (routes.some((route) => /^\/games\/:[^/]+$/.test(route))) return 'Game details';
-  if (routes.some((route) => /^\/hosting\/:[^/]+$/.test(route))) return 'Game hosting';
-  if (routes.some((route) => /^\/guides\/:[^/]+$/.test(route))) return 'Guides';
-  if (routes.some((route) => /^\/blog\/:[^/]+$/.test(route))) return 'Blog articles';
-  if (pattern === '/') return 'Homepage';
-  const section = pattern.split('/').filter(Boolean)[0];
-  if (section === 'games') return 'Games';
-  if (section === 'hosting') return 'Hosting';
-  if (section === 'guides') return 'Guides';
-  if (section === 'blog') return 'Blog';
-  if (section === 'deals' || section === 'free-games') return 'Deals';
-  if (section === 'privacy' || section === 'terms' || section === 'standards') return 'Policy and standards';
-  if (routes.length > 1) return 'Landing pages';
-  return section ? section.replace(/-/g, ' ').replace(/^./, (letter) => letter.toUpperCase()) : 'Page';
-}
 
 function authorized(request: NextRequest): boolean {
   const secret = process.env.NUCLEAS_EXECUTION_WORKER_TOKEN?.trim();

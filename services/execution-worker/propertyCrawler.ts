@@ -4,7 +4,7 @@ import net from 'node:net';
 import { analyzeProperty } from './propertyAnalyzer';
 
 type CrawlRequest = { requestId: string; rootUrl: string; callbackUrl: string; maxPages?: number; browserWorker?: { url: string; secret: string }; signal?: AbortSignal };
-type CrawlEvidence = { url: string; title: string; description: string; h1: string[]; routePattern: string };
+type CrawlEvidence = { url: string; title: string; description: string; h1: string[]; h2: string[]; metaKeywords: string[]; routePattern: string };
 const MAX_HTML = 700_000; const TIMEOUT = 30_000; const DELAY_MS = 250;
 const HEARTBEAT_MS = 60_000;
 const SKIP = /\.(?:avif|bmp|css|csv|docx?|gif|ico|jpe?g|js|json|mp3|mp4|pdf|png|pptx?|svg|webp|xlsx?|xml|zip)$/i;
@@ -43,15 +43,53 @@ function attr(tag: string, name: string) { return tag.match(new RegExp(`\\b${nam
 function all(html: string, regex: RegExp) { return [...html.matchAll(regex)].map((match) => clean(match[1])).filter(Boolean); }
 function sameSite(a: string, b: string) { return a.toLowerCase().replace(/^www\./, '') === b.toLowerCase().replace(/^www\./, ''); }
 function absolute(raw: string, base: URL) { try { const url = new URL(raw, base); url.hash = ''; if (url.protocol !== 'https:' || SKIP.test(url.pathname)) return null; [...url.searchParams.keys()].forEach((key) => { if (/^(?:utm_|fbclid|gclid)/i.test(key)) url.searchParams.delete(key); }); return url.toString(); } catch { return null; } }
-const SEMANTIC_COLLECTIONS: Record<string, string> = { games: 'game', hosting: 'game', guides: 'guide', blog: 'post', deals: 'deal' };
-
 export function routePattern(url: URL) {
   const parts = url.pathname.split('/').filter(Boolean).map((part) => decodeURIComponent(part));
   return '/' + parts.map((part, index) => {
-    if (index === 1 && SEMANTIC_COLLECTIONS[parts[0]]) return `:${SEMANTIC_COLLECTIONS[parts[0]]}`;
+    // A collection/item/subcollection/item hierarchy is the safest context-free fallback.
+    // Sitemap-aware crawls replace this with rules learned from the site's own URL corpus.
+    if (index > 0 && index % 2 === 1) return ':item';
     if (DYNAMIC.test(part)) return ':id';
     return part;
   }).join('/');
+}
+
+const LOW_VOLUME_COLLECTIONS = new Set('article articles author authors blog blogs category categories event events news post posts product products profile profiles tag tags'.split(' '));
+
+/** Learn repeated dynamic path positions from this property's own submitted URLs. */
+export function createRoutePatternResolver(urls: string[]): (url: URL) => string {
+  const rows = urls.flatMap((value) => { try { return [new URL(value).pathname.split('/').filter(Boolean).map((part) => decodeURIComponent(part))]; } catch { return []; } });
+  const dynamic = new Set<string>();
+  const normalizedPrefix = (parts: string[], end: number) => {
+    const output: string[] = [];
+    for (let index = 0; index < end; index += 1) {
+      const prefix = output.join('/');
+      output.push(dynamic.has(`${prefix}|${index}`) ? ':item' : parts[index]);
+    }
+    return output.join('/');
+  };
+  const maxDepth = Math.max(0, ...rows.map((parts) => parts.length));
+  for (let index = 1; index < maxDepth; index += 1) {
+    const groups = new Map<string, Set<string>>();
+    for (const parts of rows) {
+      if (parts.length <= index) continue;
+      const prefix = normalizedPrefix(parts, index); const values = groups.get(prefix) ?? new Set<string>();
+      values.add(parts[index].toLowerCase()); groups.set(prefix, values);
+    }
+    for (const [prefix, values] of groups) {
+      const first = prefix.split('/')[0]?.toLowerCase() ?? '';
+      if (values.size >= 5 || (index === 1 && LOW_VOLUME_COLLECTIONS.has(first) && values.size >= 2)) dynamic.add(`${prefix}|${index}`);
+    }
+  }
+  return (url: URL) => {
+    const parts = url.pathname.split('/').filter(Boolean).map((part) => decodeURIComponent(part));
+    const output: string[] = [];
+    for (let index = 0; index < parts.length; index += 1) {
+      const prefix = output.join('/');
+      output.push(dynamic.has(`${prefix}|${index}`) || DYNAMIC.test(parts[index]) ? ':item' : parts[index]);
+    }
+    return '/' + output.join('/');
+  };
 }
 
 function structuralFingerprint(html: string): string {
@@ -61,12 +99,11 @@ function structuralFingerprint(html: string): string {
   return crypto.createHash('sha1').update(landmarks.slice(0, 2_000).join('|')).digest('hex').slice(0, 12);
 }
 
-export function templateIdentity(html: string, url: URL): string {
-  const pattern = routePattern(url);
+export function templateIdentity(html: string, url: URL, pattern = routePattern(url)): string {
   return pattern.includes(':') ? `route:${pattern}` : `structure:${structuralFingerprint(html)}`;
 }
 
-export function extractPage(html: string, url: URL, statusCode: number, contentType: string) {
+export function extractPage(html: string, url: URL, statusCode: number, contentType: string, resolvedPattern = routePattern(url)) {
   const title = clean(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]); const h1 = all(html, /<h1[^>]*>([\s\S]*?)<\/h1>/gi); const h2 = all(html, /<h2[^>]*>([\s\S]*?)<\/h2>/gi); const h3 = all(html, /<h3[^>]*>([\s\S]*?)<\/h3>/gi);
   const meta = (name: string) => attr(html.match(new RegExp(`<meta\\b[^>]*(?:name|property)\\s*=\\s*["']${name}["'][^>]*>`, 'i'))?.[0] ?? '', 'content');
   const link = (rel: string) => attr(html.match(new RegExp(`<link\\b[^>]*rel\\s*=\\s*["'][^"']*${rel}[^"']*["'][^>]*>`, 'i'))?.[0] ?? '', 'href');
@@ -77,7 +114,7 @@ export function extractPage(html: string, url: URL, statusCode: number, contentT
   const structuredDataTypes = [...new Set([...html.matchAll(/["']@type["']\s*:\s*["']([^"']+)["']/gi)].map((match) => match[1]))];
   const issues: string[] = []; if (statusCode >= 400) issues.push(`HTTP ${statusCode}`); if (!title) issues.push('Missing title'); else if (title.length < 30 || title.length > 60) issues.push(`Title length ${title.length}`); if (!description) issues.push('Missing meta description'); else if (description.length < 70 || description.length > 160) issues.push(`Meta description length ${description.length}`); if (!h1.length) issues.push('Missing H1'); else if (h1.length > 1) issues.push(`${h1.length} H1 headings`); if (!canonical) issues.push('Missing canonical'); if (!language) issues.push('Missing HTML language'); const imagesMissingAlt = images.filter((tag) => !/\balt\s*=\s*["'][^"']*["']/i.test(tag)).length; if (imagesMissingAlt) issues.push(`${imagesMissingAlt} images missing alt text`); if (wordCount < 100) issues.push('Thin content');
   const published = meta('article:published_time') || html.match(/["']datePublished["']\s*:\s*["']([^"']+)/i)?.[1]; const modified = meta('article:modified_time') || html.match(/["']dateModified["']\s*:\s*["']([^"']+)/i)?.[1];
-  return { url: url.toString(), routePattern: routePattern(url), statusCode, contentType, title, description, canonical, robots, language, h1, h2, h3, metaKeywords: meta('keywords').split(',').map((item) => item.trim()).filter(Boolean), wordCount, internalLinks, externalLinks, imageCount: images.length, imagesMissingAlt, structuredDataTypes, ...(published && !Number.isNaN(Date.parse(published)) ? { datePublished: new Date(published).toISOString() } : {}), ...(modified && !Number.isNaN(Date.parse(modified)) ? { dateModified: new Date(modified).toISOString() } : {}), indexable: !/noindex/i.test(robots), templateKey: crypto.createHash('sha1').update(templateIdentity(html, url)).digest('hex').slice(0, 12), issues, fetchedAt: new Date().toISOString(), htmlSnapshot: html, renderMode: 'html' as const };
+  return { url: url.toString(), routePattern: resolvedPattern, statusCode, contentType, title, description, canonical, robots, language, h1, h2, h3, metaKeywords: meta('keywords').split(',').map((item) => item.trim()).filter(Boolean), wordCount, internalLinks, externalLinks, imageCount: images.length, imagesMissingAlt, structuredDataTypes, ...(published && !Number.isNaN(Date.parse(published)) ? { datePublished: new Date(published).toISOString() } : {}), ...(modified && !Number.isNaN(Date.parse(modified)) ? { dateModified: new Date(modified).toISOString() } : {}), indexable: !/noindex/i.test(robots), templateKey: crypto.createHash('sha1').update(templateIdentity(html, url, resolvedPattern)).digest('hex').slice(0, 12), issues, fetchedAt: new Date().toISOString(), htmlSnapshot: html, renderMode: 'html' as const };
 }
 
 /** Raw page bodies are useful while extracting evidence, but are too large for durable crawl storage. */
@@ -132,7 +169,7 @@ export async function runPropertyCrawl(request: CrawlRequest): Promise<void> {
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
   try {
-    const root = await safeUrl(request.rootUrl); const scope = resolveCrawlScope(root.toString(), await discoverSitemaps(root, request.signal)); const queue = request.maxPages ? scope.urls.slice(0, request.maxPages) : [...scope.urls]; const queued = new Set(queue); const visited = new Set<string>(); const evidence: CrawlEvidence[] = [];
+    const root = await safeUrl(request.rootUrl); const scope = resolveCrawlScope(root.toString(), await discoverSitemaps(root, request.signal)); const resolvePattern = createRoutePatternResolver(scope.urls); const queue = request.maxPages ? scope.urls.slice(0, request.maxPages) : [...scope.urls]; const queued = new Set(queue); const visited = new Set<string>(); const evidence: CrawlEvidence[] = [];
     const hasCapacity = () => request.maxPages === undefined || visited.size < request.maxPages;
     const discovered = () => request.maxPages === undefined ? visited.size + queue.length : Math.min(request.maxPages, visited.size + queue.length);
     discoveredCount = Math.max(1, queue.length);
@@ -141,14 +178,14 @@ export async function runPropertyCrawl(request: CrawlRequest): Promise<void> {
       request.signal?.throwIfAborted(); const target = queue.shift()!; if (visited.has(target)) continue; visited.add(target);
       processed = visited.size; discoveredCount = discovered();
       try {
-        const response = await fetchSafe(target, undefined, request.signal); const contentType = response.headers.get('content-type') ?? ''; const finalUrl = new URL(response.url || target); if (!sameSite(finalUrl.hostname, root.hostname)) continue; const html = contentType.includes('text/html') ? await readLimited(response, MAX_HTML) : ''; const page = await enrichRendered(request, extractPage(html, finalUrl, response.status, contentType));
-        evidence.push({ url: page.url, title: page.title, description: page.description, h1: page.h1, routePattern: page.routePattern });
+        const response = await fetchSafe(target, undefined, request.signal); const contentType = response.headers.get('content-type') ?? ''; const finalUrl = new URL(response.url || target); if (!sameSite(finalUrl.hostname, root.hostname)) continue; const html = contentType.includes('text/html') ? await readLimited(response, MAX_HTML) : ''; const page = await enrichRendered(request, extractPage(html, finalUrl, response.status, contentType, resolvePattern(new URL(target))));
+        evidence.push({ url: page.url, title: page.title, description: page.description, h1: page.h1, h2: page.h2, metaKeywords: page.metaKeywords, routePattern: page.routePattern });
         if (scope.followInternalLinks) for (const link of page.internalLinks) if (!queued.has(link) && !visited.has(link) && (request.maxPages === undefined || queue.length + visited.size < request.maxPages)) { queued.add(link); queue.push(link); }
         discoveredCount = discovered();
         await callback(request, { action: 'page', processed, discovered: discoveredCount, page: archivedPage(page) });
       } catch (error) {
         if (request.signal?.aborted) throw error;
-        const url = new URL(target); await callback(request, { action: 'page', processed, discovered: discoveredCount, page: { url: target, routePattern: routePattern(url), h1: [], h2: [], h3: [], metaKeywords: [], wordCount: 0, internalLinks: [], externalLinks: [], imageCount: 0, imagesMissingAlt: 0, structuredDataTypes: [], indexable: false, issues: [`Fetch failed: ${error instanceof Error ? error.message : 'Unknown error'}`], fetchedAt: new Date().toISOString(), renderMode: 'html' } });
+        const url = new URL(target); await callback(request, { action: 'page', processed, discovered: discoveredCount, page: { url: target, routePattern: resolvePattern(url), h1: [], h2: [], h3: [], metaKeywords: [], wordCount: 0, internalLinks: [], externalLinks: [], imageCount: 0, imagesMissingAlt: 0, structuredDataTypes: [], indexable: false, issues: [`Fetch failed: ${error instanceof Error ? error.message : 'Unknown error'}`], fetchedAt: new Date().toISOString(), renderMode: 'html' } });
       }
       await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
     }

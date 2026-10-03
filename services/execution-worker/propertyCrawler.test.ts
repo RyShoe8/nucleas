@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { archivedPage, extractPage, resolveCrawlScope, routePattern, templateIdentity } from './propertyCrawler';
+import { archivedPage, createRoutePatternResolver, extractPage, resolveCrawlScope, routePattern, templateIdentity } from './propertyCrawler';
 
 describe('VPS property crawler', () => {
   it('extracts auditable SEO and link data from a page', () => {
@@ -15,14 +15,32 @@ describe('VPS property crawler', () => {
   });
 
   it('groups semantic page families instead of splitting on content differences', () => {
-    expect(routePattern(new URL('https://playbound.club/games/8bit-killer'))).toBe('/games/:game');
-    expect(routePattern(new URL('https://playbound.club/games/castlevania-revamped'))).toBe('/games/:game');
-    expect(routePattern(new URL('https://playbound.club/games/8bit-killer/controls'))).toBe('/games/:game/controls');
-    expect(routePattern(new URL('https://playbound.club/hosting/0ad'))).toBe('/hosting/:game');
+    expect(routePattern(new URL('https://playbound.club/games/8bit-killer'))).toBe('/games/:item');
+    expect(routePattern(new URL('https://playbound.club/games/castlevania-revamped'))).toBe('/games/:item');
+    expect(routePattern(new URL('https://playbound.club/games/8bit-killer/controls'))).toBe('/games/:item/controls');
+    expect(routePattern(new URL('https://playbound.club/games/8bit-killer/editions/openra-plus'))).toBe('/games/:item/editions/:item');
+    expect(routePattern(new URL('https://playbound.club/hosting/0ad'))).toBe('/hosting/:item');
     expect(templateIdentity('<main><h1>First game</h1></main>', new URL('https://playbound.club/games/first-game')))
       .toBe(templateIdentity('<main><section><h1>Second game</h1></section></main>', new URL('https://playbound.club/games/second-game')));
     expect(templateIdentity('<main><h1>Controls</h1></main>', new URL('https://playbound.club/games/first-game/controls')))
       .not.toBe(templateIdentity('<main><h1>Game</h1></main>', new URL('https://playbound.club/games/first-game')));
+    expect(templateIdentity('<main><h1>Developer one</h1></main>', new URL('https://playbound.club/developers/first-studio')))
+      .toBe(templateIdentity('<article><section>Different markup</section></article>', new URL('https://playbound.club/developers/second-studio')));
+    expect(templateIdentity('<main><h1>Mod one</h1></main>', new URL('https://playbound.club/mods/first-mod')))
+      .toBe(templateIdentity('<article><section>Different markup</section></article>', new URL('https://playbound.club/mods/second-mod')));
+  });
+
+  it('learns template families from any sitemap instead of a property-specific route list', () => {
+    const urls = [
+      ...['alpha', 'beta', 'gamma', 'delta', 'epsilon'].map((slug) => `https://store.test/catalog/${slug}`),
+      ...['one', 'two', 'three', 'four', 'five'].map((slug) => `https://store.test/catalog/${slug}/reviews/editor-${slug}`),
+      ...['first', 'second'].map((slug) => `https://publisher.test/articles/${slug}`),
+    ];
+    const resolve = createRoutePatternResolver(urls);
+
+    expect(resolve(new URL('https://store.test/catalog/alpha'))).toBe('/catalog/:item');
+    expect(resolve(new URL('https://store.test/catalog/alpha/reviews/editor-alpha'))).toBe('/catalog/:item/reviews/:item');
+    expect(resolve(new URL('https://publisher.test/articles/first'))).toBe('/articles/:item');
   });
 
   it('stores extracted SEO evidence without duplicating raw page bodies', () => {
