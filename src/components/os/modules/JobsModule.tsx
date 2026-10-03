@@ -82,6 +82,7 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
         if (!res.ok || !body.job) return setError(body.error ?? `Failed (${res.status})`);
         setRequest('');
         onCreated(body.job);
+        window.dispatchEvent(new Event('nucleas:jobs-changed'));
     };
     return (
         <div className="ui-card p-4 space-y-4">

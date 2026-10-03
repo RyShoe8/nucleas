@@ -6,6 +6,7 @@ import { useWindowManager } from '@/hooks/os/useWindowManager';
 
 type Overview = { id: string; jobId?: string; rootUrl: string; status: 'queued' | 'dispatching' | 'crawling' | 'complete' | 'failed'; progress?: string; error?: string; pageCount: number; edgeCount: number; issueCount: number; clusters: { templateKey: string; name?: string; count: number; sampleRoutes: string[] }[]; summary: { orphanPages?: number; issuePages?: number; errorPages?: number; templates?: number }; propertyDescription: string; primaryKeywords: string[]; demographicTarget: string; competitors: { name: string; domain: string; reason: string }[]; analysisSources: string[]; analysisModel: string | null; createdAt: string; completedAt?: string };
 type Page = { id: string; url: string; routePattern: string; statusCode?: number; title?: string; description?: string; canonical?: string; robots?: string; language?: string; h1?: string[]; h2?: string[]; h3?: string[]; wordCount?: number; internalLinks?: string[]; externalLinks?: string[]; incomingLinks?: number; imageCount?: number; imagesMissingAlt?: number; structuredDataTypes?: string[]; templateKey?: string; issues?: string[]; indexable?: boolean; datePublished?: string; dateModified?: string; renderMode?: 'html' | 'rendered'; renderedText?: string };
+type TemplatePages = { pages: Page[]; total: number; loading: boolean; error?: string };
 
 export default function PropertyOverviewButton({ companyId, companyName, canManage }: { companyId: string; companyName: string; canManage: boolean }) {
   const wm = useWindowManager();
@@ -23,6 +24,8 @@ function PropertyOverviewModal({ companyId, companyName, canManage, onClose, onS
   const [tab, setTab] = useState<'summary' | 'pages' | 'templates' | 'links'>('summary');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<Page | null>(null);
+  const [expandedTemplates, setExpandedTemplates] = useState<Set<string>>(() => new Set());
+  const [templatePages, setTemplatePages] = useState<Record<string, TemplatePages>>({});
   const load = useCallback(async (offset = 0) => {
     const response = await fetch(`/api/os/companies/${companyId}/property-overview?offset=${offset}`, { cache: 'no-store' });
     const data = await response.json().catch(() => ({})) as { overview?: Overview | null; pages?: Page[]; pageTotal?: number; error?: string };
@@ -44,7 +47,23 @@ function PropertyOverviewModal({ companyId, companyName, canManage, onClose, onS
     const data = await response.json().catch(() => ({})) as { overview?: Overview; jobId?: string; error?: string };
     setBusy(false);
     if (!response.ok || !data.overview) return setError(data.error ?? `Failed (${response.status})`);
-    setOverview(data.overview); setPages([]); setPageTotal(0); onStarted();
+    setOverview(data.overview); setPages([]); setPageTotal(0); setExpandedTemplates(new Set()); setTemplatePages({}); onStarted();
+  }
+  const loadTemplatePages = useCallback(async (templateKey: string, offset = 0) => {
+    setTemplatePages((current) => ({ ...current, [templateKey]: { pages: offset ? current[templateKey]?.pages ?? [] : [], total: current[templateKey]?.total ?? 0, loading: true } }));
+    const response = await fetch(`/api/os/companies/${companyId}/property-overview?templateKey=${encodeURIComponent(templateKey)}&offset=${offset}`, { cache: 'no-store' });
+    const data = await response.json().catch(() => ({})) as { pages?: Page[]; pageTotal?: number; error?: string };
+    setTemplatePages((current) => {
+      const existing = offset ? current[templateKey]?.pages ?? [] : [];
+      return { ...current, [templateKey]: response.ok
+        ? { pages: [...existing, ...(data.pages ?? []).filter((page) => !existing.some((item) => item.id === page.id))], total: data.pageTotal ?? 0, loading: false }
+        : { pages: existing, total: current[templateKey]?.total ?? 0, loading: false, error: data.error ?? `Failed (${response.status})` } };
+    });
+  }, [companyId]);
+  function toggleTemplate(templateKey: string) {
+    const opening = !expandedTemplates.has(templateKey);
+    setExpandedTemplates((current) => { const next = new Set(current); if (opening) next.add(templateKey); else next.delete(templateKey); return next; });
+    if (opening && !templatePages[templateKey]) void loadTemplatePages(templateKey);
   }
   const filtered = useMemo(() => pages.filter((page) => `${page.url} ${page.title ?? ''} ${(page.issues ?? []).join(' ')}`.toLowerCase().includes(query.toLowerCase())), [pages, query]);
   const issuePages = overview?.summary.issuePages ?? pages.filter((page) => page.issues?.length).length;
@@ -66,7 +85,23 @@ function PropertyOverviewModal({ companyId, companyName, canManage, onClose, onS
         <div className="ui-card p-4"><h3 className="ui-kicker">Crawl coverage</h3><dl className="mt-3 grid gap-3 text-sm md:grid-cols-2"><div><dt className="text-text-secondary">Website</dt><dd><a href={overview.rootUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline">{overview.rootUrl}</a></dd></div><div><dt className="text-text-secondary">Completed</dt><dd>{overview.completedAt ? new Date(overview.completedAt).toLocaleString() : '—'}</dd></div><div><dt className="text-text-secondary">Pages with findings</dt><dd>{issuePages} of {overview.pageCount}</dd></div><div><dt className="text-text-secondary">Error pages</dt><dd>{overview.summary.errorPages ?? 0}</dd></div></dl></div>
       </div> : null}
       {overview?.status === 'complete' && tab === 'pages' ? <div className="space-y-3"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter loaded URLs, titles, or issues…" className="ui-control w-full" /><p className="text-xs text-text-secondary">Showing {pages.length.toLocaleString()} of {pageTotal.toLocaleString()} archived pages</p><div className="max-h-[55vh] space-y-2 overflow-y-auto">{filtered.map((page) => <button type="button" key={page.id} onClick={() => setSelected(page)} className="ui-card block w-full p-3 text-left hover:border-primary/50"><div className="flex gap-2"><span className={`text-xs font-semibold ${(page.statusCode ?? 0) >= 400 ? 'text-red-300' : 'text-emerald-300'}`}>{page.statusCode ?? 'ERR'}</span><span className="min-w-0 flex-1 truncate text-sm font-medium">{page.title || page.url}</span><span className="text-xs text-text-secondary">{page.wordCount ?? 0} words · {page.incomingLinks ?? 0} in</span></div><p className="mt-1 truncate text-xs text-text-secondary">{page.url}</p>{page.issues?.length ? <p className="mt-2 text-xs text-amber-300">{page.issues.join(' · ')}</p> : null}</button>)}</div>{pages.length < pageTotal ? <button type="button" className="ui-button w-full" onClick={() => void load(pages.length)}>Load 200 more pages</button> : null}</div> : null}
-      {overview?.status === 'complete' && tab === 'templates' ? <div className="space-y-2">{overview.clusters.map((cluster, index) => <div key={cluster.templateKey} className="ui-card p-4"><div className="flex items-center justify-between"><h3 className="font-medium">{cluster.name || `Template ${index + 1}`}</h3><span className="text-sm text-text-secondary">{cluster.count} pages</span></div><div className="mt-2 flex flex-wrap gap-1.5">{cluster.sampleRoutes.map((route) => <span key={route} className="rounded border border-border bg-background px-2 py-1 text-xs">{route}</span>)}</div></div>)}</div> : null}
+      {overview?.status === 'complete' && tab === 'templates' ? <div className="max-h-[60vh] space-y-2 overflow-y-auto">{overview.clusters.map((cluster, index) => {
+        const expanded = expandedTemplates.has(cluster.templateKey); const batch = templatePages[cluster.templateKey];
+        return <section key={cluster.templateKey} className="ui-card overflow-hidden">
+          <button type="button" onClick={() => toggleTemplate(cluster.templateKey)} aria-expanded={expanded} className="flex w-full items-center gap-3 p-4 text-left hover:bg-background-elevated/40">
+            <span aria-hidden className={`text-xs text-text-secondary transition-transform ${expanded ? 'rotate-90' : ''}`}>▶</span>
+            <div className="min-w-0 flex-1"><h3 className="font-medium">{cluster.name || `Template ${index + 1}`}</h3><div className="mt-2 flex flex-wrap gap-1.5">{cluster.sampleRoutes.map((route) => <span key={route} className="rounded border border-border bg-background px-2 py-1 text-xs">{route}</span>)}</div></div>
+            <span className="whitespace-nowrap text-sm text-text-secondary">{cluster.count.toLocaleString()} pages</span>
+          </button>
+          {expanded ? <div className="border-t border-border bg-background/30 p-3">
+            {batch?.error ? <p className="rounded border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">{batch.error}</p> : null}
+            {!batch || (batch.loading && !batch.pages.length) ? <p className="p-3 text-sm text-text-secondary">Loading pages…</p> : null}
+            {batch && !batch.loading && !batch.error && !batch.pages.length ? <p className="p-3 text-sm text-text-secondary">No archived pages were found for this template.</p> : null}
+            {batch?.pages.length ? <div className="divide-y divide-border overflow-hidden rounded-lg border border-border">{batch.pages.map((page) => <a key={page.id} href={page.url} target="_blank" rel="noreferrer" className="grid gap-1 bg-background-elevated/30 p-3 hover:bg-background-elevated/70 md:grid-cols-[minmax(0,1fr)_auto]"><div className="min-w-0"><p className="truncate text-sm font-medium">{page.title || page.routePattern}</p><p className="truncate text-xs text-text-secondary">{page.url}</p></div><span className={`self-center text-xs font-semibold ${(page.statusCode ?? 0) >= 400 ? 'text-red-300' : 'text-emerald-300'}`}>{page.statusCode ?? 'ERR'}</span></a>)}</div> : null}
+            {batch && batch.pages.length < batch.total ? <button type="button" disabled={batch.loading} onClick={() => void loadTemplatePages(cluster.templateKey, batch.pages.length)} className="ui-button mt-3 w-full">{batch.loading ? 'Loading…' : `Load more · ${batch.pages.length.toLocaleString()} of ${batch.total.toLocaleString()}`}</button> : null}
+          </div> : null}
+        </section>;
+      })}</div> : null}
       {overview?.status === 'complete' && tab === 'links' ? <div className="max-h-[60vh] space-y-2 overflow-y-auto">{pages.map((page) => <details key={page.id} className="ui-card p-3"><summary className="cursor-pointer text-sm font-medium">{page.routePattern} <span className="text-text-secondary">· {(page.internalLinks ?? []).length} outgoing · {page.incomingLinks ?? 0} incoming</span></summary><ul className="mt-2 space-y-1 pl-4 text-xs text-text-secondary">{(page.internalLinks ?? []).map((link) => <li key={link} className="truncate">→ {link}</li>)}</ul></details>)}</div> : null}
     </div>
     {selected ? <PageDetail page={selected} onClose={() => setSelected(null)} /> : null}

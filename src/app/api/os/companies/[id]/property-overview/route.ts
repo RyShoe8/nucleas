@@ -21,19 +21,25 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (!profile) return NextResponse.json({ error: 'Company not found.' }, { status: 404 });
   const overview = await PropertyOverview.findOne({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(id) }).sort({ createdAt: -1 }).lean<Record<string, unknown>>();
   if (!overview) return NextResponse.json({ overview: null, pages: [] });
-  const requestedOffset = Number(new URL(request.url).searchParams.get('offset') ?? 0);
+  const searchParams = new URL(request.url).searchParams;
+  const requestedOffset = Number(searchParams.get('offset') ?? 0);
   const offset = Number.isInteger(requestedOffset) ? Math.max(0, Math.min(requestedOffset, 1_000_000)) : 0;
-  const pageSize = 200;
+  const requestedTemplateKey = searchParams.get('templateKey')?.trim() ?? '';
+  if (requestedTemplateKey.length > 100) return NextResponse.json({ error: 'Invalid template key.' }, { status: 400 });
+  const pageFilter: Record<string, unknown> = { overviewId: overview._id };
+  if (requestedTemplateKey === 'unclassified') pageFilter.$or = [{ templateKey: 'unclassified' }, { templateKey: { $exists: false } }, { templateKey: null }];
+  else if (requestedTemplateKey) pageFilter.templateKey = requestedTemplateKey;
+  const pageSize = requestedTemplateKey ? 250 : 200;
   // URL ordering is covered by the { overviewId, url } index, so MongoDB never materializes and
   // sorts the large archived snapshots. Pagination keeps complete-site reports below response limits.
   const [pages, pageTotal] = await Promise.all([
-    PropertyPage.find({ overviewId: overview._id })
-      .select('-htmlSnapshot -renderedText -organizationId -companyId -__v')
+    PropertyPage.find(pageFilter)
+      .select(requestedTemplateKey ? 'url title statusCode routePattern templateKey issues wordCount' : '-htmlSnapshot -renderedText -organizationId -companyId -__v')
       .sort({ url: 1 })
       .skip(offset)
       .limit(pageSize)
       .lean(),
-    PropertyPage.countDocuments({ overviewId: overview._id }),
+    PropertyPage.countDocuments(pageFilter),
   ]);
   return NextResponse.json({ overview: view(overview), pageTotal, pages: pages.map((page) => ({ ...page, id: String(page._id), _id: undefined, overviewId: undefined })) }, { headers: { 'Cache-Control': 'no-store' } });
 }
