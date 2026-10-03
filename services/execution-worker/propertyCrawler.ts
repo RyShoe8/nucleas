@@ -6,6 +6,7 @@ import { analyzeProperty } from './propertyAnalyzer';
 type CrawlRequest = { requestId: string; rootUrl: string; callbackUrl: string; maxPages?: number; browserWorker?: { url: string; secret: string } };
 type CrawlEvidence = { url: string; title: string; description: string; h1: string[]; routePattern: string };
 const MAX_HTML = 700_000; const TIMEOUT = 30_000; const DELAY_MS = 250;
+const HEARTBEAT_MS = 60_000;
 const SKIP = /\.(?:avif|bmp|css|csv|docx?|gif|ico|jpe?g|js|json|mp3|mp4|pdf|png|pptx?|svg|webp|xlsx?|xml|zip)$/i;
 const DYNAMIC = /^(?:\d+|[0-9a-f]{12,}|[0-9a-f]{8}-[0-9a-f-]{27,}|(?=.*\d)[\w-]{16,})$/i;
 
@@ -76,6 +77,14 @@ export function extractPage(html: string, url: URL, statusCode: number, contentT
   return { url: url.toString(), routePattern: routePattern(url), statusCode, contentType, title, description, canonical, robots, language, h1, h2, h3, metaKeywords: meta('keywords').split(',').map((item) => item.trim()).filter(Boolean), wordCount, internalLinks, externalLinks, imageCount: images.length, imagesMissingAlt, structuredDataTypes, ...(published && !Number.isNaN(Date.parse(published)) ? { datePublished: new Date(published).toISOString() } : {}), ...(modified && !Number.isNaN(Date.parse(modified)) ? { dateModified: new Date(modified).toISOString() } : {}), indexable: !/noindex/i.test(robots), templateKey: crypto.createHash('sha1').update(templateIdentity(html, url)).digest('hex').slice(0, 12), issues, fetchedAt: new Date().toISOString(), htmlSnapshot: html, renderMode: 'html' as const };
 }
 
+/** Raw page bodies are useful while extracting evidence, but are too large for durable crawl storage. */
+export function archivedPage<T extends { htmlSnapshot: string; renderedText?: string }>(page: T): Omit<T, 'htmlSnapshot' | 'renderedText'> {
+  const seoEvidence = { ...page } as Partial<T>;
+  delete seoEvidence.htmlSnapshot;
+  delete seoEvidence.renderedText;
+  return seoEvidence as Omit<T, 'htmlSnapshot' | 'renderedText'>;
+}
+
 async function enrichRendered(request: CrawlRequest, page: ReturnType<typeof extractPage>) {
   if (!request.browserWorker || (page.wordCount >= 100 && !/__NEXT_DATA__|data-reactroot|ng-app|id=["']root["']/i.test(page.htmlSnapshot))) return page;
   try {
@@ -103,20 +112,32 @@ async function discoverSitemaps(root: URL) {
 }
 
 export async function runPropertyCrawl(request: CrawlRequest): Promise<void> {
+  let processed = 0; let discoveredCount = 1; let heartbeatBusy = false;
+  const heartbeat = setInterval(() => {
+    if (heartbeatBusy) return;
+    heartbeatBusy = true;
+    void callback(request, { action: 'heartbeat', processed, discovered: Math.max(1, discoveredCount) })
+      .catch((error) => console.warn(`[property-crawl:${request.requestId}] heartbeat failed`, error))
+      .finally(() => { heartbeatBusy = false; });
+  }, HEARTBEAT_MS);
+  heartbeat.unref?.();
   try {
     const root = await safeUrl(request.rootUrl); const seeds = [root.toString(), ...(await discoverSitemaps(root))]; const queue = request.maxPages ? [...new Set(seeds)].slice(0, request.maxPages) : [...new Set(seeds)]; const queued = new Set(queue); const visited = new Set<string>(); const evidence: CrawlEvidence[] = [];
     const hasCapacity = () => request.maxPages === undefined || visited.size < request.maxPages;
     const discovered = () => request.maxPages === undefined ? visited.size + queue.length : Math.min(request.maxPages, visited.size + queue.length);
+    discoveredCount = Math.max(1, queue.length);
     await callback(request, { action: 'progress', processed: 0, discovered: Math.max(1, queue.length), message: `Discovered ${queue.length} pages; beginning accuracy-first crawl…` });
     while (queue.length && hasCapacity()) {
       const target = queue.shift()!; if (visited.has(target)) continue; visited.add(target);
+      processed = visited.size; discoveredCount = discovered();
       try {
         const response = await fetchSafe(target); const contentType = response.headers.get('content-type') ?? ''; const finalUrl = new URL(response.url || target); if (!sameSite(finalUrl.hostname, root.hostname)) continue; const html = contentType.includes('text/html') ? await readLimited(response, MAX_HTML) : ''; const page = await enrichRendered(request, extractPage(html, finalUrl, response.status, contentType));
         evidence.push({ url: page.url, title: page.title, description: page.description, h1: page.h1, routePattern: page.routePattern });
         for (const link of page.internalLinks) if (!queued.has(link) && !visited.has(link) && (request.maxPages === undefined || queue.length + visited.size < request.maxPages)) { queued.add(link); queue.push(link); }
-        await callback(request, { action: 'page', processed: visited.size, discovered: discovered(), page });
+        discoveredCount = discovered();
+        await callback(request, { action: 'page', processed, discovered: discoveredCount, page: archivedPage(page) });
       } catch (error) {
-        const url = new URL(target); await callback(request, { action: 'page', processed: visited.size, discovered: discovered(), page: { url: target, routePattern: routePattern(url), h1: [], h2: [], h3: [], metaKeywords: [], wordCount: 0, internalLinks: [], externalLinks: [], imageCount: 0, imagesMissingAlt: 0, structuredDataTypes: [], indexable: false, issues: [`Fetch failed: ${error instanceof Error ? error.message : 'Unknown error'}`], fetchedAt: new Date().toISOString(), htmlSnapshot: '', renderMode: 'html' } });
+        const url = new URL(target); await callback(request, { action: 'page', processed, discovered: discoveredCount, page: { url: target, routePattern: routePattern(url), h1: [], h2: [], h3: [], metaKeywords: [], wordCount: 0, internalLinks: [], externalLinks: [], imageCount: 0, imagesMissingAlt: 0, structuredDataTypes: [], indexable: false, issues: [`Fetch failed: ${error instanceof Error ? error.message : 'Unknown error'}`], fetchedAt: new Date().toISOString(), renderMode: 'html' } });
       }
       await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
     }
@@ -124,6 +145,13 @@ export async function runPropertyCrawl(request: CrawlRequest): Promise<void> {
     await callback(request, { action: 'analysis', analysis: await analyzeProperty(evidence, root.toString()) });
     await callback(request, { action: 'complete' });
   } catch (error) {
-    await callback(request, { action: 'failed', error: error instanceof Error ? error.message.slice(0, 1500) : 'Property crawl failed.' }).catch(() => undefined);
+    const message = error instanceof Error ? error.message.slice(0, 1500) : 'Property crawl failed.';
+    console.error(`[property-crawl:${request.requestId}] ${message}`);
+    await callback(request, { action: 'failed', error: message }).catch((callbackError) => {
+      console.error(`[property-crawl:${request.requestId}] failure callback failed`, callbackError);
+    });
+    throw error;
+  } finally {
+    clearInterval(heartbeat);
   }
 }

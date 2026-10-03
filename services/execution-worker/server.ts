@@ -197,7 +197,9 @@ export const server = createServer(async (req, res) => {
         res.statusCode = 400; res.end(JSON.stringify({ error: 'Invalid property crawl request.' })); return;
       }
       propertyCrawlBusy = true;
-      void runPropertyCrawl({ requestId: input.requestId, rootUrl: input.rootUrl, callbackUrl: input.callbackUrl, ...(maxPages === undefined ? {} : { maxPages }), ...(browserWorker ? { browserWorker: { url: String(browserWorker.url), secret: String(browserWorker.secret) } } : {}) }).finally(() => { propertyCrawlBusy = false; });
+      void runPropertyCrawl({ requestId: input.requestId, rootUrl: input.rootUrl, callbackUrl: input.callbackUrl, ...(maxPages === undefined ? {} : { maxPages }), ...(browserWorker ? { browserWorker: { url: String(browserWorker.url), secret: String(browserWorker.secret) } } : {}) })
+        .catch((error) => console.error(`[property-crawl:${String(input.requestId)}] stopped`, error))
+        .finally(() => { propertyCrawlBusy = false; });
       res.statusCode = 202; res.end(JSON.stringify({ accepted: true, requestId: input.requestId })); return;
     }
     if (req.method !== 'POST' || req.url !== '/v1/execute') { res.statusCode = 404; res.end(JSON.stringify({ error: 'Not found.' })); return; }

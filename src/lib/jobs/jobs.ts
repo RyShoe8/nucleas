@@ -13,7 +13,7 @@ import { seoBriefConfigSchema, seoBriefDesign } from './templates/seoBrief';
 import { approvedSeoBrief, saveGeneratedSeoBrief } from './seoBriefs';
 import Project from '@/lib/models/Project';
 import { bulkDecideRunOpportunities, listLinkOpportunities, type LinkOpportunityView } from './linkOpportunities';
-import { PropertyOverview } from '@/lib/models/PropertyOverview';
+import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import { PROPERTY_OVERVIEW_QUEUE_OWNER } from '@/lib/propertyOverview/job';
 import { initialRunLease } from './runLifecycle';
 
@@ -483,6 +483,16 @@ export async function sweepJobs(now = new Date()): Promise<{ runsFailed: number;
       { leaseExpiresAt: { $exists: false }, updatedAt: { $lt: cutoff } },
     ],
   }).select('_id jobId dryRun propertyOverviewId leaseOwner attempt').lean<{ _id: Types.ObjectId; jobId: Types.ObjectId; dryRun: boolean; propertyOverviewId?: Types.ObjectId; leaseOwner?: string; attempt?: number }[]>();
+  const external = stale.filter((run) => run.propertyOverviewId);
+  if (external.length) {
+    // Partial crawl pages are not a usable report. Delete them before status writes so a crawl that
+    // exhausted a storage quota can recover the database instead of leaving every write blocked.
+    await PropertyPage.deleteMany({ overviewId: { $in: external.map((run) => run.propertyOverviewId!) } });
+    await PropertyPage.updateMany(
+      { $or: [{ htmlSnapshot: { $exists: true } }, { renderedText: { $exists: true } }] },
+      { $unset: { htmlSnapshot: '', renderedText: '' } }
+    );
+  }
   const runs = stale.length
     ? await JobRun.updateMany(
         { _id: { $in: stale.map((run) => run._id) }, status: 'running' },
@@ -491,7 +501,6 @@ export async function sweepJobs(now = new Date()): Promise<{ runsFailed: number;
     : { modifiedCount: 0 };
   const failedSamples = stale.filter((run) => run.dryRun).map((run) => run.jobId);
   if (failedSamples.length) await Job.updateMany({ _id: { $in: failedSamples }, status: 'testing' }, { $set: { status: 'proposed' } });
-  const external = stale.filter((run) => run.propertyOverviewId);
   if (external.length) {
     await Promise.all([
       Job.updateMany({ _id: { $in: external.map((run) => run.jobId) }, status: 'active' }, { $set: { status: 'failed', error: 'The Company Overview stopped reporting progress and timed out.' } }),

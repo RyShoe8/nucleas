@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useOsCompanies } from './CompaniesModule';
-import JobCard, { JobStatusBadge, jobIsBusy, scheduleLabel, type JobView } from './jobs/JobCard';
+import JobCard, { JobStatusBadge, jobIsBusy, jobListProgress, scheduleLabel, type JobView } from './jobs/JobCard';
 
 type Group = { key: string; label: string; test: (j: JobView) => boolean };
 
@@ -256,8 +256,10 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                                 {g.label} · {items.length}
                             </h3>
                             <ul className="space-y-2">
-                                {items.map((j) =>
-                                    open === j.id ? (
+                                {items.map((j) => {
+                                    const progress = jobListProgress(j);
+                                    const progressTone = progress.tone === 'active' ? 'bg-primary' : progress.tone === 'waiting' ? 'bg-amber-400' : progress.tone === 'complete' ? 'bg-emerald-400' : progress.tone === 'failed' ? 'bg-red-400' : 'bg-text-secondary';
+                                    return open === j.id ? (
                                         <li key={j.id}>
                                             <JobCard job={j} onChange={replace} />
                                             <button type="button" className="mt-1 text-[11px] text-text-secondary underline" onClick={() => setOpen(null)}>
@@ -269,20 +271,31 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                                             <button
                                                 type="button"
                                                 onClick={() => setOpen(j.id)}
-                                                className="ui-card-interactive w-full px-3 py-2.5 flex items-center gap-2 text-left"
+                                                className="ui-card-interactive w-full px-3 py-2.5 text-left"
                                             >
-                                                <span className="min-w-0 flex-1">
-                                                    <span className="block text-sm truncate">{j.design?.title ?? j.request}</span>
-                                                    <span className="block text-[11px] text-text-secondary truncate">
-                                                        {j.companyName}
-                                                        {j.design ? ` · ${j.design.category} · ${scheduleLabel(j.design.schedule)}` : ''}
+                                                <span className="flex items-center gap-2">
+                                                    <span className="min-w-0 flex-1">
+                                                        <span className="block text-sm truncate">{j.design?.title ?? j.request}</span>
+                                                        <span className="block text-[11px] text-text-secondary truncate">
+                                                            {j.companyName}
+                                                            {j.design ? ` · ${j.design.category} · ${scheduleLabel(j.design.schedule)}` : ''}
+                                                        </span>
+                                                    </span>
+                                                    <JobStatusBadge status={j.status} />
+                                                </span>
+                                                <span className="mt-2 block">
+                                                    <span className="mb-1 flex items-center justify-between gap-3 text-[10px] text-text-secondary">
+                                                        <span className="truncate">{progress.label}</span>
+                                                        <span className="tabular-nums">{progress.percent}%</span>
+                                                    </span>
+                                                    <span className="block h-1.5 overflow-hidden rounded-full bg-background-elevated" role="progressbar" aria-label={`${j.design?.title ?? j.request} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent}>
+                                                        <span className={`block h-full rounded-full transition-[width] duration-700 ease-out ${progressTone}`} style={{ width: `${progress.percent}%` }} />
                                                     </span>
                                                 </span>
-                                                <JobStatusBadge status={j.status} />
                                             </button>
                                         </li>
-                                    )
-                                )}
+                                    );
+                                })}
                             </ul>
                         </section>
                     );

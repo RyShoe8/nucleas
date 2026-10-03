@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractPage, routePattern, templateIdentity } from './propertyCrawler';
+import { archivedPage, extractPage, routePattern, templateIdentity } from './propertyCrawler';
 
 describe('VPS property crawler', () => {
   it('extracts auditable SEO and link data from a page', () => {
@@ -23,5 +23,14 @@ describe('VPS property crawler', () => {
       .toBe(templateIdentity('<main><section><h1>Second game</h1></section></main>', new URL('https://playbound.club/games/second-game')));
     expect(templateIdentity('<main><h1>Controls</h1></main>', new URL('https://playbound.club/games/first-game/controls')))
       .not.toBe(templateIdentity('<main><h1>Game</h1></main>', new URL('https://playbound.club/games/first-game')));
+  });
+
+  it('stores extracted SEO evidence without duplicating raw page bodies', () => {
+    const extracted = extractPage('<html><body><h1>Stored evidence</h1></body></html>', new URL('https://site.test/page'), 200, 'text/html');
+    const archived = archivedPage({ ...extracted, renderedText: 'Rendered body text' });
+
+    expect(archived).not.toHaveProperty('htmlSnapshot');
+    expect(archived).not.toHaveProperty('renderedText');
+    expect(archived.h1).toEqual(['Stored evidence']);
   });
 });

@@ -26,7 +26,7 @@ import { Job, JobRun } from '@/lib/models/Job';
 import { LinkOpportunity } from '@/lib/models/LinkOpportunity';
 import Project from '@/lib/models/Project';
 import { SeoBrief } from '@/lib/models/SeoBrief';
-import { PropertyOverview } from '@/lib/models/PropertyOverview';
+import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, runDesign, runNow, sweepJobs } from './jobs';
 import type { JobDesign } from './schema';
@@ -86,7 +86,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await Promise.all([Client.deleteMany({}), User.deleteMany({}), Employee.collection.deleteMany({}), Project.deleteMany({}), SeoBrief.deleteMany({}), Job.deleteMany({}), JobRun.deleteMany({}), LinkOpportunity.deleteMany({}), PropertyOverview.deleteMany({})]);
+  await Promise.all([Client.deleteMany({}), User.deleteMany({}), Employee.collection.deleteMany({}), Project.deleteMany({}), SeoBrief.deleteMany({}), Job.deleteMany({}), JobRun.deleteMany({}), LinkOpportunity.deleteMany({}), PropertyOverview.deleteMany({}), PropertyPage.deleteMany({})]);
   const user = await User.create({ email: 'owner@example.invalid', password: 'synthetic-pass', organizationId: String(org) });
   // Runs act as the job's creator, resolved from their employee record.
   await Employee.collection.insertOne({ userId: user._id, organizationId: String(org), role: 'Administrator', name: 'Owner', email: 'owner@example.invalid' });
@@ -366,6 +366,19 @@ describe('real runs', () => {
     expect(await sweepJobs()).toEqual({ runsFailed: 1, designsFailed: 1 });
     expect(await Job.findById(sampleJob.insertedId).lean()).toMatchObject({ status: 'proposed' });
     expect(await JobRun.findOne({ jobId: sampleJob.insertedId }).lean()).toMatchObject({ status: 'failed', error: expect.stringContaining('stopped reporting progress'), progressState: { percent: 100 } });
+  });
+
+  it('removes oversized partial crawl data before failing an expired Company Overview', async () => {
+    const companyObjectId = new Types.ObjectId(companyId);
+    const job = await Job.create({ organizationId: org, companyId: companyObjectId, createdByUserId: new Types.ObjectId(admin.userId), status: 'active', request: 'Generate a Company Overview report.', updatedAt: new Date(), createdAt: new Date() });
+    const overview = await PropertyOverview.create({ organizationId: org, companyId: companyObjectId, jobId: job._id, rootUrl: 'https://playbound.club/', status: 'crawling' });
+    const run = await JobRun.create({ organizationId: org, jobId: job._id, companyId: companyObjectId, propertyOverviewId: overview._id, status: 'running', dryRun: false, startedAt: new Date(), ...initialRunLease('vps:property-overview'), leaseExpiresAt: new Date(Date.now() - 1) });
+    await PropertyOverview.updateOne({ _id: overview._id }, { $set: { runId: run._id } });
+    await PropertyPage.create({ overviewId: overview._id, organizationId: org, companyId: companyObjectId, url: 'https://playbound.club/page', routePattern: '/page', fetchedAt: new Date(), htmlSnapshot: '<html>large snapshot</html>' });
+
+    expect(await sweepJobs()).toMatchObject({ runsFailed: 1 });
+    expect(await PropertyPage.countDocuments({ overviewId: overview._id })).toBe(0);
+    expect(await PropertyOverview.findById(overview._id).lean()).toMatchObject({ status: 'failed', error: expect.stringContaining('stopped reporting progress') });
   });
 
   it('uses the explicit lease instead of unrelated document updates when reconciling runs', async () => {

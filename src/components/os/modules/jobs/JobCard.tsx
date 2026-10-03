@@ -133,6 +133,33 @@ export function jobIsBusy(job: JobView): boolean {
     return job.status === 'designing' || job.runs.some((r) => r.status === 'running');
 }
 
+export interface JobListProgress {
+    label: string;
+    percent: number;
+    tone: 'active' | 'waiting' | 'complete' | 'failed' | 'muted';
+}
+
+/** Compact, deterministic status for collapsed rows in the Jobs window. */
+export function jobListProgress(job: JobView): JobListProgress {
+    const running = job.runs.find((run) => run.status === 'running');
+    if (running) return { label: running.progressState.label, percent: running.progressState.percent, tone: 'active' };
+
+    const review = job.runs.find((run) => run.status === 'needs_review');
+    if (review) return { label: review.progressState.label || 'Ready for review', percent: 100, tone: 'waiting' };
+
+    if (job.status === 'designing') return { label: 'Designing job', percent: 10, tone: 'active' };
+    if (job.status === 'needs_answers') return { label: 'Waiting for your answers', percent: 20, tone: 'waiting' };
+    if (job.status === 'proposed') return { label: 'Waiting for approval', percent: 25, tone: 'waiting' };
+    if (job.status === 'testing') return { label: 'Preparing dry run', percent: 5, tone: 'active' };
+    if (job.status === 'ready') return { label: 'Ready to run', percent: 0, tone: 'complete' };
+    if (job.status === 'active') return { label: job.nextRunAt ? `Next run ${new Date(job.nextRunAt).toLocaleString()}` : 'Waiting for next run', percent: 0, tone: 'complete' };
+    if (job.status === 'paused') return { label: 'Paused', percent: 0, tone: 'muted' };
+    if (job.status === 'done') return { label: 'Complete', percent: 100, tone: 'complete' };
+    if (job.status === 'failed') return { label: job.error || job.runs[0]?.error || 'Failed', percent: 100, tone: 'failed' };
+    if (job.status === 'rejected') return { label: 'Rejected', percent: 100, tone: 'muted' };
+    return { label: 'Archived', percent: 100, tone: 'muted' };
+}
+
 export function scheduleLabel(s: JobDesign['schedule'] | undefined): string {
     if (!s || s.kind === 'once') return 'Once';
     const at = s.time ? ` at ${s.time}` : '';

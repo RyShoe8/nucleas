@@ -112,6 +112,10 @@ export async function updatePropertyOverviewJob(input: { jobId?: Types.ObjectId;
   if (input.jobId) await Job.updateOne({ _id: input.jobId, status: 'active' }, { $set: { updatedAt: now } });
 }
 
+export async function heartbeatPropertyOverviewJob(runId?: Types.ObjectId): Promise<void> {
+  if (runId) await heartbeatJobRun(runId, PROPERTY_OVERVIEW_OWNER);
+}
+
 export async function completePropertyOverviewJob(input: { jobId?: Types.ObjectId; runId?: Types.ObjectId; rootUrl: string; pageCount: number; edgeCount: number; issueCount: number; templates: number; orphanPages: number; propertyDescription?: string; primaryKeywords?: string[]; demographicTarget?: string; competitors?: { name: string; domain: string; reason: string }[] }): Promise<void> {
   if (!input.runId || !input.jobId) return;
   const now = new Date();

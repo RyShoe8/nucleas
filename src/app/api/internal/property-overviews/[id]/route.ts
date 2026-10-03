@@ -4,7 +4,7 @@ import { Types } from 'mongoose';
 import { z } from 'zod';
 import connectDB from '@/lib/db/mongodb';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
-import { completePropertyOverviewJob, failPropertyOverviewJob, startPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
+import { completePropertyOverviewJob, failPropertyOverviewJob, heartbeatPropertyOverviewJob, startPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
 import { processPropertyOverviewQueue } from '@/lib/propertyOverview/crawler';
 
 export const dynamic = 'force-dynamic';
@@ -18,10 +18,11 @@ const pageSchema = z.object({
     url: z.string().url().max(4_000), routePattern: z.string().max(2_000), statusCode: z.number().int().min(0).max(599).optional(), contentType: z.string().max(300).optional(), title: short.optional(), description: short.optional(), canonical: z.string().max(4_000).optional(), robots: z.string().max(500).optional(), language: z.string().max(100).optional(),
     h1: z.array(short).max(50).default([]), h2: z.array(short).max(100).default([]), h3: z.array(short).max(150).default([]), metaKeywords: z.array(short).max(100).default([]), wordCount: z.number().int().min(0).max(10_000_000).default(0),
     internalLinks: z.array(z.string().url().max(4_000)).max(5_000).default([]), externalLinks: z.array(z.string().url().max(4_000)).max(5_000).default([]), imageCount: z.number().int().min(0).max(1_000_000).default(0), imagesMissingAlt: z.number().int().min(0).max(1_000_000).default(0), structuredDataTypes: z.array(short).max(100).default([]),
-    datePublished: z.string().datetime().optional(), dateModified: z.string().datetime().optional(), indexable: z.boolean().default(true), templateKey: z.string().max(100).optional(), issues: z.array(short).max(100).default([]), fetchedAt: z.string().datetime(), htmlSnapshot: z.string().max(750_000).default(''), renderMode: z.enum(['html', 'rendered']).default('html'), renderedText: z.string().max(50_000).optional(),
+    datePublished: z.string().datetime().optional(), dateModified: z.string().datetime().optional(), indexable: z.boolean().default(true), templateKey: z.string().max(100).optional(), issues: z.array(short).max(100).default([]), fetchedAt: z.string().datetime(), renderMode: z.enum(['html', 'rendered']).default('html'),
   }).strict(),
 }).strict();
 const progressSchema = z.object({ action: z.literal('progress'), processed: z.number().int().min(0).max(1_000_000), discovered: z.number().int().min(1).max(1_000_000), message: z.string().max(300) }).strict();
+const heartbeatSchema = z.object({ action: z.literal('heartbeat'), processed: z.number().int().min(0).max(1_000_000), discovered: z.number().int().min(1).max(1_000_000) }).strict();
 const analysisSchema = z.object({
   action: z.literal('analysis'),
   analysis: z.object({
@@ -99,7 +100,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const parsed = pageSchema.safeParse(raw);
     if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Invalid page record.' }, { status: 400 });
     const { page } = parsed.data;
-    await PropertyPage.updateOne({ overviewId, url: page.url }, { $set: { ...page, datePublished: page.datePublished ? new Date(page.datePublished) : undefined, dateModified: page.dateModified ? new Date(page.dateModified) : undefined, organizationId: overview.organizationId, companyId: overview.companyId } }, { upsert: true });
+    await PropertyPage.updateOne(
+      { overviewId, url: page.url },
+      { $set: { ...page, datePublished: page.datePublished ? new Date(page.datePublished) : undefined, dateModified: page.dateModified ? new Date(page.dateModified) : undefined, organizationId: overview.organizationId, companyId: overview.companyId }, $unset: { htmlSnapshot: '', renderedText: '' } },
+      { upsert: true }
+    );
     const message = `Archived ${parsed.data.processed} of ${parsed.data.discovered} discovered pages…`;
     await PropertyOverview.updateOne({ _id: overviewId }, { $set: { status: 'crawling', progress: message, pageCount: parsed.data.processed } });
     await updatePropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, message, processed: parsed.data.processed, discovered: parsed.data.discovered });
@@ -107,6 +112,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const parsed = progressSchema.safeParse(raw); if (!parsed.success) return NextResponse.json({ error: 'Invalid progress update.' }, { status: 400 });
     await PropertyOverview.updateOne({ _id: overviewId }, { $set: { status: 'crawling', progress: parsed.data.message, pageCount: parsed.data.processed } });
     await updatePropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, message: parsed.data.message, processed: parsed.data.processed, discovered: parsed.data.discovered });
+  } else if (action === 'heartbeat') {
+    const parsed = heartbeatSchema.safeParse(raw); if (!parsed.success) return NextResponse.json({ error: 'Invalid heartbeat.' }, { status: 400 });
+    await heartbeatPropertyOverviewJob(overview.runId);
   } else if (action === 'analysis') {
     const parsed = analysisSchema.safeParse(raw); if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Invalid property analysis.' }, { status: 400 });
     const analysis = parsed.data.analysis;

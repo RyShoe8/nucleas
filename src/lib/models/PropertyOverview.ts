@@ -60,8 +60,8 @@ const pageSchema = new Schema(
     issues: { type: [String], default: [] },
     fetchedAt: { type: Date, required: true },
     renderMode: { type: String, enum: ['html', 'rendered'], default: 'html' },
+    /** Legacy fields are retained so retries can remove oversized snapshots from older crawls. */
     renderedText: { type: String, maxlength: 50_000 },
-    /** Compressed storage can be added later; this bounded snapshot makes every crawled page auditable now. */
     htmlSnapshot: { type: String, maxlength: 750_000 },
   },
   { timestamps: true }
