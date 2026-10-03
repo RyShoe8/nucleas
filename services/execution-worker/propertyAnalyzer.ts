@@ -165,12 +165,39 @@ async function competitorResearch(rootUrl: string, keywords: string[], signal?: 
   return [...new Map(results.map((item) => [item.url, item])).values()].slice(0, 20);
 }
 
+function analysisModelScore(model: string, configured: string): number {
+  const name = model.toLowerCase();
+  let score = model === configured ? 20 : 0;
+  if (/gemma[-_/ ]?4/.test(name)) score += 70;
+  else if (/qwen[-_/ ]?3/.test(name)) score += 60;
+  else if (/qwen2\.5.*coder|coder.*qwen2\.5/.test(name)) score += 50;
+  else if (/instruct|coder|chat/.test(name)) score += 30;
+  if (/\bvl\b|vision|thinking|reasoning|image|audio/.test(name.replace(/[-_/]/g, ' '))) score -= 150;
+  return score;
+}
+
+export function rankAnalysisModels(models: string[], configured: string): string[] {
+  return [...new Set([configured, ...models].filter(Boolean))]
+    .sort((a, b) => analysisModelScore(b, configured) - analysisModelScore(a, configured))
+    .slice(0, 3);
+}
+
+async function availableAnalysisModels(endpoint: string, token: string, configured: string, signal: AbortSignal): Promise<string[]> {
+  try {
+    const url = new URL(endpoint); url.pathname = url.pathname.replace(/\/(?:chat\/completions|responses)\/?$/, '/models'); url.search = ''; url.hash = '';
+    const response = await fetch(url, { redirect: 'error', signal, headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    if (!response.ok) return [configured];
+    const payload = await response.json() as { data?: { id?: unknown }[] };
+    return rankAnalysisModels((payload.data ?? []).flatMap((item) => typeof item.id === 'string' ? [item.id] : []), configured);
+  } catch { return [configured]; }
+}
+
 /** Grounded synthesis after crawling. Failure degrades to useful extracted metadata; it never discards a crawl. */
 export async function analyzeProperty(evidence: CrawlEvidence[], rootUrl: string, signal?: AbortSignal): Promise<PropertyAnalysis> {
   const baseline = buildBaselineAnalysis(evidence, rootUrl);
   const endpoint = process.env.NUCLEAS_AI_REMOTE_ENDPOINT?.trim(); const token = process.env.NUCLEAS_AI_REMOTE_BEARER_TOKEN?.trim(); const model = process.env.NUCLEAS_AI_REMOTE_MODEL?.trim();
   if (!endpoint || !token || !model || !evidence.length) return baseline;
-  const representative = selectRepresentativeEvidence(evidence).map((page) => ({ url: page.url, routePattern: page.routePattern, title: page.title.slice(0, 200), description: page.description.slice(0, 350), h1: page.h1.slice(0, 3), h2: (page.h2 ?? []).slice(0, 5), metaKeywords: (page.metaKeywords ?? []).slice(0, 10) }));
+  const representative = selectRepresentativeEvidence(evidence, 30).map((page) => ({ url: page.url, routePattern: page.routePattern, title: page.title.slice(0, 180), description: page.description.slice(0, 240), h1: page.h1.slice(0, 2), h2: (page.h2 ?? []).slice(0, 3), metaKeywords: (page.metaKeywords ?? []).slice(0, 6) }));
   const research = await competitorResearch(rootUrl, baseline.primaryKeywords, signal);
   const messages = [
     { role: 'system', content: 'You analyze a website from verified first-party crawl evidence plus labeled web-search results. Return one JSON object only. Identify the actual offering and audience; never infer children, education, healthcare, finance, geography, or another audience from a brand name. Keywords must be specific search topics, preferably meaningful 2-4 word phrases; reject generic isolated words. Identify at most 10 genuine direct product or search competitors only when a search result supports them. Do not list articles, directories, social networks, or unrelated sites merely because they rank. Every claim must be grounded in supplied evidence and sources may contain only exact supplied URLs.' },
@@ -179,12 +206,22 @@ export async function analyzeProperty(evidence: CrawlEvidence[], rootUrl: string
   try {
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 120_000);
     try {
-      const response = await fetch(endpoint, { method: 'POST', redirect: 'error', signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, messages, temperature: 0.1, max_tokens: 2_500 }) });
-      if (!response.ok) { console.warn(`[property-analysis] model returned HTTP ${response.status}`); return baseline; }
-      const payload = await response.json() as { model?: unknown; choices?: { message?: { content?: unknown } }[] };
-      const content = payload.choices?.[0]?.message?.content;
-      if (typeof content !== 'string') { console.warn('[property-analysis] model returned no text'); return baseline; }
-      return cleanAnalysis(jsonObject(content), evidence, research, rootUrl, typeof payload.model === 'string' ? payload.model : model);
+      const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+      const candidates = await availableAnalysisModels(endpoint, token, model, requestSignal);
+      for (const candidate of candidates) {
+        try {
+          const response = await fetch(endpoint, { method: 'POST', redirect: 'error', signal: requestSignal, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: candidate, messages, temperature: 0.1, max_tokens: 1_800, response_format: { type: 'json_object' } }) });
+          if (!response.ok) { console.warn(`[property-analysis] ${candidate} returned HTTP ${response.status}`); continue; }
+          const payload = await response.json() as { model?: unknown; choices?: { finish_reason?: unknown; message?: { content?: unknown } }[] };
+          const content = payload.choices?.[0]?.message?.content;
+          if (typeof content !== 'string' || !content.trim()) { console.warn(`[property-analysis] ${candidate} returned no final text (${String(payload.choices?.[0]?.finish_reason ?? 'unknown')})`); continue; }
+          return cleanAnalysis(jsonObject(content), evidence, research, rootUrl, typeof payload.model === 'string' ? payload.model : candidate);
+        } catch (error) {
+          if (signal?.aborted || controller.signal.aborted) throw error;
+          console.warn(`[property-analysis] ${candidate} synthesis failed`, error instanceof Error ? error.message : 'unknown error');
+        }
+      }
+      return baseline;
     } finally { clearTimeout(timer); }
   } catch (error) {
     if (signal?.aborted) throw error;

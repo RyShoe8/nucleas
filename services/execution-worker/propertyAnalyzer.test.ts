@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBaselineAnalysis, selectRepresentativeEvidence } from './propertyAnalyzer';
+import { buildBaselineAnalysis, rankAnalysisModels, selectRepresentativeEvidence } from './propertyAnalyzer';
 
 const evidence = [
   {
@@ -60,5 +60,17 @@ describe('property profile analysis', () => {
     expect(selected.filter((page) => page.routePattern === '/games/:game')).toHaveLength(3);
     expect(selected.some((page) => page.url.endsWith('/hosting'))).toBe(true);
     expect(selected.some((page) => page.url.endsWith('/multiplayer'))).toBe(true);
+  });
+
+  it('routes structured synthesis away from visual thinking models when text models are available', () => {
+    expect(rankAnalysisModels([
+      'Qwen/Qwen3-VL-8B-Thinking-FP8',
+      'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ',
+      'google/gemma-4-12B-it-qat-w4a16-ct',
+    ], 'Qwen/Qwen3-VL-8B-Thinking-FP8')).toEqual([
+      'google/gemma-4-12B-it-qat-w4a16-ct',
+      'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ',
+      'Qwen/Qwen3-VL-8B-Thinking-FP8',
+    ]);
   });
 });
