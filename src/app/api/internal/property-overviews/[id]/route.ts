@@ -6,6 +6,7 @@ import connectDB from '@/lib/db/mongodb';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import { completePropertyOverviewJob, failPropertyOverviewJob, heartbeatPropertyOverviewJob, startPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
 import { processPropertyOverviewQueue } from '@/lib/propertyOverview/crawler';
+import { replaceCompanyOverview } from '@/lib/propertyOverview/storage';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -63,7 +64,8 @@ function authorized(request: NextRequest): boolean {
 }
 
 async function finalize(id: Types.ObjectId): Promise<void> {
-  const overview = await PropertyOverview.findById(id).select('jobId runId rootUrl propertyDescription primaryKeywords demographicTarget competitors').lean<{ jobId?: Types.ObjectId; runId?: Types.ObjectId; rootUrl: string; propertyDescription?: string; primaryKeywords?: string[]; demographicTarget?: string; competitors?: { name: string; domain: string; reason: string }[] }>();
+  const overview = await PropertyOverview.findById(id).select('organizationId companyId jobId runId rootUrl propertyDescription primaryKeywords demographicTarget competitors').lean<{ organizationId: Types.ObjectId; companyId: Types.ObjectId; jobId?: Types.ObjectId; runId?: Types.ObjectId; rootUrl: string; propertyDescription?: string; primaryKeywords?: string[]; demographicTarget?: string; competitors?: { name: string; domain: string; reason: string }[] }>();
+  if (!overview) throw new Error('The active Company Overview no longer exists.');
   const pages = await PropertyPage.find({ overviewId: id }).select('url templateKey routePattern issues internalLinks statusCode').lean();
   const incoming = new Map<string, number>(); const clusters = new Map<string, string[]>();
   let issueCount = 0; let edgeCount = 0;
@@ -75,8 +77,8 @@ async function finalize(id: Types.ObjectId): Promise<void> {
   if (incoming.size) await PropertyPage.bulkWrite([...incoming].map(([url, count]) => ({ updateOne: { filter: { overviewId: id, url }, update: { $set: { incomingLinks: count } } } })), { ordered: false });
   const orphanPages = pages.filter((page) => page.routePattern !== '/' && !(incoming.get(page.url) ?? 0)).length;
   const clusterRows = [...clusters].map(([templateKey, routes]) => { const uniqueRoutes = [...new Set(routes)]; return { templateKey, name: templateName(uniqueRoutes), count: routes.length, sampleRoutes: uniqueRoutes.slice(0, 8) }; }).sort((a, b) => b.count - a.count);
-  await PropertyOverview.updateOne({ _id: id, status: { $in: ['queued', 'dispatching', 'crawling'] } }, { $set: { status: 'complete', completedAt: new Date(), progress: 'Complete', pageCount: pages.length, edgeCount, issueCount, clusters: clusterRows, summary: { orphanPages, issuePages: pages.filter((page) => (page.issues?.length ?? 0) > 0).length, errorPages: pages.filter((page) => (page.statusCode ?? 0) >= 400).length, templates: clusters.size } } });
-  if (overview) await completePropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, rootUrl: overview.rootUrl, pageCount: pages.length, edgeCount, issueCount, templates: clusters.size, orphanPages, propertyDescription: overview.propertyDescription, primaryKeywords: overview.primaryKeywords, demographicTarget: overview.demographicTarget, competitors: overview.competitors });
+  await replaceCompanyOverview({ overviewId: id, organizationId: overview.organizationId, companyId: overview.companyId, completion: { completedAt: new Date(), progress: 'Complete', pageCount: pages.length, edgeCount, issueCount, clusters: clusterRows, summary: { orphanPages, issuePages: pages.filter((page) => (page.issues?.length ?? 0) > 0).length, errorPages: pages.filter((page) => (page.statusCode ?? 0) >= 400).length, templates: clusters.size } } });
+  await completePropertyOverviewJob({ jobId: overview.jobId, runId: overview.runId, rootUrl: overview.rootUrl, pageCount: pages.length, edgeCount, issueCount, templates: clusters.size, orphanPages, propertyDescription: overview.propertyDescription, primaryKeywords: overview.primaryKeywords, demographicTarget: overview.demographicTarget, competitors: overview.competitors });
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {

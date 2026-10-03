@@ -111,6 +111,13 @@ async function discoverSitemaps(root: URL) {
   return [...new Set(pages)];
 }
 
+export function resolveCrawlScope(rootUrl: string, sitemapPages: string[]) {
+  const urls = [...new Set(sitemapPages)];
+  return urls.length
+    ? { urls, source: 'sitemap' as const, followInternalLinks: false }
+    : { urls: [rootUrl], source: 'link-discovery' as const, followInternalLinks: true };
+}
+
 export async function runPropertyCrawl(request: CrawlRequest): Promise<void> {
   let processed = 0; let discoveredCount = 1; let heartbeatBusy = false;
   const heartbeat = setInterval(() => {
@@ -122,18 +129,18 @@ export async function runPropertyCrawl(request: CrawlRequest): Promise<void> {
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
   try {
-    const root = await safeUrl(request.rootUrl); const seeds = [root.toString(), ...(await discoverSitemaps(root))]; const queue = request.maxPages ? [...new Set(seeds)].slice(0, request.maxPages) : [...new Set(seeds)]; const queued = new Set(queue); const visited = new Set<string>(); const evidence: CrawlEvidence[] = [];
+    const root = await safeUrl(request.rootUrl); const scope = resolveCrawlScope(root.toString(), await discoverSitemaps(root)); const queue = request.maxPages ? scope.urls.slice(0, request.maxPages) : [...scope.urls]; const queued = new Set(queue); const visited = new Set<string>(); const evidence: CrawlEvidence[] = [];
     const hasCapacity = () => request.maxPages === undefined || visited.size < request.maxPages;
     const discovered = () => request.maxPages === undefined ? visited.size + queue.length : Math.min(request.maxPages, visited.size + queue.length);
     discoveredCount = Math.max(1, queue.length);
-    await callback(request, { action: 'progress', processed: 0, discovered: Math.max(1, queue.length), message: `Discovered ${queue.length} pages; beginning accuracy-first crawl…` });
+    await callback(request, { action: 'progress', processed: 0, discovered: Math.max(1, queue.length), message: scope.source === 'sitemap' ? `Found ${queue.length} submitted sitemap pages; beginning crawl…` : 'No usable sitemap pages found; discovering pages from first-party links…' });
     while (queue.length && hasCapacity()) {
       const target = queue.shift()!; if (visited.has(target)) continue; visited.add(target);
       processed = visited.size; discoveredCount = discovered();
       try {
         const response = await fetchSafe(target); const contentType = response.headers.get('content-type') ?? ''; const finalUrl = new URL(response.url || target); if (!sameSite(finalUrl.hostname, root.hostname)) continue; const html = contentType.includes('text/html') ? await readLimited(response, MAX_HTML) : ''; const page = await enrichRendered(request, extractPage(html, finalUrl, response.status, contentType));
         evidence.push({ url: page.url, title: page.title, description: page.description, h1: page.h1, routePattern: page.routePattern });
-        for (const link of page.internalLinks) if (!queued.has(link) && !visited.has(link) && (request.maxPages === undefined || queue.length + visited.size < request.maxPages)) { queued.add(link); queue.push(link); }
+        if (scope.followInternalLinks) for (const link of page.internalLinks) if (!queued.has(link) && !visited.has(link) && (request.maxPages === undefined || queue.length + visited.size < request.maxPages)) { queued.add(link); queue.push(link); }
         discoveredCount = discovered();
         await callback(request, { action: 'page', processed, discovered: discoveredCount, page: archivedPage(page) });
       } catch (error) {

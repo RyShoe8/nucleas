@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { archivedPage, extractPage, routePattern, templateIdentity } from './propertyCrawler';
+import { archivedPage, extractPage, resolveCrawlScope, routePattern, templateIdentity } from './propertyCrawler';
 
 describe('VPS property crawler', () => {
   it('extracts auditable SEO and link data from a page', () => {
@@ -32,5 +32,17 @@ describe('VPS property crawler', () => {
     expect(archived).not.toHaveProperty('htmlSnapshot');
     expect(archived).not.toHaveProperty('renderedText');
     expect(archived.h1).toEqual(['Stored evidence']);
+  });
+
+  it('treats submitted sitemap URLs as the authoritative crawl scope', () => {
+    const scope = resolveCrawlScope('https://site.test/', ['https://site.test/indexed', 'https://site.test/indexed']);
+
+    expect(scope).toEqual({ urls: ['https://site.test/indexed'], source: 'sitemap', followInternalLinks: false });
+  });
+
+  it('falls back to internal-link discovery only when no sitemap pages exist', () => {
+    const scope = resolveCrawlScope('https://site.test/', []);
+
+    expect(scope).toEqual({ urls: ['https://site.test/'], source: 'link-discovery', followInternalLinks: true });
   });
 });

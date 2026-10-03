@@ -33,6 +33,7 @@ import type { JobDesign } from './schema';
 import { updateLinkOpportunity, verifyLinkOpportunity } from './linkOpportunities';
 import { completePropertyOverviewJob, createPropertyOverviewJob, startPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
 import { processPropertyOverviewQueue } from '@/lib/propertyOverview/crawler';
+import { replaceCompanyOverview } from '@/lib/propertyOverview/storage';
 import { claimJobRunExecution, heartbeatJobRun, initialRunLease } from './runLifecycle';
 
 let replica: MongoMemoryReplSet;
@@ -379,6 +380,22 @@ describe('real runs', () => {
     expect(await sweepJobs()).toMatchObject({ runsFailed: 1 });
     expect(await PropertyPage.countDocuments({ overviewId: overview._id })).toBe(0);
     expect(await PropertyOverview.findById(overview._id).lean()).toMatchObject({ status: 'failed', error: expect.stringContaining('stopped reporting progress') });
+  });
+
+  it('keeps the last Company Overview until its successful replacement is finalized', async () => {
+    const companyObjectId = new Types.ObjectId(companyId);
+    const previous = await PropertyOverview.create({ organizationId: org, companyId: companyObjectId, rootUrl: 'https://playbound.club/', status: 'complete', completedAt: new Date() });
+    await PropertyPage.create({ overviewId: previous._id, organizationId: org, companyId: companyObjectId, url: 'https://playbound.club/old', routePattern: '/old', fetchedAt: new Date() });
+    const replacement = await PropertyOverview.create({ organizationId: org, companyId: companyObjectId, rootUrl: 'https://playbound.club/', status: 'crawling' });
+    await PropertyPage.create({ overviewId: replacement._id, organizationId: org, companyId: companyObjectId, url: 'https://playbound.club/new', routePattern: '/new', fetchedAt: new Date() });
+
+    expect(await PropertyOverview.exists({ _id: previous._id })).toBeTruthy();
+    await replaceCompanyOverview({ overviewId: replacement._id, organizationId: org, companyId: companyObjectId, completion: { completedAt: new Date(), progress: 'Complete', pageCount: 1, edgeCount: 0, issueCount: 0, clusters: [], summary: {} } });
+
+    expect(await PropertyOverview.exists({ _id: previous._id })).toBeNull();
+    expect(await PropertyPage.exists({ overviewId: previous._id })).toBeNull();
+    expect(await PropertyOverview.findById(replacement._id).lean()).toMatchObject({ status: 'complete', pageCount: 1 });
+    expect(await PropertyPage.exists({ overviewId: replacement._id })).toBeTruthy();
   });
 
   it('uses the explicit lease instead of unrelated document updates when reconciling runs', async () => {
