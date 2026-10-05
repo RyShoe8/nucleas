@@ -124,8 +124,9 @@ const STATUS_TONE: Partial<Record<JobStatus, string>> = {
     failed: 'text-red-400 border-red-400/40',
 };
 
-export function JobStatusBadge({ status }: { status: JobStatus }) {
-    return <span className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap ${STATUS_TONE[status] ?? 'text-text-secondary border-border'}`}>{JOB_STATUS_LABEL[status]}</span>;
+export function JobStatusBadge({ status, label }: { status: JobStatus; label?: string }) {
+    const tone = label === 'Dry run failed' ? 'text-red-400 border-red-400/40' : STATUS_TONE[status] ?? 'text-text-secondary border-border';
+    return <span className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap ${tone}`}>{label ?? JOB_STATUS_LABEL[status]}</span>;
 }
 
 /** Whether the card should keep refreshing (something is being worked on). */
@@ -146,6 +147,9 @@ export function jobListProgress(job: JobView): JobListProgress {
 
     const review = job.runs.find((run) => run.status === 'needs_review');
     if (review) return { label: review.progressState.label || 'Ready for review', percent: 100, tone: 'waiting' };
+
+    const failedSample = job.status === 'proposed' ? job.runs.find((run) => run.dryRun && run.status === 'failed') : undefined;
+    if (failedSample) return { label: failedSample.error || 'Dry run failed — retry when ready', percent: 100, tone: 'failed' };
 
     if (job.status === 'designing') return { label: 'Designing job', percent: 10, tone: 'active' };
     if (job.status === 'needs_answers') return { label: 'Waiting for your answers', percent: 20, tone: 'waiting' };
@@ -305,6 +309,7 @@ function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => vo
     const [budget, setBudget] = useState(String((job.monthlyBudgetMicros || 2_000_000) / 1_000_000));
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const retrying = job.runs.some((run) => run.dryRun && run.status === 'failed');
     const act = async (body: Record<string, unknown>, label: string) => {
         setBusy(label);
         setError(null);
@@ -312,6 +317,9 @@ function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => vo
         setBusy(null);
         if (res.error || !res.job) return setError(res.error ?? 'Failed');
         onChange(res.job);
+        // Invalidate any jobs-list request that started before this approval. Without this,
+        // its older proposed state can replace the freshly returned testing/running state.
+        window.dispatchEvent(new Event('nucleas:jobs-changed'));
     };
     return (
         <div className="space-y-2 rounded border border-border p-2">
@@ -344,7 +352,7 @@ function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => vo
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
             <div className="flex gap-2">
                 <button type="button" className={PRIMARY} disabled={busy !== null} onClick={() => void act({ action: 'approve', completion, monthlyBudgetUsd: Number(budget) }, 'approve')}>
-                    {busy === 'approve' ? 'Starting…' : 'Approve and run a dry run'}
+                    {busy === 'approve' ? 'Starting…' : retrying ? 'Retry dry run' : 'Approve and run a dry run'}
                 </button>
                 <button
                     type="button"
@@ -736,7 +744,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                         {job.monthlyBudgetMicros ? ` · ${usd(job.spentThisMonthMicros)} of ${usd(job.monthlyBudgetMicros)} this month` : ''}
                     </p>
                 </div>
-                <JobStatusBadge status={job.status} />
+                <JobStatusBadge status={job.status} label={job.status === 'proposed' && failedAttempt ? 'Dry run failed' : undefined} />
             </div>
 
             {job.status === 'designing' ? <p className="text-xs text-sky-400">Nucleas is investigating {job.companyName} and designing this job…</p> : null}

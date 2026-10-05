@@ -351,7 +351,11 @@ export async function approveJob(viewer: CompanyViewer, id: string, input: { com
   if (!result.ok) return result;
   const startedAt = new Date();
   const run = await JobRun.create({ organizationId: found.job.organizationId, jobId: found.job._id, companyId: found.job.companyId, dryRun: true, status: 'running', startedAt, ...initialRunLease(undefined, startedAt), progress: ['Starting the dry run'], progressState: { stage: 'preparing', label: 'Preparing the dry run', percent: 5, updatedAt: startedAt } });
-  return { ...result, dryRunId: String(run._id) };
+  // Return the view after the run exists. Returning the transition's earlier view leaves the
+  // client without the running dry run and allows a stale "awaiting approval" list response to
+  // win the UI race immediately after approval.
+  const refreshed = await done(viewer, id);
+  return refreshed.ok ? { ...refreshed, dryRunId: String(run._id) } : refreshed;
 }
 
 export function rejectJob(viewer: CompanyViewer, id: string, note?: string): Promise<ActionResult> {

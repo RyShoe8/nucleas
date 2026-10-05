@@ -180,6 +180,10 @@ describe('approving and the dry run', () => {
       : { requestId: 'w', role: 'assistant', text: JSON.stringify({ records: [{ values: { strategic_reason: 'A new page needs authority.', strategy_evidence: 'The games page is a newly launched priority page in the approved brief and currently has no directory citations.', opportunity_url: 'https://directory.example.org/submit', opportunity_type: 'Directory', relevance_score: 90, relevance_evidence: 'The directory exclusively catalogs video games and is used by players searching for games and community servers.', estimated_authority: 'Medium estimate', authority_basis: 'Indexed and used by peers.', target_keywords: ['games'], target_url: 'https://playbound.club/games', anchor_text: 'PlayBound games', submission_copy: 'A useful directory description.', requirements: 'Free account.', link_attribute: 'unknown', quality_risk: 'Relevant and moderated.', confidence: 'Medium', next_action: 'Submit the listing.' }, sources: ['https://directory.example.org/submit'] }], summary: 'Found one.', gaps: [] }), costMicros: 0 });
 
     const approved = await approveJob(admin, created.job.id, { completion: 'review' });
+    expect(approved.ok && approved.job).toMatchObject({
+      status: 'testing',
+      runs: [{ status: 'running', progressState: { stage: 'preparing', percent: 5, label: 'Preparing the dry run' } }],
+    });
     expect((await getJob(admin, created.job.id))?.runs[0].progressState).toMatchObject({ stage: 'preparing', percent: 5, label: 'Preparing the dry run' });
     await executeJobRun(approved.dryRunId!);
     let view = await getJob(admin, created.job.id);
