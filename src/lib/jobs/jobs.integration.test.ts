@@ -26,6 +26,7 @@ import { Job, JobRun } from '@/lib/models/Job';
 import { LinkOpportunity } from '@/lib/models/LinkOpportunity';
 import Project from '@/lib/models/Project';
 import { SeoBrief } from '@/lib/models/SeoBrief';
+import { MarketingPlan } from '@/lib/models/MarketingPlan';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, pauseJob, runDesign, runNow, sweepJobs } from './jobs';
@@ -35,6 +36,7 @@ import { completePropertyOverviewJob, createPropertyOverviewJob, startPropertyOv
 import { processPropertyOverviewQueue } from '@/lib/propertyOverview/crawler';
 import { replaceCompanyOverview } from '@/lib/propertyOverview/storage';
 import { claimJobRunExecution, heartbeatJobRun, initialRunLease } from './runLifecycle';
+import { updateMarketingPlan } from './marketingPlans';
 
 let replica: MongoMemoryReplSet;
 const org = new Types.ObjectId();
@@ -87,7 +89,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await Promise.all([Client.deleteMany({}), User.deleteMany({}), Employee.collection.deleteMany({}), Project.deleteMany({}), SeoBrief.deleteMany({}), Job.deleteMany({}), JobRun.deleteMany({}), LinkOpportunity.deleteMany({}), PropertyOverview.deleteMany({}), PropertyPage.deleteMany({})]);
+  await Promise.all([Client.deleteMany({}), User.deleteMany({}), Employee.collection.deleteMany({}), Project.deleteMany({}), SeoBrief.deleteMany({}), MarketingPlan.deleteMany({}), Job.deleteMany({}), JobRun.deleteMany({}), LinkOpportunity.deleteMany({}), PropertyOverview.deleteMany({}), PropertyPage.deleteMany({})]);
   const user = await User.create({ email: 'owner@example.invalid', password: 'synthetic-pass', organizationId: String(org) });
   // Runs act as the job's creator, resolved from their employee record.
   await Employee.collection.insertOne({ userId: user._id, organizationId: String(org), role: 'Administrator', name: 'Owner', email: 'owner@example.invalid' });
@@ -114,6 +116,23 @@ async function proposed(design: JobDesign = DESIGN) {
 }
 
 describe('designing', () => {
+  it('creates a company Marketing Plan job without requiring a project selection', async () => {
+    const created = await createTemplateJob(admin, { companyId, template: 'marketing_plan', config: { companyName: 'Playbound.club' } });
+    expect(created).toMatchObject({ ok: true, job: { companyId, projectId: null, status: 'proposed', design: { skill: 'marketing_plan', title: 'Marketing plan · Playbound.club' } } });
+  });
+
+  it('creates separate proposed execution jobs only after the Marketing Plan is approved', async () => {
+    const saved = await updateMarketingPlan(admin, companyId, {
+      status: 'approved', summary: 'A game discovery and server hosting property.', audience: 'PC players and gaming communities.', goals: ['Grow qualified discovery'], positioning: 'Practical game discovery.', messagingPillars: ['Find games worth playing'],
+      primaryTopics: ['multiplayer games'], competitors: ['example.com'], excludedTopics: ['education'], geographicTargets: ['United States'], priorityPages: [{ url: 'https://playbound.club/games', purpose: 'Game discovery', keywords: ['multiplayer games'] }], seoStrategy: 'Build topic authority around game discovery.',
+      aiCitationStrategy: 'Publish source-worthy game facts.', aiTargetQuestions: ['What free multiplayer game should I play?'], aiSourceTargets: ['Gaming publications'], socialStrategy: 'Share useful discoveries.', socialPlatforms: ['LinkedIn'], socialContentPillars: ['Game discoveries'], socialCadence: 'One daily post.', kpis: ['Organic clicks'], notes: '',
+    });
+    expect(saved).toMatchObject({ ok: true, plan: { status: 'approved' } });
+    const generated = await Job.find({ organizationId: org, companyId, 'design.skill': { $in: ['link_building', 'social_media', 'ai_citations'] } }).lean();
+    expect(generated.map((job) => job.design.skill).sort()).toEqual(['ai_citations', 'link_building', 'social_media']);
+    expect(generated.every((job) => job.status === 'proposed')).toBe(true);
+  });
+
   it('configures at most one open link-building skill per property', async () => {
     const config = { projectId, schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
     const first = await createTemplateJob(admin, { companyId, template: 'link_building', config });

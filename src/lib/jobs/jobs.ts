@@ -11,6 +11,8 @@ import { nextScheduledAt } from './schedule';
 import { linkBuildingConfigSchema, linkBuildingDesign } from './templates/linkBuilding';
 import { seoBriefConfigSchema, seoBriefDesign } from './templates/seoBrief';
 import { approvedSeoBrief, saveGeneratedSeoBrief } from './seoBriefs';
+import { marketingPlanConfigSchema, marketingPlanDesign } from './templates/marketingPlan';
+import { approvedMarketingPlan, saveGeneratedMarketingPlan } from './marketingPlans';
 import Project from '@/lib/models/Project';
 import { bulkDecideRunOpportunities, listLinkOpportunities, type LinkOpportunityView } from './linkOpportunities';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
@@ -228,37 +230,40 @@ export async function createJob(
 /** Creates a reviewed first-party skill job without spending a model call redesigning known instructions. */
 export async function createTemplateJob(
   viewer: CompanyViewer,
-  input: { companyId: string; template: 'link_building' | 'seo_brief'; config: unknown; level?: CostLevel }
+  input: { companyId: string; template: 'link_building' | 'seo_brief' | 'marketing_plan'; config: unknown; level?: CostLevel }
 ): Promise<CreateResult> {
   if (!isCompanyManager(viewer)) return { ok: false, status: 403, error: 'Only managers and administrators can configure skills.' };
   const profile = await getCompanyProfile(viewer, input.companyId);
   if (!profile) return { ok: false, status: 404, error: 'Company not found.' };
-  const parsed = input.template === 'link_building' ? linkBuildingConfigSchema.safeParse(input.config) : seoBriefConfigSchema.safeParse(input.config);
+  const parsed = input.template === 'link_building' ? linkBuildingConfigSchema.safeParse(input.config) : input.template === 'marketing_plan' ? marketingPlanConfigSchema.safeParse(input.config) : seoBriefConfigSchema.safeParse(input.config);
   if (!parsed.success) return { ok: false, status: 400, error: parsed.error.issues[0]?.message ?? 'Invalid skill settings.' };
-  const project = await Project.findOne({ _id: parsed.data.projectId, clientId: new Types.ObjectId(input.companyId) }).select('name').lean<{ _id: Types.ObjectId; name: string }>();
-  if (!project) return { ok: false, status: 404, error: 'Project not found for this company.' };
-  if (input.template === 'link_building' && !(await approvedSeoBrief(viewer.organizationId, new Types.ObjectId(input.companyId), project._id))) {
-    return { ok: false, status: 409, error: `Create and approve the SEO brief for ${project.name} before configuring link building.` };
+  const projectId = 'projectId' in parsed.data ? parsed.data.projectId : null;
+  const project = projectId ? await Project.findOne({ _id: projectId, clientId: new Types.ObjectId(input.companyId) }).select('name').lean<{ _id: Types.ObjectId; name: string }>() : null;
+  if (projectId && !project) return { ok: false, status: 404, error: 'Project not found for this company.' };
+  if (input.template === 'link_building' && project && !(await approvedMarketingPlan(viewer.organizationId, new Types.ObjectId(input.companyId))) && !(await approvedSeoBrief(viewer.organizationId, new Types.ObjectId(input.companyId), project._id))) {
+    return { ok: false, status: 409, error: `Create and approve the Marketing Plan for ${profile.name} before configuring link building.` };
   }
   const existing = await Job.exists({
     organizationId: viewer.organizationId,
     companyId: new Types.ObjectId(input.companyId),
-    projectId: project._id,
+    ...(project ? { projectId: project._id } : {}),
     'design.skill': input.template,
     status: { $nin: ['rejected', 'archived', 'done'] },
   });
-  if (existing) return { ok: false, status: 409, error: `${project.name} already has an open ${input.template === 'link_building' ? 'Link Building job' : 'SEO brief job'}. Open it to review or archive it.` };
+  if (existing) return { ok: false, status: 409, error: `${profile.name} already has an open ${input.template === 'link_building' ? 'Link Building job' : input.template === 'marketing_plan' ? 'Marketing Plan job' : 'SEO brief job'}. Open it to review or archive it.` };
   const level = input.level ?? (await readEngineSettings(String(viewer.organizationId))).defaultCostLevel;
   const design = input.template === 'link_building'
     ? linkBuildingDesign(parsed.data as ReturnType<typeof linkBuildingConfigSchema.parse>)
-    : seoBriefDesign({ ...(parsed.data as ReturnType<typeof seoBriefConfigSchema.parse>), projectName: project.name });
+    : input.template === 'marketing_plan'
+      ? marketingPlanDesign(parsed.data as ReturnType<typeof marketingPlanConfigSchema.parse>)
+      : seoBriefDesign({ ...(parsed.data as ReturnType<typeof seoBriefConfigSchema.parse>), projectName: project!.name });
   const doc = await Job.create({
     organizationId: viewer.organizationId,
     companyId: new Types.ObjectId(input.companyId),
-    projectId: project._id,
+    ...(project ? { projectId: project._id } : {}),
     createdByUserId: new Types.ObjectId(viewer.userId),
     status: 'proposed',
-    request: input.template === 'link_building' ? `Find the best free, self-service link-building opportunities for ${project.name}.` : `Create an SEO brief for ${project.name}.`,
+    request: input.template === 'link_building' ? `Find the best free, self-service link-building opportunities for ${project!.name}.` : input.template === 'marketing_plan' ? `Create a complete Marketing Plan for ${profile.name}.` : `Create an SEO brief for ${project!.name}.`,
     design,
     level,
     designCostMicros: 0,
@@ -386,6 +391,10 @@ export async function decideRun(viewer: CompanyViewer, jobId: string, runId: str
   const design = jobDesignSchema.safeParse(found.job.design);
   if (decision === 'accept' && design.success && design.data.skill === 'seo_brief' && found.job.projectId && run.output) {
     await saveGeneratedSeoBrief({ organizationId: found.job.organizationId, companyId: found.job.companyId, projectId: found.job.projectId, userId: viewer.userId, output: run.output });
+  }
+  if (decision === 'accept' && design.success && design.data.skill === 'marketing_plan' && run.output) {
+    const profile = await getCompanyProfile(viewer, String(found.job.companyId));
+    if (profile) await saveGeneratedMarketingPlan({ organizationId: found.job.organizationId, companyId: found.job.companyId, userId: viewer.userId, companyName: profile.name, output: run.output });
   }
   if (run.dryRun) {
     // The sample was right: the job is ready. A one-off job whose results stay in Nucleas is done.

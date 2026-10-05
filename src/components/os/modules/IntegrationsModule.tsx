@@ -279,6 +279,11 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                         {c.status === 'connected' ? 'Re-sign in' : 'Sign in with Google'}
                     </a>
                 ) : null}
+                {c.domain === 'social' && !c.connectable && !c.signIn && auth.isManagerOrAdmin ? (
+                    <span className="text-[11px] px-2 py-0.5 rounded border border-border text-text-secondary" title="The account is declared now; provider OAuth and publishing permissions are the next integration step.">
+                        OAuth setup pending
+                    </span>
+                ) : null}
                 {c.webhook && auth.isManagerOrAdmin && !editing ? (
                     <WebhookSetup connectionId={c.id} connected={c.status === 'connected'} onDone={onChanged} />
                 ) : null}

@@ -178,7 +178,7 @@ function AskButton({ companyId, companyName }: { companyId: string; companyName:
 
 function MarketingPlanButton({ companyId, companyName }: { companyId: string; companyName: string }) {
     const wm = useWindowManager();
-    return <button type="button" onClick={(e) => { e.stopPropagation(); wm.open('marketing', { payload: { companyId, companyName, kind: 'seo_brief' } }); }} className="ui-button flex-shrink-0">Marketing plan</button>;
+    return <button type="button" onClick={(e) => { e.stopPropagation(); wm.open('marketing', { payload: { companyId, companyName, kind: 'marketing_plan' } }); }} className="ui-button flex-shrink-0">Marketing plan</button>;
 }
 
 /** One line: connection counts, problems highlighted, and a link to the Integrations window. */

@@ -67,7 +67,7 @@ export type JobSchedule = z.infer<typeof jobScheduleSchema>;
 /** What the designer must return. */
 export const jobDesignSchema = z.object({
   /** First-party skill/template that owns this design, when applicable. */
-  skill: z.enum(['link_building', 'seo_brief', 'property_overview']).optional(),
+  skill: z.enum(['link_building', 'seo_brief', 'marketing_plan', 'social_media', 'ai_citations', 'property_overview']).optional(),
   title: z.string().min(3).max(120),
   category: z.enum(JOB_CATEGORIES).catch('research'),
   /** Exact, self-contained instructions for each run. */

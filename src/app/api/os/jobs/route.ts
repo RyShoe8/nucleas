@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
   if (typeof body.companyId !== 'string') {
     return NextResponse.json({ error: 'companyId is required.' }, { status: 400 });
   }
-  if (body.template === 'link_building' || body.template === 'seo_brief') {
+  if (body.template === 'link_building' || body.template === 'seo_brief' || body.template === 'marketing_plan') {
     const result = await createTemplateJob(viewer, {
       companyId: body.companyId,
       template: body.template,

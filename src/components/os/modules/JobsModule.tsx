@@ -24,7 +24,7 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
     const { companies } = useOsCompanies();
     const [companyId, setCompanyId] = useState(initialCompanyId ?? '');
     const [request, setRequest] = useState('');
-    const [kind, setKind] = useState<'custom' | 'link_building' | 'seo_brief'>(initialKind === 'seo_brief' ? 'seo_brief' : marketing ? 'link_building' : 'custom');
+    const [kind, setKind] = useState<'custom' | 'link_building' | 'marketing_plan'>(initialKind === 'marketing_plan' || initialKind === 'seo_brief' ? 'marketing_plan' : marketing ? 'link_building' : 'custom');
     const [projects, setProjects] = useState<{ projectId: string; projectName: string }[]>([]);
     const [projectId, setProjectId] = useState('');
     const [frequency, setFrequency] = useState<'daily' | 'weekly' | 'monthly'>('daily');
@@ -38,7 +38,7 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     useEffect(() => {
-        if (!companyId || kind === 'custom') return;
+        if (!companyId || kind === 'custom' || kind === 'marketing_plan') return;
         let cancelled = false;
         void fetch(`/api/os/companies/${companyId}/code`, { cache: 'no-store' }).then(async (res) => {
             const body = (await res.json().catch(() => ({}))) as { projects?: { projectId: string; projectName: string }[] };
@@ -73,8 +73,8 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
                       exclusions,
                   },
               }
-            : kind === 'seo_brief'
-              ? { companyId, template: 'seo_brief', config: { projectId, projectName: projects.find((p) => p.projectId === projectId)?.projectName } }
+            : kind === 'marketing_plan'
+              ? { companyId, template: 'marketing_plan', config: { companyName: companies?.find((company) => company.id === companyId)?.name ?? 'Company' } }
             : { companyId, request };
         const res = await fetch('/api/os/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
         const body = (await res.json().catch(() => ({}))) as { job?: JobView; error?: string };
@@ -89,7 +89,7 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
             {marketing ? (
                 <div className="flex gap-1">
                     <button type="button" onClick={() => { setKind('link_building'); setProjectId(''); }} className={kind === 'link_building' ? 'ui-button-primary' : 'ui-button'}>Link building</button>
-                    <button type="button" onClick={() => { setKind('seo_brief'); setProjectId(''); }} className={kind === 'seo_brief' ? 'ui-button-primary' : 'ui-button'}>Marketing plan</button>
+                    <button type="button" onClick={() => { setKind('marketing_plan'); setProjectId(''); setProjects([]); }} className={kind === 'marketing_plan' ? 'ui-button-primary' : 'ui-button'}>Marketing plan</button>
                     <button type="button" onClick={() => { setKind('custom'); setProjectId(''); setProjects([]); }} className={kind === 'custom' ? 'ui-button-primary' : 'ui-button'}>Custom job</button>
                 </div>
             ) : null}
@@ -108,7 +108,7 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
                     ))}
                 </select> : null}
                 <span className="text-[11px] text-text-secondary self-center">
-                    {kind === 'link_building' ? 'Uses the project’s approved SEO brief to reject irrelevant opportunities.' : kind === 'seo_brief' ? 'Nucleas researches a project and creates an editable strategy draft for approval.' : 'Describe the work; Nucleas investigates, asks what it must, and designs it for your approval.'}
+                    {kind === 'link_building' ? 'Uses the company’s approved Marketing Plan to reject irrelevant opportunities.' : kind === 'marketing_plan' ? 'Builds a company-wide SEO, AI-citation, and social strategy from the Company Overview.' : 'Describe the work; Nucleas investigates, asks what it must, and designs it for your approval.'}
                 </span>
             </div>
             {kind !== 'custom' && projects.length > 1 ? <label className="block space-y-1"><span className="ui-kicker">Website or project</span><select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="ui-control w-full" aria-label="Website or project"><option value="">Choose a website or project…</option>{projects.map((p) => <option key={p.projectId} value={p.projectId}>{p.projectName}</option>)}</select></label> : null}
@@ -125,15 +125,15 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
                 </div>
             ) : kind === 'custom' ? (
                 <textarea value={request} onChange={(e) => setRequest(e.target.value)} placeholder={placeholder} className="ui-control w-full h-24 resize-y" aria-label="Job request" />
-            ) : <p className="text-xs text-text-secondary">The first run produces a sourced draft. Accept the result, then edit and approve the brief from the job card.</p>}
+            ) : <p className="text-xs text-text-secondary">The first run produces a sourced company Marketing Plan. After you accept and approve it, Nucleas creates separate proposed jobs for link building, AI citations, and social drafts.</p>}
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
             <button
                 type="button"
-                disabled={busy || !companyId || (kind !== 'custom' && !projectId) || (kind === 'custom' && request.trim().length < 10)}
+                disabled={busy || !companyId || (kind === 'link_building' && !projectId) || (kind === 'custom' && request.trim().length < 10)}
                 onClick={() => void create()}
                 className="ui-button-primary"
             >
-                {busy ? 'Starting…' : kind === 'link_building' ? 'Configure link building' : kind === 'seo_brief' ? 'Generate marketing plan' : 'Design this job'}
+                {busy ? 'Starting…' : kind === 'link_building' ? 'Configure link building' : kind === 'marketing_plan' ? 'Generate marketing plan' : 'Design this job'}
             </button>
         </div>
     );

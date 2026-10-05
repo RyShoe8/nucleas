@@ -55,6 +55,7 @@ export const DOMAIN_LABEL: Record<string, string> = {
     analytics: 'Analytics',
     search: 'Search',
     seo: 'SEO',
+    social: 'Social',
     email: 'Email',
     payments: 'Payments',
     commerce: 'Commerce',
