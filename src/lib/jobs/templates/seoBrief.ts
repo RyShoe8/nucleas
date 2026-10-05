@@ -15,9 +15,10 @@ export function seoBriefDesign(config: SeoBriefConfig): JobDesign {
     instructions: [
       `Create a durable SEO strategy brief for the project “${config.projectName}”.`,
       'Establish the property identity before making any SEO recommendation. Read the verified project facts supplied by Nucleas, inspect the selected project repository with repo_tree/repo_read, and fetch the live first-party site. Do not infer the market, audience, age group, use case, or business model from the brand name or domain name.',
-      'Research the property, its actual audience, offering, indexed pages, search landscape, competitors, and connected analytics/search data. Distinguish sourced facts from recommendations. Every statement about the offering and audience must be directly supported by first-party evidence.',
+      'Use the completed Company Overview and its archived pages as the source of truth for the property, its actual audience, offering, and indexed pages. Supplement it with repository and connected analytics/search evidence. Distinguish sourced facts from recommendations. Every statement about the offering and audience must be directly supported by first-party evidence.',
       'The brief must be specific enough to reject irrelevant marketing opportunities. Topics, audiences, competitors, exclusions, and priority pages must describe this property—not a broad industry guess.',
-      'Recommend only priority pages that you verified exist. Use absolute first-party URLs, explain each page’s purpose and keyword cluster, and include explicit excluded topics or audiences that appear superficially related but should not drive SEO work.',
+      'Recommend only priority pages listed in the supplied verified-page inventory. Never construct a plausible URL. Use absolute first-party URLs, explain each page’s purpose and keyword cluster, and include explicit excluded topics or audiences that appear superficially related but should not drive SEO work.',
+      'Name a competitor only when a source URL supports the competitive relationship. Do not invent competitor brands. Do not claim a global, international, national, or local geographic target unless first-party or connected data says so; use “Not established” when it cannot be proven.',
       'If the repository or live site cannot establish the property identity, do not guess. Put the uncertainty in gaps and return no strategy record.',
     ].join('\n\n'),
     fields: [
@@ -32,7 +33,7 @@ export function seoBriefDesign(config: SeoBriefConfig): JobDesign {
       { key: 'priority_pages', label: 'Priority pages', type: 'long_text', required: true, description: 'JSON array of {url, purpose, keywords[]} for pages SEO work should support.' },
       { key: 'notes', label: 'Strategy notes', type: 'long_text', required: false, description: 'Risks, evidence gaps, and follow-up recommendations.' },
     ],
-    sourcePolicy: 'Every record must cite at least two first-party URLs from the selected property. When a repository is connected, also cite exact GitHub files used. Cite connected search/analytics data and primary competitor pages for their respective claims. Empty sources fail the run. Do not invent traffic, rankings, authority metrics, pages, audiences, or competitors.',
+    sourcePolicy: 'Every record must cite at least two exact first-party URLs from the verified Company Overview page inventory. When a repository is connected, also cite exact GitHub files used. Cite connected search/analytics data and an external source for every named competitor. Empty, fabricated, redirected, or merely plausible URLs fail the run. Do not invent traffic, rankings, authority metrics, pages, audiences, competitors, or geographic scope.',
     delivery: { method: 'nucleas', detail: 'Saved as an editable draft in Nucleas, then used only after a manager approves it.', setupSteps: [] },
     schedule: { kind: 'once' },
     recordsPerRun: 1,

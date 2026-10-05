@@ -360,6 +360,41 @@ function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => vo
     );
 }
 
+function ResultValue({ field, value }: { field: JobField; value: unknown }) {
+    if (field.key === 'priority_pages') {
+        let parsed = value;
+        if (typeof parsed === 'string') {
+            try { parsed = JSON.parse(parsed); } catch { /* show the original text below */ }
+        }
+        if (Array.isArray(parsed)) {
+            const pages = parsed.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object');
+            if (pages.length) return (
+                <div className="space-y-3">
+                    {pages.map((page, index) => {
+                        const url = String(page.url ?? '');
+                        const keywords = Array.isArray(page.keywords) ? page.keywords.map(String) : String(page.keywords ?? '').split(',').map((item) => item.trim()).filter(Boolean);
+                        return (
+                            <section key={`${url}-${index}`} className="rounded-lg border border-border bg-background-elevated/50 p-3">
+                                {url ? <a href={url} target="_blank" rel="noreferrer" className="font-medium text-primary underline break-all">{url}</a> : <p className="font-medium">Priority page {index + 1}</p>}
+                                {page.purpose ? <p className="mt-1 leading-6 text-text-primary">{String(page.purpose)}</p> : null}
+                                {keywords.length ? <div className="mt-2 flex flex-wrap gap-1.5">{keywords.map((keyword) => <span key={keyword} className="rounded-full border border-border px-2 py-0.5 text-xs text-text-secondary">{keyword}</span>)}</div> : null}
+                            </section>
+                        );
+                    })}
+                </div>
+            );
+        }
+    }
+    if (Array.isArray(value)) {
+        if (!value.length) return <span>—</span>;
+        return <ul className="space-y-1">{value.map((item, index) => <li key={index} className="flex gap-2"><span className="text-text-secondary">•</span><span>{typeof item === 'object' ? JSON.stringify(item) : String(item)}</span></li>)}</ul>;
+    }
+    if (value && typeof value === 'object') return <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-background-elevated p-2 text-xs">{JSON.stringify(value, null, 2)}</pre>;
+    const text = value === undefined || value === null ? '' : String(value);
+    if (field.type === 'url' && text) return <a href={text} target="_blank" rel="noreferrer" className="text-primary underline break-all">{text}</a>;
+    return <span className="whitespace-pre-wrap break-words leading-relaxed">{text || '—'}</span>;
+}
+
 function Results({ job, run }: { job: JobView; run: JobRunView }) {
     const fields = job.design?.fields ?? [];
     const records = run.output?.records ?? [];
@@ -372,19 +407,12 @@ function Results({ job, run }: { job: JobView; run: JobRunView }) {
                     <dl className="divide-y divide-border">
                         {fields.map((f) => {
                                         const v = r.values[f.key];
-                                        const text = Array.isArray(v) ? v.join(', ') : v === undefined || v === null ? '' : String(v);
                                         const problem = run.issues.find((x) => x.record === i && x.field === f.key);
                                         return (
                                             <div key={f.key} className={`grid gap-1 px-4 py-3 sm:grid-cols-[180px_minmax(0,1fr)] sm:gap-5 ${problem ? 'bg-amber-400/5' : ''}`} title={problem?.problem}>
                                                 <dt className="text-xs font-semibold uppercase tracking-wide text-text-secondary">{f.label}</dt>
                                                 <dd className={`min-w-0 text-sm leading-6 ${problem ? 'text-amber-300' : 'text-text-primary'}`}>
-                                                {f.type === 'url' && text ? (
-                                                    <a href={text} target="_blank" rel="noreferrer" className="text-primary underline break-all">
-                                                        {text}
-                                                    </a>
-                                                ) : (
-                                                    <span className="whitespace-pre-wrap break-words leading-relaxed">{text || '—'}</span>
-                                                )}
+                                                <ResultValue field={f} value={v} />
                                                 {problem ? <span className="mt-1 block text-xs">Check: {problem.problem}</span> : null}
                                                 </dd>
                                             </div>

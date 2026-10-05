@@ -22,7 +22,8 @@ describe('SEO brief grounding', () => {
         gaps: [],
       },
       'playbound.club',
-      'PlayBound is a game-server discovery and hosting comparison property for PC gaming communities.'
+      'PlayBound is a game-server discovery and hosting comparison property for PC gaming communities.',
+      new Set(['https://playbound.club/', 'https://playbound.club/games'])
     );
 
     expect(issues.map((issue) => issue.problem).join(' ')).toContain('two first-party');
@@ -40,6 +41,8 @@ describe('SEO brief grounding', () => {
             primary_topics: ['game servers'],
             positioning: 'Find and compare community game servers.',
             priority_pages: [{ url: 'https://playbound.club/games', purpose: 'Game catalog', keywords: ['game servers'] }],
+            competitors: [],
+            geographic_targets: ['Not established'],
           },
           sources: ['https://playbound.club/', 'https://playbound.club/games'],
         }],
@@ -47,7 +50,38 @@ describe('SEO brief grounding', () => {
         gaps: [],
       },
       'playbound.club',
-      'PlayBound is a game-server discovery and hosting comparison property for PC gaming communities.'
+      'PlayBound is a game-server discovery and hosting comparison property for PC gaming communities.',
+      new Set(['https://playbound.club/', 'https://playbound.club/games'])
     )).toEqual([]);
+  });
+
+  it('rejects plausible but unarchived first-party URLs and unsupported competitors or geography', () => {
+    const issues = seoBriefIssues(
+      {
+        records: [{
+          values: {
+            summary: 'Casino offer tracking.',
+            audience: 'Sweepstakes casino players.',
+            primary_topics: ['daily casino rewards'],
+            positioning: 'Track daily rewards.',
+            priority_pages: [{ url: 'https://frugalgambler.club/free-offers', purpose: 'Offers', keywords: ['free offers'] }],
+            competitors: ['Made Up Casino Site'],
+            geographic_targets: ['Global'],
+          },
+          sources: ['https://frugalgambler.club/', 'https://frugalgambler.club/free-offers'],
+        }],
+        summary: '',
+        gaps: [],
+      },
+      'frugalgambler.club',
+      'Frugal Gambler tracks sweepstakes casino daily rewards.',
+      new Set(['https://frugalgambler.club/', 'https://frugalgambler.club/casinos'])
+    );
+
+    const message = issues.map((issue) => issue.problem).join(' ');
+    expect(message).toContain('Not found: https://frugalgambler.club/free-offers');
+    expect(message).toContain('not found in the archived Company Overview');
+    expect(message).toContain('external source URL');
+    expect(message).toContain('global or international target');
   });
 });

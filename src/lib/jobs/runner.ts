@@ -20,6 +20,7 @@ import { getRepoSnapshot } from '@/lib/ai/repo/snapshot';
 import { projectGuide } from '@/lib/ai/repo/projectGuide';
 import { webFetch } from '@/lib/ai/tools/webFetch';
 import { nextScheduledAt } from './schedule';
+import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 
 /**
  * Runs a job once: the engine's research model does the work with tools and returns structured,
@@ -68,6 +69,14 @@ function reviewerPrompt(): string {
 
 /** Existing configured jobs keep their stored schedule/settings while receiving current safety rules. */
 function currentDesign(design: JobDesign): JobDesign {
+  if (design.skill === 'seo_brief' && !design.instructions.includes('archived Company Overview pages')) {
+    return {
+      ...design,
+      instructions: `${design.instructions}\n\nTreat the completed Company Overview and archived pages supplied by Nucleas as the source of truth. Cite and recommend only exact URLs in that verified inventory; never construct plausible paths. Name competitors only with external supporting URLs. Do not infer geographic scope; use “Not established” when evidence is absent.`,
+      sourcePolicy: 'Every record must cite at least two exact first-party URLs from the verified Company Overview page inventory. When a repository is connected, also cite exact GitHub files used. Cite connected search/analytics data and an external source for every named competitor. Empty, fabricated, redirected, or merely plausible URLs fail the run. Do not invent traffic, rankings, authority metrics, pages, audiences, competitors, or geographic scope.',
+      safeguards: [...design.safeguards, 'First-party source and priority-page URLs must match archived Company Overview pages exactly.', 'Unsupported competitors and geographic targets must be reported as not established, not guessed.'],
+    };
+  }
   if (design.skill !== 'link_building' || design.fields.some((field) => field.key === 'strategy_evidence')) return design;
   const strategicIndex = design.fields.findIndex((field) => field.key === 'strategic_reason');
   const fields = [...design.fields];
@@ -83,23 +92,63 @@ function currentDesign(design: JobDesign): JobDesign {
   };
 }
 
-export function seoBriefIssues(output: JobRunOutput, propertyHost: string | null, grounding: string): { record: number; field?: string; problem: string }[] {
+function normalizedUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+    url.hash = '';
+    url.search = '';
+    url.hostname = url.hostname.replace(/^www\./, '').toLowerCase();
+    url.pathname = url.pathname === '/' ? '/' : url.pathname.replace(/\/+$/, '');
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+export function seoBriefIssues(
+  output: JobRunOutput,
+  propertyHost: string | null,
+  grounding: string,
+  verifiedPropertyUrls: ReadonlySet<string> = new Set()
+): { record: number; field?: string; problem: string }[] {
   const issues: { record: number; field?: string; problem: string }[] = [];
+  const verified = new Set([...verifiedPropertyUrls].flatMap((url) => {
+    const normalized = normalizedUrl(url);
+    return normalized ? [normalized] : [];
+  }));
   if (output.records.length !== 1) issues.push({ record: -1, problem: 'An SEO brief must contain exactly one grounded strategy record.' });
   output.records.forEach((record, index) => {
     const firstParty = new Set(record.sources.flatMap((source) => {
-      try { const url = new URL(source); return propertyHost && url.hostname.replace(/^www\./, '') === propertyHost ? [url.toString()] : []; } catch { return []; }
+      const normalized = normalizedUrl(source);
+      if (!normalized) return [];
+      try { return propertyHost && new URL(normalized).hostname === propertyHost ? [normalized] : []; } catch { return []; }
     }));
     if (firstParty.size < 2) issues.push({ record: index, problem: 'The brief needs at least two first-party source URLs from the selected property.' });
+    if (verified.size) {
+      const inventedSources = [...firstParty].filter((url) => !verified.has(url));
+      if (inventedSources.length) issues.push({ record: index, problem: `First-party sources must be archived Company Overview pages. Not found: ${inventedSources.join(', ')}` });
+    }
     let pages: unknown = record.values.priority_pages;
     if (typeof pages === 'string') { try { pages = JSON.parse(pages); } catch { pages = null; } }
     if (!Array.isArray(pages) || !pages.length) issues.push({ record: index, field: 'priority_pages', problem: 'Priority pages must be a non-empty JSON array of verified absolute URLs.' });
     else pages.forEach((page) => {
       try {
         const url = new URL(String((page as Record<string, unknown>)?.url ?? ''));
+        const normalized = normalizedUrl(url.toString());
         if (!propertyHost || url.hostname.replace(/^www\./, '') !== propertyHost) throw new Error('foreign host');
+        if (verified.size && (!normalized || !verified.has(normalized))) {
+          issues.push({ record: index, field: 'priority_pages', problem: `Priority page was not found in the archived Company Overview: ${url.toString()}` });
+        }
       } catch { issues.push({ record: index, field: 'priority_pages', problem: 'Every priority page must be an absolute URL on the selected property.' }); }
     });
+    const competitors = Array.isArray(record.values.competitors) ? record.values.competitors : String(record.values.competitors ?? '').split(/[\n,]/).filter(Boolean);
+    const externalSources = record.sources.filter((source) => {
+      const normalized = normalizedUrl(source);
+      if (!normalized) return false;
+      try { return Boolean(propertyHost) && new URL(normalized).hostname !== propertyHost; } catch { return false; }
+    });
+    if (competitors.length && externalSources.length < competitors.length) issues.push({ record: index, field: 'competitors', problem: 'Each named search competitor requires its own external source URL supporting the competitive relationship.' });
     const claims = [record.values.summary, record.values.audience, record.values.primary_topics, record.values.positioning].flat().join(' ').toLowerCase();
     const evidence = grounding.toLowerCase();
     for (const term of ['children', 'child', 'educational', 'education', 'parents', 'teachers', 'schools']) {
@@ -108,8 +157,69 @@ export function seoBriefIssues(output: JobRunOutput, propertyHost: string | null
         break;
       }
     }
+    const geography = (Array.isArray(record.values.geographic_targets) ? record.values.geographic_targets : [record.values.geographic_targets]).join(' ').toLowerCase();
+    if (/\b(global|worldwide|international)\b/.test(geography) && !/\b(global|worldwide|international)\b/.test(evidence)) {
+      issues.push({ record: index, field: 'geographic_targets', problem: 'A global or international target requires explicit first-party or connected-data evidence; otherwise use “Not established”.' });
+    }
   });
   return issues;
+}
+
+type SeoOverview = {
+  _id: Types.ObjectId;
+  rootUrl: string;
+  propertyDescription?: string;
+  primaryKeywords?: string[];
+  demographicTarget?: string;
+  competitors?: { name?: string; domain?: string; reason?: string }[];
+  analysisSources?: string[];
+};
+
+async function seoOverviewGrounding(organizationId: Types.ObjectId, companyId: Types.ObjectId): Promise<{ context: string; urls: Set<string> }> {
+  const overview = await PropertyOverview.findOne({ organizationId, companyId, status: 'complete' })
+    .sort({ completedAt: -1, createdAt: -1 })
+    .select('rootUrl propertyDescription primaryKeywords demographicTarget competitors analysisSources')
+    .lean<SeoOverview>();
+  if (!overview) return { context: 'No completed Company Overview is available.', urls: new Set() };
+
+  const pages = await PropertyPage.find({ overviewId: overview._id, indexable: { $ne: false }, statusCode: { $gte: 200, $lt: 400 } })
+    .sort({ incomingLinks: -1, wordCount: -1, url: 1 })
+    .select('url title description h1 routePattern incomingLinks')
+    .lean<{ url: string; title?: string; description?: string; h1?: string[]; routePattern?: string; incomingLinks?: number }[]>();
+  const urls = new Set(pages.flatMap((page) => {
+    const normalized = normalizedUrl(page.url);
+    return normalized ? [normalized] : [];
+  }));
+  const candidates: string[] = [];
+  let candidateCharacters = 0;
+  for (const page of pages) {
+    const title = (page.title || page.h1?.[0] || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+    const description = (page.description || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+    const line = `- ${page.url}${title ? ` | ${title}` : ''}${description ? ` | ${description}` : ''}`;
+    if (candidates.length >= 50 || candidateCharacters + line.length > 7_000) break;
+    candidates.push(line);
+    candidateCharacters += line.length;
+  }
+  const competitors = Array.isArray(overview.competitors)
+    ? overview.competitors.slice(0, 10).map((item) => `${item.name || item.domain || 'Unknown'}${item.domain ? ` (${item.domain})` : ''}${item.reason ? ` — ${item.reason}` : ''}`)
+    : [];
+  return {
+    urls,
+    context: [
+      '# Completed Company Overview (first-party crawl evidence)',
+      `Root: ${overview.rootUrl}`,
+      `Archived indexable pages: ${pages.length}`,
+      `Description: ${overview.propertyDescription || 'Not established'}`,
+      `Primary keywords: ${overview.primaryKeywords?.join(', ') || 'Not established'}`,
+      `Demographic target: ${overview.demographicTarget || 'Not established'}`,
+      `Competitor candidates: ${competitors.join('; ') || 'Not established'}`,
+      `Analysis sources: ${overview.analysisSources?.join(', ') || 'None'}`,
+      '',
+      '# Verified first-party pages allowed as citations and priority pages',
+      ...candidates,
+      pages.length > candidates.length ? `- (${pages.length - candidates.length} additional archived pages exist but are omitted from model context; do not invent or infer their URLs.)` : '',
+    ].filter(Boolean).join('\n'),
+  };
 }
 
 async function progress(runId: Types.ObjectId, owner: string, text: string, milestone?: { stage: JobRunProgressStage; percent: number }) {
@@ -193,21 +303,32 @@ export async function executeJobRun(runId: string): Promise<void> {
   const propertyUrl = project?.liveUrl || project?.urls?.[0] || project?.url || (profile.domain ? `https://${profile.domain}` : null);
   let propertyHost: string | null = null;
   try { propertyHost = propertyUrl ? new URL(propertyUrl).hostname.replace(/^www\./, '') : profile.domain?.replace(/^www\./, '') ?? null; } catch { propertyHost = profile.domain?.replace(/^www\./, '') ?? null; }
+  const overviewGrounding = activeDesign.skill === 'seo_brief'
+    ? await seoOverviewGrounding(job.organizationId, job.companyId)
+    : { context: '', urls: new Set<string>() };
+  const verifiedPropertyUrls = overviewGrounding.urls;
   const facts = [`Selected project: ${project?.name ?? repo?.projectName ?? 'unknown'}`, `Project description: ${project?.description || 'not provided'}`, `Production URL: ${propertyUrl || 'not provided'}`, `Company description: ${profile.description || 'not provided'}`];
+  if (overviewGrounding.context) facts.push(overviewGrounding.context);
   if (repo && activeDesign.skill === 'seo_brief') {
     const snapshot = await getRepoSnapshot(org, repo.projectId).catch(() => null);
-    if (snapshot?.ok) facts.push(`# Selected repository evidence\n${projectGuide(snapshot.snapshot, 5_000)}`);
+    if (snapshot?.ok) facts.push(`# Selected repository evidence\n${projectGuide(snapshot.snapshot, 1_500)}`);
     else facts.push(`Selected repository: ${repo.repository.fullName} (snapshot unavailable)`);
   }
   if (propertyUrl && activeDesign.skill === 'seo_brief') {
     const page = await webFetch(propertyUrl).catch(() => null);
     if (page) {
+      const homepageUrl = normalizedUrl(page.url);
+      if (homepageUrl) verifiedPropertyUrls.add(homepageUrl);
       const firstPartyLinks = page.links.filter((link) => {
         try { return new URL(link).hostname.replace(/^www\./, '') === propertyHost && new URL(link).pathname !== new URL(page.url).pathname; } catch { return false; }
       }).slice(0, 2);
       const supportingPages = await Promise.all(firstPartyLinks.map((link) => webFetch(link).catch(() => null)));
-      facts.push(`# Live first-party homepage (${page.url})\nTitle: ${page.title ?? ''}\n${page.text.slice(0, 4_000)}\nVerified links:\n${page.links.slice(0, 25).join('\n')}`);
-      for (const supporting of supportingPages) if (supporting) facts.push(`# Live first-party page (${supporting.url})\nTitle: ${supporting.title ?? ''}\n${supporting.text.slice(0, 2_500)}`);
+      facts.push(`# Live first-party homepage (${page.url})\nTitle: ${page.title ?? ''}\n${page.text.slice(0, 2_500)}\nVerified links:\n${page.links.slice(0, 15).join('\n')}`);
+      for (const supporting of supportingPages) if (supporting) {
+        const supportingUrl = normalizedUrl(supporting.url);
+        if (supportingUrl) verifiedPropertyUrls.add(supportingUrl);
+        facts.push(`# Live first-party page (${supporting.url})\nTitle: ${supporting.title ?? ''}\n${supporting.text.slice(0, 1_000)}`);
+      }
     }
   }
   const groundingFacts = facts.join('\n\n');
@@ -269,13 +390,13 @@ export async function executeJobRun(runId: string): Promise<void> {
 
     await progress(run._id, owner, 'Validating evidence and required fields', { stage: 'validating', percent: 68 });
     let issues = checkRecords(activeDesign.fields, output);
-    if (activeDesign.skill === 'seo_brief') issues.push(...seoBriefIssues(output, propertyHost, groundingFacts));
+    if (activeDesign.skill === 'seo_brief') issues.push(...seoBriefIssues(output, propertyHost, groundingFacts, verifiedPropertyUrls));
     if (activeDesign.skill === 'seo_brief' && issues.length) {
       const retry = await doWork(worker, `The draft failed grounding checks:\n${issues.map((issue) => `- ${issue.problem}`).join('\n')}\nResearch the selected project again with tools. Do not reuse unsupported claims. Return only the required JSON.`, true);
       const corrected = jobRunOutputSchema.safeParse(extractJson(retry.text));
       if (corrected.success) {
         output = corrected.data;
-        issues = [...checkRecords(activeDesign.fields, output), ...seoBriefIssues(output, propertyHost, groundingFacts)];
+        issues = [...checkRecords(activeDesign.fields, output), ...seoBriefIssues(output, propertyHost, groundingFacts, verifiedPropertyUrls)];
       }
     }
     if (activeDesign.skill === 'link_building') {
