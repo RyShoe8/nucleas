@@ -23,6 +23,7 @@ import { webFetch } from '@/lib/ai/tools/webFetch';
 import { nextScheduledAt } from './schedule';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import { listCompanyConnections } from '@/lib/integrations/connections';
+import type { TeamChatTurn } from '@/lib/ai/teamChat';
 
 /**
  * Runs a job once: the engine's research model does the work with tools and returns structured,
@@ -35,6 +36,15 @@ const RUN_MAX_TOKENS = 3000;
 const COMPACT_RUN_MAX_TOKENS = 1800;
 /** Earlier records shown to a run so repeating jobs do not redo work. */
 const MEMORY_RECORDS = 40;
+
+/** A second deployment may still work when one LiteLLM/vLLM route is unhealthy. */
+function retryableProviderFailure(turn: TeamChatTurn): boolean {
+  if (turn.role !== 'status') return false;
+  return turn.failureCategory === 'rate_limit'
+    || turn.failureCategory === 'unavailable'
+    || /httpStatus=(429|50[234])\b|kind=(timeout|transport)\b/i.test(turn.debugHint ?? '')
+    || /HTTP (429|50[234])\b|upstream (?:model )?gateway timed out/i.test(turn.text);
+}
 
 export function runnerPrompt(design: JobDesign, today: string): string {
   return [
@@ -382,16 +392,34 @@ export async function executeJobRun(runId: string): Promise<void> {
   };
 
   try {
-    let turn = await doWork(worker);
+    let activeWorker = worker;
+    let turn = await doWork(activeWorker);
     if (turn.role !== 'assistant' && /context (?:length|window)|maximum context|context.*exceed/i.test(turn.text)) {
-      turn = await doWork(worker, 'Use only the verified evidence supplied below. Return the required JSON without additional exploration.', false, true);
+      turn = await doWork(activeWorker, 'Use only the verified evidence supplied below. Return the required JSON without additional exploration.', false, true);
+    }
+    // Free mode intentionally never falls through to a paid provider, but it should not keep
+    // retrying one unhealthy Rogly deployment. Refresh LiteLLM's live model list, remove the
+    // failed binding for this run, and let the normal quality router choose another free model.
+    if (retryableProviderFailure(turn)) {
+      const refreshCatalog = /httpStatus=5\d\d\b|HTTP 5\d\d\b/i.test(`${turn.debugHint ?? ''} ${turn.text}`);
+      const fresh = await listAvailableModels({ force: refreshCatalog }).catch(() => models);
+      const candidates = fresh.filter((model) => model.profileId !== activeWorker.profileId || model.model !== activeWorker.model);
+      const alternate = (await selectModel(org, 'research', level, { models: candidates, settings })).primary;
+      if (alternate && (alternate.profileId !== activeWorker.profileId || alternate.model !== activeWorker.model)) {
+        onProgress(`${shortModel(activeWorker.model)} did not complete; switching to ${shortModel(alternate.model)}`);
+        activeWorker = alternate;
+        turn = await doWork(activeWorker);
+        if (turn.role !== 'assistant' && /context (?:length|window)|maximum context|context.*exceed/i.test(turn.text)) {
+          turn = await doWork(activeWorker, 'Use only the verified evidence supplied below. Return the required JSON without additional exploration.', false, true);
+        }
+      }
     }
     // A free worker that fails may retry on the level's paid model, as elsewhere in the engine.
     if (turn.role !== 'assistant' && work.fallback) turn = await doWork(work.fallback);
     if (turn.role !== 'assistant') return void (await fail(turn.text, { costMicros: cost, models: usedModels }));
     let parsed = jobRunOutputSchema.safeParse(extractJson(turn.text));
     if (!parsed.success) {
-      const again = await doWork(worker, `Your previous reply was not the required JSON. Reply with ONLY the JSON object. Previous reply:\n${turn.text.slice(0, 12000)}`);
+      const again = await doWork(activeWorker, `Your previous reply was not the required JSON. Reply with ONLY the JSON object. Previous reply:\n${turn.text.slice(0, 12000)}`);
       parsed = jobRunOutputSchema.safeParse(extractJson(again.text));
     }
     if (!parsed.success) return void (await fail('The run did not return usable records.', { costMicros: cost, models: usedModels }));
@@ -401,7 +429,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     let issues = checkRecords(activeDesign.fields, output);
     if (activeDesign.skill === 'seo_brief' || activeDesign.skill === 'marketing_plan') issues.push(...seoBriefIssues(output, propertyHost, groundingFacts, verifiedPropertyUrls));
     if ((activeDesign.skill === 'seo_brief' || activeDesign.skill === 'marketing_plan') && issues.length) {
-      const retry = await doWork(worker, `The draft failed grounding checks:\n${issues.map((issue) => `- ${issue.problem}`).join('\n')}\nResearch the selected project again with tools. Do not reuse unsupported claims. Return only the required JSON.`, true);
+      const retry = await doWork(activeWorker, `The draft failed grounding checks:\n${issues.map((issue) => `- ${issue.problem}`).join('\n')}\nResearch the selected project again with tools. Do not reuse unsupported claims. Return only the required JSON.`, true);
       const corrected = jobRunOutputSchema.safeParse(extractJson(retry.text));
       if (corrected.success) {
         output = corrected.data;

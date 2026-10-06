@@ -666,7 +666,10 @@ function MarketingPlanEditor({ job }: { job: JobView }) {
         setPlan(body.plan); setEditing(false);
         if (status === 'approved') window.dispatchEvent(new Event('nucleas:jobs-changed'));
     };
-    if (!plan) return <p className="text-xs text-text-secondary">Accept the generated result to create the editable Marketing Plan.</p>;
+    if (!plan) {
+        const generated = job.runs.some((run) => Boolean(run.output) && (run.status === 'needs_review' || run.status === 'completed'));
+        return <p className="text-xs text-text-secondary">{generated ? 'Accept the generated result to create the editable Marketing Plan.' : 'The editable Marketing Plan will appear after a dry run completes successfully.'}</p>;
+    }
     const textarea = (key: string, label: string, rows = 3) => <label className="block space-y-1"><span className="text-xs font-medium">{label}</span><textarea value={form[key] ?? ''} onChange={(event) => setForm((value) => ({ ...value, [key]: event.target.value }))} rows={rows} className="ui-control w-full resize-y" /></label>;
     return <>
         <div className="rounded border border-border p-3 flex items-center gap-2"><div className="min-w-0 flex-1"><p className="text-sm font-medium">Marketing Plan · {plan.companyName}</p><p className="text-[11px] text-text-secondary">{plan.status === 'approved' ? `Approved · revision ${plan.revision} · execution jobs use this strategy` : `Draft · revision ${plan.revision}`}</p></div><button type="button" className={PRIMARY} onClick={open}>{plan.status === 'approved' ? 'View or edit plan' : 'Edit and approve'}</button></div>

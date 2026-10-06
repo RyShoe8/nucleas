@@ -103,6 +103,10 @@ export async function gatewayFromModelProfile(
     bearerToken,
     // Cold local hosts and long plan drafts from paid models both exceed 60s; the schema allows up to 120s.
     timeoutMs: 120000,
+    // LiteLLM/vLLM deployments commonly sit behind nginx with a 60s read timeout. Streaming sends
+    // incremental bytes while a local model works, matching Rogly's documented client example and
+    // preventing nginx from terminating a healthy long generation before Nucleas's idle timeout.
+    stream: free,
   };
   validateGatewayConfiguration(gateway);
   // Free models take tools the way the model checks found works best (native or described in the prompt).

@@ -4,16 +4,13 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 
 vi.mock('server-only', () => ({}));
 
-const mocks = vi.hoisted(() => ({ design: vi.fn(), chat: vi.fn(), browser: vi.fn() }));
+const mocks = vi.hoisted(() => ({ design: vi.fn(), chat: vi.fn(), browser: vi.fn(), models: vi.fn(), select: vi.fn() }));
 vi.mock('./designer', () => ({ designJob: (...args: unknown[]) => mocks.design(...args) }));
 vi.mock('@/lib/ai/companyChat', () => ({ attemptCompanyCredentialChat: (input: unknown) => mocks.chat(input) }));
-vi.mock('@/lib/ai/engine/catalog', () => ({ listAvailableModels: async () => [] }));
+vi.mock('@/lib/ai/engine/catalog', () => ({ listAvailableModels: (...args: unknown[]) => mocks.models(...args) }));
 vi.mock('@/lib/ai/engine/select', () => ({
   readEngineSettings: async () => ({ defaultCostLevel: 'low', priceCeilings: { low: 1.5, medium: 5, high: null }, pins: {} }),
-  selectModel: async (_org: string, need: string) => ({
-    primary: need === 'review' ? { profileId: 'r'.repeat(24), model: 'gpt-6-sol', free: false, label: 'OpenAI' } : { profileId: 'w'.repeat(24), model: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', free: true, label: 'Rogly' },
-    fallback: null,
-  }),
+  selectModel: (...args: unknown[]) => mocks.select(...args),
   isCostLevel: (v: unknown) => v === 'low' || v === 'medium' || v === 'high',
 }));
 vi.mock('@/lib/building/companyCode', () => ({ resolveCompanyRepository: async () => null }));
@@ -89,6 +86,11 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  mocks.models.mockResolvedValue([]);
+  mocks.select.mockImplementation(async (_org: string, need: string) => ({
+    primary: need === 'review' ? { profileId: 'r'.repeat(24), model: 'gpt-6-sol', free: false, label: 'OpenAI' } : { profileId: 'w'.repeat(24), model: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', free: true, label: 'Rogly' },
+    fallback: null,
+  }));
   await Promise.all([Client.deleteMany({}), User.deleteMany({}), Employee.collection.deleteMany({}), Project.deleteMany({}), SeoBrief.deleteMany({}), MarketingPlan.deleteMany({}), Job.deleteMany({}), JobRun.deleteMany({}), LinkOpportunity.deleteMany({}), PropertyOverview.deleteMany({}), PropertyPage.deleteMany({})]);
   const user = await User.create({ email: 'owner@example.invalid', password: 'synthetic-pass', organizationId: String(org) });
   // Runs act as the job's creator, resolved from their employee record.
@@ -171,6 +173,32 @@ describe('designing', () => {
 });
 
 describe('approving and the dry run', () => {
+  it('reroutes a timed-out free dry run to another eligible free model', async () => {
+    const qwen = { profileId: 'w'.repeat(24), model: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', free: true, label: 'Rogly' };
+    const gemma = { profileId: 'w'.repeat(24), model: 'google/gemma-4-12B-it-qat-w4a16-ct', free: true, label: 'Rogly' };
+    mocks.models.mockResolvedValue([qwen, gemma]);
+    mocks.select.mockImplementation(async (_org: string, need: string, _level: string, options?: { models?: { model: string }[] }) => ({
+      primary: need === 'review'
+        ? { profileId: 'r'.repeat(24), model: 'gpt-6-sol', free: false, label: 'OpenAI' }
+        : options?.models?.length === 1 && options.models[0].model === gemma.model ? gemma : qwen,
+      fallback: null,
+    }));
+    mocks.chat.mockImplementation(async (input: { systemPrompt: string; model: string }) => {
+      if (input.systemPrompt.startsWith('You check one run')) return { requestId: 'review', role: 'assistant', text: '{"verdict":"pass","notes":"Sourced."}', costMicros: 0 };
+      if (input.model === qwen.model) return { requestId: 'timeout', role: 'status', text: 'HTTP 504 (upstream timeout): The upstream model gateway timed out.', failureCategory: 'unavailable', debugHint: 'httpStatus=504', costMicros: 0 };
+      return { requestId: 'work', role: 'assistant', text: GOOD, costMicros: 0 };
+    });
+
+    const job = await proposed();
+    await Job.updateOne({ _id: job.id }, { $set: { level: 'free' } });
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+
+    const run = await JobRun.findById(approved.dryRunId).lean();
+    expect(run).toMatchObject({ status: 'needs_review', models: [qwen.model, gemma.model, 'gpt-6-sol'] });
+    expect(mocks.models).toHaveBeenLastCalledWith({ force: true });
+  });
+
   it('tracks link recommendations through approval and submission with feedback history', async () => {
     const config = { projectId, schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
     const created = await createTemplateJob(admin, { companyId, template: 'link_building', config });

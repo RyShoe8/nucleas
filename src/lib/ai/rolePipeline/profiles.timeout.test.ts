@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 
 describe('gatewayFromModelProfile timeouts', () => {
-  it('uses 120s for free/local credentials', async () => {
+  it('streams free/local credentials so upstream 60s proxy timeouts do not cut off long generations', async () => {
     const id = new Types.ObjectId();
     mocks.findById.mockReturnValue({
       select: () => ({
@@ -49,6 +49,7 @@ describe('gatewayFromModelProfile timeouts', () => {
 
     const { gateway } = await gatewayFromModelProfile(String(id), 'local');
     expect(gateway.timeoutMs).toBe(120000);
+    expect(gateway.stream).toBe(true);
   });
 
   it('uses 120s for commercial credentials too (long plan drafts exceed 60s)', async () => {
@@ -73,5 +74,6 @@ describe('gatewayFromModelProfile timeouts', () => {
 
     const { gateway } = await gatewayFromModelProfile(String(id), 'gpt-4o-mini');
     expect(gateway.timeoutMs).toBe(120000);
+    expect(gateway.stream).toBe(false);
   });
 });
