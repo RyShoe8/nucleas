@@ -57,9 +57,8 @@ function m(
 }
 
 /**
- * Phase 1 gateway speaks OpenAI chat completions only.
- * Anthropic is listed via OpenRouter’s OpenAI-compatible API (use an OpenRouter key).
- * Google uses Gemini’s OpenAI-compatible endpoint with a Gemini API key.
+ * The gateway speaks OpenAI chat completions. Anthropic and Google expose compatibility endpoints
+ * that accept their own API keys; OpenRouter remains a distinct aggregator credential.
  */
 export const MODEL_PROVIDERS: ModelProviderOption[] = [
   {
@@ -89,19 +88,19 @@ export const MODEL_PROVIDERS: ModelProviderOption[] = [
   },
   {
     id: 'anthropic',
-    label: 'Anthropic (via OpenRouter)',
-    endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    label: 'Anthropic',
+    endpoint: 'https://api.anthropic.com/v1/chat/completions',
     defaultTier: 'commercial',
-    hint: 'Claude through OpenRouter’s OpenAI-compatible API. Use an OpenRouter API key (not a raw Anthropic key) until native Anthropic support ships.',
+    hint: 'Direct Claude API access. Paste an Anthropic Console API key; Anthropic credits apply to these calls.',
     models: [
-      m('anthropic/claude-opus-5', 'Claude Opus 5', 'Highest-quality writing and complex reasoning', ['reasoning', 'chat', 'coding'], 200_000, true),
-      m('anthropic/claude-opus-4.8', 'Claude Opus 4.8', 'Top-tier analysis and long documents', ['reasoning', 'chat', 'long_context'], 200_000),
-      m('anthropic/claude-sonnet-5', 'Claude Sonnet 5', 'Strong everyday coding and writing', ['coding', 'chat', 'reasoning'], 200_000),
-      m('anthropic/claude-sonnet-4.6', 'Claude Sonnet 4.6', 'Balanced Sonnet for production work', ['coding', 'chat'], 200_000),
-      m('anthropic/claude-sonnet-4', 'Claude Sonnet 4', 'Solid coding and instruction following', ['coding', 'chat'], 200_000),
-      m('anthropic/claude-haiku-4.5', 'Claude Haiku 4.5', 'Fast cheap Claude replies', ['chat', 'speed'], 200_000),
-      m('anthropic/claude-3.5-sonnet', 'Claude 3.5 Sonnet', 'Proven coding and editing pair', ['coding', 'chat'], 200_000),
-      m('anthropic/claude-3.5-haiku', 'Claude 3.5 Haiku', 'Quick cheap Claude drafts', ['chat', 'speed'], 200_000),
+      m('claude-fable-5', 'Claude Fable 5', 'Advanced reasoning, coding, and agentic work', ['reasoning', 'chat', 'coding', 'long_context'], 1_000_000, true),
+      m('claude-opus-5', 'Claude Opus 5', 'Highest-quality writing and complex reasoning', ['reasoning', 'chat', 'coding', 'long_context'], 1_000_000),
+      m('claude-opus-4-8', 'Claude Opus 4.8', 'Top-tier analysis and long documents', ['reasoning', 'chat', 'coding', 'long_context'], 1_000_000),
+      m('claude-opus-4-7', 'Claude Opus 4.7', 'Deep reasoning and agentic coding', ['reasoning', 'chat', 'coding', 'long_context'], 1_000_000),
+      m('claude-opus-4-6', 'Claude Opus 4.6', 'Complex reasoning and coding', ['reasoning', 'chat', 'coding', 'long_context'], 1_000_000),
+      m('claude-sonnet-5', 'Claude Sonnet 5', 'Strong everyday coding and writing', ['coding', 'chat', 'reasoning', 'long_context'], 1_000_000),
+      m('claude-sonnet-4-6', 'Claude Sonnet 4.6', 'Balanced Sonnet for production work', ['coding', 'chat', 'reasoning', 'long_context'], 1_000_000),
+      m('claude-haiku-4-5-20251001', 'Claude Haiku 4.5', 'Fast, economical Claude replies', ['chat', 'speed'], 200_000),
     ],
   },
   {

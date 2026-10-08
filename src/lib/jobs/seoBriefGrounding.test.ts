@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 
-import { seoBriefIssues } from './runner';
+import { marketingPlanCoverageIssues, seoBriefIssues } from './runner';
 
 describe('SEO brief grounding', () => {
   it('rejects unsupported market identity, missing first-party citations, and relative pages', () => {
@@ -83,5 +83,58 @@ describe('SEO brief grounding', () => {
     expect(message).toContain('not found in the archived Company Overview');
     expect(message).toContain('external source URL');
     expect(message).toContain('global or international target');
+  });
+});
+
+describe('Marketing Plan coverage', () => {
+  it('requires verified owned communities and first-party offerings named in company evidence', () => {
+    const output = {
+      records: [{
+        values: {
+          social_platforms: ['Facebook', 'Instagram'],
+          priority_pages: [{ url: 'https://frugalgambler.club/casinos', purpose: 'Casino catalog', keywords: ['sweepstakes casinos'] }],
+        },
+        sources: ['https://frugalgambler.club/', 'https://frugalgambler.club/casinos'],
+      }],
+      summary: '',
+      gaps: [],
+    };
+    const issues = marketingPlanCoverageIssues(
+      output,
+      [
+        { network: 'facebook', url: 'https://facebook.com/TheFrugalGambler' },
+        { network: 'reddit', url: 'https://reddit.com/r/TheFrugalGambler' },
+      ],
+      new Set(['https://frugalgambler.club/', 'https://frugalgambler.club/casinos', 'https://frugalgambler.club/money-feed']),
+      'The company provides a money feed that tracks daily sweepstakes casino bonuses.'
+    );
+
+    expect(issues.map((issue) => issue.problem).join(' ')).toContain('company-owned reddit');
+    expect(issues.map((issue) => issue.problem).join(' ')).toContain('https://frugalgambler.club/money-feed');
+  });
+
+  it('accepts plans that cover the verified channels and named offering pages', () => {
+    expect(marketingPlanCoverageIssues(
+      {
+        records: [{
+          values: {
+            social_platforms: ['Facebook', 'Reddit'],
+            priority_pages: [
+              { url: 'https://frugalgambler.club/casinos' },
+              { url: 'https://frugalgambler.club/money-feed' },
+            ],
+          },
+          sources: [],
+        }],
+        summary: '',
+        gaps: [],
+      },
+      [
+        { network: 'facebook', url: 'https://facebook.com/TheFrugalGambler' },
+        { network: 'reddit', url: 'https://reddit.com/r/TheFrugalGambler' },
+      ],
+      new Set(['https://frugalgambler.club/', 'https://frugalgambler.club/casinos', 'https://frugalgambler.club/money-feed']),
+      'The company provides a money feed and a sweepstakes casinos directory.'
+    )).toEqual([]);
   });
 });

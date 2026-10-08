@@ -21,6 +21,12 @@ describe('modelsUrlFromChatEndpoint', () => {
     );
   });
 
+  it('maps Anthropic OpenAI compatibility chat to the direct models endpoint', () => {
+    expect(modelsUrlFromChatEndpoint('https://api.anthropic.com/v1/chat/completions').href).toBe(
+      'https://api.anthropic.com/v1/models'
+    );
+  });
+
   it('keeps an existing models path', () => {
     expect(modelsUrlFromChatEndpoint('https://api.example.com/v1/models').href).toBe(
       'https://api.example.com/v1/models'

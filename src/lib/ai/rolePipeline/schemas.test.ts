@@ -6,7 +6,7 @@ import {
   modelProfileCreateSchema,
   rolePipelineUpsertSchema,
 } from '@/lib/ai/rolePipeline/schemas';
-import { isModelAllowedForProvider } from '@/lib/ai/rolePipeline/providerCatalog';
+import { getModelProvider, isModelAllowedForProvider } from '@/lib/ai/rolePipeline/providerCatalog';
 
 describe('role pipeline schemas', () => {
   it('accepts planner JSON', () => {
@@ -63,6 +63,16 @@ describe('role pipeline schemas', () => {
     expect(parsed.model).toBeUndefined();
   });
 
+  it('accepts a direct Anthropic company credential', () => {
+    const parsed = modelProfileCreateSchema.parse({
+      label: 'Anthropic',
+      provider: 'anthropic',
+      tier: 'commercial',
+      apiKey: 'sk-ant-api03-test',
+    });
+    expect(parsed.provider).toBe('anthropic');
+  });
+
   it('requires a model id on each pipeline stage', () => {
     const parsed = rolePipelineUpsertSchema.parse({
       employee: 'product',
@@ -80,5 +90,12 @@ describe('isModelAllowedForProvider', () => {
     expect(isModelAllowedForProvider('openai', 'gpt-5.6-sol')).toBe(true);
     expect(isModelAllowedForProvider('openai', 'not-a-real-model')).toBe(false);
     expect(isModelAllowedForProvider('custom', 'Qwen/local-model')).toBe(true);
+  });
+
+  it('keeps direct Anthropic and OpenRouter Claude model ids distinct', () => {
+    expect(getModelProvider('anthropic')?.endpoint).toBe('https://api.anthropic.com/v1/chat/completions');
+    expect(isModelAllowedForProvider('anthropic', 'claude-sonnet-5')).toBe(true);
+    expect(isModelAllowedForProvider('anthropic', 'anthropic/claude-sonnet-5')).toBe(false);
+    expect(isModelAllowedForProvider('openrouter', 'anthropic/claude-sonnet-5')).toBe(true);
   });
 });

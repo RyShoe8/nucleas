@@ -178,6 +178,54 @@ export function seoBriefIssues(
   return issues;
 }
 
+function stringList(value: unknown): string[] {
+  return (Array.isArray(value) ? value : String(value ?? '').split(/[\n,]/)).map(String).map((item) => item.trim()).filter(Boolean);
+}
+
+function priorityPageSet(value: unknown): Set<string> {
+  let pages = value;
+  if (typeof pages === 'string') { try { pages = JSON.parse(pages); } catch { pages = []; } }
+  return new Set((Array.isArray(pages) ? pages : []).flatMap((page) => {
+    const normalized = normalizedUrl(String((page as Record<string, unknown>)?.url ?? ''));
+    return normalized ? [normalized] : [];
+  }));
+}
+
+/** Marketing plans must cover known owned channels and named first-party offerings. */
+export function marketingPlanCoverageIssues(
+  output: JobRunOutput,
+  socialLinks: readonly { network: string; url: string }[],
+  verifiedPropertyUrls: ReadonlySet<string>,
+  offeringEvidence: string
+): { record: number; field?: string; problem: string }[] {
+  const issues: { record: number; field?: string; problem: string }[] = [];
+  const aliases: Record<string, string[]> = { x: ['x', 'twitter'], twitter: ['x', 'twitter'], bluesky: ['bluesky', 'blue sky'] };
+  const ignoredPaths = new Set(['about', 'about-us', 'contact', 'contact-us', 'privacy', 'privacy-policy', 'terms', 'terms-of-service', 'login', 'register', 'help', 'news', 'blog']);
+  output.records.forEach((record, index) => {
+    const platforms = stringList(record.values.social_platforms).map((value) => value.toLowerCase());
+    for (const link of socialLinks) {
+      const network = link.network.trim().toLowerCase();
+      const names = aliases[network] ?? [network];
+      if (network && !platforms.some((platform) => names.some((name) => platform === name || platform.includes(name)))) {
+        issues.push({ record: index, field: 'social_platforms', problem: `The plan omitted the verified company-owned ${link.network} channel (${link.url}).` });
+      }
+    }
+
+    const selected = priorityPageSet(record.values.priority_pages);
+    const evidence = offeringEvidence.toLowerCase().replace(/[-_/]+/g, ' ');
+    for (const raw of verifiedPropertyUrls) {
+      const normalized = normalizedUrl(raw);
+      if (!normalized) continue;
+      const path = new URL(normalized).pathname.replace(/^\/+|\/+$/g, '').toLowerCase();
+      if (!path || ignoredPaths.has(path)) continue;
+      const phrase = path.split('/').at(-1)!.replace(/[-_]+/g, ' ').trim();
+      if (phrase.length < 4 || !evidence.includes(phrase) || selected.has(normalized)) continue;
+      issues.push({ record: index, field: 'priority_pages', problem: `The verified first-party offering “${phrase}” is named in company evidence but its page is missing from priority pages: ${normalized}` });
+    }
+  });
+  return issues;
+}
+
 type SeoOverview = {
   _id: Types.ObjectId;
   rootUrl: string;
@@ -188,12 +236,12 @@ type SeoOverview = {
   analysisSources?: string[];
 };
 
-async function seoOverviewGrounding(organizationId: Types.ObjectId, companyId: Types.ObjectId): Promise<{ context: string; urls: Set<string> }> {
+async function seoOverviewGrounding(organizationId: Types.ObjectId, companyId: Types.ObjectId): Promise<{ context: string; urls: Set<string>; offeringEvidence: string }> {
   const overview = await PropertyOverview.findOne({ organizationId, companyId, status: 'complete' })
     .sort({ completedAt: -1, createdAt: -1 })
     .select('rootUrl propertyDescription primaryKeywords demographicTarget competitors analysisSources')
     .lean<SeoOverview>();
-  if (!overview) return { context: 'No completed Company Overview is available.', urls: new Set() };
+  if (!overview) return { context: 'No completed Company Overview is available.', urls: new Set(), offeringEvidence: '' };
 
   const pages = await PropertyPage.find({ overviewId: overview._id, indexable: { $ne: false }, statusCode: { $gte: 200, $lt: 400 } })
     .sort({ incomingLinks: -1, wordCount: -1, url: 1 })
@@ -218,6 +266,7 @@ async function seoOverviewGrounding(organizationId: Types.ObjectId, companyId: T
     : [];
   return {
     urls,
+    offeringEvidence: [overview.propertyDescription, ...(overview.primaryKeywords ?? [])].filter(Boolean).join(' '),
     context: [
       '# Completed Company Overview (first-party crawl evidence)',
       `Root: ${overview.rootUrl}`,
@@ -320,13 +369,14 @@ export async function executeJobRun(runId: string): Promise<void> {
   try { propertyHost = propertyUrl ? new URL(propertyUrl).hostname.replace(/^www\./, '') : profile.domain?.replace(/^www\./, '') ?? null; } catch { propertyHost = profile.domain?.replace(/^www\./, '') ?? null; }
   const overviewGrounding = activeDesign.skill === 'seo_brief' || activeDesign.skill === 'marketing_plan'
     ? await seoOverviewGrounding(job.organizationId, job.companyId)
-    : { context: '', urls: new Set<string>() };
+    : { context: '', urls: new Set<string>(), offeringEvidence: '' };
   const verifiedPropertyUrls = overviewGrounding.urls;
   const facts = [`Selected project: ${project?.name ?? repo?.projectName ?? 'unknown'}`, `Project description: ${project?.description || 'not provided'}`, `Production URL: ${propertyUrl || 'not provided'}`, `Company description: ${profile.description || 'not provided'}`];
   if (overviewGrounding.context) facts.push(overviewGrounding.context);
   if (activeDesign.skill === 'marketing_plan') {
     const connections = await listCompanyConnections(viewer, String(job.companyId)).catch(() => null);
     if (connections?.length) facts.push(`# Company integrations\n${connections.map((connection) => `- ${connection.providerName}: ${connection.status}${connection.accountLabel ? ` (${connection.accountLabel})` : ''}`).join('\n')}`);
+    if (profile.socialLinks.length) facts.push(`# Verified company-owned social accounts and communities\n${profile.socialLinks.map((link) => `- ${link.network}: ${link.url}`).join('\n')}`);
   }
   if (repo && (activeDesign.skill === 'seo_brief' || activeDesign.skill === 'marketing_plan')) {
     const snapshot = await getRepoSnapshot(org, repo.projectId).catch(() => null);
@@ -338,15 +388,22 @@ export async function executeJobRun(runId: string): Promise<void> {
     if (page) {
       const homepageUrl = normalizedUrl(page.url);
       if (homepageUrl) verifiedPropertyUrls.add(homepageUrl);
+      const seen = new Set<string>();
       const firstPartyLinks = page.links.filter((link) => {
-        try { return new URL(link).hostname.replace(/^www\./, '') === propertyHost && new URL(link).pathname !== new URL(page.url).pathname; } catch { return false; }
-      }).slice(0, 2);
+        try {
+          const url = new URL(link);
+          const normalized = normalizedUrl(url.toString());
+          if (!normalized || seen.has(normalized) || url.hostname.replace(/^www\./, '') !== propertyHost || url.pathname === new URL(page.url).pathname || /^\/(?:login|register|account|admin|privacy|terms)(?:\/|$)/i.test(url.pathname)) return false;
+          seen.add(normalized);
+          return true;
+        } catch { return false; }
+      }).slice(0, 8);
       const supportingPages = await Promise.all(firstPartyLinks.map((link) => webFetch(link).catch(() => null)));
       facts.push(`# Live first-party homepage (${page.url})\nTitle: ${page.title ?? ''}\n${page.text.slice(0, 2_500)}\nVerified links:\n${page.links.slice(0, 15).join('\n')}`);
       for (const supporting of supportingPages) if (supporting) {
         const supportingUrl = normalizedUrl(supporting.url);
         if (supportingUrl) verifiedPropertyUrls.add(supportingUrl);
-        facts.push(`# Live first-party page (${supporting.url})\nTitle: ${supporting.title ?? ''}\n${supporting.text.slice(0, 1_000)}`);
+        facts.push(`# Live first-party page (${supporting.url})\nTitle: ${supporting.title ?? ''}\n${supporting.text.slice(0, 600)}`);
       }
     }
   }
@@ -428,12 +485,14 @@ export async function executeJobRun(runId: string): Promise<void> {
     await progress(run._id, owner, 'Validating evidence and required fields', { stage: 'validating', percent: 68 });
     let issues = checkRecords(activeDesign.fields, output);
     if (activeDesign.skill === 'seo_brief' || activeDesign.skill === 'marketing_plan') issues.push(...seoBriefIssues(output, propertyHost, groundingFacts, verifiedPropertyUrls));
+    if (activeDesign.skill === 'marketing_plan') issues.push(...marketingPlanCoverageIssues(output, profile.socialLinks, verifiedPropertyUrls, `${profile.description || ''} ${overviewGrounding.offeringEvidence}`));
     if ((activeDesign.skill === 'seo_brief' || activeDesign.skill === 'marketing_plan') && issues.length) {
       const retry = await doWork(activeWorker, `The draft failed grounding checks:\n${issues.map((issue) => `- ${issue.problem}`).join('\n')}\nResearch the selected project again with tools. Do not reuse unsupported claims. Return only the required JSON.`, true);
       const corrected = jobRunOutputSchema.safeParse(extractJson(retry.text));
       if (corrected.success) {
         output = corrected.data;
         issues = [...checkRecords(activeDesign.fields, output), ...seoBriefIssues(output, propertyHost, groundingFacts, verifiedPropertyUrls)];
+        if (activeDesign.skill === 'marketing_plan') issues.push(...marketingPlanCoverageIssues(output, profile.socialLinks, verifiedPropertyUrls, `${profile.description || ''} ${overviewGrounding.offeringEvidence}`));
       }
     }
     if (activeDesign.skill === 'link_building') {
