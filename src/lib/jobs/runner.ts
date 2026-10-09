@@ -447,7 +447,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       forceToolLoop: !compact && (!correction || researchRetry),
       extraTools: compact || (correction && !researchRetry) ? undefined : tools.toolSet,
       stopOnUpstreamFailure: true,
-      maxOutputTokensOverride: manualArtifact(activeDesign.skill) ? 6000 : compact ? COMPACT_RUN_MAX_TOKENS : RUN_MAX_TOKENS,
+      maxOutputTokensOverride: compact ? COMPACT_RUN_MAX_TOKENS : manualArtifact(activeDesign.skill) ? 6000 : RUN_MAX_TOKENS,
       onProgress,
     });
     cost += turn.costMicros ?? 0;

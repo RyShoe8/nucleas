@@ -29,6 +29,19 @@ vi.mock('@/lib/ai/tools/executeTool', () => ({
 import { runIdeToolLoop } from '@/lib/ai/tools/runToolLoop';
 
 describe('runIdeToolLoop keeps full context', () => {
+  it('fits an oversized initial request and recent result on a small deployment', async () => {
+    const { fitToContext } = await import('@/lib/ai/tools/runToolLoop');
+    const messages: Parameters<typeof fitToContext>[0] = [
+      { role: 'system', content: 's'.repeat(6000) },
+      { role: 'user', content: 'u'.repeat(16000) },
+      { role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'web_fetch', arguments: '{"url":"https://example.com"}' } }] },
+      { role: 'tool', tool_call_id: 'c1', content: 'r'.repeat(30000) },
+    ];
+    fitToContext(messages, 10000);
+    expect(messages.reduce((sum, m) => sum + (m.content?.length ?? 0) + (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0), 0)).toBeLessThanOrEqual(8500);
+    expect(messages.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'tool']);
+    expect(messages[3].tool_call_id).toBe('c1');
+  });
   function reading(file: (n: number) => string, rounds: number) {
     let round = 0;
     const seen: { role: string; content: string | null; tool_call_id?: string }[][] = [];

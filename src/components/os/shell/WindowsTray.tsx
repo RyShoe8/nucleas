@@ -8,7 +8,7 @@ export default function WindowsTray() {
     const wm = useWindowManager();
 
     return (
-        <footer className="h-14 flex-shrink-0 flex items-center gap-2 px-3 border-t border-border bg-background overflow-x-auto">
+        <footer className="relative z-10 h-14 flex-shrink-0 flex items-center gap-2 px-3 border-t border-border bg-background overflow-x-auto">
             {wm.windows.length === 0 ? (
                 <span className="text-xs text-text-muted">No open modules. Use the Modules menu or press ⌘K.</span>
             ) : (

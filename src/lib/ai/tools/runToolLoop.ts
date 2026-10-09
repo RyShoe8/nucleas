@@ -75,6 +75,8 @@ export async function runIdeToolLoop(input: {
     throw new GatewayError('invalid_response', { kind: 'no_tools' });
   }
   const allowedToolNames = new Set(tools.map((tool) => tool.function.name));
+  const messageBudget = Math.max(0, (input.contextChars ?? DEFAULT_CONTEXT_CHARS) - JSON.stringify(tools).length);
+  if (messageBudget < 1024) throw new GatewayError('invalid_response', { kind: 'tool_schema_context_budget' });
   const maxRounds = Math.min(
     Math.max(input.maxRounds ?? DEFAULT_MAX_ROUNDS, 1),
     DEEP_REPO_MAX_ROUNDS
@@ -109,7 +111,7 @@ export async function runIdeToolLoop(input: {
 
       // Keep everything the model has seen until its context window is nearly full; then clear
       // the oldest tool results first (they can be fetched again from the local repository copy).
-      fitToContext(messages, input.contextChars ?? DEFAULT_CONTEXT_CHARS);
+      fitToContext(messages, messageBudget);
 
       const result = await invokeModelWithTools(
         input.gateway,
@@ -337,4 +339,18 @@ export function fitToContext(messages: LoopMessage[], budgetChars: number): void
     messages[longest] = { ...m, content: `${m.content!.slice(0, Math.floor(m.content!.length / 2))}
 […shortened to fit the context window]` };
   }
+  // Small deployments can overflow on the first call or a single recent tool result.
+  // Keep message/call structure intact, but no content is exempt from the hard budget.
+  for (let guard = 0; contentChars(messages) > target && guard < messages.length * 2; guard += 1) {
+    let longest = -1;
+    for (let i = 0; i < messages.length; i += 1) {
+      if ((messages[i].content?.length ?? 0) > (longest < 0 ? 128 : messages[longest].content?.length ?? 0)) longest = i;
+    }
+    if (longest < 0) break;
+    const message = messages[longest];
+    const text = message.content!;
+    const keep = Math.max(64, text.length - (contentChars(messages) - target) - 40);
+    messages[longest] = { ...message, content: `${text.slice(0, Math.floor(keep * 0.7))}\n[Context shortened]\n${text.slice(-Math.floor(keep * 0.3))}` };
+  }
+  if (contentChars(messages) > target) throw new GatewayError('invalid_response', { kind: 'tool_history_context_budget' });
 }

@@ -24,7 +24,7 @@ export default function TopBar() {
     const projectLabel = activeProjectWindow?.payload?.projectName;
 
     return (
-        <header className="h-12 flex-shrink-0 flex items-center gap-3 px-4 border-b border-border bg-background">
+        <header className="relative z-20 h-12 flex-shrink-0 flex items-center gap-3 px-4 border-b border-border bg-background">
             <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
                 <span className="text-sm sm:text-base font-semibold tracking-tight text-text-primary">Nucleas OS</span>
                 <CompanySwitcher />

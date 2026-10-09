@@ -87,6 +87,24 @@ describe('Direct local gateway diagnostics and project context', () => {
     expect(mocks.webSearch).not.toHaveBeenCalled();
   });
 
+  it('rebudgets a plain request immediately after a 9216-token deployment rejection', async () => {
+    mocks.invokeModel.mockRejectedValueOnce(new GatewayError('unavailable', {
+      kind: 'http', httpStatus: 400,
+      providerMessage: "This model's maximum context length is 9216 tokens. However, you requested 4000 output tokens.",
+    })).mockResolvedValueOnce({ content: 'A compact persona', inputTokens: 100, outputTokens: 50, latencyMs: 1 });
+    const turn = await attemptCompanyCredentialChat({
+      systemPrompt: 'Generate a persona.', organizationId: 'org', projectId: new Types.ObjectId(),
+      userId: 'a'.repeat(24), userText: 'Brand samples '.repeat(3000), priorTurns: [],
+      modelProfileId: 'b'.repeat(24), model: 'local', includeRepoTools: false,
+      forcePlain: true, toolProfile: 'none', maxOutputTokensOverride: 6000,
+    });
+    expect(turn.role).toBe('assistant');
+    expect(mocks.invokeModel).toHaveBeenCalledTimes(2);
+    const retry = mocks.invokeModel.mock.calls[1][1];
+    expect(retry.maxOutputTokens).toBeLessThanOrEqual(1800);
+    expect(retry.messages.reduce((sum: number, m: { content: string }) => sum + m.content.length, 0)).toBeLessThanOrEqual(12000);
+  });
+
   it('shows the sanitized local provider reason and identifies a context-window rejection', async () => {
     const failure = new GatewayError('unavailable', {
       kind: 'http',

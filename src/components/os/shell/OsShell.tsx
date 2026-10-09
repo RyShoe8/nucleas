@@ -14,7 +14,8 @@ export default function OsShell({ children }: OsShellProps) {
     return (
         <div className="fixed inset-0 flex flex-col bg-background text-text-primary overflow-hidden">
             <TopBar />
-            <div className="relative flex-1 min-h-0">
+            {/* Keep window focus ordering inside the desktop, below shell navigation. */}
+            <div className="relative z-0 isolate flex-1 min-h-0">
                 <ModuleCanvas />
                 <IntegrationNotice />
                 {children ? (

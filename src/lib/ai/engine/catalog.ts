@@ -163,6 +163,11 @@ async function modelIdsFor(profile: ProfileRow, force: boolean): Promise<{ ids: 
     ids = cached?.modelIds?.length ? cached.modelIds : profile.model ? [profile.model] : [];
     contexts = cachedContexts;
   }
+  // A deployment rejection is stronger evidence than a model's advertised maximum.
+  // Keep a learned smaller window when discovery omits it or advertises a larger one.
+  for (const id of ids) {
+    if (cachedContexts[id]) contexts[id] = Math.min(contexts[id] ?? cachedContexts[id], cachedContexts[id]);
+  }
   // Model ids contain dots, so windows are stored as a list rather than a map keyed by id.
   const contextWindows = Object.entries(contexts).map(([model, tokens]) => ({ model, tokens }));
   await AiModelCatalogSnapshot.updateOne(

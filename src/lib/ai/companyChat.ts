@@ -405,7 +405,7 @@ export async function attemptCompanyCredentialChat(input: {
     ? requestedCap
     : Math.min(OUTPUT_HARD_CAP, Math.max(requestedCap, policy.maxOutputTokens));
   // Prompts are sized to this model's real context window, not a fixed pilot cap.
-  const contextTokens = await contextWindowFor(gateway.model, profile.provider, freeCredential, input.modelProfileId).catch(() => (freeCredential ? 16_000 : 64_000));
+  let contextTokens = await contextWindowFor(gateway.model, profile.provider, freeCredential, input.modelProfileId).catch(() => (freeCredential ? 16_000 : 64_000));
   maxOutputTokens = outputBudgetTokens(contextTokens, maxOutputTokens);
   let contextChars = contextBudgetChars(contextTokens, maxOutputTokens);
 
@@ -444,10 +444,22 @@ export async function attemptCompanyCredentialChat(input: {
       .map((turn) => turn.text);
     const assistSearchQuery = resolveAssistSearchQuery(input.userText, priorUserTexts);
 
+    async function learnContextLimit(error: unknown): Promise<boolean> {
+      if (!(error instanceof GatewayError) || !isContextWindowFailure(error)) return false;
+      const observed = contextWindowFromProviderMessage(error.details?.providerMessage);
+      if (!observed) return false;
+      contextTokens = Math.min(contextTokens, observed);
+      maxOutputTokens = outputBudgetTokens(contextTokens, Math.min(maxOutputTokens, 1800));
+      contextChars = Math.floor(contextBudgetChars(contextTokens, maxOutputTokens) * 0.75);
+      await recordObservedContextWindow(input.modelProfileId, gateway.model, observed).catch(() => undefined);
+      input.onProgress?.('Reducing the request to fit the deployment context window');
+      return true;
+    }
+
     async function plainInvoke(args: {
       systemExtra: string;
       userContent: string;
-    }) {
+    }, contextRetry = false): ReturnType<typeof invokeModel> {
       const rawMessages = [
         {
           role: 'system' as const,
@@ -457,7 +469,7 @@ export async function attemptCompanyCredentialChat(input: {
         { role: 'user' as const, content: args.userContent },
       ];
       const budgeted = budgetContextMessages(rawMessages, contextChars, contextChars);
-      return invokeModel(
+      try { return await invokeModel(
         gateway,
         {
           role: 'architect',
@@ -465,7 +477,10 @@ export async function attemptCompanyCredentialChat(input: {
           maxOutputTokens,
         },
         { signal: input.signal }
-      );
+      ); } catch (error) {
+        if (!contextRetry && await learnContextLimit(error)) return plainInvoke(args, true);
+        throw error;
+      }
     }
 
     /** One soft retry when the free host returns 502/504 after Nucleas already gathered context. */
@@ -801,6 +816,12 @@ export async function attemptCompanyCredentialChat(input: {
           resolved = true;
         } catch (toolError) {
           lastError = toolError;
+          // Do not misclassify context HTTP 400s as unsupported tools or lose the
+          // authoritative limit in a subsequent browse-assist error.
+          if (toolError instanceof GatewayError && isContextWindowFailure(toolError)) {
+            await learnContextLimit(toolError);
+            throw toolError;
+          }
           const isUnsupportedToolHost =
             freeCredential &&
             toolError instanceof GatewayError &&
