@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { JobView } from './JobCard';
+import ArtifactHistory from './ArtifactHistory';
 
 type Voice = { persona: string; examples: string; status: 'draft' | 'approved'; revision: number; sources: string[] };
 const EMPTY: Voice = { persona: '', examples: '', status: 'draft', revision: 0, sources: [] };
@@ -45,6 +46,8 @@ export default function BrandVoicePanel({ companyId, onCreated }: { companyId: s
   if (!companyId) return <p className="text-sm text-text-secondary">Choose a company to build its Voice.</p>;
   if (loading) return <p className="text-sm text-text-secondary">Loading Voice…</p>;
   return <div className="space-y-3">
+    <p className="text-xs text-text-secondary">Voice runs only when requested. Generate a new draft when the brand changes, then compare it with previous versions.</p>
+    <ArtifactHistory key={voice.revision} companyId={companyId} kind="brand_voice" />
     <p className="text-xs text-text-secondary">Build a persona from the Company Overview, website, and writing samples. Accept the generated job result, then edit and approve the persona here for content and social drafts.</p>
     <label className="block space-y-1"><span className="ui-kicker">Brand writing samples</span><textarea aria-label="Brand writing samples" value={voice.examples} maxLength={16000} onChange={(e) => setVoice({ ...voice, examples: e.target.value })} placeholder="Paste your own articles or posts, including source URLs. Third-party emails are content sources, not your brand voice." className="ui-control w-full h-32 resize-y" /></label>
     <label className="block space-y-1"><span className="ui-kicker">Persona · {voice.status} · revision {voice.revision}</span><textarea aria-label="Brand persona" value={voice.persona} maxLength={20000} onChange={(e) => setVoice({ ...voice, persona: e.target.value, status: 'draft' })} placeholder="Generate a persona or write your brand’s voice guidelines here." className="ui-control w-full h-64 resize-y" /></label>

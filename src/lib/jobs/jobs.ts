@@ -1,4 +1,5 @@
 import 'server-only';
+import { manualArtifact } from './output';
 import { brandVoiceDesign } from './templates/brandVoice';
 import { generatedVoice, saveGeneratedVoice } from '@/lib/brandVoice/service';
 import { Types } from 'mongoose';
@@ -349,7 +350,10 @@ export async function approveJob(viewer: CompanyViewer, id: string, input: { com
   if (input.completion !== 'review' && input.completion !== 'automatic') return { ok: false, status: 400, error: 'Choose review or automatic completion.' };
   const budget = input.monthlyBudgetMicros === undefined ? found.job.monthlyBudgetMicros ?? 2_000_000 : Math.round(input.monthlyBudgetMicros);
   if (!(budget > 0 && budget <= 1_000_000_000)) return { ok: false, status: 400, error: 'Set a monthly budget above $0.' };
-  const result = await transition(viewer, found.job, ['proposed'], { status: 'testing', completion: input.completion, monthlyBudgetMicros: budget }, 'approved', input.completion);
+  const parsedDesign = jobDesignSchema.safeParse(found.job.design);
+  const manual = parsedDesign.success && manualArtifact(parsedDesign.data.skill);
+  const completion = manual ? 'review' : input.completion;
+  const result = await transition(viewer, found.job, ['proposed'], { status: 'testing', completion, monthlyBudgetMicros: budget, ...(manual ? { design: { ...parsedDesign.data, schedule: { kind: 'once' }, recommendedCompletion: 'review' }, nextRunAt: null } : {}) }, 'approved', completion);
   if (!result.ok) return result;
   const startedAt = new Date();
   const run = await JobRun.create({ organizationId: found.job.organizationId, jobId: found.job._id, companyId: found.job.companyId, dryRun: true, status: 'running', startedAt, ...initialRunLease(undefined, startedAt), progress: ['Starting the dry run'], progressState: { stage: 'preparing', label: 'Preparing the dry run', percent: 5, updatedAt: startedAt } });
@@ -472,7 +476,7 @@ export { executeJobRun };
 
 /** Claims due recurring jobs and creates their runs. Each job advances before its run starts, so cron retries cannot duplicate it. */
 export async function claimDueJobRuns(now = new Date(), limit = 2): Promise<string[]> {
-  const candidates = await Job.find({ status: { $in: ['ready', 'active'] }, nextRunAt: { $lte: now } })
+  const candidates = await Job.find({ status: { $in: ['ready', 'active'] }, 'design.skill': { $nin: ['brand_voice', 'marketing_plan'] }, nextRunAt: { $lte: now } })
     .sort({ nextRunAt: 1 })
     .limit(Math.max(1, Math.min(limit, 10)))
     .lean<JobLean[]>();

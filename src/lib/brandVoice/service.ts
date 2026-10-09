@@ -1,4 +1,5 @@
 import 'server-only';
+import { preserveArtifact } from '@/lib/jobs/artifactHistory';
 import { Types } from 'mongoose';
 import { z } from 'zod';
 import { BrandVoice } from '@/lib/models/BrandVoice';
@@ -33,6 +34,7 @@ export async function updateBrandVoice(viewer: CompanyViewer, companyId: string,
   const parsed = editSchema.safeParse(input);
   if (!parsed.success) return { ok: false as const, status: 400, error: parsed.error.issues[0].message };
   const { revision, ...fields } = parsed.data;
+  await preserveArtifact(viewer.organizationId, new Types.ObjectId(companyId), 'brand_voice');
   try {
     const row = await BrandVoice.findOneAndUpdate(
       { organizationId: viewer.organizationId, companyId, revision },
@@ -49,6 +51,7 @@ export async function updateBrandVoice(viewer: CompanyViewer, companyId: string,
 
 export async function saveGeneratedVoice(input: { organizationId: Types.ObjectId; companyId: Types.ObjectId; userId: string; name: string; output: JobRunOutput }) {
   const generated = generatedVoice(input.output, input.name);
+  await preserveArtifact(input.organizationId, input.companyId, 'brand_voice');
   await BrandVoice.findOneAndUpdate(
     { organizationId: input.organizationId, companyId: input.companyId },
     { $set: { ...generated, status: 'draft', updatedByUserId: new Types.ObjectId(input.userId) }, $inc: { revision: 1 } },

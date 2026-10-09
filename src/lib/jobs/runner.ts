@@ -1,4 +1,5 @@
 import 'server-only';
+import { manualArtifact, parseJobOutput } from './output';
 import { brandVoiceContext, generatedVoice } from '@/lib/brandVoice/service';
 import { Types } from 'mongoose';
 import { z } from 'zod';
@@ -82,6 +83,7 @@ function reviewerPrompt(): string {
 
 /** Existing configured jobs keep their stored schedule/settings while receiving current safety rules. */
 function currentDesign(design: JobDesign): JobDesign {
+  if (manualArtifact(design.skill)) return { ...design, schedule: { kind: 'once' }, recommendedCompletion: 'review' };
   if (design.skill === 'seo_brief' && !design.instructions.includes('archived Company Overview pages')) {
     return {
       ...design,
@@ -445,7 +447,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       forceToolLoop: !compact && (!correction || researchRetry),
       extraTools: compact || (correction && !researchRetry) ? undefined : tools.toolSet,
       stopOnUpstreamFailure: true,
-      maxOutputTokensOverride: compact ? COMPACT_RUN_MAX_TOKENS : RUN_MAX_TOKENS,
+      maxOutputTokensOverride: manualArtifact(activeDesign.skill) ? 6000 : compact ? COMPACT_RUN_MAX_TOKENS : RUN_MAX_TOKENS,
       onProgress,
     });
     cost += turn.costMicros ?? 0;
@@ -476,14 +478,16 @@ export async function executeJobRun(runId: string): Promise<void> {
       }
     }
     // A free worker that fails may retry on the level's paid model, as elsewhere in the engine.
-    if (turn.role !== 'assistant' && work.fallback) turn = await doWork(work.fallback);
+    if (turn.role !== 'assistant' && work.fallback) { activeWorker = work.fallback; turn = await doWork(activeWorker); }
     if (turn.role !== 'assistant') return void (await fail(turn.text, { costMicros: cost, models: usedModels }));
-    let parsed = jobRunOutputSchema.safeParse(extractJson(turn.text));
+    let parsed = parseJobOutput(turn.text, activeDesign.skill);
     if (!parsed.success) {
-      const again = await doWork(activeWorker, `Your previous reply was not the required JSON. Reply with ONLY the JSON object. Previous reply:\n${turn.text.slice(0, 12000)}`);
-      parsed = jobRunOutputSchema.safeParse(extractJson(again.text));
+      const errors = parsed.error.issues.map((issue) => `${issue.path.join('.') || 'response'}: ${issue.message}`).join('; ');
+      const again = await doWork(activeWorker, `Format the previous research as the required JSON envelope. Do not add research or invent evidence. Validation: ${errors}\nUse {"records":[{"values":{${activeDesign.fields.map((field) => `"${field.key}": ${field.key === 'brand_profile' ? '{"positioning":{"primary":"..."},"audienceRelationship":{"style":"..."},"rhetoricalPatterns":["..."]}' : '"..."'}`).join(',')}},"sources":[]}],"summary":"...","gaps":[]}. Fill values and sources from the research below; placeholders are not answers.\nPrevious reply:\n${turn.text.slice(-24000)}`);
+      if (again.role !== 'assistant') return void (await fail(again.text, { costMicros: cost, models: usedModels }));
+      parsed = parseJobOutput(again.text, activeDesign.skill);
     }
-    if (!parsed.success) return void (await fail('The run did not return usable records.', { costMicros: cost, models: usedModels }));
+    if (!parsed.success) return void (await fail(`The model's response could not be read after a formatting retry: ${parsed.error.issues.map((issue) => `${issue.path.join('.') || 'response'}: ${issue.message}`).join('; ')}. No result was saved; retry the run.`, { costMicros: cost, models: usedModels }));
     let output = parsed.data;
 
     await progress(run._id, owner, 'Validating evidence and required fields', { stage: 'validating', percent: 68 });
@@ -546,7 +550,7 @@ export async function executeJobRun(runId: string): Promise<void> {
 
     // Dry runs always wait for a person; real runs complete by themselves only when automatic and clean.
     const clean = issues.length === 0 && verdict?.verdict !== 'fail';
-    const status = !run.dryRun && job.completion === 'automatic' && clean ? 'completed' : 'needs_review';
+    const status = !manualArtifact(activeDesign.skill) && !run.dryRun && job.completion === 'automatic' && clean ? 'completed' : 'needs_review';
     await progress(run._id, owner, 'Saving results and recommendations', { stage: 'saving', percent: 95 });
     const saved = await JobRun.updateOne(
       { _id: run._id, status: 'running', leaseOwner: owner },

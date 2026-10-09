@@ -1,4 +1,5 @@
 import 'server-only';
+import { preserveArtifact } from './artifactHistory';
 import { Types } from 'mongoose';
 import Project from '@/lib/models/Project';
 import { Job } from '@/lib/models/Job';
@@ -90,6 +91,7 @@ export function marketingPlanContext(plan: MarketingPlanView): string {
 export async function saveGeneratedMarketingPlan(input: { organizationId: Types.ObjectId; companyId: Types.ObjectId; userId: string; companyName: string; output: JobRunOutput }): Promise<void> {
   const record = input.output.records[0]?.values;
   if (!record) return;
+  await preserveArtifact(input.organizationId, input.companyId, 'marketing_plan');
   await MarketingPlan.findOneAndUpdate(
     { organizationId: input.organizationId, companyId: input.companyId },
     { $set: { companyName: input.companyName, status: 'draft', summary: String(record.summary ?? ''), audience: String(record.audience ?? ''), goals: strings(record.goals), positioning: String(record.positioning ?? ''), messagingPillars: strings(record.messaging_pillars), primaryTopics: strings(record.primary_topics), competitors: strings(record.competitors), excludedTopics: strings(record.excluded_topics), geographicTargets: strings(record.geographic_targets), priorityPages: pages(record.priority_pages), seoStrategy: String(record.seo_strategy ?? ''), aiCitationStrategy: String(record.ai_citation_strategy ?? ''), aiTargetQuestions: strings(record.ai_target_questions), aiSourceTargets: strings(record.ai_source_targets), socialStrategy: String(record.social_strategy ?? ''), socialPlatforms: strings(record.social_platforms), socialContentPillars: strings(record.social_content_pillars), socialCadence: String(record.social_cadence ?? ''), kpis: strings(record.kpis), notes: String(record.notes ?? ''), updatedByUserId: new Types.ObjectId(input.userId) }, $inc: { revision: 1 }, $unset: { approvedAt: 1, approvedByUserId: 1 } },
@@ -125,6 +127,7 @@ export async function updateMarketingPlan(viewer: CompanyViewer, companyId: stri
   const summary = String(input.summary ?? '').trim(); const audience = String(input.audience ?? '').trim();
   if (!summary || !audience) return { ok: false, status: 400, error: 'Company summary and target audience are required.' };
   const approve = input.status === 'approved';
+  await preserveArtifact(viewer.organizationId, new Types.ObjectId(companyId), 'marketing_plan');
   const row = await MarketingPlan.findOneAndUpdate(
     { organizationId: viewer.organizationId, companyId: new Types.ObjectId(companyId) },
     { $set: { companyName: profile.name, status: approve ? 'approved' : 'draft', summary: summary.slice(0, 5000), audience: audience.slice(0, 5000), goals: strings(input.goals), positioning: String(input.positioning ?? '').slice(0, 5000), messagingPillars: strings(input.messagingPillars), primaryTopics: strings(input.primaryTopics), competitors: strings(input.competitors), excludedTopics: strings(input.excludedTopics), geographicTargets: strings(input.geographicTargets), priorityPages: pages(input.priorityPages), seoStrategy: String(input.seoStrategy ?? '').slice(0, 6000), aiCitationStrategy: String(input.aiCitationStrategy ?? '').slice(0, 6000), aiTargetQuestions: strings(input.aiTargetQuestions), aiSourceTargets: strings(input.aiSourceTargets), socialStrategy: String(input.socialStrategy ?? '').slice(0, 6000), socialPlatforms: strings(input.socialPlatforms), socialContentPillars: strings(input.socialContentPillars), socialCadence: String(input.socialCadence ?? '').slice(0, 2000), kpis: strings(input.kpis), notes: String(input.notes ?? '').slice(0, 5000), updatedByUserId: new Types.ObjectId(viewer.userId), ...(approve ? { approvedAt: new Date(), approvedByUserId: new Types.ObjectId(viewer.userId) } : {}) }, $inc: { revision: 1 }, ...(!approve ? { $unset: { approvedAt: 1, approvedByUserId: 1 } } : {}) },

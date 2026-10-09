@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Modal from '@/components/ui/Modal';
+import { manualArtifact } from '@/lib/jobs/output';
 
 // ---------- Types (mirror the server's JobView) ----------
 
@@ -24,7 +25,7 @@ interface JobQuestion {
 }
 
 interface JobDesign {
-    skill?: 'link_building' | 'seo_brief' | 'marketing_plan' | 'social_media' | 'ai_citations' | 'property_overview';
+    skill?: 'link_building' | 'seo_brief' | 'marketing_plan' | 'brand_voice' | 'social_media' | 'ai_citations' | 'property_overview';
     title: string;
     category: string;
     instructions: string;
@@ -305,6 +306,7 @@ function DesignSummary({ job }: { job: JobView }) {
 }
 
 function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => void }) {
+    const manual = manualArtifact(job.design?.skill);
     const [completion, setCompletion] = useState<'review' | 'automatic'>(job.design?.recommendedCompletion ?? 'review');
     const [budget, setBudget] = useState(String((job.monthlyBudgetMicros || 2_000_000) / 1_000_000));
     const [busy, setBusy] = useState<string | null>(null);
@@ -323,8 +325,8 @@ function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => vo
     };
     return (
         <div className="space-y-2 rounded border border-border p-2">
-            <p className="text-xs font-medium">When a run finishes</p>
-            {(['review', 'automatic'] as const).map((c) => (
+            <p className="text-xs font-medium">{manual ? 'One-time generation' : 'When a run finishes'}</p>
+            {manual ? <p className="text-xs text-text-secondary">Runs only when you request it. Review the draft before accepting it. Generate an update later to compare versions; it will never repeat automatically.</p> : (['review', 'automatic'] as const).map((c) => (
                 <label key={c} className="flex items-start gap-2 text-xs cursor-pointer">
                     <input type="radio" name={`${job.id}-completion`} checked={completion === c} onChange={() => setCompletion(c)} className="mt-0.5" />
                     <span>
@@ -347,12 +349,12 @@ function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => vo
                     className="h-6 w-20 px-1 rounded border border-border bg-background-elevated text-xs"
                     aria-label="Monthly budget in dollars"
                 />
-                <span className="text-text-secondary">the job pauses when it is reached</span>
+                <span className="text-text-secondary">{manual ? 'spending cap only; never schedules a run' : 'the job pauses when it is reached'}</span>
             </label>
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
             <div className="flex gap-2">
-                <button type="button" className={PRIMARY} disabled={busy !== null} onClick={() => void act({ action: 'approve', completion, monthlyBudgetUsd: Number(budget) }, 'approve')}>
-                    {busy === 'approve' ? 'Starting…' : retrying ? 'Retry dry run' : 'Approve and run a dry run'}
+                <button type="button" className={PRIMARY} disabled={busy !== null} onClick={() => void act({ action: 'approve', completion: manual ? 'review' : completion, monthlyBudgetUsd: Number(budget) }, 'approve')}>
+                    {busy === 'approve' ? 'Starting…' : manual ? retrying ? 'Retry generation' : 'Generate draft' : retrying ? 'Retry dry run' : 'Approve and run a dry run'}
                 </button>
                 <button
                     type="button"
@@ -363,7 +365,7 @@ function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => vo
                     Reject
                 </button>
             </div>
-            <p className="text-[11px] text-text-secondary">A dry run does the work once without delivering anything, so you can check a sample first.</p>
+            <p className="text-[11px] text-text-secondary">{manual ? 'Generate once, review, then save the new version. Nothing is scheduled.' : 'A dry run does the work once without delivering anything, so you can check a sample first.'}</p>
         </div>
     );
 }
