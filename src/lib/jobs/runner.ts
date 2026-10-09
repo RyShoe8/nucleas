@@ -60,7 +60,7 @@ export function runnerPrompt(design: JobDesign, today: string): string {
     '',
     '# Sources',
     design.sourcePolicy,
-    'Every record lists the URLs it came from. Never invent values: leave a field empty and say why in gaps instead.',
+    'Every record lists at most 20 distinct source URLs, ordered by relevance. Never invent values: leave a field empty and say why in gaps instead.',
     ...(design.safeguards.length ? ['', '# Safeguards', ...design.safeguards.map((s) => `- ${s}`)] : []),
     '',
     '# Rules',

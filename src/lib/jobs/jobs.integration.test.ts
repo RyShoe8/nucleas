@@ -139,8 +139,7 @@ describe('designing', () => {
     expect(await updateBrandVoice(admin, companyId, { ...voice, status: 'approved' })).toMatchObject({ ok: true, voice: { status: 'approved', revision: 2 } });
     expect(await brandVoiceContext(org, new Types.ObjectId(companyId))).toContain('Fellow players');
     const history = await artifactHistory(admin, companyId, 'brand_voice');
-    expect(history?.versions).toHaveLength(1);
-    expect(history?.versions[0].text).toContain('Fellow players');
+    expect(history?.versions).toHaveLength(0); // Approval alone does not create different content.
     expect(await artifactHistory({ ...admin, organizationId: new Types.ObjectId() }, companyId, 'brand_voice')).toBeNull();
     expect(await brandVoiceContext(new Types.ObjectId(), new Types.ObjectId(companyId))).toBe('');
     expect(await getBrandVoice({ ...admin, organizationId: new Types.ObjectId() }, companyId)).toBeNull();
@@ -176,6 +175,11 @@ describe('designing', () => {
     const history = await artifactHistory(admin, companyId, 'marketing_plan');
     expect(history?.versions[0].text).toContain('A game discovery and server hosting property.');
     expect(history?.current?.text).toContain('Updated company strategy.');
+    const updated = await updateMarketingPlan(admin, companyId, { ...saved.plan, summary: 'Updated company strategy.', status: 'approved' });
+    expect(updated.ok).toBe(true);
+    const afterApproval = await artifactHistory(admin, companyId, 'marketing_plan');
+    expect(afterApproval?.versions).toHaveLength(1);
+    expect(afterApproval?.versions[0].text).toContain('A game discovery and server hosting property.');
   });
 
   it('configures at most one open link-building skill per property', async () => {

@@ -5,6 +5,7 @@ import { useOsCompanies } from './CompaniesModule';
 import JobCard, { JobStatusBadge, jobIsBusy, jobListProgress, scheduleLabel, type JobView } from './jobs/JobCard';
 import BrandVoicePanel from './jobs/BrandVoicePanel';
 import ArtifactHistory from './jobs/ArtifactHistory';
+import MarketingPlanEditor from './jobs/MarketingPlanEditor';
 
 type Group = { key: string; label: string; test: (j: JobView) => boolean };
 
@@ -129,7 +130,7 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
             ) : kind === 'custom' ? (
                 <textarea value={request} onChange={(e) => setRequest(e.target.value)} placeholder={placeholder} className="ui-control w-full h-24 resize-y" aria-label="Job request" />
             ) : <p className="text-xs text-text-secondary">The first run produces a sourced company Marketing Plan. After you accept and approve it, Nucleas creates separate proposed jobs for link building, AI citations, and social drafts.</p>}
-            {kind === 'marketing_plan' && companyId ? <ArtifactHistory companyId={companyId} kind="marketing_plan" key={companyId} /> : null}
+            {kind === 'marketing_plan' && companyId ? <div className="space-y-3" key={companyId}><MarketingPlanEditor companyId={companyId} /><ArtifactHistory companyId={companyId} kind="marketing_plan" /></div> : null}
             {kind === 'marketing_plan' ? <p className="text-xs text-text-secondary">A one-time overview, updated only when you request it. Previous saved versions are retained for comparison.</p> : null}
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
             {kind !== 'brand_voice' ? <button

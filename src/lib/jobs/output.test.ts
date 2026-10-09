@@ -4,6 +4,14 @@ import { parseJobOutput } from './output';
 const profile = { positioning: { primary: 'Practical game discovery' }, audienceRelationship: { style: 'Fellow players' }, rhetoricalPatterns: ['Concrete recommendations'] };
 const record = { values: { brand_profile: profile }, sources: ['https://playbound.club/'] };
 describe('job output recovery', () => {
+  it('keeps a generated persona when source citations exceed the storage limit', () => {
+    const sources = Array.from({ length: 27 }, (_, i) => `https://playbound.club/games/${i}`);
+    const parsed = parseJobOutput(JSON.stringify({ records: [{ values: record.values, sources: [sources[0], ...sources, ' '] }] }), 'brand_voice');
+    expect(parsed).toMatchObject({ success: true, data: { records: [{ values: record.values, sources: sources.slice(0, 20) }] } });
+  });
+  it('still rejects malformed sources rather than hiding them past the cap', () => {
+    expect(parseJobOutput(JSON.stringify({ records: [{ ...record, sources: [...Array(21).fill('https://playbound.club/'), { url: 'invalid shape' }] }] }), 'brand_voice').success).toBe(false);
+  });
   it('reads JSON after reasoning and an irrelevant fence', () => {
     const text = '<think>I should return {something}.</think>```text\nWorking\n```\n```json\n' + JSON.stringify({ records: [record] }) + '\n```';
     expect(parseJobOutput(text, 'brand_voice')).toMatchObject({ success: true, data: { records: [record] } });

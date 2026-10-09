@@ -37,5 +37,17 @@ export async function artifactHistory(viewer: CompanyViewer, companyId: string, 
   const id = new Types.ObjectId(companyId);
   const versions = await ArtifactRevision.find({ organizationId: viewer.organizationId, companyId: id, kind }).sort({ revision: -1 }).limit(30).lean<{ revision: number; savedAt: Date; text: string }[]>();
   const latest = await current(viewer.organizationId, id, kind);
-  return { current: latest, versions: versions.filter((v) => v.revision !== latest?.revision).map(({ revision, savedAt, text }) => ({ revision, savedAt, text })) };
+  // Approval and no-op saves are not new plans. Compare against the previous
+  // distinct content, ignoring bookkeeping in both new and legacy snapshots.
+  const previous = versions.find((v) => v.revision < (latest?.revision ?? 0) && artifactContent(v.text, kind) !== artifactContent(latest?.text ?? '', kind));
+  return { current: latest, versions: previous ? [{ revision: previous.revision, savedAt: previous.savedAt, text: previous.text }] : [] };
+}
+
+export function artifactContent(text: string, kind: ArtifactKind): string {
+  if (kind === 'brand_voice') return text.trim();
+  try {
+    const value = JSON.parse(text) as Record<string, unknown>;
+    const metadata = new Set(['revision', 'status', 'createdAt', 'updatedAt', 'approvedAt']);
+    return JSON.stringify(Object.fromEntries(Object.entries(value).filter(([key]) => !metadata.has(key)).sort(([a], [b]) => a.localeCompare(b))));
+  } catch { return text.trim(); }
 }
