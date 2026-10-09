@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useOsCompanies } from './CompaniesModule';
 import JobCard, { JobStatusBadge, jobIsBusy, jobListProgress, scheduleLabel, type JobView } from './jobs/JobCard';
+import BrandVoicePanel from './jobs/BrandVoicePanel';
 
 type Group = { key: string; label: string; test: (j: JobView) => boolean };
 
@@ -24,7 +25,7 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
     const { companies } = useOsCompanies();
     const [companyId, setCompanyId] = useState(initialCompanyId ?? '');
     const [request, setRequest] = useState('');
-    const [kind, setKind] = useState<'custom' | 'link_building' | 'marketing_plan'>(initialKind === 'marketing_plan' || initialKind === 'seo_brief' ? 'marketing_plan' : marketing ? 'link_building' : 'custom');
+    const [kind, setKind] = useState<'custom' | 'link_building' | 'marketing_plan' | 'brand_voice'>(initialKind === 'brand_voice' ? 'brand_voice' : initialKind === 'link_building' ? 'link_building' : initialKind === 'custom' ? 'custom' : marketing ? 'marketing_plan' : 'custom');
     const [projects, setProjects] = useState<{ projectId: string; projectName: string }[]>([]);
     const [projectId, setProjectId] = useState('');
     const [frequency, setFrequency] = useState<'daily' | 'weekly' | 'monthly'>('daily');
@@ -38,7 +39,7 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     useEffect(() => {
-        if (!companyId || kind === 'custom' || kind === 'marketing_plan') return;
+        if (!companyId || kind !== 'link_building') return;
         let cancelled = false;
         void fetch(`/api/os/companies/${companyId}/code`, { cache: 'no-store' }).then(async (res) => {
             const body = (await res.json().catch(() => ({}))) as { projects?: { projectId: string; projectName: string }[] };
@@ -87,9 +88,10 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
     return (
         <div className="ui-card p-4 space-y-4">
             {marketing ? (
-                <div className="flex gap-1">
+                <div className="flex flex-wrap gap-1">
+                    <button type="button" onClick={() => { setKind('marketing_plan'); setProjectId(''); setProjects([]); }} className={kind === 'marketing_plan' ? 'ui-button-primary' : 'ui-button'}>Marketing overview</button>
+                    <button type="button" onClick={() => { setKind('brand_voice'); setProjectId(''); setProjects([]); }} className={kind === 'brand_voice' ? 'ui-button-primary' : 'ui-button'}>Voice</button>
                     <button type="button" onClick={() => { setKind('link_building'); setProjectId(''); }} className={kind === 'link_building' ? 'ui-button-primary' : 'ui-button'}>Link building</button>
-                    <button type="button" onClick={() => { setKind('marketing_plan'); setProjectId(''); setProjects([]); }} className={kind === 'marketing_plan' ? 'ui-button-primary' : 'ui-button'}>Marketing plan</button>
                     <button type="button" onClick={() => { setKind('custom'); setProjectId(''); setProjects([]); }} className={kind === 'custom' ? 'ui-button-primary' : 'ui-button'}>Custom job</button>
                 </div>
             ) : null}
@@ -108,11 +110,11 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
                     ))}
                 </select> : null}
                 <span className="text-[11px] text-text-secondary self-center">
-                    {kind === 'link_building' ? 'Uses the company’s approved Marketing Plan to reject irrelevant opportunities.' : kind === 'marketing_plan' ? 'Builds a company-wide SEO, AI-citation, and social strategy from the Company Overview.' : 'Describe the work; Nucleas investigates, asks what it must, and designs it for your approval.'}
+                    {kind === 'brand_voice' ? 'Your brand’s persona and writing style.' : kind === 'link_building' ? 'Uses the company’s approved Marketing Plan to reject irrelevant opportunities.' : kind === 'marketing_plan' ? 'Builds a company-wide SEO, AI-citation, and social strategy from the Company Overview.' : 'Describe the work; Nucleas investigates, asks what it must, and designs it for your approval.'}
                 </span>
             </div>
             {kind !== 'custom' && projects.length > 1 ? <label className="block space-y-1"><span className="ui-kicker">Website or project</span><select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="ui-control w-full" aria-label="Website or project"><option value="">Choose a website or project…</option>{projects.map((p) => <option key={p.projectId} value={p.projectId}>{p.projectName}</option>)}</select></label> : null}
-            {kind === 'link_building' ? (
+            {kind === 'brand_voice' ? <BrandVoicePanel key={companyId} companyId={companyId} onCreated={onCreated} /> : kind === 'link_building' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
                     <label className="space-y-1"><span className="text-text-secondary">Frequency</span><select value={frequency} onChange={(e) => setFrequency(e.target.value as typeof frequency)} className="ui-control block w-full"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
                     {frequency === 'weekly' ? <label className="space-y-1"><span className="text-text-secondary">Day</span><select value={weekday} onChange={(e) => setWeekday(Number(e.target.value))} className="block w-full h-7 rounded border border-border bg-background-elevated px-1">{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((d, i) => <option key={d} value={i}>{d}</option>)}</select></label> : null}
@@ -127,14 +129,14 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
                 <textarea value={request} onChange={(e) => setRequest(e.target.value)} placeholder={placeholder} className="ui-control w-full h-24 resize-y" aria-label="Job request" />
             ) : <p className="text-xs text-text-secondary">The first run produces a sourced company Marketing Plan. After you accept and approve it, Nucleas creates separate proposed jobs for link building, AI citations, and social drafts.</p>}
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
-            <button
+            {kind !== 'brand_voice' ? <button
                 type="button"
                 disabled={busy || !companyId || (kind === 'link_building' && !projectId) || (kind === 'custom' && request.trim().length < 10)}
                 onClick={() => void create()}
                 className="ui-button-primary"
             >
                 {busy ? 'Starting…' : kind === 'link_building' ? 'Configure link building' : kind === 'marketing_plan' ? 'Generate marketing plan' : 'Design this job'}
-            </button>
+            </button> : null}
         </div>
     );
 }
@@ -150,7 +152,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
     const [company, setCompany] = useState(initialCompanyId ?? 'all');
     const [showClosed, setShowClosed] = useState(false);
     const [open, setOpen] = useState<string | null>(null);
-    const [creating, setCreating] = useState(Boolean(initialCompanyId && initialKind));
+    const [creating, setCreating] = useState(title === 'Marketing' || Boolean(initialCompanyId && initialKind));
     const [reloadKey, setReloadKey] = useState(0);
     const reload = useCallback(() => setReloadKey((k) => k + 1), []);
 
@@ -237,7 +239,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                         initialKind={initialKind}
                         companyLocked={company !== 'all'}
                         onCreated={(j) => {
-                            setCreating(false);
+                            setCreating(title === 'Marketing');
                             setJobs((list) => [j, ...(list ?? [])]);
                             setOpen(j.id);
                         }}

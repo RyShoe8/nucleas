@@ -1,4 +1,5 @@
 import 'server-only';
+import { brandVoiceContext, generatedVoice } from '@/lib/brandVoice/service';
 import { Types } from 'mongoose';
 import { z } from 'zod';
 import { attemptCompanyCredentialChat } from '@/lib/ai/companyChat';
@@ -367,12 +368,15 @@ export async function executeJobRun(runId: string): Promise<void> {
   const propertyUrl = project?.liveUrl || project?.urls?.[0] || project?.url || (profile.domain ? `https://${profile.domain}` : null);
   let propertyHost: string | null = null;
   try { propertyHost = propertyUrl ? new URL(propertyUrl).hostname.replace(/^www\./, '') : profile.domain?.replace(/^www\./, '') ?? null; } catch { propertyHost = profile.domain?.replace(/^www\./, '') ?? null; }
-  const overviewGrounding = activeDesign.skill === 'seo_brief' || activeDesign.skill === 'marketing_plan'
+  const overviewGrounding = activeDesign.skill === 'seo_brief' || activeDesign.skill === 'marketing_plan' || activeDesign.skill === 'brand_voice'
     ? await seoOverviewGrounding(job.organizationId, job.companyId)
     : { context: '', urls: new Set<string>(), offeringEvidence: '' };
   const verifiedPropertyUrls = overviewGrounding.urls;
   const facts = [`Selected project: ${project?.name ?? repo?.projectName ?? 'unknown'}`, `Project description: ${project?.description || 'not provided'}`, `Production URL: ${propertyUrl || 'not provided'}`, `Company description: ${profile.description || 'not provided'}`];
   if (overviewGrounding.context) facts.push(overviewGrounding.context);
+  const voiceContext = activeDesign.skill === 'brand_voice' || activeDesign.category === 'content' || activeDesign.skill === 'social_media'
+    ? await brandVoiceContext(job.organizationId, job.companyId, activeDesign.skill === 'brand_voice') : '';
+  if (voiceContext) facts.push(voiceContext);
   if (activeDesign.skill === 'marketing_plan') {
     const connections = await listCompanyConnections(viewer, String(job.companyId)).catch(() => null);
     if (connections?.length) facts.push(`# Company integrations\n${connections.map((connection) => `- ${connection.providerName}: ${connection.status}${connection.accountLabel ? ` (${connection.accountLabel})` : ''}`).join('\n')}`);
@@ -383,7 +387,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     if (snapshot?.ok) facts.push(`# Selected repository evidence\n${projectGuide(snapshot.snapshot, 1_500)}`);
     else facts.push(`Selected repository: ${repo.repository.fullName} (snapshot unavailable)`);
   }
-  if (propertyUrl && (activeDesign.skill === 'seo_brief' || activeDesign.skill === 'marketing_plan')) {
+  if (propertyUrl && (activeDesign.skill === 'seo_brief' || activeDesign.skill === 'marketing_plan' || activeDesign.skill === 'brand_voice')) {
     const page = await webFetch(propertyUrl).catch(() => null);
     if (page) {
       const homepageUrl = normalizedUrl(page.url);
@@ -484,6 +488,10 @@ export async function executeJobRun(runId: string): Promise<void> {
 
     await progress(run._id, owner, 'Validating evidence and required fields', { stage: 'validating', percent: 68 });
     let issues = checkRecords(activeDesign.fields, output);
+    if (activeDesign.skill === 'brand_voice') {
+      try { generatedVoice(output, profile.name); }
+      catch { issues.push({ record: 0, field: 'brand_profile', problem: 'Invalid brand profile: provide JSON with evidenced positioning, audience relationship, and rhetorical patterns.' }); }
+    }
     if (activeDesign.skill === 'seo_brief' || activeDesign.skill === 'marketing_plan') issues.push(...seoBriefIssues(output, propertyHost, groundingFacts, verifiedPropertyUrls));
     if (activeDesign.skill === 'marketing_plan') issues.push(...marketingPlanCoverageIssues(output, profile.socialLinks, verifiedPropertyUrls, `${profile.description || ''} ${overviewGrounding.offeringEvidence}`));
     if ((activeDesign.skill === 'seo_brief' || activeDesign.skill === 'marketing_plan') && issues.length) {
@@ -518,7 +526,7 @@ export async function executeJobRun(runId: string): Promise<void> {
         organizationId: org,
         projectId: repo?.projectId ?? assistantLedgerProjectId(org),
         userId: viewer.userId,
-        userText: [`# Instructions\n${activeDesign.instructions}`, marketingPlan ? `# Approved Marketing Plan\n${marketingPlanContext(marketingPlan)}` : seoBrief ? `# Approved legacy SEO brief\n${seoBriefContext(seoBrief)}` : '', `# Source policy\n${activeDesign.sourcePolicy}`, `# Result\n${JSON.stringify(output).slice(0, 30000)}`, issues.length ? `# Problems found by code\n${issues.map((i) => `- ${i.problem}`).join('\n')}` : ''].join('\n\n'),
+        userText: [`# Instructions\n${activeDesign.instructions}`, voiceContext, marketingPlan ? `# Approved Marketing Plan\n${marketingPlanContext(marketingPlan)}` : seoBrief ? `# Approved legacy SEO brief\n${seoBriefContext(seoBrief)}` : '', `# Source policy\n${activeDesign.sourcePolicy}`, `# Result\n${JSON.stringify(output).slice(0, 30000)}`, issues.length ? `# Problems found by code\n${issues.map((i) => `- ${i.problem}`).join('\n')}` : ''].join('\n\n'),
         priorTurns: [],
         modelProfileId: review.primary.profileId,
         model: review.primary.model,

@@ -24,6 +24,8 @@ import { LinkOpportunity } from '@/lib/models/LinkOpportunity';
 import Project from '@/lib/models/Project';
 import { SeoBrief } from '@/lib/models/SeoBrief';
 import { MarketingPlan } from '@/lib/models/MarketingPlan';
+import { BrandVoice } from '@/lib/models/BrandVoice';
+import { brandVoiceContext, getBrandVoice, updateBrandVoice } from '@/lib/brandVoice/service';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, pauseJob, runDesign, runNow, sweepJobs } from './jobs';
@@ -86,6 +88,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  await BrandVoice.deleteMany({});
   mocks.models.mockResolvedValue([]);
   mocks.select.mockImplementation(async (_org: string, need: string) => ({
     primary: need === 'review' ? { profileId: 'r'.repeat(24), model: 'gpt-6-sol', free: false, label: 'OpenAI' } : { profileId: 'w'.repeat(24), model: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', free: true, label: 'Rogly' },
@@ -118,6 +121,35 @@ async function proposed(design: JobDesign = DESIGN) {
 }
 
 describe('designing', () => {
+  it('persists generated Voice as a draft, then uses only approved company-scoped personas', async () => {
+    const created = await createTemplateJob(admin, { companyId, template: 'brand_voice', config: {} });
+    expect(created).toMatchObject({ ok: true, job: { design: { skill: 'brand_voice' }, projectId: null } });
+    if (!created.ok) throw new Error(created.error);
+    const run = await JobRun.create({ organizationId: org, companyId, jobId: created.job.id, startedAt: new Date(), status: 'needs_review', dryRun: true,
+      output: { records: [{ values: { brand_profile: { positioning: { primary: 'Game discovery with practical advice.' }, audienceRelationship: { style: 'Fellow players' }, rhetoricalPatterns: ['Open with the game and a concrete reason to play.'] } }, sources: ['https://playbound.club/'] }], summary: 'Brand persona', gaps: [] },
+    });
+    expect(await decideRun(admin, created.job.id, String(run._id), 'accept')).toMatchObject({ ok: true });
+    const voice = await getBrandVoice(admin, companyId);
+    expect(voice).toMatchObject({ status: 'draft', revision: 1 });
+    expect(voice?.persona).toContain('Fellow players');
+    expect(await brandVoiceContext(org, new Types.ObjectId(companyId))).toBe('');
+    expect(await updateBrandVoice(member, companyId, { ...voice, status: 'approved' })).toMatchObject({ ok: false, status: 403 });
+    expect(await updateBrandVoice(admin, companyId, { ...voice, status: 'approved' })).toMatchObject({ ok: true, voice: { status: 'approved', revision: 2 } });
+    expect(await brandVoiceContext(org, new Types.ObjectId(companyId))).toContain('Fellow players');
+    expect(await brandVoiceContext(new Types.ObjectId(), new Types.ObjectId(companyId))).toBe('');
+    expect(await getBrandVoice({ ...admin, organizationId: new Types.ObjectId() }, companyId)).toBeNull();
+    expect(await updateBrandVoice(admin, companyId, { ...voice, status: 'draft' })).toMatchObject({ ok: false, status: 409 });
+  });
+
+  it('keeps malformed Voice results reviewable instead of accepting them', async () => {
+    const created = await createTemplateJob(admin, { companyId, template: 'brand_voice', config: {} });
+    if (!created.ok) throw new Error(created.error);
+    const run = await JobRun.create({ organizationId: org, companyId, jobId: created.job.id, startedAt: new Date(), status: 'needs_review', output: { records: [{ values: { brand_profile: '{}' }, sources: [] }] } });
+    expect(await decideRun(admin, created.job.id, String(run._id), 'accept')).toMatchObject({ ok: false, status: 400 });
+    expect(await JobRun.findById(run._id).lean()).toMatchObject({ status: 'needs_review' });
+    expect(await getBrandVoice(admin, companyId)).toBeNull();
+  });
+
   it('creates a company Marketing Plan job without requiring a project selection', async () => {
     const created = await createTemplateJob(admin, { companyId, template: 'marketing_plan', config: { companyName: 'Playbound.club' } });
     expect(created).toMatchObject({ ok: true, job: { companyId, projectId: null, status: 'proposed', design: { skill: 'marketing_plan', title: 'Marketing plan · Playbound.club' } } });
@@ -285,6 +317,16 @@ describe('approving and the dry run', () => {
 });
 
 describe('real runs', () => {
+  it('passes the approved Voice to both the content worker and reviewer', async () => {
+    const persona = 'Write like a fellow player: practical, specific, and clear about what makes each game worth trying.';
+    expect(await updateBrandVoice(admin, companyId, { persona, examples: '', status: 'approved', revision: 0 })).toMatchObject({ ok: true });
+    const job = await proposed({ ...DESIGN, category: 'content' });
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    expect(mocks.chat.mock.calls.length).toBeGreaterThanOrEqual(2);
+    for (const [input] of mocks.chat.mock.calls) expect(input.userText).toContain(persona);
+  });
+
   it('tracks a VPS Company Overview as a durable background job', async () => {
     const overview = await PropertyOverview.create({ organizationId: org, companyId: new Types.ObjectId(companyId), rootUrl: 'https://playbound.club/', status: 'queued' });
     const linked = await createPropertyOverviewJob({ organizationId: org, companyId: new Types.ObjectId(companyId), userId: admin.userId, companyName: 'Playbound.club', overviewId: overview._id, rootUrl: overview.rootUrl });
