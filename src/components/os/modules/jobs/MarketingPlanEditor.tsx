@@ -10,7 +10,7 @@ type MarketingPlanView = {
     revision: number; approvedAt: string | null;
 };
 
-export default function MarketingPlanEditor({ companyId, updatedAt }: { companyId: string; updatedAt?: string }) {
+export default function MarketingPlanEditor({ companyId, updatedAt, hideEmpty = false }: { companyId: string; updatedAt?: string; hideEmpty?: boolean }) {
     const [plan, setPlan] = useState<MarketingPlanView | null>(null);
     const [editing, setEditing] = useState(false);
     const [form, setForm] = useState<Record<string, string>>({});
@@ -52,11 +52,28 @@ export default function MarketingPlanEditor({ companyId, updatedAt }: { companyI
     if (!plan) {
         if (loading) return <p className="text-xs text-text-secondary">Loading marketing plan…</p>;
         if (error) return <p role="alert" className="text-xs text-red-400">{error}</p>;
+        if (hideEmpty) return null;
         return <p className="text-xs text-text-secondary">No saved marketing plan yet. Generate a draft and accept its result to view it here.</p>;
     }
     const textarea = (key: string, label: string, rows = 3) => <label className="block space-y-1"><span className="text-xs font-medium">{label}</span><textarea value={form[key] ?? ''} onChange={(event) => setForm((value) => ({ ...value, [key]: event.target.value }))} rows={rows} className="ui-control w-full resize-y" /></label>;
     return <>
         <div className="rounded border border-border p-3 flex items-center gap-2"><div className="min-w-0 flex-1"><p className="text-sm font-medium">Marketing Plan · {plan.companyName}</p><p className="text-[11px] text-text-secondary">{plan.status === 'approved' ? `Approved · revision ${plan.revision} · execution jobs use this strategy` : `Draft · revision ${plan.revision}`}</p></div><button type="button" className={PRIMARY} onClick={open}>{plan.status === 'approved' ? 'View or edit plan' : 'Edit and approve'}</button></div>
+        <div className="rounded border border-border p-3 space-y-3 text-sm">
+            <p className="whitespace-pre-wrap">{plan.summary}</p>
+            <details><summary className="cursor-pointer font-medium">Read full marketing plan</summary><div className="mt-3 space-y-4">
+                {[
+                    ['Audience', plan.audience], ['Goals', plan.goals.join('\n')], ['Positioning', plan.positioning],
+                    ['Messaging pillars', plan.messagingPillars.join('\n')], ['SEO strategy', plan.seoStrategy],
+                    ['Primary topics', plan.primaryTopics.join('\n')], ['Competitors', plan.competitors.join('\n')],
+                    ['Excluded topics', plan.excludedTopics.join('\n')], ['Geographic targets', plan.geographicTargets.join('\n')],
+                    ['Priority pages', plan.priorityPages.map((page) => `${page.url}\n${page.purpose}\n${page.keywords.join(', ')}`).join('\n\n')],
+                    ['AI citation strategy', plan.aiCitationStrategy], ['Target questions', plan.aiTargetQuestions.join('\n')],
+                    ['Source targets', plan.aiSourceTargets.join('\n')], ['Social strategy', plan.socialStrategy],
+                    ['Social platforms', plan.socialPlatforms.join('\n')], ['Social content pillars', plan.socialContentPillars.join('\n')],
+                    ['Social cadence', plan.socialCadence], ['KPIs', plan.kpis.join('\n')], ['Risks and evidence gaps', plan.notes],
+                ].filter(([, value]) => value).map(([label, value]) => <section key={label}><h4 className="ui-kicker">{label}</h4><p className="whitespace-pre-wrap break-words">{value}</p></section>)}
+            </div></details>
+        </div>
         <Modal isOpen={editing} onClose={() => setEditing(false)} title={`Marketing Plan · ${plan.companyName}`} maxWidth="5xl" appearance="theme">
             <div className="space-y-5">
                 <p className="text-xs text-text-secondary">Approving this plan creates separate proposed jobs for link building, AI-citation opportunities, and social drafts. You still review and approve each job before it runs.</p>

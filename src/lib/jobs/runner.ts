@@ -1,4 +1,5 @@
 import 'server-only';
+import { VOICE_TRAIT_GUIDANCE } from './templates/brandVoice';
 import { manualArtifact, parseJobOutput } from './output';
 import { brandVoiceContext, generatedVoice } from '@/lib/brandVoice/service';
 import { Types } from 'mongoose';
@@ -83,7 +84,7 @@ function reviewerPrompt(): string {
 
 /** Existing configured jobs keep their stored schedule/settings while receiving current safety rules. */
 function currentDesign(design: JobDesign): JobDesign {
-  if (manualArtifact(design.skill)) return { ...design, schedule: { kind: 'once' }, recommendedCompletion: 'review' };
+  if (manualArtifact(design.skill)) return { ...design, instructions: design.skill === 'brand_voice' && !design.instructions.includes(VOICE_TRAIT_GUIDANCE) ? `${design.instructions}\n\n${VOICE_TRAIT_GUIDANCE}` : design.instructions, schedule: { kind: 'once' }, recommendedCompletion: 'review' };
   if (design.skill === 'seo_brief' && !design.instructions.includes('archived Company Overview pages')) {
     return {
       ...design,

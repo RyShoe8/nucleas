@@ -228,13 +228,13 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                 </label>
                 <span className="flex-1" />
                 {busy ? <span className="text-[11px] text-sky-400">Working…</span> : null}
-                <button type="button" onClick={() => setCreating((v) => !v)} className="ui-button-primary">
+                {title !== 'Marketing' ? <button type="button" onClick={() => setCreating((v) => !v)} className="ui-button-primary">
                     {creating ? 'Close' : 'New job'}
-                </button>
+                </button> : null}
             </div>
 
             <div className="flex-1 overflow-y-auto p-3 space-y-4">
-                {creating ? (
+                {(title === 'Marketing' ? company !== 'all' : creating) ? (
                     <NewJob
                         key={`${company}-${initialKind ?? ''}`}
                         placeholder={placeholder}

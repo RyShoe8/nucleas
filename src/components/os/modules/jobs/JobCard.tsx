@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import MarketingPlanEditor from './MarketingPlanEditor';
+import BrandVoiceResult from './BrandVoiceResult';
 import { manualArtifact } from '@/lib/jobs/output';
 
 // ---------- Types (mirror the server's JobView) ----------
@@ -372,6 +373,7 @@ function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => vo
 }
 
 function ResultValue({ field, value }: { field: JobField; value: unknown }) {
+    if (field.key === 'brand_profile') return <BrandVoiceResult value={value} />;
     if (field.key === 'priority_pages') {
         let parsed = value;
         if (typeof parsed === 'string') {
@@ -414,7 +416,7 @@ function Results({ job, run }: { job: JobView; run: JobRunView }) {
             {run.output?.summary ? <section className="rounded-lg border border-border bg-background-elevated/40 p-4"><h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-secondary">Summary</h3><p className="whitespace-pre-wrap leading-6">{run.output.summary}</p></section> : null}
             {records.map((r, i) => (
                 <article key={i} className="overflow-hidden rounded-lg border border-border">
-                    <header className="border-b border-border bg-background-elevated px-4 py-3"><h3 className="text-base font-semibold">{records.length === 1 ? 'Opportunity details' : `Opportunity ${i + 1}`}</h3></header>
+                    <header className="border-b border-border bg-background-elevated px-4 py-3"><h3 className="text-base font-semibold">{job.design?.skill === 'brand_voice' ? 'Brand voice' : job.design?.skill === 'marketing_plan' ? 'Marketing plan' : records.length === 1 ? 'Opportunity details' : `Opportunity ${i + 1}`}</h3></header>
                     <dl className="divide-y divide-border">
                         {fields.map((f) => {
                                         const v = r.values[f.key];
