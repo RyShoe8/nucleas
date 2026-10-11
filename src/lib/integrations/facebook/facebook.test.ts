@@ -66,12 +66,26 @@ describe('exchangeFacebookPages', () => {
 describe('pickFacebookPage', () => {
   const page = (name: string) => ({ id: name, name, token: `t-${name}` });
 
-  it('takes the only shared Page', () => {
+  it('takes a sole Page that no other company uses', () => {
     expect(pickFacebookPage([page('Anything')], 'Frugal Gambler')).toMatchObject({ ok: true, page: { name: 'Anything' } });
   });
 
   it('matches the company by name among several', () => {
     expect(pickFacebookPage([page('Other'), page('The Frugal Gambler'), page('Third')], 'Frugal Gambler')).toMatchObject({ ok: true, page: { name: 'The Frugal Gambler' } });
+  });
+
+  it('does not reuse a Page that another company already connected', () => {
+    const out = pickFacebookPage([page('PlayBound')], 'Frugal Gambler', ['PlayBound']);
+    expect(out).toMatchObject({ ok: false, error: expect.stringContaining('already connected to another company') });
+    expect(out.ok === false && out.error).toContain('Business integrations');
+  });
+
+  it('skips a claimed Page and takes the unclaimed one', () => {
+    expect(pickFacebookPage([page('PlayBound'), page('Frugal Gambler Club')], 'Frugal Gambler', ['PlayBound'])).toMatchObject({ ok: true, page: { name: 'Frugal Gambler Club' } });
+  });
+
+  it('still lets a company reconnect its own Page', () => {
+    expect(pickFacebookPage([page('PlayBound')], 'PlayBound', ['PlayBound'])).toMatchObject({ ok: true, page: { name: 'PlayBound' } });
   });
 
   it('asks the person to choose one Page when it cannot tell', () => {

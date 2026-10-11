@@ -26,7 +26,10 @@ export async function completeFacebookConnection(
 
   const exchanged = await exchangeFacebookPages({ code: input.code, redirectUri: input.redirectUri, appId, appSecret }, fetchImpl);
   if (!exchanged.ok) return exchanged;
-  const picked = pickFacebookPage(exchanged.pages, profile.name);
+  const others = await IntegrationConnection.find({ organizationId: viewer.organizationId, provider: 'facebook', status: 'connected', companyId: { $ne: new Types.ObjectId(input.companyId) } })
+    .select('accountLabel')
+    .lean<{ accountLabel?: string }[]>();
+  const picked = pickFacebookPage(exchanged.pages, profile.name, others.map((o) => o.accountLabel).filter((n): n is string => Boolean(n)));
   if (!picked.ok) return picked;
 
   const result = await connectWithApiKey(viewer, String(connection._id), picked.page.token);

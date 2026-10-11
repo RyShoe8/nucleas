@@ -59,12 +59,30 @@ function normalize(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
-/** The only Page, or the one whose name matches the company; otherwise a message telling the person what to do. */
-export function pickFacebookPage(pages: FacebookPage[], companyName: string): { ok: true; page: FacebookPage } | { ok: false; error: string } {
-  if (pages.length === 1) return { ok: true, page: pages[0] };
+export const FACEBOOK_EDIT_ACCESS_HINT = "Facebook remembers your earlier choice. On Facebook go to Settings, then Business integrations, open Nucleas, choose View and edit, and add the Page. Then log in again here.";
+
+/**
+ * Chooses the company's Page from the Pages Facebook shared. Pages already connected to another company
+ * are never reused unless the Page name matches this company, so a remembered earlier grant cannot link the
+ * wrong Page. A sole unclaimed Page is accepted; otherwise the person is told what to do.
+ */
+export function pickFacebookPage(pages: FacebookPage[], companyName: string, takenPageNames: string[] = []): { ok: true; page: FacebookPage } | { ok: false; error: string } {
   const wanted = normalize(companyName);
-  const exact = pages.filter((p) => normalize(p.name) === wanted);
-  const matches = exact.length ? exact : pages.filter((p) => wanted && (normalize(p.name).includes(wanted) || wanted.includes(normalize(p.name))));
+  const taken = new Set(takenPageNames.map(normalize));
+  const matchesCompany = (p: FacebookPage) => {
+    const name = normalize(p.name);
+    return Boolean(wanted) && (name === wanted || name.includes(wanted) || wanted.includes(name));
+  };
+  const available = pages.filter((p) => !taken.has(normalize(p.name)) || matchesCompany(p));
+
+  const exact = available.filter((p) => normalize(p.name) === wanted);
+  if (exact.length === 1) return { ok: true, page: exact[0] };
+  const matches = available.filter(matchesCompany);
   if (matches.length === 1) return { ok: true, page: matches[0] };
-  return { ok: false, error: `Several Pages were shared (${pages.map((p) => p.name).slice(0, 5).join(', ')}). Log in again and choose only the company's Page.` };
+  if (available.length === 1 && matches.length === 0) return { ok: true, page: available[0] };
+
+  if (!available.length) {
+    return { ok: false, error: `Facebook only shared ${pages.map((p) => p.name).slice(0, 5).join(', ')}, which ${pages.length === 1 ? 'is' : 'are'} already connected to another company. ${FACEBOOK_EDIT_ACCESS_HINT}` };
+  }
+  return { ok: false, error: `Several Pages were shared (${available.map((p) => p.name).slice(0, 5).join(', ')}) and none clearly matches ${companyName}. Log in again and choose only this company's Page.` };
 }
