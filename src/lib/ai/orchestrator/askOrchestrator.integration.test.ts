@@ -295,7 +295,7 @@ describe('deep research', () => {
       const stage = stageOf(input);
       if (stage === 'plan') return reply(plan, 1500);
       if (stage === 'research') {
-        expect(input.model).toBe(ROGLY_MODELS.code);
+        expect(input.model).toBe(ROGLY_MODELS.general);
         expect(input.toolProfile).toBe('full');
         expect(input.forceToolLoop).toBe(true);
         return { ...reply('Findings\n- Site A offers 250 free spins ([A](https://a.example))'), toolsUsed: ['web_search', 'web_fetch', 'web_search'] };

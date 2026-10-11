@@ -108,7 +108,7 @@ const LEVELS: { key: Level; label: string; hint: string }[] = [
     { key: 'free', label: 'Free', hint: 'Rogly models only, for every step. Never calls or retries on a paid model.' },
     { key: 'low', label: 'Low', hint: 'Best-scoring paid model under this ceiling plans and reviews; Rogly does the work; never pays to retry.' },
     { key: 'medium', label: 'Medium', hint: 'Best-scoring paid model under this ceiling plans and reviews; Rogly does the work and may retry on that model.' },
-    { key: 'high', label: 'High', hint: 'Best-scoring model under this ceiling plans and reviews; the best model under the Medium ceiling does the work.' },
+    { key: 'high', label: 'High', hint: 'Best-scoring model under this ceiling plans, reviews and does the work.' },
 ];
 
 type Ceilings = Record<PaidLevel, number | null>;

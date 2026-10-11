@@ -32,7 +32,7 @@ export function modelStepReason(input: { stage: 'work' | 'review'; level: ModelP
   if (input.free) {
     return `${level} level: the free model does the work${input.level === 'medium' ? ', with a paid retry only if it fails' : ' and never pays to retry'}.`;
   }
-  return `${level} level: the strongest paid model within the Medium price ceiling does the work.`;
+  return `${level} level: the strongest paid model within the High price ceiling does the work.`;
 }
 
 export function costSummary(steps: readonly ModelStep[]): { knownMicros: number; unknownModels: string[] } {

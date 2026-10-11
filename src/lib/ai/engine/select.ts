@@ -5,13 +5,13 @@ import { localModelPowerScore } from '@/lib/ai/rolePipeline/modelMeta';
 
 /**
  * The one model-selection system. Every AI job asks for a need at a cost level; the engine picks
- * the best available model automatically. Admins may pin a model per need (applies at every level).
+ * the best available model automatically. Admins may choose a model per task and level; Auto returns it to this pick.
  *
  * Each level has a price ceiling (blended $ per 1M tokens, editable by admins). The paid pick is the
  * model with the best benchmark score for the task that costs no more than the ceiling:
  *   low    — plans and reviews under the low ceiling; Rogly does the work; never pays to retry
  *   medium — plans and reviews under the medium ceiling; Rogly does the work, retrying on that model
- *   high   — plans and reviews with no ceiling; the best model under the medium ceiling does the work
+ *   high   — plans, reviews and does the work under the high ceiling (none by default)
  * Rogly always uses its strongest model for the job.
  */
 
@@ -159,7 +159,13 @@ function freeFor(models: AvailableModel[], need: Need): AvailableModel | undefin
     )[0];
   // Tool-driven work skips models whose host was measured to refuse tool calls.
   const toolCapable = (pool: AvailableModel[]) => pool.filter((m) => m.checks?.supports.tools !== false);
-  if (need === 'code' || need === 'research') return strongest(toolCapable(withStrength(free, 'coding'))) ?? strongest(toolCapable(free)) ?? strongest(free);
+  if (need === 'code') return strongest(toolCapable(withStrength(free, 'coding'))) ?? strongest(toolCapable(free)) ?? strongest(free);
+  // Research is tool use and grounded answers, not code: every tool-capable text model competes on its
+  // research check score (a coder tag must not shut out a model that measures better).
+  if (need === 'research') {
+    const textOnly = free.filter((m) => !m.strengths.includes('vision'));
+    return strongest(toolCapable(textOnly)) ?? strongest(toolCapable(free)) ?? strongest(free);
+  }
   if (need === 'vision') return strongest(withStrength(free, 'vision'));
   // Keep multimodal specialists available for vision. For ordinary text work prefer a text model
   // when one exists; an excellent vision benchmark should not make the VL deployment the planner.
@@ -213,10 +219,10 @@ export function selectFrom(models: AvailableModel[], need: Need, level: CostLeve
     case 'research':
     case 'code':
     case 'vision':
-      // High: a paid model does the work — the strongest within the medium ceiling (the high-ceiling
-      // model plans and reviews). Low/medium: Rogly does the work; medium may retry on its paid
-      // pick when Rogly fails, low never pays to retry.
-      if (level === 'high') return { ...base, primary: choice(bestUnder(paid, need, ceilings.medium) ?? free), fallback: null };
+      // High: a paid model does the work too, the strongest within the high ceiling (none by default).
+      // Low/medium: Rogly does the work; medium may retry on its paid pick when Rogly fails, low never
+      // pays to retry.
+      if (level === 'high') return { ...base, primary: choice(bestUnder(paid, need, ceilings.high) ?? free), fallback: null };
       return { ...base, primary: choice(free ?? paidPick), fallback: level === 'medium' && free ? choice(paidPick) : null };
   }
 }

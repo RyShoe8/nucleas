@@ -49,7 +49,8 @@ describe('automatic model selection', () => {
     expect(pick('write', 'low').primary).toBe('google/gemma-4-12B-it-qat-w4a16-ct');
     expect(pick('utility', 'high').primary).toBe('google/gemma-4-12B-it-qat-w4a16-ct');
     expect(pick('code', 'low').primary).toBe('Qwen/Qwen2.5-Coder-14B-Instruct-AWQ');
-    expect(pick('research', 'medium').primary).toBe('Qwen/Qwen2.5-Coder-14B-Instruct-AWQ');
+    // Research is tool use and grounded answers: the general text model, not the coder.
+    expect(pick('research', 'medium').primary).toBe('google/gemma-4-12B-it-qat-w4a16-ct');
     expect(pick('vision', 'low').primary).toBe('Qwen/Qwen3-VL-8B-Thinking-FP8');
   });
 
@@ -79,12 +80,21 @@ describe('automatic model selection', () => {
     expect(pick('code', 'medium', WITH_SCORES)).toEqual({ primary: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', fallback: 'meta/muse-spark-1.3' });
   });
 
-  it('high: the best model under the medium ceiling does the work, by the task’s score; utilities stay on Rogly', () => {
-    expect(pick('write', 'high', WITH_SCORES).primary).toBe('meta/muse-spark-1.3');
-    expect(pick('research', 'high', WITH_SCORES).primary).toBe('meta/muse-spark-1.3');
-    // Code ranks on the coding score: muse 76 beats gemini flash 75, mimo 70 and gpt-6-sol 60.
-    expect(pick('code', 'high', WITH_SCORES).primary).toBe('meta/muse-spark-1.3');
+  it('high: the best model under the high ceiling does the work, by the task’s score; utilities stay on Rogly', () => {
+    // No high ceiling: the strongest model for each task, however much it costs per token.
+    expect(pick('write', 'high', WITH_SCORES).primary).toBe('anthropic/claude-opus-5.5');
+    expect(pick('research', 'high', WITH_SCORES).primary).toBe('anthropic/claude-opus-5.5');
+    // Code ranks on the coding score: fable 82 beats opus 80 and muse 76.
+    expect(pick('code', 'high', WITH_SCORES).primary).toBe('anthropic/claude-fable-5.1');
     expect(pick('utility', 'high', WITH_SCORES).primary).toBe('google/gemma-4-12B-it-qat-w4a16-ct');
+  });
+
+  it('high follows an edited high ceiling for the work as well as for planning', () => {
+    const capped = { low: 1.5, medium: 5, high: 10 };
+    expect(selectFrom(WITH_SCORES, 'code', 'high', capped).primary?.model).toBe('anthropic/claude-opus-5.5');
+    expect(selectFrom(WITH_SCORES, 'plan', 'high', capped).primary?.model).toBe('anthropic/claude-opus-5.5');
+    // The medium ceiling no longer limits High.
+    expect(selectFrom(WITH_SCORES, 'code', 'high', { ...capped, medium: 1 }).primary?.model).toBe('anthropic/claude-opus-5.5');
   });
 
   it('uses edited ceilings, and the cheapest model when nothing fits under one', () => {
@@ -214,6 +224,21 @@ describe('free models ranked by Nucleas checks', () => {
     // Unmeasured beats measured-and-failed.
     const twoLeft = [measured(gemma, { json: 0.2, routing: 0.2, tools: 0, grounded: 0.3 }), coder];
     expect(pick('write', 'low', twoLeft).primary).toBe(coder.model);
+  });
+
+  it('picks the research model by its research checks, not by a coder tag', () => {
+    // The checks measured for this install: Gemma is stronger on tools and grounded answers, the coder on code.
+    const models = [
+      measured(gemma, { json: 1, routing: 1, tools: 1, grounded: 0.83, code: 1 }),
+      measured(coder, { json: 1, routing: 0.92, tools: 0.83, grounded: 0.67, code: 1 }),
+      measured(vl, { json: 0.88, routing: 0.92, tools: 0.83, grounded: 1, code: 0.33 }),
+    ];
+    expect(checkScore(models[0], 'research')!).toBeGreaterThan(checkScore(models[1], 'research')!);
+    for (const level of ['free', 'low', 'medium'] as const) expect(pick('research', level, models).primary).toBe(gemma.model);
+    // The vision specialist stays out of text research even though it scores well on grounded answers.
+    expect(pick('research', 'low', models).primary).not.toBe(vl.model);
+    // Code is still given to the coding model.
+    expect(pick('code', 'low', models).primary).toBe(coder.model);
   });
 
   it('skips models whose host refused tool calls for tool-driven work', () => {

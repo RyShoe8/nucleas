@@ -19,7 +19,7 @@ describe('modelStepReason', () => {
     expect(modelStepReason({ stage: 'work', level: 'low', free: false, source: 'pinned', fallback: false })).toMatch(/Chosen for this task and level/);
     expect(modelStepReason({ stage: 'work', level: 'free', free: true, source: 'auto', fallback: false })).toMatch(/Free level/);
     expect(modelStepReason({ stage: 'work', level: 'medium', free: false, source: 'auto', fallback: true })).toMatch(/paid retry/);
-    expect(modelStepReason({ stage: 'work', level: 'high', free: false, source: 'auto', fallback: false })).toMatch(/Medium price ceiling/);
+    expect(modelStepReason({ stage: 'work', level: 'high', free: false, source: 'auto', fallback: false })).toMatch(/High price ceiling/);
   });
 });
 
