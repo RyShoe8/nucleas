@@ -1,5 +1,6 @@
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 import { isBrowserWorkerConfigured } from '@/lib/ai/tools/browseRouter';
+import { htmlToMarkdown } from '@/lib/ai/tools/htmlToMarkdown';
 
 export type BrowserNavigateResult = {
   url: string;
@@ -68,13 +69,23 @@ export async function browserNavigate(
       url?: string;
       title?: string | null;
       text?: string;
+      html?: string;
       images?: unknown;
       links?: unknown;
     };
+    const finalUrl = typeof body.url === 'string' ? body.url : target.toString();
+    let markdown = '';
+    if (typeof body.html === 'string' && body.html) {
+      try {
+        markdown = htmlToMarkdown(body.html, { baseUrl: finalUrl, maxChars: 12000 });
+      } catch {
+        // Older workers send only text; so does a failed conversion.
+      }
+    }
     return {
-      url: typeof body.url === 'string' ? body.url : target.toString(),
+      url: finalUrl,
       title: typeof body.title === 'string' ? body.title.slice(0, 200) : null,
-      text: typeof body.text === 'string' ? body.text.slice(0, 12000) : '',
+      text: markdown || (typeof body.text === 'string' ? body.text.slice(0, 12000) : ''),
       note: 'Rendered via Playwright browser worker.',
       images: sanitizeHttpsList(body.images, 12),
       links: sanitizeHttpsList(body.links, 500),

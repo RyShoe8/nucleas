@@ -94,8 +94,10 @@ async function navigate(url: string, maxChars: number) {
           if (abs.protocol === 'https:') links.push(abs.toString());
         } catch {}
       }
-      return { text, images, links };
-    })()`) as { text?: string; images?: string[]; links?: string[] };
+      const root = document.querySelector('main') || document.querySelector('article') || document.body;
+      const html = root ? root.outerHTML.slice(0, 400000) : '';
+      return { text, images, links, html };
+    })()`) as { text?: string; images?: string[]; links?: string[]; html?: string };
     const finalUrl = page.url();
     if (!isSafePublicHttpsUrl(finalUrl)) {
       throw new Error('Unsafe redirected URL.');
@@ -119,6 +121,7 @@ async function navigate(url: string, maxChars: number) {
         .slice(0, maxChars),
       images,
       links,
+      html: String(scraped.html ?? ''),
     };
   } finally {
     await browser.close();

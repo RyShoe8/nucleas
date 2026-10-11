@@ -60,6 +60,8 @@ export function describeToolCall(name: string, argumentsJson: string): string {
       return `Searching the web for “${str(a.query)}”`;
     case 'web_fetch':
       return `Reading ${host(a.url)}`;
+    case 'site_map':
+      return `Listing pages on ${host(a.url)}`;
     case 'browser_navigate':
       return `Opening ${host(a.url)} in a browser`;
     case 'image_search':

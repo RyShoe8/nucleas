@@ -168,11 +168,32 @@ export function ideChatToolDefinitions(options: {
       function: {
         name: 'web_fetch',
         description:
-          'Cheap HTTPS fetch of a public URL. Prefer for concrete external pages. Escalate only if content is thin or JS-rendered.',
+          'Cheap HTTPS fetch of public pages, returned as markdown. Prefer for concrete external pages. Pass `urls` (up to 5) to read several pages in one call, e.g. pages chosen from site_map. Escalate only if content is thin or JS-rendered.',
         parameters: {
           type: 'object',
           properties: {
             url: { type: 'string', description: 'HTTPS URL to fetch' },
+            urls: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Up to 5 HTTPS URLs to fetch together (shorter text per page). Use instead of url.',
+            },
+          },
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'site_map',
+        description:
+          'List the pages of a public website (from its sitemap, else its home-page links). Use to find the right page on a site before web_fetch. Same-origin, read-only.',
+        parameters: {
+          type: 'object',
+          properties: {
+            url: { type: 'string', description: 'HTTPS URL on the site (the site root is fine)' },
+            search: { type: 'string', description: 'Optional text the page URL must contain, e.g. "pricing"' },
+            limit: { type: 'number', description: 'Max URLs to return (default 100, max 500)' },
           },
           required: ['url'],
         },

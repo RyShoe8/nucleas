@@ -5,6 +5,9 @@ import Asset from '@/lib/models/Asset';
 import { browserNavigate } from '@/lib/ai/tools/browserClient';
 import { chooseBrowseTool, isBrowserWorkerConfigured } from '@/lib/ai/tools/browseRouter';
 import { webFetch } from '@/lib/ai/tools/webFetch';
+import { mapSite } from '@/lib/ai/tools/siteMap';
+
+const MAX_FETCH_URLS = 5;
 import { findReferences, reachableFrom, routeFileFor } from '@/lib/ai/repo/references';
 import { imageHitsToArtifacts } from '@/lib/ai/tools/imageSearchArtifacts';
 import { imageSearch, webSearch } from '@/lib/ai/tools/webSearch';
@@ -314,6 +317,25 @@ export async function executeIdeTool(input: {
     };
   }
 
+  if (input.name === 'web_fetch' && Array.isArray(args.urls) && args.urls.length > 0) {
+    const urls = [...new Set(args.urls.filter((u): u is string => typeof u === 'string'))].slice(0, MAX_FETCH_URLS);
+    if (urls.length === 0) throw new Error('web_fetch needs at least one URL.');
+    const perPage = Math.floor(10000 / urls.length);
+    const settled = await Promise.allSettled(urls.map((u) => webFetch(u, { signal: input.signal })));
+    const pages = settled.map((outcome, i) =>
+      outcome.status === 'fulfilled'
+        ? {
+            url: outcome.value.url,
+            title: outcome.value.title,
+            text: outcome.value.text.slice(0, perPage),
+            thin: outcome.value.thin,
+            suggestBrowser: outcome.value.escalateHint,
+          }
+        : { url: urls[i], error: outcome.reason instanceof Error ? outcome.reason.message.slice(0, 200) : 'Fetch failed.' }
+    );
+    return { content: JSON.stringify({ pages }).slice(0, 12000), artifacts };
+  }
+
   if (input.name === 'web_fetch') {
     const url = typeof args.url === 'string' ? args.url : '';
     const result = await webFetch(url, { signal: input.signal });
@@ -332,6 +354,16 @@ export async function executeIdeTool(input: {
       }).slice(0, 12000),
       artifacts,
     };
+  }
+
+  if (input.name === 'site_map') {
+    const url = typeof args.url === 'string' ? args.url : '';
+    const result = await mapSite(url, {
+      signal: input.signal,
+      search: typeof args.search === 'string' ? args.search : undefined,
+      limit: typeof args.limit === 'number' ? args.limit : undefined,
+    });
+    return { content: JSON.stringify(result).slice(0, 12000), artifacts };
   }
 
   if (input.name === 'browser_navigate') {

@@ -161,6 +161,35 @@ describe('invokeModelWithTools', () => {
     expect(res.artifacts).toEqual([]);
   });
 
+  it('web_fetch reads several urls in one call and reports per-page failures', async () => {
+    const { executeIdeTool } = await import('@/lib/ai/tools/executeTool');
+    const body = 'Useful page content for the company profile. '.repeat(10);
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) =>
+      String(input).includes('/missing')
+        ? new Response('', { status: 404 })
+        : new Response(`<html><title>Page</title><body><h1>Hello</h1><p>${body}</p></body></html>`, { headers: { 'content-type': 'text/html' } })
+    );
+    try {
+      const res = await executeIdeTool({
+        name: 'web_fetch',
+        argumentsJson: JSON.stringify({
+          urls: ['https://public.example.org/about', 'https://public.example.org/missing', 'https://localhost/x', 'https://public.example.org/about'],
+        }),
+        gateway: config,
+        organizationId: 'org',
+        projectId: new (await import('mongoose')).Types.ObjectId(),
+        userId: 'user',
+      });
+      const parsed = JSON.parse(res.content) as { pages: { url: string; text?: string; error?: string }[] };
+      expect(parsed.pages).toHaveLength(3);
+      expect(parsed.pages[0].text).toContain('# Hello');
+      expect(parsed.pages[1].error).toContain('404');
+      expect(parsed.pages[2].error).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('pages repo_read and returns valid JSON with metadata', async () => {
     const { executeIdeTool } = await import('@/lib/ai/tools/executeTool');
     const ideCommitPush = await import('@/lib/ai/ideCommitPush');

@@ -1,4 +1,5 @@
 import { assertSafePublicHttpsUrl, isSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
+import { htmlToMarkdown } from '@/lib/ai/tools/htmlToMarkdown';
 
 const MAX_BYTES = 250_000;
 const TIMEOUT_MS = 12_000;
@@ -93,7 +94,13 @@ export async function webFetch(
     if (contentType.includes('html') || /<html/i.test(raw)) {
       const titleMatch = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
       title = titleMatch?.[1] ? stripHtml(titleMatch[1]).slice(0, 200) : null;
-      text = stripHtml(raw);
+      let markdown = '';
+      try {
+        markdown = htmlToMarkdown(raw, { baseUrl: url.toString() });
+      } catch {
+        // Fall back to plain text below.
+      }
+      text = markdown || stripHtml(raw);
     }
     text = text.slice(0, 12000);
     const thin =
