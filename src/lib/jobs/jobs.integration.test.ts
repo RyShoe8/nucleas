@@ -125,7 +125,7 @@ async function proposed(design: JobDesign = DESIGN) {
 describe('designing', () => {
   it('persists generated Voice as a draft, then uses only approved company-scoped personas', async () => {
     const created = await createTemplateJob(admin, { companyId, template: 'brand_voice', config: {} });
-    expect(created).toMatchObject({ ok: true, job: { design: { skill: 'brand_voice' }, projectId: null } });
+    expect(created).toMatchObject({ ok: true, job: { design: { skill: 'brand_voice' }, projectId: null, level: 'high' } });
     if (!created.ok) throw new Error(created.error);
     const run = await JobRun.create({ organizationId: org, companyId, jobId: created.job.id, startedAt: new Date(), status: 'needs_review', dryRun: true,
       output: { records: [{ values: { brand_profile: { positioning: { primary: 'Game discovery with practical advice.' }, audienceRelationship: { style: 'Fellow players' }, rhetoricalPatterns: ['Open with the game and a concrete reason to play.'] } }, sources: ['https://playbound.club/'] }], summary: 'Brand persona', gaps: [] },

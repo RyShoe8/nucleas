@@ -366,7 +366,9 @@ export async function executeJobRun(runId: string): Promise<void> {
   const settings = await readEngineSettings(org);
   const level = job.level ?? settings.defaultCostLevel;
   const models = await listAvailableModels();
-  const [work, review] = await Promise.all([selectModel(org, 'research', level, { models, settings }), selectModel(org, 'review', level, { models, settings })]);
+  // Writing a persona is writing, not code research: it should pick (and be pinned as) a chat model.
+  const workNeed = activeDesign.skill === 'brand_voice' ? 'write' : 'research';
+  const [work, review] = await Promise.all([selectModel(org, workNeed, level, { models, settings }), selectModel(org, 'review', level, { models, settings })]);
   const worker = work.primary;
   if (!worker) return fail('No model is available for this job.');
 
@@ -380,13 +382,15 @@ export async function executeJobRun(runId: string): Promise<void> {
     : { context: '', urls: new Set<string>(), offeringEvidence: '' };
   const verifiedPropertyUrls = overviewGrounding.urls;
   const facts = [`Selected project: ${project?.name ?? repo?.projectName ?? 'unknown'}`, `Project description: ${project?.description || 'not provided'}`, `Production URL: ${propertyUrl || 'not provided'}`, `Company description: ${profile.description || 'not provided'}`];
+  // Long prompts are trimmed from the end for small-context models, so the evidence that shapes voice goes first.
+  const priorityFacts: string[] = [];
   if (overviewGrounding.context) facts.push(overviewGrounding.context);
   const wantsVoice = activeDesign.skill === 'brand_voice' || activeDesign.category === 'content' || activeDesign.skill === 'social_media';
   const voiceContext = wantsVoice
     ? await brandVoiceContext(job.organizationId, job.companyId, activeDesign.skill === 'brand_voice') : '';
-  if (voiceContext) facts.push(voiceContext);
+  if (voiceContext) priorityFacts.push(voiceContext);
   if (profile.subreddit && (wantsVoice || activeDesign.skill === 'marketing_plan')) {
-    facts.push(`# Company subreddit (community the team posts in by hand; a place to learn how its audience talks)
+    priorityFacts.push(`# Company subreddit (community the team posts in by hand; a place to learn how its audience talks)
 - r/${profile.subreddit}: https://www.reddit.com/r/${profile.subreddit}`);
   }
   if (activeDesign.skill === 'brand_voice') {
@@ -395,11 +399,11 @@ export async function executeJobRun(runId: string): Promise<void> {
       return null;
     });
     if (!social) {
-      facts.push('# Social channels not read (report these as gaps)\n- Social posts could not be collected because of an internal error.');
+      priorityFacts.push('# Social channels not read (report these as gaps)\n- Social posts could not be collected because of an internal error.');
       await progress(run._id, owner, 'Social posts could not be read for the voice (internal error)', { stage: 'preparing', percent: 9 });
     } else {
-      if (social.block) facts.push(`${social.block}\nCite these profile URLs as sources when you use these posts: ${social.sources.join(', ') || 'none'}.`);
-      if (social.gaps.length) facts.push(`# Social channels not read (report these as gaps)\n${social.gaps.map((gap) => `- ${gap}`).join('\n')}`);
+      if (social.block) priorityFacts.push(`${social.block}\nCite these profile URLs as sources when you use these posts: ${social.sources.join(', ') || 'none'}.`);
+      if (social.gaps.length) priorityFacts.push(`# Social channels not read (report these as gaps)\n${social.gaps.map((gap) => `- ${gap}`).join('\n')}`);
       const read = [social.counts.bluesky ? `${social.counts.bluesky} Bluesky` : '', social.counts.facebook ? `${social.counts.facebook} Facebook` : ''].filter(Boolean);
       await progress(run._id, owner, read.length ? `Read ${read.join(' and ')} posts for the voice` : `No social posts were read for the voice${social.gaps.length ? `: ${social.gaps.join(' ')}` : ' (no social channels are set up)'}`.slice(0, 300), { stage: 'preparing', percent: 9 });
     }
@@ -438,7 +442,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       }
     }
   }
-  const groundingFacts = facts.join('\n\n');
+  const groundingFacts = [...priorityFacts, ...facts].join('\n\n');
   const tools = await buildAssistantTools(viewer, [profile]);
   const today = new Date().toISOString().slice(0, 10);
   const done = activeDesign.skill === 'link_building' ? await linkOpportunityMemory(job._id) : await earlierRecords(job._id, run._id);
@@ -498,7 +502,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       const refreshCatalog = /httpStatus=5\d\d\b|HTTP 5\d\d\b/i.test(`${turn.debugHint ?? ''} ${turn.text}`);
       const fresh = await listAvailableModels({ force: refreshCatalog }).catch(() => models);
       const candidates = fresh.filter((model) => model.profileId !== activeWorker.profileId || model.model !== activeWorker.model);
-      const alternate = (await selectModel(org, 'research', level, { models: candidates, settings })).primary;
+      const alternate = (await selectModel(org, workNeed, level, { models: candidates, settings })).primary;
       if (alternate && (alternate.profileId !== activeWorker.profileId || alternate.model !== activeWorker.model)) {
         onProgress(`${shortModel(activeWorker.model)} did not complete; switching to ${shortModel(alternate.model)}`);
         activeWorker = alternate;

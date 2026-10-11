@@ -264,7 +264,8 @@ export async function createTemplateJob(
     status: { $nin: ['rejected', 'archived', 'done'] },
   });
   if (existing) return { ok: false, status: 409, error: `${profile.name} already has an open ${input.template === 'brand_voice' ? 'Voice job' : input.template === 'link_building' ? 'Link Building job' : input.template === 'marketing_plan' ? 'Marketing Plan job' : 'SEO brief job'}. Open it to review or archive it.` };
-  const level = input.level ?? (await readEngineSettings(String(viewer.organizationId))).defaultCostLevel;
+  // A voice is rarely regenerated and people edit it closely, so it defaults to a paid writer whatever the org default is.
+  const level = input.level ?? (input.template === 'brand_voice' ? 'high' : (await readEngineSettings(String(viewer.organizationId))).defaultCostLevel);
   const design = input.template === 'brand_voice' ? brandVoiceDesign(profile.name) : input.template === 'link_building'
     ? linkBuildingDesign(parsed.data as ReturnType<typeof linkBuildingConfigSchema.parse>)
     : input.template === 'marketing_plan'
