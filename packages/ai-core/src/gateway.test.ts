@@ -3,6 +3,10 @@ import {
   completionLimitBody,
   invokeModel,
   invokeModelWithTools,
+  needsResponsesApi,
+  parseResponsesOutput,
+  responsesInput,
+  responsesUrlFromChatEndpoint,
   sanitizeProviderMessage,
   supportedReasoningEfforts,
   toolCallReasoningBody,
@@ -177,6 +181,58 @@ describe('remote inference gateway', () => {
       expect(next).toHaveBeenCalledTimes(1);
       expect(JSON.parse(String(next.mock.calls[0][1]!.body))).toMatchObject({ reasoning_effort: 'low' });
       expect(toolCallReasoningBody('gpt-6.1-pro-test')).toEqual({ reasoning_effort: 'low' });
+    });
+
+    describe('models that only run function tools on the Responses API', () => {
+      const noNone = unsupported;
+      const noTools = () =>
+        new Response(
+          JSON.stringify({ error: { message: "Function tools with reasoning_effort are not supported for gpt-6.1-sol-test in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.", type: 'invalid_request_error', code: 'unsupported_parameter' } }),
+          { status: 400, headers: { 'content-type': 'application/json' } }
+        );
+      const toolReply = () => Response.json({ output: [{ type: 'reasoning', summary: [] }, { type: 'function_call', call_id: 'call_abc', name: 'web_search', arguments: '{"q":"x"}' }], status: 'completed', usage: { input_tokens: 120, output_tokens: 30 } });
+      const textReply = () => Response.json({ output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Done.' }] }], status: 'completed', usage: { input_tokens: 10, output_tokens: 2 } });
+
+      it('recognizes the refusal', () => {
+        expect(needsResponsesApi("Function tools with reasoning_effort are not supported for gpt-6.1-sol in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.")).toBe(true);
+        expect(needsResponsesApi('bad request')).toBe(false);
+      });
+
+      it('goes to /v1/responses after chat completions refuses both none and tools, then remembers', async () => {
+        const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(noNone()).mockResolvedValueOnce(noTools()).mockResolvedValueOnce(toolReply());
+        const result = await call('gpt-6.1-sol-test', fetcher);
+        expect(result.toolCalls).toEqual([{ id: 'call_abc', type: 'function', function: { name: 'web_search', arguments: '{"q":"x"}' } }]);
+        expect(result).toMatchObject({ inputTokens: 120, outputTokens: 30, finishReason: 'tool_calls' });
+        expect(fetcher).toHaveBeenCalledTimes(3);
+        expect(String(fetcher.mock.calls[2][0])).toBe('https://llm.rogly.net/v1/responses');
+        const body = JSON.parse(String(fetcher.mock.calls[2][1]!.body));
+        expect(body).toMatchObject({ model: 'gpt-6.1-sol-test', max_output_tokens: 100, reasoning: { effort: 'low' }, store: false });
+        expect(body.tools).toEqual([{ type: 'function', name: 'web_search', description: 'Search', parameters: { type: 'object', properties: {} } }]);
+        expect(body.input).toEqual([{ role: 'user', content: 'hi' }]);
+
+        const next = vi.fn<typeof fetch>().mockResolvedValue(textReply());
+        expect((await call('gpt-6.1-sol-test', next)).content).toBe('Done.');
+        expect(next).toHaveBeenCalledTimes(1);
+        expect(String(next.mock.calls[0][0])).toContain('/v1/responses');
+      });
+    });
+
+    it('translates chat messages, tool calls and tool results for the Responses API', () => {
+      expect(
+        responsesInput([
+          { role: 'system', content: 'be brief' },
+          { role: 'user', content: 'find it' },
+          { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'web_search', arguments: '{"q":"a"}' } }] },
+          { role: 'tool', tool_call_id: 'c1', content: '{"hits":[]}' },
+        ])
+      ).toEqual([
+        { role: 'system', content: 'be brief' },
+        { role: 'user', content: 'find it' },
+        { type: 'function_call', call_id: 'c1', name: 'web_search', arguments: '{"q":"a"}' },
+        { type: 'function_call_output', call_id: 'c1', output: '{"hits":[]}' },
+      ]);
+      expect(responsesUrlFromChatEndpoint('https://api.openai.com/v1/chat/completions').href).toBe('https://api.openai.com/v1/responses');
+      expect(parseResponsesOutput({ output: [{ type: 'message', content: [{ type: 'output_text', text: '<think>x</think>Hi' }] }], status: 'incomplete' })).toMatchObject({ text: 'Hi', toolCalls: [], truncated: true });
     });
 
     it('does not retry unrelated 400s', async () => {

@@ -542,6 +542,67 @@ export async function invokeModel(
   }
 }
 
+/** Models OpenAI will only run function tools for through /v1/responses (chat completions refuses tools with a reasoning effort). */
+const responsesOnlyModels = new Set<string>();
+
+/** True for OpenAI's refusal to combine function tools with a reasoning effort on /v1/chat/completions. */
+export function needsResponsesApi(errorBody: string): boolean {
+  return /\/v1\/responses/i.test(errorBody) && /function tools/i.test(errorBody);
+}
+
+/** Derive the Responses API URL from a chat-completions endpoint. */
+export function responsesUrlFromChatEndpoint(endpoint: string): URL {
+  const url = validateGatewayConfiguration({ endpoint, bearerToken: 'x', model: 'x', protocol: 'openai-chat' });
+  let path = url.pathname.replace(/\/+$/, '') || '';
+  if (path.endsWith('/chat/completions')) path = `${path.slice(0, -'/chat/completions'.length)}/responses`;
+  else if (path.endsWith('/v1')) path = `${path}/responses`;
+  else if (!path || path === '/') path = '/v1/responses';
+  else path = `${path}/responses`;
+  url.pathname = path;
+  return url;
+}
+
+/** Chat messages as Responses API input items: tool calls and their results become function_call items. */
+export function responsesInput(messages: ModelToolRequest['messages']): Record<string, unknown>[] {
+  const items: Record<string, unknown>[] = [];
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      items.push({ type: 'function_call_output', call_id: message.tool_call_id ?? 'call_0', output: message.content ?? '' });
+      continue;
+    }
+    if (message.content) items.push({ role: message.role, content: message.content });
+    for (const call of message.tool_calls ?? []) {
+      items.push({ type: 'function_call', call_id: call.id, name: call.function.name, arguments: call.function.arguments });
+    }
+  }
+  return items;
+}
+
+/** Visible text and function calls from a Responses API reply. */
+export function parseResponsesOutput(body: unknown): { text: string; toolCalls: ToolCall[]; truncated: boolean; inputTokens: number | null; outputTokens: number | null } {
+  const reply = body as {
+    output?: { type?: string; content?: { type?: string; text?: string }[]; call_id?: string; id?: string; name?: string; arguments?: unknown }[];
+    status?: string;
+    usage?: { input_tokens?: number; output_tokens?: number };
+  };
+  const text: string[] = [];
+  const raw: { id: string; function: { name: unknown; arguments: unknown } }[] = [];
+  for (const item of reply.output ?? []) {
+    if (item.type === 'message') {
+      for (const part of item.content ?? []) if (part.type === 'output_text' && part.text) text.push(part.text);
+    } else if (item.type === 'function_call') {
+      raw.push({ id: item.call_id ?? item.id ?? `call_${raw.length}`, function: { name: item.name, arguments: item.arguments } });
+    }
+  }
+  return {
+    text: stripThinkTags(text.join('\n')),
+    toolCalls: parseToolCalls(raw),
+    truncated: reply.status === 'incomplete',
+    inputTokens: typeof reply.usage?.input_tokens === 'number' ? reply.usage.input_tokens : null,
+    outputTokens: typeof reply.usage?.output_tokens === 'number' ? reply.usage.output_tokens : null,
+  };
+}
+
 /**
  * Tool-capable chat completions. Returns assistant text and/or tool_calls.
  * Callers must execute tools server-side; never trust model-claimed side effects alone.
@@ -585,15 +646,69 @@ export async function invokeModelWithTools(
             : { ...nativeBody, ...extra }
         ),
       });
+    const modelId = modelIdBase(config.model);
+    // The Responses API route, for models OpenAI will not run function tools on through chat completions.
+    const viaResponses = async (): Promise<ModelToolResult> => {
+      responsesOnlyModels.add(modelId);
+      const url = responsesUrlFromChatEndpoint(config.endpoint);
+      const post = (effort: string) => {
+        timer.touch();
+        return (options.fetcher ?? fetch)(url, {
+          method: 'POST',
+          redirect: 'error',
+          cache: 'no-store',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.bearerToken}` },
+          body: JSON.stringify({
+            model: config.model,
+            input: responsesInput(input.messages),
+            tools: input.tools.map((t) => ({ type: 'function', name: t.function.name, description: t.function.description, parameters: t.function.parameters })),
+            max_output_tokens: input.maxOutputTokens,
+            reasoning: { effort },
+            store: false,
+          }),
+        });
+      };
+      let effort = learnedReasoningEffort.get(modelId) ?? 'low';
+      let reply = await post(effort);
+      if (reply.status === 400) {
+        const supported = supportedReasoningEfforts(await reply.clone().text().catch(() => ''));
+        if (supported && !supported.includes(effort)) {
+          effort = pickReasoningEffort(supported);
+          reply = await post(effort);
+        }
+      }
+      if (!reply.ok) throw await httpGatewayError(reply, config.bearerToken);
+      learnedReasoningEffort.set(modelId, effort);
+      const parsed = parseResponsesOutput(await readBoundedJson(reply, 512000));
+      if (!parsed.toolCalls.length && !parsed.text) {
+        throw new GatewayError('invalid_response', { kind: 'empty_content', finishReason: parsed.truncated ? 'length' : null, contentChars: 0, hasToolCalls: false, hasReasoning: false });
+      }
+      return {
+        content: parsed.text,
+        toolCalls: parsed.toolCalls,
+        model: config.model,
+        inputTokens: parsed.inputTokens,
+        outputTokens: parsed.outputTokens,
+        latencyMs: Date.now() - started,
+        finishReason: parsed.toolCalls.length ? 'tool_calls' : parsed.truncated ? 'length' : 'stop',
+      };
+    };
+    if (config.toolMode !== 'prompted' && responsesOnlyModels.has(modelId)) return await viaResponses();
+
     let response = await send(toolCallReasoningBody(config.model));
-    // A model that rejects `none` says which efforts it accepts: retry once with the cheapest, and remember it.
     if (response.status === 400 && config.toolMode !== 'prompted' && 'reasoning_effort' in toolCallReasoningBody(config.model)) {
-      const supported = supportedReasoningEfforts(await response.clone().text().catch(() => ''));
+      // A model that rejects `none` says which efforts it accepts: retry once with the cheapest, and remember it.
+      let errorText = await response.clone().text().catch(() => '');
+      const supported = supportedReasoningEfforts(errorText);
       if (supported) {
         const effort = pickReasoningEffort(supported);
-        learnedReasoningEffort.set(modelIdBase(config.model), effort);
+        learnedReasoningEffort.set(modelId, effort);
         response = await send({ reasoning_effort: effort });
+        errorText = response.status === 400 ? await response.clone().text().catch(() => '') : '';
       }
+      // Some of those models only run function tools on the Responses API; use it from here on.
+      if (needsResponsesApi(errorText)) return await viaResponses();
     }
     if (!response.ok) {
       throw await httpGatewayError(response, config.bearerToken);
