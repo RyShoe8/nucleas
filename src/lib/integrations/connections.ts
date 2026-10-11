@@ -79,7 +79,7 @@ export async function listCompanyConnections(viewer: CompanyViewer, companyId: s
   })
     .select(VIEW_FIELDS)
     .lean<ConnectionLean[]>();
-  return rows.map(toView).sort((a, b) => a.domain.localeCompare(b.domain) || a.providerName.localeCompare(b.providerName));
+  return rows.filter((row) => getIntegrationProvider(row.provider)).map(toView).sort((a, b) => a.domain.localeCompare(b.domain) || a.providerName.localeCompare(b.providerName));
 }
 
 export type ConnectResult =

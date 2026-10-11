@@ -280,8 +280,8 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                     </a>
                 ) : null}
                 {c.domain === 'social' && !c.connectable && !c.signIn && auth.isManagerOrAdmin ? (
-                    <span className="text-[11px] px-2 py-0.5 rounded border border-border text-text-secondary" title="The account is declared now; provider OAuth and publishing permissions are the next integration step.">
-                        OAuth setup pending
+                    <span className="text-[11px] px-2 py-0.5 rounded border border-border text-text-secondary" title="Nucleas can't post to this platform for you yet. Drafts are copied and posted by hand.">
+                        Manual posting
                     </span>
                 ) : null}
                 {c.webhook && auth.isManagerOrAdmin && !editing ? (
@@ -318,7 +318,7 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                         spellCheck={false}
                         value={credential}
                         onChange={(e) => setCredential(e.target.value)}
-                        placeholder={`${c.providerName} API key`}
+                        placeholder={c.provider === 'bluesky' ? 'handle.bsky.social:xxxx-xxxx-xxxx-xxxx' : `${c.providerName} API key`}
                         className="flex-1 min-w-0 h-8 px-2 rounded border border-border bg-background-elevated text-sm"
                         autoFocus
                     />

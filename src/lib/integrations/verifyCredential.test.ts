@@ -67,6 +67,26 @@ describe('verifyCredential', () => {
     expect(JSON.stringify(echoed)).not.toContain('xkeysib-secret');
   });
 
+  it('verifies a Bluesky handle with an app password and never sends anything else', async () => {
+    const f = fakeFetch(200, { handle: 'frugal.bsky.social', accessJwt: 'jwt-should-not-leak' });
+    const out = await verifyCredential('bluesky', '@frugal.bsky.social:abcd-efgh-ijkl-mnop', f);
+    expect(out).toEqual({ ok: true, accountLabel: '@frugal.bsky.social' });
+    expect(JSON.parse(String(f.mock.calls[0][1]?.body))).toEqual({ identifier: 'frugal.bsky.social', password: 'abcd-efgh-ijkl-mnop' });
+    expect(JSON.stringify(out)).not.toContain('jwt-should-not-leak');
+  });
+
+  it('refuses a Bluesky account password before any network call', async () => {
+    const f = fakeFetch(200, {});
+    expect(await verifyCredential('bluesky', 'frugal.bsky.social:my real password', f)).toMatchObject({ ok: false, reason: 'wrong_key_type' });
+    expect(await verifyCredential('bluesky', 'just-a-password', f)).toMatchObject({ ok: false, reason: 'invalid_credential' });
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('reports a rejected Bluesky app password', async () => {
+    const out = await verifyCredential('bluesky', 'frugal.bsky.social:abcd-efgh-ijkl-mnop', fakeFetch(401, { error: 'AuthenticationRequired', message: 'Invalid identifier or password' }));
+    expect(out).toMatchObject({ ok: false, reason: 'invalid_credential' });
+  });
+
   it('refuses providers that are not API-key based', async () => {
     expect(await verifyCredential('ga4', 'x', fakeFetch(200, {}))).toMatchObject({ ok: false, reason: 'unsupported' });
   });

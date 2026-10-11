@@ -113,6 +113,28 @@ export async function verifyCredential(provider: string, credential: string, fet
         if (fail) return fail;
         return { ok: true, accountLabel: String((body.user as { username?: string } | undefined)?.username ?? 'Vercel') };
       }
+      case 'bluesky': {
+        // App passwords only (xxxx-xxxx-xxxx-xxxx); the account password must never be stored.
+        const split = key.indexOf(':');
+        const identifier = split > 0 ? key.slice(0, split).trim().replace(/^@/, '') : '';
+        const password = split > 0 ? key.slice(split + 1).trim() : '';
+        if (!identifier) return { ok: false, reason: 'invalid_credential', message: 'Enter the handle and app password as handle:app-password.' };
+        if (!/^[a-z0-9]{4}(-[a-z0-9]{4}){3}$/i.test(password)) {
+          return { ok: false, reason: 'wrong_key_type', message: 'Use an app password (xxxx-xxxx-xxxx-xxxx) from Bluesky Settings → Privacy and security → App passwords, not the account password.' };
+        }
+        const res = await fetchImpl('https://bsky.social/xrpc/com.atproto.server.createSession', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({ identifier, password }),
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+          redirect: 'error',
+        });
+        const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        const fail = authFailure(res.status === 400 ? 401 : res.status, body, password);
+        if (fail) return fail;
+        if (res.status !== 200) return { ok: false, reason: 'invalid_credential', message: `Bluesky returned ${res.status}.` };
+        return { ok: true, accountLabel: typeof body.handle === 'string' ? `@${body.handle}` : `@${identifier}` };
+      }
       default:
         return { ok: false, reason: 'unsupported', message: `${provider} is not connected with an API key.` };
     }
