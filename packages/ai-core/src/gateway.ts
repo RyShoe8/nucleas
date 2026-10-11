@@ -201,15 +201,35 @@ export function completionLimitBody(
     : { max_tokens: maxOutputTokens };
 }
 
+/** Models that refused `none`, mapped to the effort they accept, so later calls start with the right value. */
+const learnedReasoningEffort = new Map<string, string>();
+
 /**
  * GPT-5/6 series defaults to reasoning; OpenAI /v1/chat/completions requires
- * `reasoning_effort: 'none'` when function tools are provided.
+ * `reasoning_effort: 'none'` when function tools are provided. Some models (the "pro" tiers) do not
+ * accept `none`; for those the gateway learns a supported value from the error and uses it from then on.
  */
-export function toolCallReasoningBody(
-  model: string
-): { reasoning_effort: 'none' } | Record<string, never> {
+export function toolCallReasoningBody(model: string): { reasoning_effort: string } | Record<string, never> {
   const id = modelIdBase(model);
-  return /^gpt-[56]/.test(id) ? { reasoning_effort: 'none' } : {};
+  if (!/^gpt-[56]/.test(id)) return {};
+  return { reasoning_effort: learnedReasoningEffort.get(id) ?? 'none' };
+}
+
+/**
+ * The efforts a model accepts, read from OpenAI's 400 ("Unsupported value: 'reasoning_effort' does not
+ * support 'none' with this model. Supported values are: 'low', 'medium', 'high', and 'xhigh'."), or null
+ * when the error is about something else.
+ */
+export function supportedReasoningEfforts(errorBody: string): string[] | null {
+  if (!/reasoning_effort/.test(errorBody) || !/does not support/i.test(errorBody)) return null;
+  const list = /Supported values are:\s*([^"]*)/i.exec(errorBody)?.[1] ?? '';
+  const values = [...list.matchAll(/'([a-z]+)'/g)].map((m) => m[1]);
+  return values.length ? values : null;
+}
+
+/** The cheapest accepted effort: faster and less costly, and enough for a tool-driven step. */
+function pickReasoningEffort(supported: string[]): string {
+  return ['minimal', 'low', 'medium', 'high', 'xhigh'].find((e) => supported.includes(e)) ?? supported[0]!;
 }
 
 /** Derive OpenAI-compatible images generations URL from a chat-completions endpoint. */
@@ -540,30 +560,41 @@ export async function invokeModelWithTools(
   const timer = callTimer(config, cancel);
   const started = Date.now();
   try {
-    const response = await (options.fetcher ?? fetch)(endpoint, {
-      method: 'POST',
-      redirect: 'error',
-      cache: 'no-store',
-      signal: controller.signal,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.bearerToken}` },
-      body: JSON.stringify(
-        config.toolMode === 'prompted'
-          ? {
-              model: config.model,
-              messages: promptedToolMessages(input.messages, input.tools),
-              ...completionLimitBody(config.model, input.maxOutputTokens),
-              ...streamBody(config),
-            }
-          : {
-              model: config.model,
-              messages: input.messages,
-              ...completionLimitBody(config.model, input.maxOutputTokens),
-              ...toolCallReasoningBody(config.model),
-              tools: input.tools,
-              ...streamBody(config),
-            }
-      ),
-    });
+    const nativeBody = {
+      model: config.model,
+      messages: input.messages,
+      ...completionLimitBody(config.model, input.maxOutputTokens),
+      tools: input.tools,
+      ...streamBody(config),
+    };
+    const send = (extra: Record<string, unknown>) =>
+      (options.fetcher ?? fetch)(endpoint, {
+        method: 'POST',
+        redirect: 'error',
+        cache: 'no-store',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.bearerToken}` },
+        body: JSON.stringify(
+          config.toolMode === 'prompted'
+            ? {
+                model: config.model,
+                messages: promptedToolMessages(input.messages, input.tools),
+                ...completionLimitBody(config.model, input.maxOutputTokens),
+                ...streamBody(config),
+              }
+            : { ...nativeBody, ...extra }
+        ),
+      });
+    let response = await send(toolCallReasoningBody(config.model));
+    // A model that rejects `none` says which efforts it accepts: retry once with the cheapest, and remember it.
+    if (response.status === 400 && config.toolMode !== 'prompted' && 'reasoning_effort' in toolCallReasoningBody(config.model)) {
+      const supported = supportedReasoningEfforts(await response.clone().text().catch(() => ''));
+      if (supported) {
+        const effort = pickReasoningEffort(supported);
+        learnedReasoningEffort.set(modelIdBase(config.model), effort);
+        response = await send({ reasoning_effort: effort });
+      }
+    }
     if (!response.ok) {
       throw await httpGatewayError(response, config.bearerToken);
     }

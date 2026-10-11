@@ -4,6 +4,7 @@ import {
   invokeModel,
   invokeModelWithTools,
   sanitizeProviderMessage,
+  supportedReasoningEfforts,
   toolCallReasoningBody,
   usesMaxCompletionTokens,
   validateGatewayConfiguration,
@@ -146,6 +147,43 @@ describe('remote inference gateway', () => {
   it('preserves reported zero usage, separately from unknown', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ ...output, usage: { prompt_tokens: 0, completion_tokens: 3 } }));
     expect(await invokeModel(config, request, { fetcher })).toMatchObject({ inputTokens: 0, outputTokens: 3 });
+  });
+
+  describe('models that refuse reasoning_effort none', () => {
+    const unsupported = () =>
+      new Response(
+        JSON.stringify({ error: { message: "Unsupported value: 'reasoning_effort' does not support 'none' with this model. Supported values are: 'low', 'medium', 'high', and 'xhigh'.", type: 'invalid_request_error', param: 'reasoning_effort', code: 'unsupported_value' } }),
+        { status: 400, headers: { 'content-type': 'application/json' } }
+      );
+    const tools = [{ type: 'function' as const, function: { name: 'web_search', description: 'Search', parameters: { type: 'object', properties: {} } } }];
+    const call = (model: string, fetcher: typeof fetch) =>
+      invokeModelWithTools({ ...config, model }, { role: 'worker', messages: [{ role: 'user', content: 'hi' }], maxOutputTokens: 100, tools }, { fetcher });
+    const ok = () => Response.json({ choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] });
+
+    it('reads the accepted efforts from the error', () => {
+      expect(supportedReasoningEfforts("Unsupported value: 'reasoning_effort' does not support 'none' with this model. Supported values are: 'low', 'medium', 'high', and 'xhigh'.")).toEqual(['low', 'medium', 'high', 'xhigh']);
+      expect(supportedReasoningEfforts('The model is overloaded.')).toBeNull();
+    });
+
+    it('retries once with the cheapest accepted effort and remembers it for the next call', async () => {
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(unsupported()).mockResolvedValueOnce(ok());
+      expect((await call('gpt-6.1-pro-test', fetcher)).content).toBe('done');
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(JSON.parse(String(fetcher.mock.calls[0][1]!.body))).toMatchObject({ reasoning_effort: 'none' });
+      expect(JSON.parse(String(fetcher.mock.calls[1][1]!.body))).toMatchObject({ reasoning_effort: 'low' });
+
+      const next = vi.fn<typeof fetch>().mockResolvedValue(ok());
+      await call('openai/gpt-6.1-pro-test', next);
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(next.mock.calls[0][1]!.body))).toMatchObject({ reasoning_effort: 'low' });
+      expect(toolCallReasoningBody('gpt-6.1-pro-test')).toEqual({ reasoning_effort: 'low' });
+    });
+
+    it('does not retry unrelated 400s', async () => {
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('{"error":{"message":"bad request"}}', { status: 400 }));
+      await expect(call('gpt-6.1-other-test', fetcher)).rejects.toMatchObject({ code: 'unavailable', details: { httpStatus: 400 } });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('accepts truncated tool replies when content is present', async () => {
