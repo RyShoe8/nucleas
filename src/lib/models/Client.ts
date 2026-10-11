@@ -19,6 +19,8 @@ export interface IClient extends Document, IPlatformOperationsFields {
   contactEmail?: string;
   contactPhone?: string;
   domain?: string;
+  /** Company subreddit name without r/, entered by hand (Reddit has no open API). */
+  subreddit?: string;
   description?: string;
   color: string;
   status: ClientStatus;
@@ -75,6 +77,11 @@ const ClientSchema: Schema = new Schema(
       type: String,
       trim: true,
       lowercase: true,
+    },
+    subreddit: {
+      type: String,
+      trim: true,
+      maxlength: 21,
     },
     description: {
       type: String,

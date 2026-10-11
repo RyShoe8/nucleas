@@ -54,6 +54,15 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                         {RELATIONSHIP_LABEL[company.relationship]}
                         {company.devUrl ? ` · dev ${company.devUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}` : ''}
                     </p>
+                    <SubredditEditor
+                        companyId={company.id}
+                        subreddit={company.subreddit}
+                        canManage={detail.canManage}
+                        onSaved={(subreddit) => {
+                            setDetail((current) => current ? { ...current, company: { ...current.company, subreddit: subreddit ?? undefined } } : current);
+                            setActivityKey((key) => key + 1);
+                        }}
+                    />
                     <ProductionDomainEditor
                         companyId={company.id}
                         domain={company.domain}
@@ -154,6 +163,75 @@ function ProductionDomainEditor({ companyId, domain, canManage, onSaved }: { com
                 <button type="button" disabled={saving} className="rounded border border-border px-2.5 py-1 text-xs hover:bg-background-card disabled:opacity-50" onClick={() => { setEditing(false); setError(null); setValue(domain ?? ''); }}>Cancel</button>
             </div>
             <p className="text-[11px] text-text-secondary">Used to match analytics, search, hosting, and other company integrations. This does not change DNS.</p>
+            {error ? <p className="text-[11px] text-red-400">{error}</p> : null}
+        </form>
+    );
+}
+
+function SubredditEditor({ companyId, subreddit, canManage, onSaved }: { companyId: string; subreddit?: string; canManage: boolean; onSaved: (subreddit: string | null) => void }) {
+    const [editing, setEditing] = useState(false);
+    const [value, setValue] = useState(subreddit ? `r/${subreddit}` : '');
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => setValue(subreddit ? `r/${subreddit}` : ''), [subreddit]);
+
+    async function save(event: FormEvent) {
+        event.preventDefault();
+        if (saving) return;
+        setSaving(true);
+        setError(null);
+        try {
+            const response = await fetch(`/api/os/companies/${companyId}`, {
+                method: 'PATCH',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ subreddit: value }),
+            });
+            const data = await response.json().catch(() => ({})) as { subreddit?: string | null; error?: string };
+            if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+            onSaved(data.subreddit ?? null);
+            setEditing(false);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Could not save the subreddit.');
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    if (!editing) {
+        if (!subreddit && !canManage) return null;
+        return (
+            <div className="mt-1 flex items-center gap-2 text-xs">
+                {subreddit ? (
+                    <a href={`https://www.reddit.com/r/${subreddit}`} target="_blank" rel="noreferrer" className="text-primary hover:underline" onClick={(event) => event.stopPropagation()}>r/{subreddit}</a>
+                ) : (
+                    <span className="text-text-secondary">No subreddit</span>
+                )}
+                {canManage ? (
+                    <button type="button" className="text-[11px] text-text-secondary hover:text-text-primary underline-offset-2 hover:underline" onClick={() => { setValue(subreddit ? `r/${subreddit}` : ''); setError(null); setEditing(true); }}>
+                        {subreddit ? 'Edit' : 'Set subreddit'}
+                    </button>
+                ) : null}
+            </div>
+        );
+    }
+
+    return (
+        <form onSubmit={save} className="mt-2 max-w-md space-y-1.5">
+            <label className="block text-[11px] text-text-secondary" htmlFor={`subreddit-${companyId}`}>Subreddit</label>
+            <div className="flex gap-2">
+                <input
+                    id={`subreddit-${companyId}`}
+                    value={value}
+                    onChange={(event) => setValue(event.target.value)}
+                    placeholder="r/YourCommunity"
+                    autoFocus
+                    className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-xs text-text-primary"
+                />
+                <button type="submit" disabled={saving} className="rounded bg-primary px-2.5 py-1 text-xs text-white disabled:opacity-50">{saving ? 'Saving…' : 'Save'}</button>
+                <button type="button" disabled={saving} className="rounded border border-border px-2.5 py-1 text-xs hover:bg-background-card disabled:opacity-50" onClick={() => { setEditing(false); setError(null); setValue(subreddit ? `r/${subreddit}` : ''); }}>Cancel</button>
+            </div>
+            <p className="text-[11px] text-text-secondary">Reddit posts are made by hand, so there is no connection to set up. Nucleas uses this community when it plans posts and builds the company voice. Paste r/name or the subreddit link.</p>
             {error ? <p className="text-[11px] text-red-400">{error}</p> : null}
         </form>
     );

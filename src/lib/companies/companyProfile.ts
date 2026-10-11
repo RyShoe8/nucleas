@@ -5,6 +5,7 @@ import User from '@/lib/models/User';
 import Employee from '@/lib/models/Employee';
 import { canUserAccessClient } from '@/lib/utils/clientTeam';
 import { getProjectTeamEmployeeIds } from '@/lib/utils/projectTeam';
+import { subredditUrl } from '@/lib/companies/subreddit';
 
 /**
  * Company = Client document. For owned/internal companies the hub project is the source of truth
@@ -45,7 +46,10 @@ export interface CompanyProfile {
   devUrl?: string;
   liveUrl?: string;
   urls: string[];
+  /** Includes the manually entered subreddit as a Reddit link when no equivalent link is already listed. */
   socialLinks: { network: string; url: string }[];
+  /** Subreddit name without r/, entered by hand; stored on the company, not the hub project. */
+  subreddit?: string;
   stackToolIds: string[];
   teamEmployeeIds: string[];
   profileSource: 'hub_project' | 'client';
@@ -84,6 +88,14 @@ export function resolveCompanyProfile(company: Doc, hubProject: Doc | null): Com
     }
   }
 
+  const socialLinks = ((src.socialLinks as { network: string; url: string }[] | undefined) ?? [])
+    .filter((s) => s?.url)
+    .map((s) => ({ network: s.network, url: s.url }));
+  const subreddit = str(company.subreddit);
+  if (subreddit && !socialLinks.some((s) => s.network === 'reddit' && s.url.toLowerCase().includes(`/r/${subreddit.toLowerCase()}`))) {
+    socialLinks.push({ network: 'reddit', url: subredditUrl(subreddit) });
+  }
+
   return {
     id: String(company._id),
     relationship,
@@ -97,9 +109,8 @@ export function resolveCompanyProfile(company: Doc, hubProject: Doc | null): Com
     devUrl: str(src.devUrl),
     liveUrl: str(src.liveUrl),
     urls: [...new Set(urls)],
-    socialLinks: ((src.socialLinks as { network: string; url: string }[] | undefined) ?? [])
-      .filter((s) => s?.url)
-      .map((s) => ({ network: s.network, url: s.url })),
+    socialLinks,
+    subreddit,
     stackToolIds: [...stackToolIds],
     teamEmployeeIds: [...getProjectTeamEmployeeIds(src as Parameters<typeof getProjectTeamEmployeeIds>[0])],
     profileSource: useHub ? 'hub_project' : 'client',

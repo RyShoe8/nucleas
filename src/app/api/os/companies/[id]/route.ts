@@ -6,6 +6,7 @@ import { getCompanyProfile, isCompanyManager } from '@/lib/companies/companyProf
 import { listCompanyConnections } from '@/lib/integrations/connections';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { normalizeProductionDomain } from '@/lib/companies/productionDomain';
+import { normalizeSubreddit } from '@/lib/companies/subreddit';
 import { recordActivity } from '@/lib/companies/activityLog';
 import { CompanyAssistantTurn } from '@/lib/models/CompanyAssistantTurn';
 
@@ -92,29 +93,42 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     } catch {
       return NextResponse.json({ error: 'Request body must be valid JSON.' }, { status: 400 });
     }
-    if (!body || typeof body !== 'object' || !Object.prototype.hasOwnProperty.call(body, 'domain')) {
-      return NextResponse.json({ error: 'Production domain is required.' }, { status: 400 });
+    const has = (key: string) => Boolean(body) && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, key);
+    if (!has('domain') && !has('subreddit')) {
+      return NextResponse.json({ error: 'Nothing to update.' }, { status: 400 });
     }
-    const parsed = normalizeProductionDomain((body as { domain?: unknown }).domain);
-    if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
+    const fields = body as { domain?: unknown; subreddit?: unknown };
+    const domain = has('domain') ? normalizeProductionDomain(fields.domain) : null;
+    if (domain && !domain.ok) return NextResponse.json({ error: domain.error }, { status: 400 });
+    const subreddit = has('subreddit') ? normalizeSubreddit(fields.subreddit) : null;
+    if (subreddit && !subreddit.ok) return NextResponse.json({ error: subreddit.error }, { status: 400 });
 
     const company = await Client.findOne({ _id: id, organizationId: viewer.organizationId });
     if (!company) return NextResponse.json({ error: 'Company not found' }, { status: 404 });
-    const previous = company.domain ?? null;
-    company.domain = parsed.domain ?? undefined;
-    await company.save();
+    const result: { domain?: string | null; subreddit?: string | null } = {};
+    const activities: { title: string; detail?: string }[] = [];
 
-    if (previous !== parsed.domain) {
-      await recordActivity({
-        organizationId: viewer.organizationId,
-        companyId: id,
-        kind: 'company',
-        title: parsed.domain ? 'Production domain set' : 'Production domain cleared',
-        detail: parsed.domain ?? previous ?? undefined,
-        actorUserId: viewer.userId,
-      });
+    if (domain?.ok) {
+      const previous = company.domain ?? null;
+      company.domain = domain.domain ?? undefined;
+      result.domain = domain.domain;
+      if (previous !== domain.domain) {
+        activities.push({ title: domain.domain ? 'Production domain set' : 'Production domain cleared', detail: domain.domain ?? previous ?? undefined });
+      }
     }
-    return NextResponse.json({ domain: parsed.domain });
+    if (subreddit?.ok) {
+      const previous = company.subreddit ?? null;
+      company.subreddit = subreddit.subreddit ?? undefined;
+      result.subreddit = subreddit.subreddit;
+      if (previous !== subreddit.subreddit) {
+        activities.push({ title: subreddit.subreddit ? 'Subreddit set' : 'Subreddit cleared', detail: subreddit.subreddit ? `r/${subreddit.subreddit}` : previous ? `r/${previous}` : undefined });
+      }
+    }
+    await company.save();
+    for (const activity of activities) {
+      await recordActivity({ organizationId: viewer.organizationId, companyId: id, kind: 'company', ...activity, actorUserId: viewer.userId });
+    }
+    return NextResponse.json(result);
   } catch (error) {
     console.error('[os/companies/:id] update failed', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

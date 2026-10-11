@@ -65,6 +65,25 @@ describe('company production domain', () => {
     expect(mocks.findCompany).not.toHaveBeenCalled();
   });
 
+  it('saves and clears the subreddit, recording activity after the save', async () => {
+    const company = { domain: 'x.com', subreddit: undefined as string | undefined, save: mocks.save };
+    mocks.findCompany.mockResolvedValue(company);
+    const set = await PATCH(new NextRequest(`https://os.nucleas.test/api/os/companies/${companyId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subreddit: 'https://www.reddit.com/r/TheFrugalGambler/' }) }), { params: Promise.resolve({ id: companyId }) });
+    expect(await set.json()).toEqual({ subreddit: 'TheFrugalGambler' });
+    expect(company.subreddit).toBe('TheFrugalGambler');
+    expect(company.domain).toBe('x.com');
+    expect(mocks.activity).toHaveBeenCalledWith(expect.objectContaining({ title: 'Subreddit set', detail: 'r/TheFrugalGambler' }));
+    const cleared = await PATCH(new NextRequest(`https://os.nucleas.test/api/os/companies/${companyId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subreddit: '' }) }), { params: Promise.resolve({ id: companyId }) });
+    expect(await cleared.json()).toEqual({ subreddit: null });
+    expect(company.subreddit).toBeUndefined();
+  });
+
+  it('rejects an invalid subreddit without writing', async () => {
+    const response = await PATCH(new NextRequest(`https://os.nucleas.test/api/os/companies/${companyId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subreddit: 'u/someone' }) }), { params: Promise.resolve({ id: companyId }) });
+    expect(response.status).toBe(400);
+    expect(mocks.findCompany).not.toHaveBeenCalled();
+  });
+
   it('allows only managers and administrators', async () => {
     mocks.role = 'User';
     const response = await PATCH(request('seniorbydesign.com'), { params: Promise.resolve({ id: companyId }) });

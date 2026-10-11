@@ -38,6 +38,7 @@ export interface OsCompanyDetail {
         liveUrl?: string;
         urls: string[];
         hubProjectId?: string;
+        subreddit?: string;
         profileSource: 'hub_project' | 'client';
     };
     projects: { id: string; name: string; status: string; isHub: boolean; openTasks: number; totalTasks: number }[];

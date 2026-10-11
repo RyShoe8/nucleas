@@ -5,6 +5,7 @@ import Modal from '@/components/ui/Modal';
 import MarketingPlanEditor from './MarketingPlanEditor';
 import BrandVoiceResult from './BrandVoiceResult';
 import { manualArtifact } from '@/lib/jobs/output';
+import { redditPostFromRecord, subredditSubmitUrl } from '@/lib/jobs/redditPost';
 
 // ---------- Types (mirror the server's JobView) ----------
 
@@ -82,6 +83,7 @@ export interface JobView {
     companyId: string;
     projectId: string | null;
     companyName: string;
+    companySubreddit?: string | null;
     status: JobStatus;
     request: string;
     design: JobDesign | null;
@@ -408,6 +410,36 @@ function ResultValue({ field, value }: { field: JobField; value: unknown }) {
     return <span className="whitespace-pre-wrap break-words leading-relaxed">{text || '—'}</span>;
 }
 
+function RedditPostPanel({ values, subreddit }: { values: Record<string, unknown>; subreddit?: string | null }) {
+    const post = redditPostFromRecord(values);
+    const [copied, setCopied] = useState<string | null>(null);
+    if (!post) return null;
+    const copy = async (label: string, value: string) => {
+        try {
+            await navigator.clipboard.writeText(value);
+            setCopied(label);
+            window.setTimeout(() => setCopied((current) => (current === label ? null : current)), 1500);
+        } catch {
+            setCopied('failed');
+        }
+    };
+    const button = 'rounded border border-border px-2.5 py-1 text-xs hover:bg-background-card';
+    return (
+        <section className="border-b border-border bg-background-elevated/30 px-4 py-3" aria-label="Post to Reddit">
+            <div className="flex flex-wrap items-center gap-2">
+                <p className="mr-auto text-xs text-text-secondary">
+                    {subreddit ? <>Post by hand to <a href={subredditSubmitUrl(subreddit)} target="_blank" rel="noreferrer" className="text-primary underline">r/{subreddit}</a></> : 'No subreddit is set for this company. Add it in the Company window, then post by hand.'}
+                </p>
+                <button type="button" className={button} onClick={() => copy('title', post.title)}>{copied === 'title' ? 'Copied' : 'Copy title'}</button>
+                <button type="button" className={button} onClick={() => copy('body', post.body)} disabled={!post.body}>{copied === 'body' ? 'Copied' : 'Copy body'}</button>
+                <button type="button" className="rounded bg-primary px-2.5 py-1 text-xs text-white" onClick={() => copy('both', post.combined)}>{copied === 'both' ? 'Copied' : 'Copy for Reddit'}</button>
+                {subreddit ? <a href={subredditSubmitUrl(subreddit)} target="_blank" rel="noreferrer" className={button}>Open submit page</a> : null}
+            </div>
+            {copied === 'failed' ? <p className="mt-1 text-[11px] text-red-400">Could not copy. Select the text and copy it by hand.</p> : null}
+        </section>
+    );
+}
+
 function Results({ job, run }: { job: JobView; run: JobRunView }) {
     const fields = job.design?.fields ?? [];
     const records = run.output?.records ?? [];
@@ -417,6 +449,7 @@ function Results({ job, run }: { job: JobView; run: JobRunView }) {
             {records.map((r, i) => (
                 <article key={i} className="overflow-hidden rounded-lg border border-border">
                     <header className="border-b border-border bg-background-elevated px-4 py-3"><h3 className="text-base font-semibold">{job.design?.skill === 'brand_voice' ? 'Brand voice' : job.design?.skill === 'marketing_plan' ? 'Marketing plan' : records.length === 1 ? 'Opportunity details' : `Opportunity ${i + 1}`}</h3></header>
+                    {job.design?.skill === 'social_media' ? <RedditPostPanel values={r.values} subreddit={job.companySubreddit} /> : null}
                     <dl className="divide-y divide-border">
                         {fields.map((f) => {
                                         const v = r.values[f.key];

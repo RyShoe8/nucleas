@@ -377,9 +377,14 @@ export async function executeJobRun(runId: string): Promise<void> {
   const verifiedPropertyUrls = overviewGrounding.urls;
   const facts = [`Selected project: ${project?.name ?? repo?.projectName ?? 'unknown'}`, `Project description: ${project?.description || 'not provided'}`, `Production URL: ${propertyUrl || 'not provided'}`, `Company description: ${profile.description || 'not provided'}`];
   if (overviewGrounding.context) facts.push(overviewGrounding.context);
-  const voiceContext = activeDesign.skill === 'brand_voice' || activeDesign.category === 'content' || activeDesign.skill === 'social_media'
+  const wantsVoice = activeDesign.skill === 'brand_voice' || activeDesign.category === 'content' || activeDesign.skill === 'social_media';
+  const voiceContext = wantsVoice
     ? await brandVoiceContext(job.organizationId, job.companyId, activeDesign.skill === 'brand_voice') : '';
   if (voiceContext) facts.push(voiceContext);
+  if (profile.subreddit && (wantsVoice || activeDesign.skill === 'marketing_plan')) {
+    facts.push(`# Company subreddit (community the team posts in by hand; a place to learn how its audience talks)
+- r/${profile.subreddit}: https://www.reddit.com/r/${profile.subreddit}`);
+  }
   if (activeDesign.skill === 'marketing_plan') {
     const connections = await listCompanyConnections(viewer, String(job.companyId)).catch(() => null);
     if (connections?.length) facts.push(`# Company integrations\n${connections.map((connection) => `- ${connection.providerName}: ${connection.status}${connection.accountLabel ? ` (${connection.accountLabel})` : ''}`).join('\n')}`);

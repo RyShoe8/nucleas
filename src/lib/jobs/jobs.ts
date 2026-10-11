@@ -54,6 +54,8 @@ export interface JobView {
   companyId: string;
   projectId: string | null;
   companyName: string;
+  /** The company's manually entered subreddit (no r/), for copy-and-paste Reddit posting. */
+  companySubreddit: string | null;
   status: JobStatus;
   request: string;
   design: JobDesign | null;
@@ -136,14 +138,15 @@ function runView(r: RunLean): JobRunView {
   };
 }
 
-async function toView(job: JobLean, companyName: string, canManage: boolean, runs: RunLean[]): Promise<JobView> {
+async function toView(job: JobLean, company: { name: string; subreddit?: string }, canManage: boolean, runs: RunLean[]): Promise<JobView> {
   const parsed = jobDesignSchema.safeParse(job.design);
   const design = parsed.success ? parsed.data : null;
   return {
     id: String(job._id),
     companyId: String(job.companyId),
     projectId: job.projectId ? String(job.projectId) : null,
-    companyName,
+    companyName: company.name,
+    companySubreddit: company.subreddit ?? null,
     status: job.status,
     request: job.request,
     design,
@@ -173,7 +176,7 @@ function event(viewer: CompanyViewer | null, action: string, note?: string) {
 
 export async function listJobs(viewer: CompanyViewer, options: { includeClosed?: boolean; companyId?: string } = {}): Promise<JobView[]> {
   const companies = await listCompanyProfiles(viewer);
-  const names = new Map(companies.map((c) => [c.id, c.name]));
+  const byCompany = new Map(companies.map((c) => [c.id, { name: c.name, subreddit: c.subreddit }]));
   const allowed = companies.map((c) => new Types.ObjectId(c.id)).filter((id) => !options.companyId || String(id) === options.companyId);
   const jobs = await Job.find({ organizationId: viewer.organizationId, companyId: { $in: allowed }, ...(options.includeClosed ? {} : { status: { $in: [...OPEN, 'done'] } }) })
     .sort({ updatedAt: -1 })
@@ -188,7 +191,7 @@ export async function listJobs(viewer: CompanyViewer, options: { includeClosed?:
     if (list.length < 5) byJob.set(String(r.jobId), [...list, r]);
   }
   const canManage = isCompanyManager(viewer);
-  return Promise.all(jobs.map((j) => toView(j, names.get(String(j.companyId)) ?? 'Company', canManage, byJob.get(String(j._id)) ?? [])));
+  return Promise.all(jobs.map((j) => toView(j, byCompany.get(String(j.companyId)) ?? { name: 'Company' }, canManage, byJob.get(String(j._id)) ?? [])));
 }
 
 export async function getJob(viewer: CompanyViewer, id: string): Promise<JobView | null> {
@@ -198,7 +201,7 @@ export async function getJob(viewer: CompanyViewer, id: string): Promise<JobView
   const profile = await getCompanyProfile(viewer, String(job.companyId));
   if (!profile) return null;
   const runs = await JobRun.find({ jobId: job._id }).sort({ createdAt: -1 }).limit(20).lean<RunLean[]>();
-  return toView(job, profile.name, isCompanyManager(viewer), runs);
+  return toView(job, { name: profile.name, subreddit: profile.subreddit }, isCompanyManager(viewer), runs);
 }
 
 // ---------- Designing ----------
