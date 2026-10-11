@@ -94,6 +94,9 @@ const runSchema = new Schema(
     issues: { type: Schema.Types.Mixed, default: [] },
     review: { verdict: { type: String, enum: ['pass', 'fail'] }, notes: String, model: String },
     models: { type: [String], default: [] },
+    /** Every model call in order with why it was chosen and what it cost (null cost = unknown price). */
+    modelPath: { type: Schema.Types.Mixed, default: [] },
+    costUnknown: { type: Boolean, default: false },
     costMicros: { type: Number, default: 0 },
     decidedByUserId: { type: Schema.Types.ObjectId },
     decisionNote: { type: String, maxlength: 500 },

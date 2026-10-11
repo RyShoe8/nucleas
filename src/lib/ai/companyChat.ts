@@ -79,18 +79,24 @@ export function budgetContextMessages<T extends { role: string; content?: string
   return budgeted;
 }
 
-function settleChatCostMicros(input: {
+/**
+ * Settled cost of a chat call. Priced from the engine's live price registry first (the prices shown in the
+ * AI Engine window), then the local rate table; null only when neither knows the model or usage is missing.
+ */
+async function settleChatCostMicros(input: {
   noProviderFee: boolean;
   model: string;
+  provider?: string;
   inputTokens?: number | null;
   outputTokens?: number | null;
-}): number | null {
+}): Promise<number | null> {
   if (input.noProviderFee) return 0;
-  return estimateCostMicros({
-    model: input.model,
-    inputTokens: input.inputTokens,
-    outputTokens: input.outputTokens,
-  });
+  const { inputTokens, outputTokens } = input;
+  if (typeof inputTokens === 'number' && typeof outputTokens === 'number' && Number.isSafeInteger(inputTokens) && Number.isSafeInteger(outputTokens) && inputTokens >= 0 && outputTokens >= 0) {
+    const priced = await priceTokens({ model: input.model, provider: input.provider, free: false, inputTokens, outputTokens }).catch(() => null);
+    if (priced !== null) return priced;
+  }
+  return estimateCostMicros({ model: input.model, inputTokens, outputTokens });
 }
 
 function statusTurn(
@@ -179,7 +185,7 @@ import { companyChatAdmissionMessage } from '@/lib/ai/companyChatAdmission';
 import { recordModelFailure, recordModelSuccess } from '@/lib/ai/engine/health';
 import type { RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 import { describeToolCall, type ProgressFn } from '@/lib/ai/progress';
-import { contextBudgetChars, contextWindowFor, contextWindowFromProviderMessage, outputBudgetTokens, recordObservedContextWindow } from '@/lib/ai/engine/catalog';
+import { contextBudgetChars, contextWindowFor, contextWindowFromProviderMessage, outputBudgetTokens, priceTokens, recordObservedContextWindow } from '@/lib/ai/engine/catalog';
 
 /**
  * Governed IDE chat via a company credential (Direct or AI Team Worker binding).
@@ -970,7 +976,8 @@ export async function attemptCompanyCredentialChat(input: {
         tools: loop.toolCallsMade.join(',') || 'none',
       });
       await finish({
-        actualMicros: settleChatCostMicros({
+        actualMicros: await settleChatCostMicros({
+          provider: profile.provider ?? undefined,
           noProviderFee,
           model: gateway.model,
           inputTokens: loop.inputTokens,
@@ -988,7 +995,8 @@ export async function attemptCompanyCredentialChat(input: {
         'invalid_response',
         String(runId),
         {
-          costMicros: settleChatCostMicros({
+          costMicros: await settleChatCostMicros({
+          provider: profile.provider ?? undefined,
             noProviderFee,
             model: gateway.model,
             inputTokens: loop.inputTokens,
@@ -1001,7 +1009,8 @@ export async function attemptCompanyCredentialChat(input: {
       );
     }
 
-    const settled = settleChatCostMicros({
+    const settled = await settleChatCostMicros({
+          provider: profile.provider ?? undefined,
       noProviderFee,
       model: gateway.model,
       inputTokens: loop.inputTokens,
@@ -1041,7 +1050,8 @@ export async function attemptCompanyCredentialChat(input: {
     const errorCost = noProviderFee
       ? 0
       : errorUsage
-      ? settleChatCostMicros({
+      ? await settleChatCostMicros({
+          provider: profile.provider ?? undefined,
           noProviderFee,
           model: gateway.model,
           inputTokens: errorUsage.inputTokens,

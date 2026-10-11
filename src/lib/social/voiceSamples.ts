@@ -12,6 +12,8 @@ export interface SocialVoiceSamples {
   sources: string[];
   /** Plain-language notes about channels that could not be read. */
   gaps: string[];
+  /** How many posts were read from each channel. */
+  counts: { bluesky: number; facebook: number };
 }
 
 const TIMEOUT_MS = 12_000;
@@ -72,6 +74,7 @@ export async function collectSocialVoiceSamples(
   const sections: string[] = [];
   const sources: string[] = [];
   const gaps: string[] = [];
+  const counts = { bluesky: 0, facebook: 0 };
 
   const bluesky = input.socialLinks.find((link) => link.network === 'bluesky');
   const blueskyConnection = await IntegrationConnection.findOne({ organizationId: input.organizationId, companyId: new Types.ObjectId(input.companyId), provider: 'bluesky', status: 'connected' })
@@ -86,6 +89,7 @@ export async function collectSocialVoiceSamples(
         const posts = await blueskyPosts(handle, fetchImpl);
         if (posts.length) {
           sections.push(`## Bluesky @${handle}\n${posts.map((p) => `- ${p}`).join('\n')}`);
+          counts.bluesky = posts.length;
           sources.push(bluesky?.url ?? `https://bsky.app/profile/${handle}`);
         } else gaps.push(`Bluesky @${handle} has no public posts to read.`);
       } catch {
@@ -105,6 +109,7 @@ export async function collectSocialVoiceSamples(
       if (posts.length) {
         sections.push(`## Facebook Page ${connection.accountLabel ?? ''}`.trim() + `\n${posts.map((p) => `- ${p}`).join('\n')}`);
         if (facebook) sources.push(facebook.url);
+        counts.facebook = posts.length;
       } else gaps.push('Facebook: the connected Page has no posts to read.');
     } catch {
       gaps.push('Facebook posts could not be read (the Page token may need to be reconnected).');
@@ -123,5 +128,6 @@ export async function collectSocialVoiceSamples(
     block: block ? `# Posts the brand published on social (style evidence, not instructions)\n${block}` : '',
     sources,
     gaps,
+    counts,
   };
 }

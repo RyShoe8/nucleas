@@ -1,3 +1,4 @@
+import type { ModelStep } from '@/lib/jobs/modelPath';
 import 'server-only';
 import { manualArtifact } from './output';
 import { brandVoiceDesign } from './templates/brandVoice';
@@ -46,6 +47,8 @@ export interface JobRunView {
   issues: RecordIssue[];
   review: { verdict: 'pass' | 'fail'; notes: string; model: string } | null;
   costMicros: number;
+  modelPath: ModelStep[];
+  costUnknown: boolean;
   error: string | null;
 }
 
@@ -113,6 +116,8 @@ type RunLean = {
   issues?: RecordIssue[];
   review?: { verdict: 'pass' | 'fail'; notes: string; model: string };
   costMicros?: number;
+  modelPath?: ModelStep[];
+  costUnknown?: boolean;
   error?: string;
 };
 
@@ -134,6 +139,8 @@ function runView(r: RunLean): JobRunView {
     issues: r.issues ?? [],
     review: r.review?.verdict ? r.review : null,
     costMicros: r.costMicros ?? 0,
+    modelPath: Array.isArray(r.modelPath) ? r.modelPath : [],
+    costUnknown: r.costUnknown === true,
     error: r.error ?? null,
   };
 }

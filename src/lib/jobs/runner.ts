@@ -3,6 +3,7 @@ import { VOICE_TRAIT_GUIDANCE } from './templates/brandVoice';
 import { manualArtifact, parseJobOutput } from './output';
 import { brandVoiceContext, generatedVoice } from '@/lib/brandVoice/service';
 import { collectSocialVoiceSamples } from '@/lib/social/voiceSamples';
+import { modelStepReason, type ModelStep } from '@/lib/jobs/modelPath';
 import { Types } from 'mongoose';
 import { z } from 'zod';
 import { attemptCompanyCredentialChat } from '@/lib/ai/companyChat';
@@ -335,9 +336,11 @@ export async function executeJobRun(runId: string): Promise<void> {
     level?: 'low' | 'medium' | 'high';
     monthlyBudgetMicros?: number;
   }>();
+  const modelPath: ModelStep[] = [];
+  let costUnknown = false;
   const fail = async (error: string, details: { costMicros?: number; models?: string[] } = {}) => {
     const now = new Date();
-    const failed = await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { status: 'failed', error: error.slice(0, 1000), finishedAt: now, progressState: { stage: 'complete', label: 'Run stopped', percent: 100, updatedAt: now }, ...details }, $unset: { leaseExpiresAt: '' } });
+    const failed = await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { status: 'failed', error: error.slice(0, 1000), finishedAt: now, progressState: { stage: 'complete', label: 'Run stopped', percent: 100, updatedAt: now }, modelPath, costUnknown, ...details }, $unset: { leaseExpiresAt: '' } });
     if (!failed.modifiedCount) return;
     // A failed sample must not strand its parent in "testing" with no available action.
     // Return it to the approved-design screen so the person can inspect the error and retry.
@@ -387,9 +390,19 @@ export async function executeJobRun(runId: string): Promise<void> {
 - r/${profile.subreddit}: https://www.reddit.com/r/${profile.subreddit}`);
   }
   if (activeDesign.skill === 'brand_voice') {
-    const social = await collectSocialVoiceSamples({ organizationId: job.organizationId, companyId: String(job.companyId), socialLinks: profile.socialLinks, subreddit: profile.subreddit }).catch(() => null);
-    if (social?.block) facts.push(`${social.block}\nCite these profile URLs as sources when you use these posts: ${social.sources.join(', ') || 'none'}.`);
-    if (social?.gaps.length) facts.push(`# Social channels not read (report these as gaps)\n${social.gaps.map((gap) => `- ${gap}`).join('\n')}`);
+    const social = await collectSocialVoiceSamples({ organizationId: job.organizationId, companyId: String(job.companyId), socialLinks: profile.socialLinks, subreddit: profile.subreddit }).catch((error: unknown) => {
+      console.error('[jobs/voice] social samples failed', error instanceof Error ? error.message : 'unknown');
+      return null;
+    });
+    if (!social) {
+      facts.push('# Social channels not read (report these as gaps)\n- Social posts could not be collected because of an internal error.');
+      await progress(run._id, owner, 'Social posts could not be read for the voice (internal error)', { stage: 'preparing', percent: 9 });
+    } else {
+      if (social.block) facts.push(`${social.block}\nCite these profile URLs as sources when you use these posts: ${social.sources.join(', ') || 'none'}.`);
+      if (social.gaps.length) facts.push(`# Social channels not read (report these as gaps)\n${social.gaps.map((gap) => `- ${gap}`).join('\n')}`);
+      const read = [social.counts.bluesky ? `${social.counts.bluesky} Bluesky` : '', social.counts.facebook ? `${social.counts.facebook} Facebook` : ''].filter(Boolean);
+      await progress(run._id, owner, read.length ? `Read ${read.join(' and ')} posts for the voice` : `No social posts were read for the voice${social.gaps.length ? `: ${social.gaps.join(' ')}` : ' (no social channels are set up)'}`.slice(0, 300), { stage: 'preparing', percent: 9 });
+    }
   }
   if (activeDesign.skill === 'marketing_plan') {
     const connections = await listCompanyConnections(viewer, String(job.companyId)).catch(() => null);
@@ -431,6 +444,10 @@ export async function executeJobRun(runId: string): Promise<void> {
   const done = activeDesign.skill === 'link_building' ? await linkOpportunityMemory(job._id) : await earlierRecords(job._id, run._id);
   let cost = 0;
   const usedModels: string[] = [];
+  const recordStep = (stage: ModelStep['stage'], note: string, choice: { model: string; free: boolean }, source: ModelStep['source'], fallback: boolean, costMicros: number | null) => {
+    modelPath.push({ stage, note, model: choice.model, free: choice.free, source, level, fallback, costMicros, reason: modelStepReason({ stage, level, free: choice.free, source, fallback }) });
+    if (costMicros === null && !choice.free) costUnknown = true;
+  };
   let researchPercent = 28;
   const onProgress = (t: string) => {
     // Tool/model messages prove liveness. Advance slowly within the research band without
@@ -463,6 +480,8 @@ export async function executeJobRun(runId: string): Promise<void> {
       onProgress,
     });
     cost += turn.costMicros ?? 0;
+    const pinned = work.source === 'pinned' && choice.profileId === work.primary?.profileId && choice.model === work.primary?.model;
+    recordStep('work', compact ? 'Compact retry' : correction ? (researchRetry ? 'Re-research' : 'Format retry') : 'First attempt', choice, pinned ? 'pinned' : 'auto', choice === work.fallback, turn.costMicros ?? null);
     return turn;
   };
 
@@ -555,6 +574,7 @@ export async function executeJobRun(runId: string): Promise<void> {
         maxOutputTokensOverride: 2000,
       });
       cost += reviewTurn.costMicros ?? 0;
+      recordStep('review', 'Independent review', review.primary, review.source === 'pinned' ? 'pinned' : 'auto', false, reviewTurn.costMicros ?? null);
       usedModels.push(review.primary.model);
       const v = z.object({ verdict: z.enum(['pass', 'fail']), notes: z.string().max(2000).default('') }).safeParse(extractJson(reviewTurn.text));
       if (v.success) verdict = { ...v.data, model: review.primary.model };
@@ -575,6 +595,8 @@ export async function executeJobRun(runId: string): Promise<void> {
           finishedAt: new Date(),
           costMicros: cost,
           models: usedModels,
+          modelPath,
+          costUnknown,
           progressState: { stage: 'complete', label: status === 'completed' ? 'Complete' : 'Ready for review', percent: 100, updatedAt: new Date() },
         },
         $unset: { leaseExpiresAt: '' },

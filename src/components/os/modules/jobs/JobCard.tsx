@@ -6,6 +6,7 @@ import MarketingPlanEditor from './MarketingPlanEditor';
 import BrandVoiceResult from './BrandVoiceResult';
 import { manualArtifact } from '@/lib/jobs/output';
 import { redditPostFromRecord, subredditSubmitUrl } from '@/lib/jobs/redditPost';
+import { costSummary, type ModelStep } from '@/lib/jobs/modelPath';
 
 // ---------- Types (mirror the server's JobView) ----------
 
@@ -75,6 +76,8 @@ export interface JobRunView {
     issues: { record: number; field?: string; problem: string }[];
     review: { verdict: 'pass' | 'fail'; notes: string; model: string } | null;
     costMicros: number;
+    modelPath?: ModelStep[];
+    costUnknown?: boolean;
     error: string | null;
 }
 
@@ -440,6 +443,30 @@ function RedditPostPanel({ values, subreddit }: { values: Record<string, unknown
     );
 }
 
+function ModelPath({ run }: { run: JobRunView }) {
+    const steps = run.modelPath ?? [];
+    if (!steps.length) return null;
+    const { unknownModels } = costSummary(steps);
+    return (
+        <section className="rounded-lg border border-border bg-background-elevated/40 p-4" aria-label="Models used">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-secondary">Models used</h3>
+            <ol className="space-y-2">
+                {steps.map((step, i) => (
+                    <li key={i} className="text-sm leading-6">
+                        <span className="font-medium">{step.stage === 'work' ? 'Work' : 'Review'}</span>
+                        <span className="text-text-secondary"> · {step.note} · </span>
+                        <span className="font-mono text-xs">{step.model}</span>
+                        <span className={`ml-2 rounded border px-1.5 py-0.5 text-[10px] ${step.free ? 'border-border text-text-secondary' : 'border-primary/40 text-primary'}`}>{step.free ? 'Free' : 'Paid'}</span>
+                        <span className="ml-2 text-xs text-text-secondary">{step.costMicros === null ? (step.free ? '' : 'cost unknown') : usd(step.costMicros)}</span>
+                        <p className="text-xs text-text-secondary">{step.reason}</p>
+                    </li>
+                ))}
+            </ol>
+            {unknownModels.length ? <p className="mt-2 text-xs text-amber-300">No token price is on file for {unknownModels.join(', ')}, so its cost is not included below. It was not free.</p> : null}
+        </section>
+    );
+}
+
 function Results({ job, run }: { job: JobView; run: JobRunView }) {
     const fields = job.design?.fields ?? [];
     const records = run.output?.records ?? [];
@@ -485,7 +512,8 @@ function Results({ job, run }: { job: JobView; run: JobRunView }) {
                 <section className={`rounded-lg border p-4 ${run.review.verdict === 'pass' ? 'border-emerald-400/40 bg-emerald-400/5 text-emerald-300' : 'border-amber-400/40 bg-amber-400/5 text-amber-300'}`}><h3 className="mb-2 text-xs font-semibold uppercase tracking-wider">Reviewer · {run.review.model.split('/').pop()}</h3><p className="leading-6">{run.review.notes}</p></section>
             ) : null}
             {run.output?.gaps.length ? <p className="text-text-secondary">Could not find: {run.output.gaps.join('; ')}</p> : null}
-            <p className="text-[10px] text-text-secondary">Cost {usd(run.costMicros)}</p>
+            <ModelPath run={run} />
+            <p className="text-[10px] text-text-secondary">Cost {usd(run.costMicros)}{run.costUnknown ? ' + unknown (see Models used)' : ''}</p>
         </div>
     );
 }
