@@ -7,7 +7,7 @@ vi.mock('server-only', () => ({}));
 import { AiModelProfile } from '@/lib/models/AiModelProfile';
 import { encryptModelSecret } from '@/lib/ai/modelSecrets';
 import { gatewayFromModelProfile } from '@/lib/ai/rolePipeline/profiles';
-import { AiModelCatalogSnapshot, describeModel, isModelListedForProfile, listAvailableModels } from './catalog';
+import { AiModelCatalogSnapshot, describeModel, isModelListedForProfile, listAvailableModels, priceTokens } from './catalog';
 import { recordModelFailure, recordModelSuccess } from './health';
 
 let replica: MongoMemoryReplSet;
@@ -48,6 +48,34 @@ describe('only models a provider lists right now are callable', () => {
     const rows = [{ id: 'anthropic/claude-opus-5.5', provider: 'openrouter', mode: 'chat', input: 5, output: 25, cacheRead: null, variable: false, supportsReasoning: true }];
     expect(describeModel('anthropic/claude-opus-5.5', 'openrouter', false, rows).autoEligible).toBe(true);
     expect(describeModel('anthropic/claude-opus-5.5:batch', 'openrouter', false, rows).autoEligible).toBe(false);
+  });
+});
+
+describe('prices and features from the provider list', () => {
+  const info = { inputPer1M: 3, outputPer1M: 15, tools: true, reasoning: true, vision: true };
+
+  it('prices and enables a brand-new model the registries have never heard of', () => {
+    const without = describeModel('anthropic/claude-sonnet-5.5', 'openrouter', false, []);
+    expect(without).toMatchObject({ autoEligible: false, blendedPricePer1M: null });
+    const withInfo = describeModel('anthropic/claude-sonnet-5.5', 'openrouter', false, [], info);
+    expect(withInfo).toMatchObject({ autoEligible: true, blendedPricePer1M: 6 });
+  });
+
+  it('prefers the credential’s own price over a registry row', () => {
+    const rows = [{ id: 'anthropic/claude-sonnet-4.6', provider: 'openrouter', mode: 'chat', input: 9, output: 9, cacheRead: null, variable: false }];
+    expect(describeModel('anthropic/claude-sonnet-4.6', 'openrouter', false, rows, info).blendedPricePer1M).toBe(6);
+  });
+
+  it('says what a routing variant is before saying it has no price', () => {
+    expect(describeModel('anthropic/claude-sonnet-5.5:batch', 'openrouter', false, []).excludedReason).toMatch(/routing variant/i);
+  });
+
+  it('costs a call from the stored provider price', async () => {
+    const profile = await AiModelProfile.create({ key: 'or-price', label: 'OpenRouter prices', provider: 'openrouter', tier: 'commercial', protocol: 'openai-chat', endpoint: 'https://openrouter.ai/api/v1/chat/completions', secretCiphertext: encryptModelSecret('sk-test'), secretLast4: 'test', enabled: true });
+    await AiModelCatalogSnapshot.create({ profileId: profile._id, modelIds: ['anthropic/claude-sonnet-5.5'], providerInfo: [{ model: 'anthropic/claude-sonnet-5.5', ...info }], fetchedAt: new Date() });
+    // $3 per 1M input and $15 per 1M output: 1,000 in + 200 out = 3,000 + 3,000 micro-dollars.
+    expect(await priceTokens({ model: 'anthropic/claude-sonnet-5.5', provider: 'openrouter', profileId: String(profile._id), free: false, inputTokens: 1000, outputTokens: 200 })).toBe(6000);
+    expect(await priceTokens({ model: 'anthropic/claude-sonnet-5.5', provider: 'openrouter', free: true, inputTokens: 1000, outputTokens: 200 })).toBe(0);
   });
 });
 

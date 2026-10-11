@@ -74,7 +74,7 @@ export async function describeImage(input: {
       void recordModelSuccess(choice.profileId, choice.model).catch(() => undefined);
       const usage = { inputTokens: body.usage?.prompt_tokens ?? 0, outputTokens: body.usage?.completion_tokens ?? 0 };
       const provider = models.find((m) => m.profileId === choice.profileId && m.model === choice.model)?.provider;
-      const costMicros = body.usage ? await priceTokens({ model: choice.model, provider, free: choice.free, ...usage }) : choice.free ? 0 : null;
+      const costMicros = body.usage ? await priceTokens({ model: choice.model, provider, profileId: choice.profileId, free: choice.free, ...usage }) : choice.free ? 0 : null;
       await AiRun.create({
         organizationId: input.organizationId,
         projectId: input.projectId,

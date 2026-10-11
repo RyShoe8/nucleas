@@ -87,13 +87,14 @@ async function settleChatCostMicros(input: {
   noProviderFee: boolean;
   model: string;
   provider?: string;
+  profileId?: string;
   inputTokens?: number | null;
   outputTokens?: number | null;
 }): Promise<number | null> {
   if (input.noProviderFee) return 0;
   const { inputTokens, outputTokens } = input;
   if (typeof inputTokens === 'number' && typeof outputTokens === 'number' && Number.isSafeInteger(inputTokens) && Number.isSafeInteger(outputTokens) && inputTokens >= 0 && outputTokens >= 0) {
-    const priced = await priceTokens({ model: input.model, provider: input.provider, free: false, inputTokens, outputTokens }).catch(() => null);
+    const priced = await priceTokens({ model: input.model, provider: input.provider, profileId: input.profileId, free: false, inputTokens, outputTokens }).catch(() => null);
     if (priced !== null) return priced;
   }
   return estimateCostMicros({ model: input.model, inputTokens, outputTokens });
@@ -978,6 +979,7 @@ export async function attemptCompanyCredentialChat(input: {
       await finish({
         actualMicros: await settleChatCostMicros({
           provider: profile.provider ?? undefined,
+          profileId: input.modelProfileId,
           noProviderFee,
           model: gateway.model,
           inputTokens: loop.inputTokens,
@@ -997,6 +999,7 @@ export async function attemptCompanyCredentialChat(input: {
         {
           costMicros: await settleChatCostMicros({
           provider: profile.provider ?? undefined,
+          profileId: input.modelProfileId,
             noProviderFee,
             model: gateway.model,
             inputTokens: loop.inputTokens,
@@ -1011,6 +1014,7 @@ export async function attemptCompanyCredentialChat(input: {
 
     const settled = await settleChatCostMicros({
           provider: profile.provider ?? undefined,
+          profileId: input.modelProfileId,
       noProviderFee,
       model: gateway.model,
       inputTokens: loop.inputTokens,
@@ -1052,6 +1056,7 @@ export async function attemptCompanyCredentialChat(input: {
       : errorUsage
       ? await settleChatCostMicros({
           provider: profile.provider ?? undefined,
+          profileId: input.modelProfileId,
           noProviderFee,
           model: gateway.model,
           inputTokens: errorUsage.inputTokens,

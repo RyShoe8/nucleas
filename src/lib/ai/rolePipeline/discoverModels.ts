@@ -6,12 +6,23 @@
 import { localModelMetaOverlay, markFlagshipAmongModels } from '@/lib/ai/rolePipeline/modelMeta';
 import { shortModelDisplayName, type ModelStrength } from '@/lib/ai/rolePipeline/providerCatalog';
 
+/** What a provider says about a model in its own list (OpenRouter sends price and supported features for every model). */
+export type ProviderModelInfo = {
+  /** USD per 1M input / output tokens; null when the provider gives none (or "-1" for routers). */
+  inputPer1M: number | null;
+  outputPer1M: number | null;
+  tools: boolean | null;
+  reasoning: boolean | null;
+  vision: boolean | null;
+};
+
 export type DiscoveredModel = {
   id: string;
   label: string;
   bestAt: string;
   strengths: ModelStrength[];
   contextTokens: number | null;
+  info?: ProviderModelInfo | null;
   flagship?: boolean;
 };
 
@@ -59,6 +70,33 @@ function readContextTokens(item: object): number | null {
   return null;
 }
 
+function perMillion(value: unknown): number | null {
+  const n = typeof value === 'string' || typeof value === 'number' ? Number(value) : NaN;
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 1e6 * 1e6) / 1e6 : null;
+}
+
+export function readProviderInfo(item: object): ProviderModelInfo | null {
+  const pricing = (item as { pricing?: { prompt?: unknown; completion?: unknown } }).pricing;
+  let inputPer1M = perMillion(pricing?.prompt);
+  let outputPer1M = perMillion(pricing?.completion);
+  // A zero price on both sides says "free variant or unmetered", not a real rate to bill against.
+  if (inputPer1M === 0 && outputPer1M === 0) {
+    inputPer1M = null;
+    outputPer1M = null;
+  }
+  const params = (item as { supported_parameters?: unknown }).supported_parameters;
+  const list = Array.isArray(params) ? params.filter((p): p is string => typeof p === 'string') : null;
+  const modalities = (item as { architecture?: { input_modalities?: unknown } }).architecture?.input_modalities;
+  const info: ProviderModelInfo = {
+    inputPer1M,
+    outputPer1M,
+    tools: list ? list.includes('tools') : null,
+    reasoning: list ? list.includes('reasoning') || list.includes('include_reasoning') : null,
+    vision: Array.isArray(modalities) ? modalities.includes('image') : null,
+  };
+  return Object.values(info).every((v) => v === null) ? null : info;
+}
+
 export function mapOpenAiModelsResponse(body: unknown): DiscoveredModel[] {
   if (!body || typeof body !== 'object') return [];
   const data = (body as { data?: unknown }).data;
@@ -77,6 +115,7 @@ export function mapOpenAiModelsResponse(body: unknown): DiscoveredModel[] {
       bestAt: overlay.bestAt,
       strengths: overlay.strengths,
       contextTokens: readContextTokens(item),
+      info: readProviderInfo(item),
     });
   }
   return markFlagshipAmongModels(models.sort((a, b) => a.id.localeCompare(b.id)));

@@ -1,5 +1,6 @@
 import mongoose, { Schema, Types, type InferSchemaType, type Model } from 'mongoose';
 import { AiModelProfile } from '@/lib/models/AiModelProfile';
+import type { ProviderModelInfo } from '@/lib/ai/rolePipeline/discoverModels';
 import { decryptModelSecret } from '@/lib/ai/modelSecrets';
 import { discoverOpenAiCompatibleModels } from '@/lib/ai/rolePipeline/discoverModels';
 import { buildModelMetaView, isFreeCredential } from '@/lib/ai/rolePipeline/modelMeta';
@@ -27,6 +28,8 @@ const snapshotSchema = new Schema(
     modelIds: { type: [String], default: [] },
     /** Context window per model as the provider reports it (e.g. vLLM max_model_len). */
     contextWindows: { type: [{ model: String, tokens: Number, _id: false }], default: [] },
+    /** Price and features per model as the provider's own list reports them (refreshed with the list). */
+    providerInfo: { type: [{ model: String, inputPer1M: Number, outputPer1M: Number, tools: Boolean, reasoning: Boolean, vision: Boolean, _id: false }], default: [] },
     error: { type: String },
     fetchedAt: { type: Date, required: true },
   },
@@ -100,12 +103,13 @@ function isMovingAlias(id: string): boolean {
 
 let registryMemo: { rows: PricingRow[]; at: number } | null = null;
 
-async function registryRows(): Promise<PricingRow[]> {
-  if (registryMemo && Date.now() - registryMemo.at < REGISTRY_TTL_MS) return registryMemo.rows;
+/** `force` (the window's Refresh) skips the 24-hour cache and re-reads the published price list. */
+async function registryRows(force = false): Promise<PricingRow[]> {
+  if (!force && registryMemo && Date.now() - registryMemo.at < REGISTRY_TTL_MS) return registryMemo.rows;
   // No database connection (e.g. isolated tests): nothing cached to read and nowhere to cache.
   if (mongoose.connection.readyState !== 1) return [];
   const cached = await AiPricingRegistryCache.findOne({ key: 'litellm' }).lean<{ rows: PricingRow[]; fetchedAt: Date }>();
-  if (cached && Date.now() - cached.fetchedAt.getTime() < REGISTRY_TTL_MS) {
+  if (!force && cached && Date.now() - cached.fetchedAt.getTime() < REGISTRY_TTL_MS) {
     registryMemo = { rows: cached.rows, at: cached.fetchedAt.getTime() };
     return cached.rows;
   }
@@ -145,17 +149,22 @@ export function findRegistryRow(id: string, provider: string | undefined, rows: 
 
 // ---------- Catalog ----------
 
-async function modelIdsFor(profile: ProfileRow, force: boolean): Promise<{ ids: string[]; contexts: Record<string, number> }> {
-  const cached = await AiModelCatalogSnapshot.findOne({ profileId: profile._id }).lean<{ modelIds: string[]; contextWindows?: { model: string; tokens: number }[]; fetchedAt: Date }>();
+type SnapshotInfo = ProviderModelInfo & { model: string };
+
+async function modelIdsFor(profile: ProfileRow, force: boolean): Promise<{ ids: string[]; contexts: Record<string, number>; infos: Record<string, ProviderModelInfo> }> {
+  const cached = await AiModelCatalogSnapshot.findOne({ profileId: profile._id }).lean<{ modelIds: string[]; contextWindows?: { model: string; tokens: number }[]; providerInfo?: SnapshotInfo[]; fetchedAt: Date }>();
+  const cachedInfos: Record<string, ProviderModelInfo> = Object.fromEntries((cached?.providerInfo ?? []).map(({ model, ...info }) => [model, info]));
   const cachedContexts: Record<string, number> = Object.fromEntries((cached?.contextWindows ?? []).map((c) => [c.model, c.tokens]));
-  if (!force && cached && Date.now() - cached.fetchedAt.getTime() < CACHE_TTL_MS) return { ids: cached.modelIds, contexts: cachedContexts };
+  if (!force && cached && Date.now() - cached.fetchedAt.getTime() < CACHE_TTL_MS) return { ids: cached.modelIds, contexts: cachedContexts, infos: cachedInfos };
   let ids: string[] = [];
   let contexts: Record<string, number> = {};
+  let infos: Record<string, ProviderModelInfo> = {};
   let error: string | undefined;
   try {
     const discovered = await discoverOpenAiCompatibleModels({ endpoint: profile.endpoint, bearerToken: decryptModelSecret(profile.secretCiphertext) });
     ids = discovered.models.map((m) => m.id);
     contexts = Object.fromEntries(discovered.models.filter((m) => m.contextTokens).map((m) => [m.id, m.contextTokens as number]));
+    infos = Object.fromEntries(discovered.models.flatMap((m) => (m.info ? [[m.id, m.info] as const] : [])));
     error = discovered.error ?? undefined;
   } catch (err) {
     error = err instanceof Error ? err.message.slice(0, 200) : 'discovery failed';
@@ -164,6 +173,7 @@ async function modelIdsFor(profile: ProfileRow, force: boolean): Promise<{ ids: 
   if (ids.length === 0) {
     ids = cached?.modelIds?.length ? cached.modelIds : profile.model ? [profile.model] : [];
     contexts = cachedContexts;
+    infos = cachedInfos;
   }
   // A deployment rejection is stronger evidence than a model's advertised maximum.
   // Keep a learned smaller window when discovery omits it or advertises a larger one.
@@ -172,54 +182,57 @@ async function modelIdsFor(profile: ProfileRow, force: boolean): Promise<{ ids: 
   }
   // Model ids contain dots, so windows are stored as a list rather than a map keyed by id.
   const contextWindows = Object.entries(contexts).map(([model, tokens]) => ({ model, tokens }));
+  const providerInfo = Object.entries(infos).map(([model, info]) => ({ model, ...info }));
   await AiModelCatalogSnapshot.updateOne(
     { profileId: profile._id },
-    error ? { $set: { modelIds: ids, contextWindows, error, fetchedAt: new Date() } } : { $set: { modelIds: ids, contextWindows, fetchedAt: new Date() }, $unset: { error: '' } },
+    error ? { $set: { modelIds: ids, contextWindows, providerInfo, error, fetchedAt: new Date() } } : { $set: { modelIds: ids, contextWindows, providerInfo, fetchedAt: new Date() }, $unset: { error: '' } },
     { upsert: true }
   );
-  return { ids, contexts };
+  return { ids, contexts, infos };
 }
 
-export function describeModel(id: string, provider: string | undefined, free: boolean, rows: PricingRow[]): Omit<AvailableModel, 'profileId' | 'profileLabel' | 'provider' | 'model' | 'benchmark'> {
+export function describeModel(id: string, provider: string | undefined, free: boolean, rows: PricingRow[], info?: ProviderModelInfo | null): Omit<AvailableModel, 'profileId' | 'profileLabel' | 'provider' | 'model' | 'benchmark'> {
   const normalized = normalizeModelId(id);
   const curated = findCatalogModel(normalized) ?? findCatalogModel(id);
   const meta = buildModelMetaView({ id: normalized, free });
   const ref = free ? null : findRegistryRow(id, provider, rows);
 
   let strengths: ModelStrength[] = curated?.strengths ?? meta.strengths;
-  if (!curated && ref) {
+  if (!curated && (ref || info)) {
     const derived = new Set<ModelStrength>(['chat']);
-    if (ref.supportsReasoning) derived.add('reasoning');
-    if (ref.supportsVision) derived.add('vision');
+    if (ref?.supportsReasoning || info?.reasoning) derived.add('reasoning');
+    if (ref?.supportsVision || info?.vision) derived.add('vision');
     if (/codex|coder/i.test(normalized)) derived.add('coding');
     strengths = [...derived];
   }
 
   let price: number | null = free ? 0 : null;
-  if (!free && ref && ref.input !== null && ref.output !== null) price = Math.round(((ref.input * 3 + ref.output) / 4) * 1000) / 1000;
+  // What this credential's own list says it charges wins: it is what the account is billed, and it covers new models first.
+  if (!free && info && info.inputPer1M !== null && info.outputPer1M !== null) price = Math.round(((info.inputPer1M * 3 + info.outputPer1M) / 4) * 1000) / 1000;
+  if (!free && price === null && ref && ref.input !== null && ref.output !== null) price = Math.round(((ref.input * 3 + ref.output) / 4) * 1000) / 1000;
   if (!free && price === null) {
     const rate = lookupModelTokenRate(normalized) ?? lookupModelTokenRate(id);
     if (rate) price = Math.round(((rate.inputMicrosPer1M * 3 + rate.outputMicrosPer1M) / 4 / 1_000_000) * 1000) / 1000;
   }
 
   const textCapable = isTextChatModel(normalized) && !strengths.includes('image_gen') && !strengths.includes('embeddings');
-  const currentCapable = Boolean(curated) || Boolean(ref && (ref.supportsReasoning || ref.supportsVision || ref.supportsTools));
+  const currentCapable = Boolean(curated) || Boolean(ref && (ref.supportsReasoning || ref.supportsVision || ref.supportsTools)) || Boolean(info && (info.tools || info.reasoning || info.vision));
   const autoEligible = textCapable && (free || (price !== null && price <= AUTO_PRICE_CAP && !isLegacy(normalized) && !isMovingAlias(normalized) && !isRoutingVariant(normalized) && currentCapable));
   const excludedReason = autoEligible
     ? undefined
     : !textCapable
       ? 'Not a text chat model'
-      : price === null
-        ? 'No price on file for it'
-        : price > AUTO_PRICE_CAP
-          ? `Priced above $${AUTO_PRICE_CAP} per 1M tokens`
-          : isLegacy(normalized)
-            ? 'Older model family'
-            : isMovingAlias(normalized)
-              ? 'Moving alias (-latest), not a fixed version'
-              : isRoutingVariant(normalized)
-                ? 'Provider routing variant'
-                : 'No capability data (not in the curated list, and the price registry shows no reasoning, vision or tool support)';
+      : isLegacy(normalized)
+        ? 'Older model family'
+        : isMovingAlias(normalized)
+          ? 'Moving alias (-latest), not a fixed version'
+          : isRoutingVariant(normalized)
+            ? 'Provider routing variant (batch, free and similar)'
+            : price === null
+              ? 'No price on file for it (neither the provider list nor the price registry has one)'
+              : price > AUTO_PRICE_CAP
+                ? `Priced above $${AUTO_PRICE_CAP} per 1M tokens`
+                : 'No capability data (not in the curated list, and neither the provider nor the price registry shows reasoning, vision or tool support)';
 
   return {
     label: curated?.label ?? meta.label,
@@ -237,8 +250,15 @@ export function describeModel(id: string, provider: string | undefined, free: bo
  * Cost in micro-USD of a call's tokens, priced from the same registry the engine ranks with (falling
  * back to the local rate table). Null when the price is unknown. Free credentials cost nothing.
  */
-export async function priceTokens(input: { model: string; provider?: string; free: boolean; inputTokens: number; outputTokens: number }): Promise<number | null> {
+export async function priceTokens(input: { model: string; provider?: string; profileId?: string; free: boolean; inputTokens: number; outputTokens: number }): Promise<number | null> {
   if (input.free) return 0;
+  if (input.profileId && Types.ObjectId.isValid(input.profileId) && mongoose.connection.readyState === 1) {
+    const snapshot = await AiModelCatalogSnapshot.findOne({ profileId: new Types.ObjectId(input.profileId), 'providerInfo.model': input.model }, { 'providerInfo.$': 1 }).lean<{ providerInfo?: SnapshotInfo[] }>().catch(() => null);
+    const info = snapshot?.providerInfo?.[0];
+    if (info && info.inputPer1M != null && info.outputPer1M != null && !(info.inputPer1M === 0 && info.outputPer1M === 0)) {
+      return Math.round(input.inputTokens * info.inputPer1M + input.outputTokens * info.outputPer1M);
+    }
+  }
   const row = findRegistryRow(input.model, input.provider, await registryRows());
   if (row && row.input !== null && row.output !== null) return Math.round(input.inputTokens * row.input + input.outputTokens * row.output);
   const rate = lookupModelTokenRate(normalizeModelId(input.model)) ?? lookupModelTokenRate(input.model);
@@ -258,15 +278,15 @@ export async function listAvailableModels(options: { force?: boolean } = {}): Pr
     .select('label provider tier endpoint secretCiphertext model')
     .lean<ProfileRow[]>();
   const anyPaid = profiles.some((p) => !isFreeCredential({ provider: p.provider, tier: p.tier }));
-  const rows = anyPaid ? await registryRows() : [];
+  const rows = anyPaid ? await registryRows(Boolean(options.force)) : [];
   const scores = anyPaid ? await benchmarkRows(Boolean(options.force)) : [];
   const checkRows = await modelCheckRows().catch(() => []);
   const out: AvailableModel[] = [];
   for (const profile of profiles) {
     const free = isFreeCredential({ provider: profile.provider, tier: profile.tier });
-    const { ids, contexts } = await modelIdsFor(profile, Boolean(options.force));
+    const { ids, contexts, infos } = await modelIdsFor(profile, Boolean(options.force));
     for (const id of ids) {
-      const described = describeModel(id, profile.provider, free, rows);
+      const described = describeModel(id, profile.provider, free, rows, infos[id]);
       if (!isTextChatModel(normalizeModelId(id))) continue;
       // What the provider says it serves beats any listed or guessed window.
       const contextTokens = contexts[id] ?? described.contextTokens;

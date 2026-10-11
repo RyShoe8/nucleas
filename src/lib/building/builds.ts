@@ -393,7 +393,7 @@ export async function runBuild(id: string): Promise<void> {
     const engineModel = Boolean(result.usedEngineModel && model);
     const costMicros =
       engineModel && model && result.usage
-        ? await priceTokens({ model: model.choice.model, provider: model.provider, free: model.choice.free, ...result.usage })
+        ? await priceTokens({ model: model.choice.model, provider: model.provider, profileId: model.choice.profileId, free: model.choice.free, ...result.usage })
         : null;
     await recordBuildRun(doc, { model: result.routing.requestedModel, ok: succeeded, ...(result.usage ?? {}), costMicros });
     await BuildRequest.updateOne(

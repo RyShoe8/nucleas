@@ -71,3 +71,21 @@ describe('companyDisplayName / cleanedCompanyLabel', () => {
     expect(cleanedCompanyLabel({ label: 'OpenAI', provider: 'openai' })).toBeNull();
   });
 });
+
+describe('provider-reported price and features', () => {
+  it('reads OpenRouter pricing (USD per token) and supported features per model', () => {
+    const models = mapOpenAiModelsResponse({
+      data: [
+        { id: 'anthropic/claude-sonnet-5.5', pricing: { prompt: '0.000003', completion: '0.000015' }, supported_parameters: ['tools', 'reasoning', 'temperature'], architecture: { input_modalities: ['text', 'image'] } },
+        { id: 'openrouter/auto', pricing: { prompt: '-1', completion: '-1' } },
+        { id: 'some/free-variant', pricing: { prompt: '0', completion: '0' } },
+        { id: 'plain/model' },
+      ],
+    });
+    const byId = Object.fromEntries(models.map((m) => [m.id, m.info]));
+    expect(byId['anthropic/claude-sonnet-5.5']).toEqual({ inputPer1M: 3, outputPer1M: 15, tools: true, reasoning: true, vision: true });
+    expect(byId['openrouter/auto']).toBeNull();
+    expect(byId['some/free-variant']).toBeNull();
+    expect(byId['plain/model']).toBeNull();
+  });
+});
