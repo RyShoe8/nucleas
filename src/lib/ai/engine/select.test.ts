@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AvailableModel } from './catalog';
+import { dedupeAcrossCredentials, describeModel, type AvailableModel } from './catalog';
 import { DEFAULT_PRICE_CEILINGS, checkScore, mergeOverrides, selectFrom, selectModel, type CostLevel, type Need } from './select';
 import { buildModelMetaView } from '@/lib/ai/rolePipeline/modelMeta';
 
@@ -278,5 +278,21 @@ describe('per-level model choices', () => {
     const free = await selectModel('org', 'write', 'free', { models: ALL, settings: s });
     expect(free.source).toBe('auto');
     expect(free.primary?.free).toBe(true);
+  });
+});
+
+describe('why a model is not auto-ranked', () => {
+  it('says so in plain words and leaves eligible and free models without a reason', () => {
+    expect(describeModel('anthropic/claude-sonnet-5', 'openrouter', false, []).excludedReason).toBeUndefined();
+    expect(describeModel('anthropic/claude-sonnet-4.5', 'openrouter', false, []).excludedReason).toMatch(/No price on file/);
+    expect(describeModel('some/free-model', 'custom', true, []).excludedReason).toBeUndefined();
+  });
+
+  it('explains a duplicate left out in favor of the direct credential', () => {
+    const direct = model('claude-sonnet-5', false, 4, 'anthropic-direct');
+    const viaRouter = { ...model('anthropic/claude-sonnet-5', false, 4, 'openrouter-key'), provider: 'openrouter' };
+    const out = dedupeAcrossCredentials([viaRouter, direct]);
+    expect(out.find((m) => m.profileId === 'openrouter-key')).toMatchObject({ autoEligible: false, excludedReason: expect.stringContaining('preferred credential') });
+    expect(out.find((m) => m.profileId === 'anthropic-direct')?.excludedReason).toBeUndefined();
   });
 });

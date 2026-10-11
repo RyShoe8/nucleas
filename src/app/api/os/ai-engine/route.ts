@@ -1,7 +1,7 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import User from '@/lib/models/User';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
-import { listAvailableModels, shortlistModels } from '@/lib/ai/engine/catalog';
+import { listAvailableModels } from '@/lib/ai/engine/catalog';
 import { activeHealthIssues } from '@/lib/ai/engine/health';
 import { cancelModelChecks, listModelChecks, queueModelChecks, runQueuedModelChecks } from '@/lib/ai/engine/modelChecks';
 import { BENCHMARK_SOURCE, benchmarkRows, benchmarkStatus, saveBenchmarkKey } from '@/lib/ai/engine/benchmarks';
@@ -30,6 +30,13 @@ export async function GET(request: NextRequest) {
   const models = await listAvailableModels({ force: request.nextUrl.searchParams.get('refresh') === '1' });
   const settings = await readEngineSettings(org);
   const leaderboard = await benchmarkRows(false).catch(() => []);
+  const rankingFor = (need: 'plan' | 'code') => buildRanking({ paid: rankPaid(models, need).filter((m) => m.autoEligible), local: models.filter((m) => m.free), scores: leaderboard, need });
+  const rankings = { plan: rankingFor('plan'), code: rankingFor('code') };
+  const rankedKeys = new Set(
+    models
+      .filter((m) => rankings.plan.concat(rankings.code).some((r) => r.model === m.model && r.profileLabel === m.profileLabel))
+      .map((m) => `${m.profileId}::${m.model}`)
+  );
   const needs = await Promise.all(
     NEEDS.map(async (need) => ({
       need,
@@ -51,15 +58,21 @@ export async function GET(request: NextRequest) {
       })),
       needs,
       checks: (await listModelChecks()).map((c) => ({ ...c, profileLabel: models.find((m) => m.profileId === c.profileId)?.profileLabel ?? 'Credential' })),
-      rankings: Object.fromEntries(
-        (['plan', 'code'] as const).map((need) => [need, buildRanking({
-          paid: rankPaid(models, need).filter((m) => m.autoEligible),
-          local: models.filter((m) => m.free),
-          scores: leaderboard,
-          need,
-        })])
-      ),
-      models: shortlistModels(models).map((m) => ({ profileId: m.profileId, profileLabel: m.profileLabel, model: m.model, free: m.free, strengths: m.strengths, price: m.blendedPricePer1M, benchmark: m.benchmark })),
+      rankings,
+      // Everything the credentials list: the chooser shows a provider's full list, and the search explains each model's status.
+      models: models
+        .filter((m) => m.free || m.autoEligible || m.excludedReason !== 'Not a text chat model')
+        .map((m) => ({
+          profileId: m.profileId,
+          profileLabel: m.profileLabel,
+          model: m.model,
+          free: m.free,
+          strengths: m.strengths,
+          price: m.blendedPricePer1M,
+          benchmark: m.benchmark,
+          status: m.free || m.autoEligible ? (rankedKeys.has(`${m.profileId}::${m.model}`) ? 'ranked' : 'eligible') : 'excluded',
+          reason: m.excludedReason ?? null,
+        })),
     },
     { headers: { 'Cache-Control': 'no-store' } }
   );

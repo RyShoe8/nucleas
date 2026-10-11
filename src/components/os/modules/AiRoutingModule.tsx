@@ -43,6 +43,9 @@ interface ModelRow {
     free: boolean;
     price: number | null;
     benchmark: Benchmark | null;
+    /** ranked: in the ranking tables; eligible: usable by the engine but outside the tables; excluded: skipped, see reason. */
+    status: 'ranked' | 'eligible' | 'excluded';
+    reason: string | null;
 }
 
 interface RankRow {
@@ -157,25 +160,62 @@ function ModelChooser({ models, freeOnly, onChoose, onCancel }: { models: ModelR
     const pool = freeOnly ? models.filter((m) => m.free) : models;
     const providers = [...new Map(pool.map((m) => [m.profileId, m.profileLabel] as const)).entries()];
     const [profileId, setProfileId] = useState('');
-    const options = pool.filter((m) => m.profileId === profileId);
+    const [filter, setFilter] = useState('');
+    const all = pool
+        .filter((m) => m.profileId === profileId)
+        .sort((a, b) => Number(a.status === 'excluded') - Number(b.status === 'excluded') || (b.benchmark?.intelligence ?? -1) - (a.benchmark?.intelligence ?? -1) || (b.price ?? 0) - (a.price ?? 0) || a.model.localeCompare(b.model));
+    const needle = filter.trim().toLowerCase();
+    const options = needle ? all.filter((m) => m.model.toLowerCase().includes(needle)) : all;
     const field = 'h-7 w-full px-1 rounded border border-border bg-background-elevated text-xs';
     return (
         <div className="mt-1 space-y-1">
-            <select autoFocus value={profileId} onChange={(e) => setProfileId(e.target.value)} className={field} aria-label="Provider">
+            <select autoFocus value={profileId} onChange={(e) => { setProfileId(e.target.value); setFilter(''); }} className={field} aria-label="Provider">
                 <option value="">Provider…</option>
                 {providers.map(([id, label]) => (
                     <option key={id} value={id}>{label}</option>
                 ))}
             </select>
-            <select disabled={!profileId} defaultValue="" onChange={(e) => { if (e.target.value) onChoose(profileId, e.target.value); }} className={`${field} disabled:opacity-50`} aria-label="Model">
-                <option value="">Model…</option>
+            {profileId && all.length > 15 ? <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={`Filter ${all.length} models`} className={field} aria-label="Filter models" /> : null}
+            <select disabled={!profileId} value="" onChange={(e) => { if (e.target.value) onChoose(profileId, e.target.value); }} className={`${field} disabled:opacity-50`} aria-label="Model">
+                <option value="">{profileId ? `Model… (${options.length})` : 'Model…'}</option>
                 {options.map((m) => (
                     <option key={m.model} value={m.model}>
-                        {short(m.model)} · {m.free ? 'free' : m.price !== null ? `~${m.price}/1M` : 'price unknown'}{m.benchmark?.intelligence != null ? ` · score ${m.benchmark.intelligence.toFixed(1)}` : ''}
+                        {short(m.model)} · {m.free ? 'free' : m.price !== null ? `~${m.price}/1M` : 'price unknown'}{m.benchmark?.intelligence != null ? ` · score ${m.benchmark.intelligence.toFixed(1)}` : ''}{m.status === 'excluded' ? ' · not auto-ranked' : ''}
                     </option>
                 ))}
             </select>
             <button type="button" onClick={onCancel} className="text-[11px] text-text-secondary hover:text-text-primary">Cancel</button>
+        </div>
+    );
+}
+
+function FindModel({ models }: { models: ModelRow[] }) {
+    const [query, setQuery] = useState('');
+    const needle = query.trim().toLowerCase();
+    const hits = needle ? models.filter((m) => m.model.toLowerCase().includes(needle)) : [];
+    const statusText = (m: ModelRow) =>
+        m.status === 'ranked' ? 'Shown in the ranking tables' : m.status === 'eligible' ? 'Usable by the engine, but outside the top rows the tables show' : `Not auto-ranked: ${m.reason ?? 'unknown reason'}`;
+    return (
+        <div className="space-y-1">
+            <label className="block text-xs font-medium" htmlFor="find-model">Find a model</label>
+            <input id="find-model" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="e.g. sonnet" className="h-7 w-full max-w-xs px-2 rounded border border-border bg-background-elevated text-xs" />
+            {needle ? (
+                hits.length ? (
+                    <ul className="text-[11px] space-y-0.5">
+                        {hits.slice(0, 25).map((m) => (
+                            <li key={`${m.profileId}::${m.model}`}>
+                                <span className="font-medium">{m.model}</span> <span className="text-text-secondary">· {m.profileLabel} · {m.free ? 'free' : m.price !== null ? `~${m.price}/1M` : 'no price'} · </span>
+                                <span className={m.status === 'excluded' ? 'text-amber-400' : 'text-emerald-400'}>{statusText(m)}</span>
+                            </li>
+                        ))}
+                        {hits.length > 25 ? <li className="text-text-secondary">…and {hits.length - 25} more. Type more to narrow it down.</li> : null}
+                    </ul>
+                ) : (
+                    <p className="text-[11px] text-amber-400">No enabled credential lists a model matching “{query.trim()}”. Check that the credential is enabled and use “Refresh model lists”.</p>
+                )
+            ) : (
+                <p className="text-[11px] text-text-secondary">Search every model your credentials list to see whether it is ranked, or why it is not.</p>
+            )}
         </div>
     );
 }
@@ -527,6 +567,7 @@ export default function AiRoutingModule() {
             <section className="space-y-2">
                 <h2 className="text-sm font-semibold">Benchmark ranking</h2>
                 <BenchmarkKey status={data.benchmarks} onSave={(key) => save({ benchmarkApiKey: key })} />
+                <FindModel models={data.models} />
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Ranking title="Plan, review, write, research (intelligence index)" kind="intelligence" rows={data.rankings.plan} />
                     <Ranking title="Code (coding index)" kind="coding" rows={data.rankings.code} />

@@ -59,6 +59,8 @@ export interface AvailableModel {
   autoEligible: boolean;
   /** Artificial Analysis scores when the model is on their leaderboard. */
   benchmark: ModelBenchmark | null;
+  /** Why automatic selection skips this model; absent when it is eligible (or free). */
+  excludedReason?: string;
   /** Set while the provider is rejecting this credential or model; not auto-selected meanwhile. */
   benched?: HealthIssue | null;
   /** What Nucleas measured by running the model (free models; see modelChecks.ts). */
@@ -203,6 +205,21 @@ export function describeModel(id: string, provider: string | undefined, free: bo
   const textCapable = isTextChatModel(normalized) && !strengths.includes('image_gen') && !strengths.includes('embeddings');
   const currentCapable = Boolean(curated) || Boolean(ref && (ref.supportsReasoning || ref.supportsVision || ref.supportsTools));
   const autoEligible = textCapable && (free || (price !== null && price <= AUTO_PRICE_CAP && !isLegacy(normalized) && !isMovingAlias(normalized) && !isRoutingVariant(normalized) && currentCapable));
+  const excludedReason = autoEligible
+    ? undefined
+    : !textCapable
+      ? 'Not a text chat model'
+      : price === null
+        ? 'No price on file for it'
+        : price > AUTO_PRICE_CAP
+          ? `Priced above $${AUTO_PRICE_CAP} per 1M tokens`
+          : isLegacy(normalized)
+            ? 'Older model family'
+            : isMovingAlias(normalized)
+              ? 'Moving alias (-latest), not a fixed version'
+              : isRoutingVariant(normalized)
+                ? 'Provider routing variant'
+                : 'No capability data (not in the curated list, and the price registry shows no reasoning, vision or tool support)';
 
   return {
     label: curated?.label ?? meta.label,
@@ -212,6 +229,7 @@ export function describeModel(id: string, provider: string | undefined, free: bo
     contextTokens: curated?.contextTokens ?? ref?.maxInputTokens ?? meta.contextTokens,
     blendedPricePer1M: price,
     autoEligible,
+    ...(excludedReason ? { excludedReason } : {}),
   };
 }
 
@@ -260,7 +278,7 @@ export async function listAvailableModels(options: { force?: boolean } = {}): Pr
   const withHealth = issues.length
     ? out.map((m) => {
         const benched = isBenched(issues, m.profileId, m.model);
-        return benched ? { ...m, benched, autoEligible: false } : m;
+        return benched ? { ...m, benched, autoEligible: false, excludedReason: 'Skipped for now after recent failures from the provider' } : m;
       })
     : out;
   return dedupeAcrossCredentials(dedupeDatedVariants(withHealth));
@@ -285,7 +303,11 @@ export function dedupeAcrossCredentials(models: AvailableModel[]): AvailableMode
       (AGGREGATORS.has(current.provider) === AGGREGATORS.has(m.provider) && (m.blendedPricePer1M ?? Infinity) < (current.blendedPricePer1M ?? Infinity));
     if (better) best.set(identity(m), m);
   }
-  return models.map((m) => (m.autoEligible && !m.free && best.get(identity(m)) !== m ? { ...m, autoEligible: false } : m));
+  return models.map((m) =>
+    m.autoEligible && !m.free && best.get(identity(m)) !== m
+      ? { ...m, autoEligible: false, excludedReason: 'The same model is also listed by a preferred credential (a direct one beats an aggregator)' }
+      : m
+  );
 }
 
 /**
@@ -304,7 +326,7 @@ export function dedupeDatedVariants(models: AvailableModel[]): AvailableModel[] 
     const undated = group.find((m) => normalizeModelId(m.model) === m.model.replace(/^models\//i, ''));
     keep.add(undated ?? [...group].sort((a, b) => b.model.localeCompare(a.model))[0]);
   }
-  return models.map((m) => (keep.has(m) ? m : { ...m, autoEligible: false }));
+  return models.map((m) => (keep.has(m) ? m : { ...m, autoEligible: false, excludedReason: 'A dated copy of a model already listed without the date' }));
 }
 
 /**

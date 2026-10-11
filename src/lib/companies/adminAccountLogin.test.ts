@@ -11,7 +11,7 @@ vi.mock('@/lib/ai/tools/browserClient', () => ({
   browserObserve: vi.fn(),
   browserWorkerCall: async (path: string, body: Record<string, unknown>) => {
     worker.calls.push({ path, body });
-    if (path === '/login/start') return { sessionId: 'w1', width: 1000, height: 640 };
+    if (path === '/login/start') return { sessionId: 'worker-session-7c1f9e2a', width: 1000, height: 640 };
     if (path === '/login/frame') return { image: 'AAAA', url: 'https://site.example/', title: 'Login' };
     if (path === '/login/finish') return { cookies: [{ name: 'session', value: 'abc', domain: 'site.example', path: '/', expires: -1 }, { name: 'ga', value: '1', domain: '.google.com', path: '/', expires: -1 }] };
     return { ok: true };
@@ -47,7 +47,7 @@ describe('logging in through a window inside Nucleas', () => {
     const started = await loginStart(viewer('u1'), companyId, 'https://site.example/admin');
     if (!started.ok) throw new Error('start failed');
     expect(started.baseUrl).toBe('https://site.example');
-    expect(started.handle).not.toContain('w1');
+    expect(started.handle).not.toContain('worker-session-7c1f9e2a');
     expect(await loginFrame(viewer('u1'), companyId, started.handle)).toMatchObject({ ok: true, image: 'AAAA' });
     expect(await loginFrame(viewer('u2'), companyId, started.handle)).toMatchObject({ ok: false });
     expect(await loginInput(viewer('u1'), 'other-company', started.handle, { type: 'click', x: 1, y: 1 })).toMatchObject({ ok: false });
