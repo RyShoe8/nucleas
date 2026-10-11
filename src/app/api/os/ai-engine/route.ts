@@ -1,12 +1,13 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import User from '@/lib/models/User';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
-import { listAvailableModels } from '@/lib/ai/engine/catalog';
+import { listAvailableModels, listMediaModels } from '@/lib/ai/engine/catalog';
 import { activeHealthIssues } from '@/lib/ai/engine/health';
 import { cancelModelChecks, listModelChecks, queueModelChecks, runQueuedModelChecks } from '@/lib/ai/engine/modelChecks';
-import { BENCHMARK_SOURCE, benchmarkRows, benchmarkStatus, saveBenchmarkKey } from '@/lib/ai/engine/benchmarks';
+import { BENCHMARK_SOURCE, benchmarkRows, benchmarkStatus, mediaLeaderboards, saveBenchmarkKey } from '@/lib/ai/engine/benchmarks';
+import { buildMediaRanking } from '@/lib/ai/engine/mediaRankings';
 import { buildRanking } from '@/lib/ai/engine/rankings';
-import { COST_LEVELS, NEED_LABELS, NEEDS, isCostLevel, isPriceCeiling, rankPaid, readEngineSettings, saveEngineSettings, selectModel, type Need } from '@/lib/ai/engine/select';
+import { COST_LEVELS, NEED_LABELS, NEEDS, isCostLevel, isPriceCeiling, rankPaid, readEngineSettings, saveEngineSettings, selectModel, type CostLevel, type Need } from '@/lib/ai/engine/select';
 
 export const dynamic = 'force-dynamic';
 /** Model checks run after the response; each free model takes a minute or two. */
@@ -29,7 +30,12 @@ export async function GET(request: NextRequest) {
   const org = String(viewer.organizationId);
   const models = await listAvailableModels({ force: request.nextUrl.searchParams.get('refresh') === '1' });
   const settings = await readEngineSettings(org);
+  const refresh = request.nextUrl.searchParams.get('refresh') === '1';
   const leaderboard = await benchmarkRows(false).catch(() => []);
+  const [media, mediaModels] = await Promise.all([
+    mediaLeaderboards(refresh).catch(() => ({ image: [], video: [], error: 'Could not load the image and video leaderboards.', fetchedAt: null })),
+    listMediaModels({ force: refresh }).catch(() => []),
+  ]);
   const rankingFor = (need: 'plan' | 'code') => buildRanking({ paid: rankPaid(models, need).filter((m) => m.autoEligible), local: models.filter((m) => m.free), scores: leaderboard, need });
   const rankings = { plan: rankingFor('plan'), code: rankingFor('code') };
   const rankedKeys = new Set(
@@ -59,6 +65,12 @@ export async function GET(request: NextRequest) {
       needs,
       checks: (await listModelChecks()).map((c) => ({ ...c, profileLabel: models.find((m) => m.profileId === c.profileId)?.profileLabel ?? 'Credential' })),
       rankings,
+      mediaRankings: {
+        image: buildMediaRanking({ rows: media.image, available: mediaModels.filter((m) => m.kind === 'image') }),
+        video: buildMediaRanking({ rows: media.video, available: mediaModels.filter((m) => m.kind === 'video') }),
+        error: media.error,
+        fetchedAt: media.fetchedAt,
+      },
       // Everything the credentials list: the chooser shows a provider's full list, and the search explains each model's status.
       models: models
         .filter((m) => m.free || m.autoEligible || m.excludedReason !== 'Not a text chat model')
@@ -82,7 +94,7 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   const viewer = await requireAdmin(request);
   if (viewer instanceof NextResponse) return viewer;
-  const body = (await request.json().catch(() => ({}))) as { defaultCostLevel?: unknown; override?: { level?: unknown; need?: unknown; profileId?: unknown; model?: unknown }; clearOverride?: { level?: unknown; need?: unknown }; benchmarkApiKey?: unknown; priceCeilings?: unknown };
+  const body = (await request.json().catch(() => ({}))) as { defaultCostLevel?: unknown; override?: { level?: unknown; need?: unknown; profileId?: unknown; model?: unknown }; clearOverride?: { level?: unknown; need?: unknown }; clearAll?: { level?: unknown } | true; benchmarkApiKey?: unknown; priceCeilings?: unknown };
   if ('benchmarkApiKey' in body) {
     const key = typeof body.benchmarkApiKey === 'string' && body.benchmarkApiKey.trim() ? body.benchmarkApiKey : null;
     const saved = await saveBenchmarkKey(key);
@@ -101,6 +113,12 @@ export async function PUT(request: NextRequest) {
       override:
         body.override && need(body.override.need) && isCostLevel(body.override.level) && typeof body.override.profileId === 'string' && typeof body.override.model === 'string'
           ? { level: body.override.level, need: need(body.override.need)!, profileId: body.override.profileId, model: body.override.model }
+          : null,
+      clearAll:
+        body.clearAll === true || (body.clearAll && typeof body.clearAll === 'object')
+          ? isCostLevel((body.clearAll as { level?: unknown }).level)
+            ? { level: (body.clearAll as { level: CostLevel }).level }
+            : {}
           : null,
       clearOverride:
         body.clearOverride && need(body.clearOverride.need) && isCostLevel(body.clearOverride.level)

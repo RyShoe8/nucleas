@@ -1,6 +1,7 @@
 import mongoose, { Schema, Types, type InferSchemaType, type Model } from 'mongoose';
 import { AiModelProfile } from '@/lib/models/AiModelProfile';
 import type { ProviderModelInfo } from '@/lib/ai/rolePipeline/discoverModels';
+import { mediaKindOf, type MediaModel } from '@/lib/ai/engine/mediaRankings';
 import { decryptModelSecret } from '@/lib/ai/modelSecrets';
 import { discoverOpenAiCompatibleModels } from '@/lib/ai/rolePipeline/discoverModels';
 import { buildModelMetaView, isFreeCredential } from '@/lib/ai/rolePipeline/modelMeta';
@@ -81,7 +82,7 @@ export function normalizeModelId(id: string): string {
 
 /** Models that cannot hold a text conversation (speech, images, video, embeddings, realtime, etc.). */
 export function isTextChatModel(id: string): boolean {
-  return !/(tts|transcribe|whisper|audio|image|imagen|dall-e|veo|lyria|embed|search-api|search-preview|realtime|[-_]live|robotics|computer-use|moderation|babbage|davinci|aqa|nano-banana|omni|translate|deep-research)/i.test(id);
+  return !/(tts|transcribe|whisper|audio|image|imagen|dall-e|veo|lyria|embed|search-api|search-preview|realtime|[-_]live|robotics|computer-use|moderation|babbage|davinci|aqa|nano-banana|omni|translate|deep-research|sora|video|kling|hailuo|flux|stable-diffusion|sdxl|seedream|ideogram|recraft|midjourney)/i.test(id);
 }
 
 /** Older families that are priced high but outclassed; never auto-selected. */
@@ -271,6 +272,20 @@ export async function isModelListedForProfile(profileId: string, model: string):
   if (!Types.ObjectId.isValid(profileId)) return false;
   const hit = await AiModelCatalogSnapshot.exists({ profileId: new Types.ObjectId(profileId), modelIds: model });
   return Boolean(hit);
+}
+
+/** Image and video generation models the enabled credentials list (they are not chat models, so listAvailableModels leaves them out). */
+export async function listMediaModels(options: { force?: boolean } = {}): Promise<MediaModel[]> {
+  const profiles = await AiModelProfile.find({ enabled: true }).select('label provider tier endpoint secretCiphertext model').lean<ProfileRow[]>();
+  const out: MediaModel[] = [];
+  for (const profile of profiles) {
+    const { ids } = await modelIdsFor(profile, Boolean(options.force));
+    for (const id of ids) {
+      const kind = mediaKindOf(id);
+      if (kind) out.push({ profileId: String(profile._id), profileLabel: profile.label, model: id, kind });
+    }
+  }
+  return out.sort((a, b) => a.profileLabel.localeCompare(b.profileLabel) || a.model.localeCompare(b.model));
 }
 
 export async function listAvailableModels(options: { force?: boolean } = {}): Promise<AvailableModel[]> {

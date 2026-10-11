@@ -308,7 +308,7 @@ export async function selectModel(
 
 export async function saveEngineSettings(
   organizationId: string,
-  input: { defaultCostLevel?: CostLevel; priceCeilings?: Partial<PriceCeilings>; override?: { level: CostLevel; need: Need; profileId: string; model: string } | null; clearOverride?: { level: CostLevel; need: Need } | null },
+  input: { defaultCostLevel?: CostLevel; priceCeilings?: Partial<PriceCeilings>; override?: { level: CostLevel; need: Need; profileId: string; model: string } | null; clearOverride?: { level: CostLevel; need: Need } | null; clearAll?: { level?: CostLevel } | null },
   userId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const update: Record<string, unknown> = { updatedByUserId: Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : undefined };
@@ -341,6 +341,12 @@ export async function saveEngineSettings(
     if (!chosen) return { ok: false, error: 'That model is not available from an enabled credential.' };
     if (level === 'free' && !chosen.free) return { ok: false, error: 'The Free level can only use free models.' };
     set[`overrides.${level}.${need}`] = { profileId, model };
+  }
+  if (input.clearAll) {
+    const levels = input.clearAll.level ? [input.clearAll.level] : [...COST_LEVELS];
+    if (levels.some((level) => !isCostLevel(level))) return { ok: false, error: 'Unknown cost level.' };
+    // Back to automatic for every task: also overrides any legacy all-levels choice still waiting to be moved.
+    for (const level of levels) for (const need of NEEDS) set[`overrides.${level}.${need}`] = null;
   }
   if (input.clearOverride) {
     const { level, need } = input.clearOverride;

@@ -1,5 +1,6 @@
 import mongoose, { Schema, type InferSchemaType, type Model } from 'mongoose';
 import { decryptModelSecret, encryptModelSecret, secretLast4 } from '@/lib/ai/modelSecrets';
+import { parseMediaResponse, type MediaKind, type MediaRow } from '@/lib/ai/engine/mediaRankings';
 
 /**
  * Benchmark scores from Artificial Analysis (https://artificialanalysis.ai/, free API, attribution
@@ -10,6 +11,10 @@ import { decryptModelSecret, encryptModelSecret, secretLast4 } from '@/lib/ai/mo
 
 const ENDPOINT = 'https://artificialanalysis.ai/api/v2/data/llms/models';
 const TTL_MS = 24 * 60 * 60 * 1000;
+const MEDIA_ENDPOINTS: Record<MediaKind, string> = {
+  image: 'https://artificialanalysis.ai/api/v2/data/media/text-to-image',
+  video: 'https://artificialanalysis.ai/api/v2/data/media/text-to-video',
+};
 export const BENCHMARK_SOURCE = { name: 'Artificial Analysis', url: 'https://artificialanalysis.ai/' };
 
 export interface BenchmarkRow {
@@ -40,6 +45,10 @@ const sourceSchema = new Schema(
     apiKeyCiphertext: { type: String },
     apiKeyLast4: { type: String },
     rows: { type: Schema.Types.Mixed, default: [] },
+    /** Text-to-image and text-to-video arena leaderboards, refreshed with the text scores. */
+    media: { type: Schema.Types.Mixed, default: {} },
+    mediaFetchedAt: { type: Date },
+    mediaError: { type: String },
     fetchedAt: { type: Date },
     error: { type: String },
   },
@@ -51,7 +60,8 @@ export const AiBenchmarkSource: Model<SourceDoc> =
 
 const KEY = 'artificial_analysis';
 
-type Stored = { apiKeyCiphertext?: string; apiKeyLast4?: string; rows?: BenchmarkRow[]; fetchedAt?: Date; error?: string };
+type MediaStored = Partial<Record<MediaKind, MediaRow[]>>;
+type Stored = { apiKeyCiphertext?: string; apiKeyLast4?: string; rows?: BenchmarkRow[]; media?: MediaStored; mediaFetchedAt?: Date; mediaError?: string; fetchedAt?: Date; error?: string };
 
 function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
@@ -101,6 +111,42 @@ export async function benchmarkRows(force = false): Promise<BenchmarkRow[]> {
     await AiBenchmarkSource.updateOne({ key: KEY }, { $set: { error: err instanceof Error ? err.message : 'refresh failed', fetchedAt: new Date() } });
     return doc.rows ?? [];
   }
+}
+
+async function fetchMedia(apiKey: string, kind: MediaKind): Promise<MediaRow[]> {
+  const res = await fetch(MEDIA_ENDPOINTS[kind], { headers: { 'x-api-key': apiKey }, cache: 'no-store', signal: AbortSignal.timeout(20_000) });
+  if (res.status === 401 || res.status === 403) throw new Error('Artificial Analysis rejected the API key.');
+  if (!res.ok) throw new Error(`Artificial Analysis returned ${res.status} for the ${kind} leaderboard.`);
+  const rows = parseMediaResponse(await res.json());
+  if (rows.length === 0) throw new Error(`Artificial Analysis returned no ${kind} models.`);
+  return rows;
+}
+
+/**
+ * The image and video generation leaderboards (Elo from blind votes). Cached for a day like the text scores;
+ * each leaderboard keeps its last good rows if a refresh fails, and a failure never affects the text rankings.
+ */
+export async function mediaLeaderboards(force = false): Promise<{ image: MediaRow[]; video: MediaRow[]; error: string | null; fetchedAt: string | null }> {
+  const doc = await AiBenchmarkSource.findOne({ key: KEY }).lean<Stored>();
+  const empty = { image: [] as MediaRow[], video: [] as MediaRow[], error: null, fetchedAt: null };
+  if (!doc?.apiKeyCiphertext) return empty;
+  const stored = { image: doc.media?.image ?? [], video: doc.media?.video ?? [] };
+  const fresh = doc.mediaFetchedAt && Date.now() - new Date(doc.mediaFetchedAt).getTime() < TTL_MS;
+  if (!force && fresh) return { ...stored, error: doc.mediaError ?? null, fetchedAt: new Date(doc.mediaFetchedAt!).toISOString() };
+  const apiKey = decryptModelSecret(doc.apiKeyCiphertext);
+  const errors: string[] = [];
+  const next: MediaStored = {};
+  for (const kind of ['image', 'video'] as const) {
+    try {
+      next[kind] = await fetchMedia(apiKey, kind);
+    } catch (err) {
+      next[kind] = stored[kind];
+      errors.push(err instanceof Error ? err.message : `${kind} refresh failed`);
+    }
+  }
+  const now = new Date();
+  await AiBenchmarkSource.updateOne({ key: KEY }, { $set: { media: next, mediaFetchedAt: now, ...(errors.length ? { mediaError: errors.join(' ') } : {}) }, ...(errors.length ? {} : { $unset: { mediaError: '' } }) });
+  return { image: next.image ?? [], video: next.video ?? [], error: errors.length ? errors.join(' ') : null, fetchedAt: now.toISOString() };
 }
 
 /** Saves (after verifying) or removes the Artificial Analysis API key. */

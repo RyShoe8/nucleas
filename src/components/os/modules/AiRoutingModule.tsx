@@ -96,7 +96,13 @@ interface CheckRow {
     error: string | null;
 }
 
-type EngineData = { checks: CheckRow[]; health: HealthIssue[]; defaultCostLevel: Level; priceCeilings: Ceilings; needs: NeedRow[]; models: ModelRow[]; benchmarks: BenchmarkStatus; rankings: Record<'plan' | 'code', RankRow[]> };
+interface MediaRankView {
+    rows: { rank: number | null; name: string; creator: string; elo: number; ci95: string | null; appearances: number | null; releaseDate: string | null; available: { profileLabel: string; model: string }[] }[];
+    unmatched: { profileLabel: string; model: string }[];
+    total: number;
+}
+
+type EngineData = { checks: CheckRow[]; health: HealthIssue[]; defaultCostLevel: Level; priceCeilings: Ceilings; needs: NeedRow[]; models: ModelRow[]; benchmarks: BenchmarkStatus; rankings: Record<'plan' | 'code', RankRow[]>; mediaRankings: { image: MediaRankView; video: MediaRankView; error: string | null; fetchedAt: string | null } };
 
 const LEVELS: { key: Level; label: string; hint: string }[] = [
     { key: 'free', label: 'Free', hint: 'Rogly models only, for every step. Never calls or retries on a paid model.' },
@@ -262,6 +268,46 @@ function Ranking({ title, kind, rows }: { title: string; kind: 'intelligence' | 
             </ol>
             {rows.some((r) => r.benchmark?.estimated) ? (
                 <p className="mt-1 text-[10px] text-text-secondary">~ Estimate: the listed model&apos;s score for a compressed copy, discounted by a rule of thumb (8-bit about 0.5%, 4-bit about 1.5-4%). Not measured by Nucleas.</p>
+            ) : null}
+        </div>
+    );
+}
+
+function MediaRanking({ title, ranking, configured }: { title: string; ranking: MediaRankView; configured: boolean }) {
+    return (
+        <div className="min-w-0">
+            <h3 className="text-xs font-medium mb-1">{title}</h3>
+            {ranking.rows.length === 0 ? (
+                <p className="text-[11px] text-text-secondary">{configured ? 'No leaderboard data yet. Use “Refresh model lists”.' : 'Add the Artificial Analysis key above to load this leaderboard.'}</p>
+            ) : (
+                <>
+                    <div className="flex items-baseline gap-2 text-[10px] text-text-secondary">
+                        <span className="w-5" />
+                        <span className="flex-1">Model</span>
+                        <span className="w-24 text-right" title="Elo from blind side-by-side votes on Artificial Analysis. ± is the 95% confidence interval.">Elo</span>
+                        <span className="w-28 text-right">Your credentials</span>
+                    </div>
+                    <ol className="space-y-0.5">
+                        {ranking.rows.map((r) => (
+                            <li key={`${r.name}:${r.creator}`} className="flex items-baseline gap-2 text-[11px]">
+                                <span className="w-5 text-right text-text-secondary">{r.rank ?? ''}</span>
+                                <span className="truncate flex-1" title={`${r.name}${r.releaseDate ? ` · released ${r.releaseDate}` : ''}${r.appearances ? ` · ${r.appearances.toLocaleString()} votes` : ''}`}>
+                                    {r.name} {r.creator ? <span className="text-text-secondary">· {r.creator}</span> : null}
+                                </span>
+                                <span className="w-24 text-right">{Math.round(r.elo)}{r.ci95 ? <span className="text-text-secondary"> {r.ci95}</span> : null}</span>
+                                <span className={`w-28 text-right truncate ${r.available.length ? 'text-emerald-400' : 'text-text-secondary'}`} title={r.available.map((a) => `${a.model} · ${a.profileLabel}`).join('\n')}>
+                                    {r.available.length ? r.available.map((a) => a.profileLabel).join(', ') : '—'}
+                                </span>
+                            </li>
+                        ))}
+                    </ol>
+                    <p className="mt-1 text-[10px] text-text-secondary">Top {Math.min(ranking.rows.length, ranking.total)} of {ranking.total} ranked models, plus any your credentials can use.</p>
+                </>
+            )}
+            {ranking.unmatched.length ? (
+                <p className="mt-1 text-[10px] text-text-secondary" title={ranking.unmatched.map((m) => `${m.model} · ${m.profileLabel}`).join('\n')}>
+                    Also listed by your credentials but not on the leaderboard: {ranking.unmatched.slice(0, 4).map((m) => short(m.model)).join(', ')}{ranking.unmatched.length > 4 ? ` and ${ranking.unmatched.length - 4} more` : ''}.
+                </p>
             ) : null}
         </div>
     );
@@ -572,6 +618,11 @@ export default function AiRoutingModule() {
                     <Ranking title="Plan, review, write, research (intelligence index)" kind="intelligence" rows={data.rankings.plan} />
                     <Ranking title="Code (coding index)" kind="coding" rows={data.rankings.code} />
                 </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <MediaRanking title="Image generation (Elo)" ranking={data.mediaRankings.image} configured={data.benchmarks.configured} />
+                    <MediaRanking title="Video generation (Elo)" ranking={data.mediaRankings.video} configured={data.benchmarks.configured} />
+                </div>
+                {data.mediaRankings.error ? <p className="text-[11px] text-amber-400">{data.mediaRankings.error}</p> : null}
                 <p className="text-[11px] text-text-secondary">
                     Benchmark data:{' '}
                     <a href={data.benchmarks.source.url} target="_blank" rel="noreferrer" className="underline">
@@ -582,7 +633,18 @@ export default function AiRoutingModule() {
             </section>
 
             <section>
-                <h2 className="text-sm font-semibold mb-1">What the engine picks</h2>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                    <h2 className="text-sm font-semibold">What the engine picks</h2>
+                    <button
+                        type="button"
+                        disabled={!data.needs.some((n) => LEVELS.some((l) => n.overrides[l.key]))}
+                        onClick={() => { if (window.confirm('Put every task at every level back to the engine’s own pick? Models you chose by hand are cleared.')) void save({ clearAll: true }); }}
+                        className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card disabled:opacity-40"
+                        title="Clear every model you chose by hand, at every level"
+                    >
+                        Reset all to Auto
+                    </button>
+                </div>
                 <p className="text-[11px] text-text-secondary mb-2">
                     Chosen automatically from every enabled credential. Rogly uses its best-checked model for the job (by name until checks have run). Use Change to choose a provider and model for one task at one plan level; Auto returns it to the engine's pick.
                 </p>
@@ -593,6 +655,11 @@ export default function AiRoutingModule() {
                             {LEVELS.map((l) => (
                                 <th key={l.key} className="font-normal py-1 px-2">
                                     {l.label}
+                                    {data.needs.some((n) => n.overrides[l.key]) ? (
+                                        <button type="button" onClick={() => void save({ clearAll: { level: l.key } })} className="ml-1 text-[10px] underline text-text-secondary hover:text-text-primary" title={`Put every task at the ${l.label} level back to Auto`}>
+                                            reset
+                                        </button>
+                                    ) : null}
                                 </th>
                             ))}
                         </tr>

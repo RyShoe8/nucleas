@@ -28,7 +28,7 @@ import { CapabilityInvocation } from '@/lib/models/Capability';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { resolvePortfolioContext } from '@/lib/context/resolveCompanyContext';
 import { AiModelCatalogSnapshot } from '@/lib/ai/engine/catalog';
-import { AiEngineSettings, saveEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
+import { AiEngineSettings, readEngineSettings, saveEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
 import { AiModelHealth, recordModelFailure } from '@/lib/ai/engine/health';
 
 const ROGLY_MODELS = {
@@ -126,6 +126,36 @@ describe('engine selection in Ask', () => {
     });
     await ask('summarize', 'high');
     expect(writers).toEqual([ROGLY_MODELS.code]);
+  });
+});
+
+describe('resetting model choices', () => {
+  it('puts every task back to automatic, for one level or all of them', async () => {
+    const general = { profileId: roglyProfile, model: ROGLY_MODELS.general };
+    for (const level of ['low', 'high'] as const) {
+      await saveEngineSettings(String(org), { override: { level, need: 'write', ...general } }, admin.userId);
+      await saveEngineSettings(String(org), { override: { level, need: 'research', ...general } }, admin.userId);
+    }
+    expect((await readEngineSettings(String(org))).overrides.low?.write).toEqual(general);
+
+    await saveEngineSettings(String(org), { clearAll: { level: 'low' } }, admin.userId);
+    const afterLevel = await readEngineSettings(String(org));
+    expect(afterLevel.overrides.low?.write).toBeNull();
+    expect(afterLevel.overrides.low?.research).toBeNull();
+    expect(afterLevel.overrides.high?.write).toEqual(general);
+
+    await saveEngineSettings(String(org), { clearAll: {} }, admin.userId);
+    const afterAll = await readEngineSettings(String(org));
+    expect(afterAll.overrides.high?.write).toBeNull();
+    expect(afterAll.overrides.high?.research).toBeNull();
+  });
+
+  it('also overrides an old all-levels pin', async () => {
+    await AiEngineSettings.updateOne({ organizationId: String(org) }, { $set: { pins: { research: { profileId: roglyProfile, model: ROGLY_MODELS.code } } } }, { upsert: true });
+    expect((await readEngineSettings(String(org))).overrides.high?.research).toBeTruthy();
+    await saveEngineSettings(String(org), { clearAll: {} }, admin.userId);
+    const after = await readEngineSettings(String(org));
+    for (const level of ['free', 'low', 'medium', 'high'] as const) expect(after.overrides[level]?.research).toBeNull();
   });
 });
 
