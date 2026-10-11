@@ -2,6 +2,7 @@ import 'server-only';
 import { VOICE_TRAIT_GUIDANCE } from './templates/brandVoice';
 import { manualArtifact, parseJobOutput } from './output';
 import { brandVoiceContext, generatedVoice } from '@/lib/brandVoice/service';
+import { collectSocialVoiceSamples } from '@/lib/social/voiceSamples';
 import { Types } from 'mongoose';
 import { z } from 'zod';
 import { attemptCompanyCredentialChat } from '@/lib/ai/companyChat';
@@ -384,6 +385,11 @@ export async function executeJobRun(runId: string): Promise<void> {
   if (profile.subreddit && (wantsVoice || activeDesign.skill === 'marketing_plan')) {
     facts.push(`# Company subreddit (community the team posts in by hand; a place to learn how its audience talks)
 - r/${profile.subreddit}: https://www.reddit.com/r/${profile.subreddit}`);
+  }
+  if (activeDesign.skill === 'brand_voice') {
+    const social = await collectSocialVoiceSamples({ organizationId: job.organizationId, companyId: String(job.companyId), socialLinks: profile.socialLinks, subreddit: profile.subreddit }).catch(() => null);
+    if (social?.block) facts.push(`${social.block}\nCite these profile URLs as sources when you use these posts: ${social.sources.join(', ') || 'none'}.`);
+    if (social?.gaps.length) facts.push(`# Social channels not read (report these as gaps)\n${social.gaps.map((gap) => `- ${gap}`).join('\n')}`);
   }
   if (activeDesign.skill === 'marketing_plan') {
     const connections = await listCompanyConnections(viewer, String(job.companyId)).catch(() => null);
