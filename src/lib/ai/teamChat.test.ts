@@ -72,7 +72,7 @@ vi.mock('@/lib/ai/control/dispatchLimits', () => ({
 
 vi.mock('@/lib/ai/engine/catalog', () => ({ listAvailableModels: async () => [] }));
 vi.mock('@/lib/ai/engine/select', () => ({
-  readEngineSettings: async () => ({ defaultCostLevel: 'low', priceCeilings: { low: 1.5, medium: 5, high: null }, pins: {} }),
+  readEngineSettings: async () => ({ defaultCostLevel: 'low', priceCeilings: { low: 1.5, medium: 5, high: null }, overrides: {} }),
   selectModel: async (_org: string, need: string, level: string) => ({ need, level, primary: null, fallback: null, source: 'none' }),
 }));
 

@@ -381,13 +381,23 @@ export async function runAskOrchestrator(
   if (!attempt.parsedPlan?.success && attempt.turn.role === 'assistant') attempt = await planOnce(planRoute.primary, CORRECTION);
   if (!attempt.parsedPlan?.success) {
     // Re-read the models: a provider that just rejected its key is now benched. Pick again at this
-    // level (another provider); if that is still the same model, go one level up (high: medium).
+    // level (another provider); if that is still the same model, go up a level (high: medium).
     const failed = planRoute.primary;
     models = await listAvailableModels();
     [planRoute, workRoute, reviewRoute] = await routes();
     let other = planRoute.primary && planRoute.primary.model !== failed.model ? planRoute : null;
-    // Free never escalates to a paid model.
-    if (!other && input.level !== 'free') other = await selectModel(org, 'plan', input.level === 'low' ? 'medium' : input.level === 'medium' ? 'high' : 'medium', { models, settings });
+    // Free never escalates to a paid model. Climb until a different model is found: without benchmark
+    // scores a level above can pick the same model again.
+    if (!other && input.level !== 'free') {
+      const above: CostLevel[] = input.level === 'low' ? ['medium', 'high'] : input.level === 'medium' ? ['high'] : ['medium'];
+      for (const level of above) {
+        const candidate = await selectModel(org, 'plan', level, { models, settings });
+        if (candidate.primary && candidate.primary.model !== failed.model) {
+          other = candidate;
+          break;
+        }
+      }
+    }
     if (!other) other = { ...planRoute, primary: null };
     if (other.primary && other.primary.model !== failed.model) {
       attempt = await planOnce(other.primary, CORRECTION);

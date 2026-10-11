@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AvailableModel } from './catalog';
-import { checkScore, selectFrom, type CostLevel, type Need } from './select';
+import { DEFAULT_PRICE_CEILINGS, checkScore, mergeOverrides, selectFrom, selectModel, type CostLevel, type Need } from './select';
 import { buildModelMetaView } from '@/lib/ai/rolePipeline/modelMeta';
 
 function model(id: string, free: boolean, price: number | null, profile = free ? 'rogly' : 'paid'): AvailableModel {
@@ -93,9 +93,10 @@ describe('automatic model selection', () => {
     expect(selectFrom(WITH_SCORES, 'plan', 'medium', ceilings).primary?.model).toBe('anthropic/claude-opus-5.5');
   });
 
-  it('without benchmark scores, falls back to price as the power signal', () => {
+  it('without benchmark scores, plans with the priciest reasoning model the level can afford', () => {
     expect(pick('plan', 'high').primary).toBe('gpt-6-astra');
-    expect(pick('plan', 'medium').primary).toBe('anthropic/claude-sonnet-5');
+    // Reasoning models are preferred for planning; o4-mini is the only one under the medium ceiling.
+    expect(pick('plan', 'medium').primary).toBe('o4-mini');
   });
 
   it('falls back to Rogly when no paid credential exists, and to paid when Rogly is missing', () => {
@@ -242,5 +243,40 @@ describe('free level', () => {
       expect(s.fallback).toBeNull();
     }
     expect(selectFrom(PAID, 'plan', 'free').primary).toBeNull();
+  });
+});
+
+describe('per-level model choices', () => {
+  const gemma = { profileId: 'rogly', model: 'google/gemma-4-12B-it-qat-w4a16-ct' };
+  const settings = (doc: Parameters<typeof mergeOverrides>[0]) => ({ priceCeilings: DEFAULT_PRICE_CEILINGS, overrides: mergeOverrides(doc) });
+
+  it('applies a choice only at the level it was made for', async () => {
+    const s = settings({ overrides: { medium: { research: gemma } } });
+    const medium = await selectModel('org', 'research', 'medium', { models: ALL, settings: s });
+    expect(medium).toMatchObject({ source: 'pinned', primary: { model: gemma.model } });
+    const high = await selectModel('org', 'research', 'high', { models: ALL, settings: s });
+    expect(high.source).toBe('auto');
+    expect(high.primary?.free).toBe(false);
+  });
+
+  it('treats a legacy all-levels choice as a choice at each level until one level is cleared', async () => {
+    const legacy = settings({ pins: { research: gemma } });
+    expect((await selectModel('org', 'research', 'high', { models: ALL, settings: legacy })).source).toBe('pinned');
+    const cleared = settings({ pins: { research: gemma }, overrides: { high: { research: null } } });
+    expect((await selectModel('org', 'research', 'high', { models: ALL, settings: cleared })).source).toBe('auto');
+    expect((await selectModel('org', 'research', 'low', { models: ALL, settings: cleared })).source).toBe('pinned');
+  });
+
+  it('lets an explicit choice at a level beat a legacy one', () => {
+    const merged = mergeOverrides({ pins: { write: gemma }, overrides: { low: { write: { profileId: 'paid', model: 'o4-mini' } } } });
+    expect(merged.low?.write).toEqual({ profileId: 'paid', model: 'o4-mini' });
+    expect(merged.medium?.write).toEqual(gemma);
+  });
+
+  it('ignores a paid choice at the Free level', async () => {
+    const s = settings({ overrides: { free: { write: { profileId: 'paid', model: 'o4-mini' } } } });
+    const free = await selectModel('org', 'write', 'free', { models: ALL, settings: s });
+    expect(free.source).toBe('auto');
+    expect(free.primary?.free).toBe(true);
   });
 });

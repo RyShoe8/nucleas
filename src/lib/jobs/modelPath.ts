@@ -21,7 +21,7 @@ const LEVEL_LABEL: Record<ModelPathLevel, string> = { free: 'Free', low: 'Low', 
 /** Plain-language reason the engine picked this model, mirroring the rules in engine/select.ts. */
 export function modelStepReason(input: { stage: 'work' | 'review'; level: ModelPathLevel; free: boolean; source: 'pinned' | 'auto'; fallback: boolean }): string {
   const level = LEVEL_LABEL[input.level];
-  if (input.source === 'pinned') return `Pinned for this task in AI Engine settings.`;
+  if (input.source === 'pinned') return 'Chosen for this task and level in AI Engine settings.';
   if (input.level === 'free') return 'The Free level uses only free models.';
   if (input.stage === 'review') {
     return input.free

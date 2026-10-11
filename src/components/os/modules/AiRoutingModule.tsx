@@ -22,7 +22,8 @@ interface NeedRow {
     need: string;
     label: string;
     description: string;
-    pinned: { profileId: string; model: string } | null;
+    /** The model chosen for this need at each level, or null for automatic. */
+    overrides: Record<Level, { profileId: string; model: string } | null>;
     picks: Record<Level, Pick>;
 }
 
@@ -148,6 +149,33 @@ function PickCell({ pick }: { pick: Pick }) {
                 <span className={`ml-1 text-[10px] ${pick.primary.free ? 'text-emerald-400' : 'text-text-secondary'}`}>{pick.primary.free ? 'free' : 'paid'}</span>
             </div>
             {pick.fallback ? <div className="text-[10px] text-text-secondary truncate">retry: {short(pick.fallback.model)}</div> : null}
+        </div>
+    );
+}
+
+function ModelChooser({ models, freeOnly, onChoose, onCancel }: { models: ModelRow[]; freeOnly: boolean; onChoose: (profileId: string, model: string) => void; onCancel: () => void }) {
+    const pool = freeOnly ? models.filter((m) => m.free) : models;
+    const providers = [...new Map(pool.map((m) => [m.profileId, m.profileLabel] as const)).entries()];
+    const [profileId, setProfileId] = useState('');
+    const options = pool.filter((m) => m.profileId === profileId);
+    const field = 'h-7 w-full px-1 rounded border border-border bg-background-elevated text-xs';
+    return (
+        <div className="mt-1 space-y-1">
+            <select autoFocus value={profileId} onChange={(e) => setProfileId(e.target.value)} className={field} aria-label="Provider">
+                <option value="">Provider…</option>
+                {providers.map(([id, label]) => (
+                    <option key={id} value={id}>{label}</option>
+                ))}
+            </select>
+            <select disabled={!profileId} defaultValue="" onChange={(e) => { if (e.target.value) onChoose(profileId, e.target.value); }} className={`${field} disabled:opacity-50`} aria-label="Model">
+                <option value="">Model…</option>
+                {options.map((m) => (
+                    <option key={m.model} value={m.model}>
+                        {short(m.model)} · {m.free ? 'free' : m.price !== null ? `~${m.price}/1M` : 'price unknown'}{m.benchmark?.intelligence != null ? ` · score ${m.benchmark.intelligence.toFixed(1)}` : ''}
+                    </option>
+                ))}
+            </select>
+            <button type="button" onClick={onCancel} className="text-[11px] text-text-secondary hover:text-text-primary">Cancel</button>
         </div>
     );
 }
@@ -348,7 +376,7 @@ export default function AiRoutingModule() {
     const [error, setError] = useState<string | null>(null);
     const [refreshingModels, setRefreshingModels] = useState(false);
     const [refreshResult, setRefreshResult] = useState<string | null>(null);
-    const [pinning, setPinning] = useState<string | null>(null);
+    const [editing, setEditing] = useState<string | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
     const forceNextLoad = useRef(false);
     const modelIds = useRef<Set<string>>(new Set());
@@ -404,7 +432,7 @@ export default function AiRoutingModule() {
             return;
         }
         setError(null);
-        setPinning(null);
+        setEditing(null);
         reload();
     };
 
@@ -515,7 +543,7 @@ export default function AiRoutingModule() {
             <section>
                 <h2 className="text-sm font-semibold mb-1">What the engine picks</h2>
                 <p className="text-[11px] text-text-secondary mb-2">
-                    Chosen automatically from every enabled credential. Rogly uses its best-checked model for the job (by name until checks have run). Pin a model to override a need at every level.
+                    Chosen automatically from every enabled credential. Rogly uses its best-checked model for the job (by name until checks have run). Use Change to choose a provider and model for one task at one plan level; Auto returns it to the engine's pick.
                 </p>
                 <table className="w-full text-sm">
                     <thead>
@@ -526,7 +554,6 @@ export default function AiRoutingModule() {
                                     {l.label}
                                 </th>
                             ))}
-                            <th />
                         </tr>
                     </thead>
                     <tbody>
@@ -535,47 +562,36 @@ export default function AiRoutingModule() {
                                 <td className="py-2 pr-2 w-44">
                                     <div className="text-sm">{n.label}</div>
                                     <div className="text-[10px] text-text-secondary">{n.description}</div>
-                                    {n.pinned ? <div className="text-[10px] text-amber-400 mt-0.5">pinned</div> : null}
-                                    {pinning === n.need ? (
-                                        <select
-                                            autoFocus
-                                            defaultValue=""
-                                            onChange={(e) => {
-                                                const [profileId, ...rest] = e.target.value.split('::');
-                                                if (profileId) void save({ pin: { need: n.need, profileId, model: rest.join('::') } });
-                                            }}
-                                            className="mt-1 h-7 w-full px-1 rounded border border-border bg-background-elevated text-xs"
-                                            aria-label={`Pin a model for ${n.label}`}
-                                        >
-                                            <option value="">Choose a model…</option>
-                                            {data.models.map((m) => (
-                                                <option key={`${m.profileId}::${m.model}`} value={`${m.profileId}::${m.model}`}>
-                                                    {m.model} · {m.profileLabel} · {m.free ? 'free' : m.price !== null ? `~${m.price}/1M` : 'price unknown'}{m.benchmark?.intelligence != null ? ` · score ${m.benchmark.intelligence.toFixed(1)}` : ''}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    ) : null}
                                 </td>
-                                {LEVELS.map((l) => (
-                                    <td key={l.key} className="py-2 px-2">
-                                        <PickCell pick={n.picks[l.key]} />
-                                    </td>
-                                ))}
-                                <td className="py-2 pl-2 text-right whitespace-nowrap">
-                                    {n.pinned ? (
-                                        <button type="button" onClick={() => void save({ unpin: n.need })} className="text-[11px] px-2 py-0.5 rounded border border-border">
-                                            Unpin
-                                        </button>
-                                    ) : (
-                                        <button
-                                            type="button"
-                                            onClick={() => setPinning(pinning === n.need ? null : n.need)}
-                                            className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card"
-                                        >
-                                            {pinning === n.need ? 'Cancel' : 'Pin'}
-                                        </button>
-                                    )}
-                                </td>
+                                {LEVELS.map((l) => {
+                                    const cell = `${n.need}:${l.key}`;
+                                    const chosen = n.overrides[l.key];
+                                    return (
+                                        <td key={l.key} className="py-2 px-2 min-w-[8.5rem]">
+                                            <PickCell pick={n.picks[l.key]} />
+                                            {chosen ? <div className="text-[10px] text-amber-400">set by you</div> : null}
+                                            {editing === cell ? (
+                                                <ModelChooser
+                                                    models={data.models}
+                                                    freeOnly={l.key === 'free'}
+                                                    onChoose={(profileId, model) => void save({ override: { level: l.key, need: n.need, profileId, model } })}
+                                                    onCancel={() => setEditing(null)}
+                                                />
+                                            ) : (
+                                                <div className="mt-1 flex gap-1">
+                                                    <button type="button" onClick={() => setEditing(cell)} className="text-[11px] px-1.5 py-0.5 rounded border border-border hover:bg-background-card">
+                                                        Change
+                                                    </button>
+                                                    {chosen ? (
+                                                        <button type="button" onClick={() => void save({ clearOverride: { level: l.key, need: n.need } })} className="text-[11px] px-1.5 py-0.5 rounded border border-border hover:bg-background-card">
+                                                            Auto
+                                                        </button>
+                                                    ) : null}
+                                                </div>
+                                            )}
+                                        </td>
+                                    );
+                                })}
                             </tr>
                         ))}
                     </tbody>

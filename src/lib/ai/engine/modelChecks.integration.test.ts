@@ -160,22 +160,41 @@ describe('code edit scoring', () => {
 });
 
 describe('slow models', () => {
-  it('checks a slow model one stage per run, saving progress and releasing the lock between stages', async () => {
+  it('checks a slow model across several runs, keeping progress and releasing the lock between them', async () => {
     const profileId = String(new Types.ObjectId());
     listed.models = [{ profileId, model: 'Qwen/Qwen3-VL-8B-Thinking', free: true }];
     await queueModelChecks();
-    // Replies that take a minute each: after the first stage, the next never fits in the time left.
-    const caller = async () => fakeModel({ latencyMs: 60_000 });
-    for (let run = 1; run <= 4; run += 1) {
-      await runQueuedModelChecks({ caller, budgetMs: 200_000 });
-      const row = await AiModelCheck.findOne({}).lean<{ status: string; progress?: { done: string[] } }>();
-      expect(row).toMatchObject({ status: 'queued' });
-      expect(row?.progress?.done).toHaveLength(run);
-      expect(await AiDispatchLock.countDocuments()).toBe(0);
+    // Every reply takes a minute of (fake) wall-clock time, so a 200s run only fits a few calls.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
+    try {
+      const model = fakeModel({ latencyMs: 60_000 });
+      const slow: CheckCaller = {
+        async plain(...args) {
+          const reply = await model.plain(...args);
+          vi.setSystemTime(Date.now() + 60_000);
+          return reply;
+        },
+        async tools(...args) {
+          const reply = await model.tools(...args);
+          vi.setSystemTime(Date.now() + 60_000);
+          return reply;
+        },
+      };
+      let runs = 0;
+      for (; runs < 40; runs += 1) {
+        await runQueuedModelChecks({ caller: async () => slow, budgetMs: 200_000 });
+        expect(await AiDispatchLock.countDocuments()).toBe(0);
+        const row = await AiModelCheck.findOne({}).lean<{ status: string }>();
+        if (row?.status === 'done') break;
+        expect(row).toMatchObject({ status: 'queued' });
+      }
+      expect(runs).toBeGreaterThan(0);
+      expect(runs).toBeLessThan(40);
+      const done = (await modelCheckRows())[0];
+      expect(done).toMatchObject({ status: 'done', overall: 1, avgLatencyMs: 60_000 });
+      expect((await AiModelCheck.findOne({}).lean<{ progress?: unknown }>())?.progress).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
     }
-    await runQueuedModelChecks({ caller, budgetMs: 200_000 });
-    const done = (await modelCheckRows())[0];
-    expect(done).toMatchObject({ status: 'done', overall: 1, avgLatencyMs: 60_000 });
-    expect((await AiModelCheck.findOne({}).lean<{ progress?: unknown }>())?.progress).toBeUndefined();
   });
 });

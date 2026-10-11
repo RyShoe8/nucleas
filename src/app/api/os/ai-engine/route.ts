@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
     NEEDS.map(async (need) => ({
       need,
       ...NEED_LABELS[need],
-      pinned: settings.pins[need] ?? null,
+      overrides: Object.fromEntries(COST_LEVELS.map((level) => [level, settings.overrides[level]?.[need] ?? null])),
       picks: Object.fromEntries(
         await Promise.all(COST_LEVELS.map(async (level) => [level, await selectModel(org, need, level, { models, settings })] as const))
       ),
@@ -65,11 +65,11 @@ export async function GET(request: NextRequest) {
   );
 }
 
-/** Set the org default cost level or price ceilings, pin/unpin a model for a need, or set/remove the benchmark API key. */
+/** Set the org default cost level or price ceilings, choose or clear the model for a need at one level, or set/remove the benchmark API key. */
 export async function PUT(request: NextRequest) {
   const viewer = await requireAdmin(request);
   if (viewer instanceof NextResponse) return viewer;
-  const body = (await request.json().catch(() => ({}))) as { defaultCostLevel?: unknown; pin?: { need?: unknown; profileId?: unknown; model?: unknown }; unpin?: unknown; benchmarkApiKey?: unknown; priceCeilings?: unknown };
+  const body = (await request.json().catch(() => ({}))) as { defaultCostLevel?: unknown; override?: { level?: unknown; need?: unknown; profileId?: unknown; model?: unknown }; clearOverride?: { level?: unknown; need?: unknown }; benchmarkApiKey?: unknown; priceCeilings?: unknown };
   if ('benchmarkApiKey' in body) {
     const key = typeof body.benchmarkApiKey === 'string' && body.benchmarkApiKey.trim() ? body.benchmarkApiKey : null;
     const saved = await saveBenchmarkKey(key);
@@ -85,11 +85,14 @@ export async function PUT(request: NextRequest) {
         body.priceCeilings && typeof body.priceCeilings === 'object'
           ? Object.fromEntries(Object.entries(body.priceCeilings as Record<string, unknown>).filter(([level, v]) => isCostLevel(level) && isPriceCeiling(v)))
           : undefined,
-      pin:
-        body.pin && need(body.pin.need) && typeof body.pin.profileId === 'string' && typeof body.pin.model === 'string'
-          ? { need: need(body.pin.need)!, profileId: body.pin.profileId, model: body.pin.model }
+      override:
+        body.override && need(body.override.need) && isCostLevel(body.override.level) && typeof body.override.profileId === 'string' && typeof body.override.model === 'string'
+          ? { level: body.override.level, need: need(body.override.need)!, profileId: body.override.profileId, model: body.override.model }
           : null,
-      unpin: need(body.unpin),
+      clearOverride:
+        body.clearOverride && need(body.clearOverride.need) && isCostLevel(body.clearOverride.level)
+          ? { level: body.clearOverride.level, need: need(body.clearOverride.need)! }
+          : null,
     },
     viewer.userId
   );

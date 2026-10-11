@@ -115,8 +115,8 @@ describe('engine selection in Ask', () => {
     expect(seen.review).toEqual(['gpt-6-astra']);
   });
 
-  it('a pinned model overrides automatic selection at every level', async () => {
-    await saveEngineSettings(String(org), { pin: { need: 'write', profileId: roglyProfile, model: ROGLY_MODELS.code } }, admin.userId);
+  it('a model chosen for a level replaces the automatic one at that level only', async () => {
+    await saveEngineSettings(String(org), { override: { level: 'high', need: 'write', profileId: roglyProfile, model: ROGLY_MODELS.code } }, admin.userId);
     const writers: string[] = [];
     chat.mockImplementation(async (input) => {
       if (stageOf(input) === 'plan') return reply('{"kind":"answer","scope":"general","outline":[],"review":false}');
@@ -213,8 +213,7 @@ describe('orchestrated Ask', () => {
     chat.mockImplementation(async () => reply('{"kind":"clarify","clarifyQuestion":"Which business do you mean?"}'));
     const clarify = await ask('how is it going?');
     expect(clarify).toMatchObject({ role: 'assistant', text: 'Which business do you mean?' });
-    // 2 calls (plan + write), 3 plan attempts (retry, then one step up), 1 clarify.
-    // 2 answers; unusable plans get 2 tries on the first model and 2 on the fallback; 1 clarify.
+    // 2 answers (plan + write); unusable plans get 2 tries on the first model and 2 on the model above; 1 clarify.
     expect(chat).toHaveBeenCalledTimes(2 + 4 + 1);
   });
 });
@@ -310,7 +309,7 @@ describe('planner robustness', () => {
     });
     const out = await ask('summarize', 'low');
     expect(out.role).toBe('assistant');
-    expect(planners).toEqual(['o4-mini', 'o4-mini', 'anthropic/claude-sonnet-5']);
+    expect(planners).toEqual(['o4-mini', 'o4-mini', 'gpt-6-astra']);
     expect(out.stages.filter((s) => s.stage === 'plan').map((s) => s.note ?? 'ok')).toEqual(['unusable plan (no JSON)', 'unusable plan (no JSON)', 'ok']);
   });
 
@@ -348,7 +347,7 @@ describe('code changes', () => {
     propose.mockResolvedValue({ ok: true, costMicros: 900, build: { id: 'b1', title: 'Add a FAQ page', summary: 'Static FAQ.', status: 'proposed', repository: { fullName: 'RyShoe8/frugalgambler' } } });
     const answer = await ask('Plan a FAQ page for Frugal Gambler');
     expect(plannerSystem).toContain('- Frugal Gambler: RyShoe8/frugalgambler');
-    expect(propose).toHaveBeenCalledWith(admin, expect.objectContaining({ companyId, request: 'Add a FAQ page linked from the footer', level: 'low' }));
+    expect(propose).toHaveBeenCalledWith(admin, expect.objectContaining({ companyId, request: "Add a FAQ page linked from the footer\n\nThe user's exact message:\nPlan a FAQ page for Frugal Gambler", level: 'low' }));
     expect(answer.build).toMatchObject({ id: 'b1', status: 'proposed' });
     expect(answer.text).toContain('Add a FAQ page');
     expect(answer.stages.map((s) => s.stage)).toEqual(['plan', 'code']);

@@ -222,7 +222,7 @@ export function selectFrom(models: AvailableModel[], need: Need, level: CostLeve
 }
 
 
-// ---------- Settings: org default level and optional pins ----------
+// ---------- Settings: org default level and optional per-level model choices ----------
 
 const settingsSchema = new Schema(
   {
@@ -230,8 +230,10 @@ const settingsSchema = new Schema(
     defaultCostLevel: { type: String, enum: COST_LEVELS, default: 'low' },
     /** level -> max blended $ per 1M tokens (null = none). Missing levels use the defaults. */
     priceCeilings: { type: Schema.Types.Mixed },
-    /** need -> pinned model (applies at every level). */
+    /** Legacy: need -> model applied at every level. Read as per-level choices until the next save moves it. */
     pins: { type: Schema.Types.Mixed, default: {} },
+    /** level -> need -> chosen model, or null once a legacy choice has been cleared for that level. */
+    overrides: { type: Schema.Types.Mixed, default: {} },
     updatedByUserId: { type: Schema.Types.ObjectId },
   },
   { timestamps: true }
@@ -242,18 +244,37 @@ export const AiEngineSettings: Model<SettingsDoc> =
 
 type Pins = Partial<Record<Need, { profileId: string; model: string }>>;
 
+export type ModelOverride = { profileId: string; model: string };
+/** A level's choice per need. null means "automatic" even if a legacy all-levels choice exists. */
+export type Overrides = Partial<Record<CostLevel, Partial<Record<Need, ModelOverride | null>>>>;
+
+/** Explicit per-level choices win; a legacy all-levels choice fills any level that has none. */
+export function mergeOverrides(doc: { overrides?: Overrides; pins?: Pins } | null | undefined): Overrides {
+  const out: Overrides = {};
+  for (const level of COST_LEVELS) {
+    const row: Partial<Record<Need, ModelOverride | null>> = {};
+    for (const need of NEEDS) {
+      const explicit = doc?.overrides?.[level]?.[need];
+      if (explicit !== undefined) row[need] = explicit;
+      else if (doc?.pins?.[need]) row[need] = doc.pins[need]!;
+    }
+    out[level] = row;
+  }
+  return out;
+}
+
 export interface EngineSettings {
   defaultCostLevel: CostLevel;
   priceCeilings: PriceCeilings;
-  pins: Pins;
+  overrides: Overrides;
 }
 
 export async function readEngineSettings(organizationId: string): Promise<EngineSettings> {
-  const doc = await AiEngineSettings.findOne({ organizationId }).lean<{ defaultCostLevel?: CostLevel; priceCeilings?: Partial<PriceCeilings>; pins?: Pins }>();
+  const doc = await AiEngineSettings.findOne({ organizationId }).lean<{ defaultCostLevel?: CostLevel; priceCeilings?: Partial<PriceCeilings>; pins?: Pins; overrides?: Overrides }>();
   return {
     defaultCostLevel: doc?.defaultCostLevel ?? 'low',
     priceCeilings: { ...DEFAULT_PRICE_CEILINGS, ...(doc?.priceCeilings ?? {}) },
-    pins: doc?.pins ?? {},
+    overrides: mergeOverrides(doc),
   };
 }
 
@@ -266,16 +287,16 @@ export function isCostLevel(value: unknown): value is CostLevel {
   return typeof value === 'string' && (COST_LEVELS as readonly string[]).includes(value);
 }
 
-/** Selects a model for a need. A pin overrides the automatic choice at every level. */
+/** Selects a model for a need at a level. A choice made for that level and need replaces the automatic one. */
 export async function selectModel(
   organizationId: string,
   need: Need,
   level: CostLevel,
-  options: { models?: AvailableModel[]; settings?: Pick<EngineSettings, 'pins' | 'priceCeilings'> } = {}
+  options: { models?: AvailableModel[]; settings?: Pick<EngineSettings, 'overrides' | 'priceCeilings'> } = {}
 ): Promise<Selection> {
   const models = options.models ?? (await listAvailableModels());
   const settings = options.settings ?? (await readEngineSettings(organizationId));
-  const pin = settings.pins[need];
+  const pin = settings.overrides?.[level]?.[need];
   if (pin) {
     const pinned = models.find((m) => m.profileId === pin.profileId && m.model === pin.model);
     // At the free level a paid pin does not apply.
@@ -287,7 +308,7 @@ export async function selectModel(
 
 export async function saveEngineSettings(
   organizationId: string,
-  input: { defaultCostLevel?: CostLevel; priceCeilings?: Partial<PriceCeilings>; pin?: { need: Need; profileId: string; model: string } | null; unpin?: Need },
+  input: { defaultCostLevel?: CostLevel; priceCeilings?: Partial<PriceCeilings>; override?: { level: CostLevel; need: Need; profileId: string; model: string } | null; clearOverride?: { level: CostLevel; need: Need } | null },
   userId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const update: Record<string, unknown> = { updatedByUserId: Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : undefined };
@@ -301,15 +322,31 @@ export async function saveEngineSettings(
     set[`priceCeilings.${level}`] = ceiling === null ? null : Math.round(ceiling * 1000) / 1000;
   }
   const unset: Record<string, ''> = {};
-  if (input.pin) {
-    if (!(NEEDS as readonly string[]).includes(input.pin.need)) return { ok: false, error: 'Unknown need.' };
-    const available = await listAvailableModels();
-    if (!available.some((m) => m.profileId === input.pin!.profileId && m.model === input.pin!.model)) {
-      return { ok: false, error: 'That model is not available from an enabled credential.' };
+  // Move a legacy all-levels choice into per-level choices the first time settings are saved.
+  const existing = await AiEngineSettings.findOne({ organizationId }).lean<{ pins?: Pins; overrides?: Overrides }>();
+  const legacy = existing?.pins ?? {};
+  for (const need of NEEDS) {
+    if (!legacy[need]) continue;
+    for (const level of COST_LEVELS) {
+      if (existing?.overrides?.[level]?.[need] === undefined) set[`overrides.${level}.${need}`] = legacy[need];
     }
-    set[`pins.${input.pin.need}`] = { profileId: input.pin.profileId, model: input.pin.model };
   }
-  if (input.unpin) unset[`pins.${input.unpin}`] = '';
+  if (Object.keys(legacy).length) unset.pins = '';
+  if (input.override) {
+    const { level, need, profileId, model } = input.override;
+    if (!isCostLevel(level)) return { ok: false, error: 'Unknown cost level.' };
+    if (!(NEEDS as readonly string[]).includes(need)) return { ok: false, error: 'Unknown need.' };
+    const available = await listAvailableModels();
+    const chosen = available.find((m) => m.profileId === profileId && m.model === model);
+    if (!chosen) return { ok: false, error: 'That model is not available from an enabled credential.' };
+    if (level === 'free' && !chosen.free) return { ok: false, error: 'The Free level can only use free models.' };
+    set[`overrides.${level}.${need}`] = { profileId, model };
+  }
+  if (input.clearOverride) {
+    const { level, need } = input.clearOverride;
+    if (!isCostLevel(level) || !(NEEDS as readonly string[]).includes(need)) return { ok: false, error: 'Unknown level or need.' };
+    set[`overrides.${level}.${need}`] = null;
+  }
   await AiEngineSettings.updateOne({ organizationId }, { $set: set, ...(Object.keys(unset).length ? { $unset: unset } : {}) }, { upsert: true });
   return { ok: true };
 }

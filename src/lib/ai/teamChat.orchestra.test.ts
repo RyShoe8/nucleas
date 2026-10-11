@@ -23,7 +23,7 @@ vi.mock('@/lib/ai/engine/catalog', () => ({
   contextBudgetChars: () => 48_000,
 }));
 vi.mock('@/lib/ai/engine/select', () => ({
-  readEngineSettings: async () => ({ defaultCostLevel: 'low', priceCeilings: { low: 1.5, medium: 5, high: null }, pins: {} }),
+  readEngineSettings: async () => ({ defaultCostLevel: 'low', priceCeilings: { low: 1.5, medium: 5, high: null }, overrides: {} }),
   selectModel: (...args: unknown[]) => mocks.selectModel(...args),
 }));
 vi.mock('@/lib/models/AiControl', () => ({

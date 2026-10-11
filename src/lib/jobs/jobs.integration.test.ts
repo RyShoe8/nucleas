@@ -9,7 +9,7 @@ vi.mock('./designer', () => ({ designJob: (...args: unknown[]) => mocks.design(.
 vi.mock('@/lib/ai/companyChat', () => ({ attemptCompanyCredentialChat: (input: unknown) => mocks.chat(input) }));
 vi.mock('@/lib/ai/engine/catalog', () => ({ listAvailableModels: (...args: unknown[]) => mocks.models(...args) }));
 vi.mock('@/lib/ai/engine/select', () => ({
-  readEngineSettings: async () => ({ defaultCostLevel: 'low', priceCeilings: { low: 1.5, medium: 5, high: null }, pins: {} }),
+  readEngineSettings: async () => ({ defaultCostLevel: 'low', priceCeilings: { low: 1.5, medium: 5, high: null }, overrides: {} }),
   selectModel: (...args: unknown[]) => mocks.select(...args),
   isCostLevel: (v: unknown) => v === 'low' || v === 'medium' || v === 'high',
 }));
