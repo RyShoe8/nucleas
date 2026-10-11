@@ -353,7 +353,8 @@ export async function executeJobRun(runId: string): Promise<void> {
   await progress(run._id, owner, 'Preparing company, project, and model context', { stage: 'preparing', percent: 8 });
 
   const spent = await monthSpendMicros(job._id);
-  if (spent >= (job.monthlyBudgetMicros ?? 0)) return fail(`This job has reached its monthly budget ($${((job.monthlyBudgetMicros ?? 0) / 1_000_000).toFixed(2)}).`);
+  // Voice and Marketing plan have no spending cap: they are generated once and reviewed, not scheduled.
+  if (!manualArtifact(design.data.skill) && spent >= (job.monthlyBudgetMicros ?? 0)) return fail(`This job has reached its monthly budget ($${((job.monthlyBudgetMicros ?? 0) / 1_000_000).toFixed(2)}).`);
 
   const viewer = await loadCompanyViewer(String(job.createdByUserId));
   const profile = viewer ? await getCompanyProfile(viewer, String(job.companyId)) : null;

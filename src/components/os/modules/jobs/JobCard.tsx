@@ -345,6 +345,9 @@ function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => vo
                     </span>
                 </label>
             ))}
+            {manual ? (
+                <p className="text-xs text-text-secondary">No spending cap: this is generated once and reviewed, so there is no monthly budget. The cost is shown with the result.</p>
+            ) : (
             <label className="flex items-center gap-2 text-xs">
                 Monthly budget $
                 <input
@@ -358,9 +361,10 @@ function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => vo
                 />
                 <span className="text-text-secondary">{manual ? 'spending cap only; never schedules a run' : 'the job pauses when it is reached'}</span>
             </label>
+            )}
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
             <div className="flex gap-2">
-                <button type="button" className={PRIMARY} disabled={busy !== null} onClick={() => void act({ action: 'approve', completion: manual ? 'review' : completion, monthlyBudgetUsd: Number(budget) }, 'approve')}>
+                <button type="button" className={PRIMARY} disabled={busy !== null} onClick={() => void act({ action: 'approve', completion: manual ? 'review' : completion, ...(manual ? {} : { monthlyBudgetUsd: Number(budget) }) }, 'approve')}>
                     {busy === 'approve' ? 'Starting…' : manual ? retrying ? 'Retry generation' : 'Generate draft' : retrying ? 'Retry dry run' : 'Approve and run a dry run'}
                 </button>
                 <button
@@ -750,7 +754,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                         {job.companyName}
                         {d ? ` · ${scheduleLabel(d.schedule)}` : ''}
                         {job.completion ? ` · ${job.completion === 'automatic' ? 'automatic' : 'reviewed'}` : ''}
-                        {job.monthlyBudgetMicros ? ` · ${usd(job.spentThisMonthMicros)} of ${usd(job.monthlyBudgetMicros)} this month` : ''}
+                        {manualArtifact(job.design?.skill) ? (job.spentThisMonthMicros ? ` · ${usd(job.spentThisMonthMicros)} spent` : '') : job.monthlyBudgetMicros ? ` · ${usd(job.spentThisMonthMicros)} of ${usd(job.monthlyBudgetMicros)} this month` : ''}
                     </p>
                 </div>
                 <JobStatusBadge status={job.status} label={job.status === 'proposed' && failedAttempt ? 'Dry run failed' : undefined} />

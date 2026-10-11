@@ -359,9 +359,11 @@ export async function approveJob(viewer: CompanyViewer, id: string, input: { com
   const found = await managed(viewer, id);
   if (!found.ok) return found;
   if (input.completion !== 'review' && input.completion !== 'automatic') return { ok: false, status: 400, error: 'Choose review or automatic completion.' };
-  const budget = input.monthlyBudgetMicros === undefined ? found.job.monthlyBudgetMicros ?? 2_000_000 : Math.round(input.monthlyBudgetMicros);
-  if (!(budget > 0 && budget <= 1_000_000_000)) return { ok: false, status: 400, error: 'Set a monthly budget above $0.' };
   const parsedDesign = jobDesignSchema.safeParse(found.job.design);
+  // Voice and Marketing plan are generated once (or a few times) and reviewed, so they have no spending cap (0 means uncapped).
+  const uncapped = parsedDesign.success && manualArtifact(parsedDesign.data.skill);
+  const budget = uncapped ? 0 : input.monthlyBudgetMicros === undefined ? found.job.monthlyBudgetMicros ?? 2_000_000 : Math.round(input.monthlyBudgetMicros);
+  if (!uncapped && !(budget > 0 && budget <= 1_000_000_000)) return { ok: false, status: 400, error: 'Set a monthly budget above $0.' };
   const manual = parsedDesign.success && manualArtifact(parsedDesign.data.skill);
   const completion = manual ? 'review' : input.completion;
   const result = await transition(viewer, found.job, ['proposed'], { status: 'testing', completion, monthlyBudgetMicros: budget, ...(manual ? { design: { ...parsedDesign.data, schedule: { kind: 'once' }, recommendedCompletion: 'review' }, nextRunAt: null } : {}) }, 'approved', completion);

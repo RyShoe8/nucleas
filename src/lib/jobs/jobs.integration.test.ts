@@ -343,6 +343,28 @@ describe('real runs', () => {
     expect(mocks.chat.mock.calls[0][0].maxOutputTokensOverride).toBe(6000);
   });
 
+  it('gives a Voice no spending cap, and still caps other jobs', async () => {
+    await Client.updateOne({ _id: companyId }, { $unset: { domain: '' } });
+    const created = await createTemplateJob(admin, { companyId, template: 'brand_voice', config: {} });
+    if (!created.ok) throw new Error(created.error);
+    // Even a budget sent with the approval is ignored: a voice is generated once.
+    const approved = await approveJob(admin, created.job.id, { completion: 'review', monthlyBudgetMicros: 100 });
+    expect(approved).toMatchObject({ ok: true });
+    expect(await getJob(admin, created.job.id)).toMatchObject({ monthlyBudgetMicros: 0 });
+    mocks.chat.mockResolvedValueOnce({ role: 'assistant', text: JSON.stringify({ brand_profile: { positioning: { primary: 'Practical game discovery.' }, audienceRelationship: { style: 'Fellow players' }, rhetoricalPatterns: ['Start with a concrete reason to play.'] }, sources: ['https://playbound.club/'] }), costMicros: 5_000_000 });
+    await executeJobRun(approved.dryRunId!);
+    const run = (await getJob(admin, created.job.id))?.runs[0];
+    expect(run?.status).toBe('needs_review');
+    expect(run?.error ?? '').not.toContain('monthly budget');
+  });
+
+  it('gives a Marketing plan no spending cap either', async () => {
+    const created = await createTemplateJob(admin, { companyId, template: 'marketing_plan', config: { companyName: 'PlayBound' } });
+    if (!created.ok) throw new Error(created.error);
+    expect(await approveJob(admin, created.job.id, { completion: 'review', monthlyBudgetMicros: 100 })).toMatchObject({ ok: true });
+    expect(await getJob(admin, created.job.id)).toMatchObject({ monthlyBudgetMicros: 0 });
+  });
+
   it('never schedules Voice or Marketing overview, even with legacy recurring settings', async () => {
     for (const template of ['brand_voice', 'marketing_plan'] as const) {
       const created = await createTemplateJob(admin, { companyId, template, config: { companyName: 'PlayBound' } });
