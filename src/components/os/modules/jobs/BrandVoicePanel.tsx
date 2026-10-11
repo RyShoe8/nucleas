@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import type { JobView } from './JobCard';
-import ArtifactHistory from './ArtifactHistory';
 
 type Voice = { persona: string; examples: string; status: 'draft' | 'approved'; revision: number; sources: string[] };
 const EMPTY: Voice = { persona: '', examples: '', status: 'draft', revision: 0, sources: [] };
@@ -13,7 +12,6 @@ export default function BrandVoicePanel({ companyId, onCreated }: { companyId: s
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
-  const [reload, setReload] = useState(0);
   useEffect(() => {
     if (!companyId) return;
     let cancelled = false;
@@ -23,7 +21,7 @@ export default function BrandVoicePanel({ companyId, onCreated }: { companyId: s
       if (!cancelled) { setVoice(body.voice ?? EMPTY); setLoading(false); setError(''); }
     }).catch((e: Error) => { if (!cancelled) { setError(e.message); setLoading(false); } });
     return () => { cancelled = true; };
-  }, [companyId, reload]);
+  }, [companyId]);
 
   async function save(status: Voice['status'], generate = false) {
     setBusy(true); setError(''); setMessage('');
@@ -38,7 +36,7 @@ export default function BrandVoicePanel({ companyId, onCreated }: { companyId: s
         if (!created.ok || !result.job) throw new Error(result.error || 'Could not create Voice job.');
         onCreated(result.job);
         window.dispatchEvent(new Event('nucleas:jobs-changed'));
-      } else setMessage(status === 'approved' ? 'Voice approved. Content and social drafting jobs will use it.' : 'Draft saved.');
+      } else setMessage('Voice approved. Content and social drafting jobs will use it.');
     } catch (e) { setError(e instanceof Error ? e.message : 'Voice request failed.'); }
     finally { setBusy(false); }
   }
@@ -46,8 +44,7 @@ export default function BrandVoicePanel({ companyId, onCreated }: { companyId: s
   if (!companyId) return <p className="text-sm text-text-secondary">Choose a company to build its Voice.</p>;
   if (loading) return <p className="text-sm text-text-secondary">Loading Voice…</p>;
   return <div className="space-y-3">
-    <p className="text-xs text-text-secondary">Voice runs only when requested. Generate a new draft when the brand changes, then compare it with previous versions.</p>
-    <ArtifactHistory key={voice.revision} companyId={companyId} kind="brand_voice" />
+    <p className="text-xs text-text-secondary">Voice runs only when requested. Generate a new draft when the brand changes.</p>
     <p className="text-xs text-text-secondary">Build a persona from the Company Overview, website, and writing samples. Accept the generated job result, then edit and approve the persona here for content and social drafts.</p>
     <label className="block space-y-1"><span className="ui-kicker">Brand writing samples</span><textarea aria-label="Brand writing samples" value={voice.examples} maxLength={16000} onChange={(e) => setVoice({ ...voice, examples: e.target.value })} placeholder="Paste your own articles or posts, including source URLs. Third-party emails are content sources, not your brand voice." className="ui-control w-full h-32 resize-y" /></label>
     <label className="block space-y-1"><span className="ui-kicker">Persona · {voice.status} · revision {voice.revision}</span><textarea aria-label="Brand persona" value={voice.persona} maxLength={20000} onChange={(e) => setVoice({ ...voice, persona: e.target.value, status: 'draft' })} placeholder="Generate a persona or write your brand’s voice guidelines here." className="ui-control w-full h-64 resize-y" /></label>
@@ -56,9 +53,7 @@ export default function BrandVoicePanel({ companyId, onCreated }: { companyId: s
     {message ? <p role="status" className="text-xs text-emerald-400">{message}</p> : null}
     <div className="flex flex-wrap gap-2">
       <button type="button" disabled={busy} className="ui-button-primary" onClick={() => void save(voice.status, true)}>{busy ? 'Saving…' : 'Generate Voice'}</button>
-      <button type="button" disabled={busy} className="ui-button" onClick={() => void save('draft')}>Save draft</button>
       <button type="button" disabled={busy || voice.persona.trim().length < 40} className="ui-button" onClick={() => void save('approved')}>Approve Voice</button>
-      <button type="button" disabled={busy} className="ui-button" onClick={() => { setLoading(true); setReload((n) => n + 1); }}>Reload saved Voice</button>
     </div>
   </div>;
 }
