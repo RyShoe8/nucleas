@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { IntegrationConnection, IntegrationSecret } from '@/lib/models/Integration';
 import { openSecret, sealSecret, secretHint } from '@/lib/security/secretBox';
 import { getIntegrationProvider } from '@/lib/integrations/providers';
+import { facebookSignInConfigured } from '@/lib/integrations/facebook/facebookOAuth';
 import { verifyCredential, type VerifyOutcome } from '@/lib/integrations/verifyCredential';
 import { getCompanyProfile, isCompanyManager, type CompanyViewer } from '@/lib/companies/companyProfile';
 
@@ -22,7 +23,7 @@ export interface ConnectionView {
   lastError?: string;
   connectable: boolean;
   /** OAuth sign-in flow that connects this integration, when not API-key based. */
-  signIn: 'google' | null;
+  signIn: 'google' | 'facebook' | null;
   /** Integrations set up by generating a signed endpoint rather than entering a key. */
   webhook: boolean;
   /** Guidance shown next to the credential field. */
@@ -60,7 +61,7 @@ function toView(c: ConnectionLean): ConnectionView {
     lastVerifiedAt: c.lastVerifiedAt?.toISOString(),
     lastError: c.lastError,
     connectable: def?.authKind === 'api_key',
-    signIn: ['ga4', 'gsc', 'adsense'].includes(c.provider) ? 'google' : null,
+    signIn: ['ga4', 'gsc', 'adsense'].includes(c.provider) ? 'google' : c.provider === 'facebook' && facebookSignInConfigured() ? 'facebook' : null,
     webhook: def?.authKind === 'webhook',
     keyGuidance: def?.credentialHint,
   };

@@ -67,6 +67,17 @@ describe('verifyCredential', () => {
     expect(JSON.stringify(echoed)).not.toContain('xkeysib-secret');
   });
 
+  it('verifies a Facebook Page token and rejects personal or expired tokens', async () => {
+    const ok = fakeFetch(200, { id: '123', name: 'Frugal Gambler', category: 'Website' });
+    expect(await verifyCredential('facebook', 'EAAB-page-token', ok)).toEqual({ ok: true, accountLabel: 'Frugal Gambler' });
+    expect(ok.mock.calls[0][0]).not.toContain('EAAB-page-token');
+    expect(ok.mock.calls[0][1]?.headers).toMatchObject({ authorization: 'Bearer EAAB-page-token' });
+    const user = fakeFetch(400, { error: { code: 100, message: 'Tried accessing nonexisting field (category) on node type (User)' } });
+    expect(await verifyCredential('facebook', 'EAAB-user-token', user)).toMatchObject({ ok: false, reason: 'wrong_key_type' });
+    const expired = fakeFetch(400, { error: { code: 190, message: 'Error validating access token: Session has expired' } });
+    expect(await verifyCredential('facebook', 'EAAB-old', expired)).toMatchObject({ ok: false, reason: 'invalid_credential' });
+  });
+
   it('verifies a Bluesky handle with an app password and never sends anything else', async () => {
     const f = fakeFetch(200, { handle: 'frugal.bsky.social', accessJwt: 'jwt-should-not-leak' });
     const out = await verifyCredential('bluesky', '@frugal.bsky.social:abcd-efgh-ijkl-mnop', f);

@@ -113,6 +113,21 @@ export async function verifyCredential(provider: string, credential: string, fet
         if (fail) return fail;
         return { ok: true, accountLabel: String((body.user as { username?: string } | undefined)?.username ?? 'Vercel') };
       }
+      case 'facebook': {
+        // Only a Page token proves access to a Page; a personal user token has no Page category.
+        const { status, body } = await getJson(fetchImpl, 'https://graph.facebook.com/v21.0/me?fields=id,name,category', { authorization: `Bearer ${key}` });
+        const error = (body.error ?? {}) as { code?: number; message?: string };
+        if (status === 200 && body.id) return { ok: true, accountLabel: String(body.name ?? 'Facebook Page') };
+        if (error.code === 100 && /category/i.test(String(error.message ?? ''))) {
+          return { ok: false, reason: 'wrong_key_type', message: 'That is a personal user token. Generate a Page access token for the company Page instead.' };
+        }
+        if (error.code === 190 || status === 401 || status === 403) {
+          return { ok: false, reason: 'invalid_credential', message: 'Facebook rejected this token. It may be expired or revoked; generate a new Page access token.' };
+        }
+        const fail = authFailure(status, body, key);
+        if (fail) return fail;
+        return { ok: false, reason: 'invalid_credential', message: `Facebook returned ${status}.` };
+      }
       case 'bluesky': {
         // App passwords only (xxxx-xxxx-xxxx-xxxx); the account password must never be stored.
         const split = key.indexOf(':');

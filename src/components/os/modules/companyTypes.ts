@@ -26,7 +26,7 @@ export interface OsConnection {
     lastVerifiedAt?: string;
     lastError?: string;
     connectable: boolean;
-    signIn: 'google' | null;
+    signIn: 'google' | 'facebook' | null;
     webhook: boolean;
     keyGuidance?: string;
 }

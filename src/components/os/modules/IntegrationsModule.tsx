@@ -279,6 +279,14 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                         {c.status === 'connected' ? 'Re-sign in' : 'Sign in with Google'}
                     </a>
                 ) : null}
+                {c.signIn === 'facebook' && auth.isManagerOrAdmin && c.companyId ? (
+                    <a
+                        href={`/api/os/integrations/facebook/start?companyId=${encodeURIComponent(c.companyId)}`}
+                        className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card"
+                    >
+                        {c.status === 'connected' ? 'Log in again' : 'Log in with Facebook'}
+                    </a>
+                ) : null}
                 {c.domain === 'social' && !c.connectable && !c.signIn && auth.isManagerOrAdmin ? (
                     <span className="text-[11px] px-2 py-0.5 rounded border border-border text-text-secondary" title="Nucleas can't post to this platform for you yet. Drafts are copied and posted by hand.">
                         Manual posting
@@ -318,7 +326,7 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                         spellCheck={false}
                         value={credential}
                         onChange={(e) => setCredential(e.target.value)}
-                        placeholder={c.provider === 'bluesky' ? 'handle.bsky.social:xxxx-xxxx-xxxx-xxxx' : `${c.providerName} API key`}
+                        placeholder={c.provider === 'bluesky' ? 'handle.bsky.social:xxxx-xxxx-xxxx-xxxx' : c.provider === 'facebook' ? 'Facebook Page access token' : `${c.providerName} API key`}
                         className="flex-1 min-w-0 h-8 px-2 rounded border border-border bg-background-elevated text-sm"
                         autoFocus
                     />

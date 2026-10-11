@@ -12,7 +12,7 @@ export const GOOGLE_INTEGRATION_SCOPES = [
 export const GOOGLE_INTEGRATION_CALLBACK_PATH = '/api/os/integrations/google/callback';
 
 /** Hosts allowed to receive the OAuth callback. Must also be registered on the Google OAuth client. */
-const ALLOWED_CALLBACK_HOSTS = ['os.nucleas.app', 'nucleas.app', 'os.localhost:3000', 'localhost:3000'];
+export const ALLOWED_CALLBACK_HOSTS = ['os.nucleas.app', 'nucleas.app', 'os.localhost:3000', 'localhost:3000'];
 
 export function googleIntegrationRedirectUri(requestUrl: string): string | null {
   const url = new URL(requestUrl);
