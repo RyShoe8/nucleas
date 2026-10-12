@@ -21,6 +21,8 @@ const connectionSchema = new Schema(
     credentialHint: { type: String, trim: true },
     /** Provider-reported account identity after verification (e.g. Brevo company name). */
     accountLabel: { type: String, trim: true },
+    /** Public page of the connected account when the provider has one (e.g. the Facebook Page), for company link buttons. */
+    accountUrl: { type: String, trim: true, maxlength: 500 },
     /** Provider plan when known; capabilities report plan_limited from this. */
     planLabel: { type: String, trim: true },
     /** Credential works but the provider plan withholds data/API access. */

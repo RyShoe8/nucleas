@@ -34,5 +34,6 @@ export async function completeFacebookConnection(
 
   const result = await connectWithApiKey(viewer, String(connection._id), picked.page.token);
   if (!result.ok) return { ok: false, error: result.error };
+  await IntegrationConnection.updateOne({ _id: connection._id }, { $set: { accountUrl: `https://www.facebook.com/${encodeURIComponent(picked.page.id)}` } });
   return { ok: true, pageName: picked.page.name };
 }

@@ -5,6 +5,7 @@ import { useOsCompanies } from './CompaniesModule';
 import JobCard, { JobStatusBadge, jobIsBusy, jobListProgress, scheduleLabel, type JobView } from './jobs/JobCard';
 import ArtifactHistory from './jobs/ArtifactHistory';
 import MarketingPlanEditor from './jobs/MarketingPlanEditor';
+import BrandAssetsPanel from './jobs/BrandAssetsPanel';
 
 type Group = { key: string; label: string; test: (j: JobView) => boolean };
 
@@ -153,6 +154,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
     const [error, setError] = useState<string | null>(null);
     const [company, setCompany] = useState(initialCompanyId ?? 'all');
     const [showClosed, setShowClosed] = useState(false);
+    const [showAssets, setShowAssets] = useState(false);
     const [open, setOpen] = useState<string | null>(null);
     const [creating, setCreating] = useState(title === 'Marketing' || Boolean(initialCompanyId && initialKind));
     const [reloadKey, setReloadKey] = useState(0);
@@ -210,8 +212,8 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
               : 'e.g. Research Deadlock in detail — developer, release date, platforms, server requirements — and add it to the PlayBound catalog.';
 
     return (
-        <div className="h-full flex flex-col text-text-primary">
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
+        <div className="touch-comfort h-full flex flex-col text-text-primary">
+            <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-border">
                 <select value={company} onChange={(e) => setCompany(e.target.value)} className="ui-control" aria-label="Company">
                     <option value="all">All companies</option>
                     {companies.map(([id, name]) => (
@@ -226,12 +228,19 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                 </label>
                 <span className="flex-1" />
                 {busy ? <span className="text-[11px] text-sky-400">Working…</span> : null}
+                {title === 'Marketing' ? <button type="button" onClick={() => setShowAssets((v) => !v)} disabled={company === 'all'} title={company === 'all' ? 'Choose a company first' : undefined} className={showAssets && company !== 'all' ? 'ui-button-primary' : 'ui-button'} aria-pressed={showAssets && company !== 'all'}>Assets</button> : null}
                 {title !== 'Marketing' ? <button type="button" onClick={() => setCreating((v) => !v)} className="ui-button-primary">
                     {creating ? 'Close' : 'New job'}
                 </button> : null}
             </div>
 
-            <div className="flex-1 overflow-y-auto p-3 space-y-4">
+            {showAssets && title === 'Marketing' && company !== 'all' ? (
+                <div className="flex-1 overflow-y-auto p-3">
+                    <BrandAssetsPanel key={company} companyId={company} companyName={companies.find(([id]) => id === company)?.[1] ?? 'Company'} />
+                </div>
+            ) : null}
+
+            <div className={`flex-1 overflow-y-auto p-3 space-y-4 ${showAssets && title === 'Marketing' && company !== 'all' ? 'hidden' : ''}`}>
                 {(title === 'Marketing' ? company !== 'all' : creating) ? (
                     <NewJob
                         key={`${company}-${initialKind ?? ''}`}

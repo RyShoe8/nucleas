@@ -9,7 +9,7 @@ vi.mock('@/lib/models/Integration', () => ({
 }));
 vi.mock('@/lib/integrations/connections', () => ({ readConnectionCredential: (...args: unknown[]) => mocks.credential(...args) }));
 
-import { blueskyHandleFromUrl, collectSocialVoiceSamples } from './voiceSamples';
+import { blueskyHandleFromUrl, collectSocialVoiceSamples, varied } from './voiceSamples';
 
 const org = new Types.ObjectId();
 const company = String(new Types.ObjectId());
@@ -78,5 +78,29 @@ describe('social voice samples', () => {
     expect(out.gaps.join(' ')).toMatch(/Facebook: connect the Page/);
     expect(out.gaps.join(' ')).toMatch(/Bluesky posts could not be read/);
     expect(out.gaps.join(' ')).toMatch(/Reddit r\/PlayBound: Reddit cannot be read automatically/);
+  });
+
+  it('keeps Facebook in the prompt when Bluesky has many long, templated posts', async () => {
+    mocks.findOne.mockImplementation(async (filter: { provider: string }) => (filter.provider === 'facebook' ? { _id: new Types.ObjectId(), accountLabel: 'The Frugal Gambler' } : null));
+    mocks.credential.mockResolvedValue('page-token-123');
+    const alerts = Array.from({ length: 25 }, (_, i) => ({ post: { author: { handle: 'x.bsky.social' }, record: { text: `Deal alert number ${i}: ${'Pay $20 get $40 in coins today only. '.repeat(10)}` } } }));
+    const f = fetcher({ getAuthorFeed: { feed: alerts }, '/me/posts': { data: [{ message: 'Our first rule: never chase the big hit.' }, { message: 'Happy spinning, Frugal Gamblers.' }] } });
+    const out = await collectSocialVoiceSamples(
+      { organizationId: org, companyId: company, socialLinks: [{ network: 'bluesky', url: 'https://bsky.app/profile/x.bsky.social' }, { network: 'facebook', url: 'https://facebook.com/TheFrugalGambler' }] },
+      f
+    );
+    expect(out.block).toContain('## Facebook Page The Frugal Gambler');
+    expect(out.block).toContain('Our first rule: never chase the big hit.');
+    expect(out.block).toContain('Happy spinning, Frugal Gamblers.');
+    expect(out.sources).toContain('https://facebook.com/TheFrugalGambler');
+    expect(out.block.length).toBeLessThan(8_500);
+    expect(out.counts).toEqual({ bluesky: 25, facebook: 2 });
+  });
+
+  it('limits templated posts so varied writing is not crowded out', () => {
+    const posts = [...Array.from({ length: 10 }, (_, i) => `Deal alert today ${i}`), 'A personal note about discipline'];
+    const kept = varied(posts);
+    expect(kept.filter((p) => p.startsWith('Deal alert'))).toHaveLength(3);
+    expect(kept).toContain('A personal note about discipline');
   });
 });

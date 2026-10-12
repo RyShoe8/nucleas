@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   connections: vi.fn(),
   citations: vi.fn(),
   voice: vi.fn(),
+  connected: vi.fn(async () => [] as { network: string; url: string }[]),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -26,6 +27,7 @@ vi.mock('@/lib/models/Project', () => ({ default: { aggregate: (...args: unknown
 vi.mock('@/lib/models/BrandVoice', () => ({ BrandVoice: { findOne: () => ({ select: () => ({ lean: () => mocks.voice() }) }) } }));
 vi.mock('@/lib/models/CompanyAssistantTurn', () => ({ CompanyAssistantTurn: { aggregate: (...args: unknown[]) => mocks.citations(...args) } }));
 vi.mock('@/lib/integrations/connections', () => ({ listCompanyConnections: (...args: unknown[]) => mocks.connections(...args) }));
+vi.mock('@/lib/companies/connectedSocialLinks', async () => ({ ...(await vi.importActual<object>('@/lib/companies/connectedSocialLinks')), connectedSocialLinks: () => mocks.connected() }));
 vi.mock('@/lib/companies/activityLog', () => ({ recordActivity: (...args: unknown[]) => mocks.activity(...args) }));
 
 import { GET, PATCH } from './route';
@@ -97,6 +99,13 @@ describe('company production domain', () => {
     // Approved with no persona text is not a usable Voice.
     mocks.voice.mockResolvedValue({ status: 'approved', persona: '   ' });
     expect(await get()).toBe('none');
+  });
+
+  it('shows connected Bluesky and Facebook accounts as social links without duplicating listed ones', async () => {
+    mocks.profile.mockResolvedValue({ id: companyId, name: 'PlayBound', socialLinks: [{ network: 'reddit', url: 'https://www.reddit.com/r/PlayBoundGaming' }] });
+    mocks.connected.mockResolvedValue([{ network: 'bluesky', url: 'https://bsky.app/profile/playbound.bsky.social' }, { network: 'reddit', url: 'https://reddit.com/dupe' }]);
+    const body = await (await GET(new NextRequest(`https://os.nucleas.test/api/os/companies/${companyId}`), { params: Promise.resolve({ id: companyId }) })).json();
+    expect(body.company.socialLinks).toEqual([{ network: 'reddit', url: 'https://www.reddit.com/r/PlayBoundGaming' }, { network: 'bluesky', url: 'https://bsky.app/profile/playbound.bsky.social' }]);
   });
 
   it('allows only managers and administrators', async () => {

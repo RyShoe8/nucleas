@@ -3,6 +3,7 @@ import { VOICE_TRAIT_GUIDANCE } from './templates/brandVoice';
 import { manualArtifact, parseJobOutput } from './output';
 import { brandVoiceContext, generatedVoice } from '@/lib/brandVoice/service';
 import { collectSocialVoiceSamples } from '@/lib/social/voiceSamples';
+import { brandMediaPrompt, brandMediaSources } from '@/lib/brandAssets/brandAssets';
 import { modelStepReason, type ModelStep } from '@/lib/jobs/modelPath';
 import { Types } from 'mongoose';
 import { z } from 'zod';
@@ -390,6 +391,9 @@ export async function executeJobRun(runId: string): Promise<void> {
   const voiceContext = wantsVoice
     ? await brandVoiceContext(job.organizationId, job.companyId, activeDesign.skill === 'brand_voice') : '';
   if (voiceContext) priorityFacts.push(voiceContext);
+  // The company's own logo and icon are the source for any image or video a job describes or creates.
+  const mediaPrompt = brandMediaPrompt(await brandMediaSources(job.organizationId, job.companyId).catch(() => ({ logoUrl: null, iconUrl: null, logoFrom: null })));
+  if (mediaPrompt) priorityFacts.push(mediaPrompt);
   if (profile.subreddit && (wantsVoice || activeDesign.skill === 'marketing_plan')) {
     priorityFacts.push(`# Company subreddit (community the team posts in by hand; a place to learn how its audience talks)
 - r/${profile.subreddit}: https://www.reddit.com/r/${profile.subreddit}`);

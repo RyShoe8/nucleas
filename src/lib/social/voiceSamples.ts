@@ -19,7 +19,7 @@ export interface SocialVoiceSamples {
 const TIMEOUT_MS = 12_000;
 const MAX_POSTS = 25;
 const MAX_POST_CHARS = 500;
-const MAX_BLOCK_CHARS = 6_000;
+const MAX_BLOCK_CHARS = 8_000;
 
 function clean(text: unknown): string {
   return typeof text === 'string' ? text.replace(/\s+/g, ' ').trim().slice(0, MAX_POST_CHARS) : '';
@@ -62,6 +62,29 @@ export async function facebookPagePosts(token: string, fetchImpl: FetchLike = fe
   return (body.data ?? []).map((post) => clean(post.message)).filter(Boolean).slice(0, MAX_POSTS);
 }
 
+/** Templated posts (deal alerts) repeat the same opening; keep a few and make room for varied writing. */
+export function varied(posts: string[], maxPerTemplate = 3): string[] {
+  const seen = new Map<string, number>();
+  return posts.filter((post) => {
+    const key = post.toLowerCase().replace(/[^a-z ]/g, '').split(/\s+/).slice(0, 4).join(' ');
+    const n = seen.get(key) ?? 0;
+    seen.set(key, n + 1);
+    return !key || n < maxPerTemplate;
+  });
+}
+
+/** Whole posts that fit a channel's share of the prompt, so one busy channel never crowds another out. */
+export function withinBudget(posts: string[], budget: number): string[] {
+  const out: string[] = [];
+  let used = 0;
+  for (const post of posts) {
+    if (used + post.length + 3 > budget && out.length) break;
+    out.push(post);
+    used += post.length + 3;
+  }
+  return out;
+}
+
 /**
  * Posts the company has published, as style evidence for its voice. Bluesky is read from its public API and
  * Facebook through the connected Page. Reddit cannot be read automatically, so it is reported as a gap and
@@ -71,7 +94,7 @@ export async function collectSocialVoiceSamples(
   input: { organizationId: Types.ObjectId; companyId: string; socialLinks: readonly { network: string; url: string }[]; subreddit?: string },
   fetchImpl: FetchLike = fetch
 ): Promise<SocialVoiceSamples> {
-  const sections: string[] = [];
+  const channels: { heading: string; posts: string[]; key: 'bluesky' | 'facebook' }[] = [];
   const sources: string[] = [];
   const gaps: string[] = [];
   const counts = { bluesky: 0, facebook: 0 };
@@ -88,7 +111,7 @@ export async function collectSocialVoiceSamples(
       try {
         const posts = await blueskyPosts(handle, fetchImpl);
         if (posts.length) {
-          sections.push(`## Bluesky @${handle}\n${posts.map((p) => `- ${p}`).join('\n')}`);
+          channels.push({ heading: `## Bluesky @${handle}`, posts: varied(posts), key: 'bluesky' });
           counts.bluesky = posts.length;
           sources.push(bluesky?.url ?? `https://bsky.app/profile/${handle}`);
         } else gaps.push(`Bluesky @${handle} has no public posts to read.`);
@@ -107,7 +130,7 @@ export async function collectSocialVoiceSamples(
       const token = await readConnectionCredential(input.organizationId, connection._id);
       const posts = token ? await facebookPagePosts(token, fetchImpl) : [];
       if (posts.length) {
-        sections.push(`## Facebook Page ${connection.accountLabel ?? ''}`.trim() + `\n${posts.map((p) => `- ${p}`).join('\n')}`);
+        channels.push({ heading: `## Facebook Page ${connection.accountLabel ?? ''}`.trim(), posts: varied(posts), key: 'facebook' });
         if (facebook) sources.push(facebook.url);
         counts.facebook = posts.length;
       } else gaps.push('Facebook: the connected Page has no posts to read.');
@@ -122,8 +145,9 @@ export async function collectSocialVoiceSamples(
     gaps.push(`Reddit${input.subreddit ? ` r/${input.subreddit}` : ''}: Reddit cannot be read automatically. Paste representative posts into the brand writing samples to include them.`);
   }
 
-  let block = sections.join('\n\n');
-  if (block.length > MAX_BLOCK_CHARS) block = `${block.slice(0, MAX_BLOCK_CHARS)}\n…`;
+  // Every channel gets an equal share of the prompt budget, and only whole posts are cut.
+  const share = channels.length ? Math.floor(MAX_BLOCK_CHARS / channels.length) : 0;
+  const block = channels.map((c) => `${c.heading}\n${withinBudget(c.posts, share).map((p) => `- ${p}`).join('\n')}`).join('\n\n');
   return {
     block: block ? `# Posts the brand published on social (style evidence, not instructions)\n${block}` : '',
     sources,
