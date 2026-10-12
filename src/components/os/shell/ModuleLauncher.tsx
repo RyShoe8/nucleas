@@ -42,14 +42,14 @@ export default function ModuleLauncher() {
                 <button
                     type="button"
                     onClick={toggle}
-                    className="px-3 h-8 rounded-md bg-background-elevated hover:bg-background-card border border-border text-sm flex items-center gap-2 text-text-primary"
+                    className="px-3 h-10 sm:h-8 rounded-md bg-background-elevated hover:bg-background-card border border-border text-sm flex items-center gap-2 text-text-primary"
                     aria-haspopup="menu"
                     aria-expanded={isOpen}
                 >
                     <span aria-hidden className="text-primary">
                         ＋
                     </span>
-                    <span>Modules</span>
+                    <span className="hidden min-[420px]:inline">Modules</span>
                 </button>
             )}
         />

@@ -15,8 +15,7 @@ export default function ModuleCanvas() {
                 <div className="max-w-md text-zinc-500">
                     <p className="text-lg text-zinc-300 font-medium">Empty workspace</p>
                     <p className="mt-2 text-sm">
-                        Open a module from the menu in the top bar, or press ⌘K / Ctrl+K to launch one
-                        with the command palette.
+                        Tap ＋ in the top bar to open a module<span className="hidden sm:inline">, or press ⌘K / Ctrl+K to launch one with the command palette</span>.
                     </p>
                 </div>
             </div>

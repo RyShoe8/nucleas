@@ -54,10 +54,10 @@ function PostCard({ post, onChange }: { post: PostView; onChange: (p: PostView |
         <li className="ui-card space-y-2 p-3">
             <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{post.title}</p>
+                    <p className="line-clamp-2 break-words text-sm font-medium">{post.title}</p>
                     {post.dealSummary ? <p className="text-[11px] text-text-secondary">{post.dealSummary}</p> : null}
                 </div>
-                <button type="button" className="text-[11px] text-text-secondary underline" onClick={() => void archive()}>Archive</button>
+                <button type="button" className="touch-link text-[11px] text-text-secondary" onClick={() => void archive()}>Archive</button>
             </div>
             {entries.map(([platform, text]) => (
                 <div key={platform} className="space-y-1">
@@ -65,7 +65,7 @@ function PostCard({ post, onChange }: { post: PostView; onChange: (p: PostView |
                         <span className="font-medium text-text-primary">{getSocialPlatform(platform).label}</span>
                         <span>{text.length} / {getSocialPlatform(platform).maxChars}</span>
                         <span className="flex-1" />
-                        <button type="button" className="underline" onClick={() => (editing === platform ? setEditing(null) : (setEditing(platform), setDraft(text)))}>{editing === platform ? 'Cancel' : 'Edit'}</button>
+                        <button type="button" className="touch-link" onClick={() => (editing === platform ? setEditing(null) : (setEditing(platform), setDraft(text)))}>{editing === platform ? 'Cancel' : 'Edit'}</button>
                         <button type="button" className="ui-button px-2 py-0.5" onClick={() => void copy(platform, text)}>{copied === platform ? 'Copied' : 'Copy'}</button>
                     </div>
                     {editing === platform ? (
@@ -78,7 +78,7 @@ function PostCard({ post, onChange }: { post: PostView; onChange: (p: PostView |
                     )}
                 </div>
             ))}
-            {post.link ? <a href={post.link} target="_blank" rel="noopener noreferrer" className="block truncate text-[11px] text-primary underline">{post.link}</a> : null}
+            {post.link ? <a href={post.link} target="_blank" rel="noopener noreferrer" className="touch-link block break-all text-[11px] text-primary">{post.link}</a> : null}
             {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
         </li>
     );
@@ -211,8 +211,8 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
                             <li key={item.id} className="ui-card p-3">
                                 <div className="flex items-start gap-2">
                                     <div className="min-w-0 flex-1">
-                                        <button type="button" onClick={() => void openItem(item.id)} className="block w-full truncate text-left text-sm font-medium hover:underline">{item.subject || '(no subject)'}</button>
-                                        <p className="truncate text-[11px] text-text-secondary">{item.fromName || item.fromEmail} · {when(item.sentAt)}</p>
+                                        <button type="button" onClick={() => void openItem(item.id)} className="block w-full break-words py-1 text-left text-sm font-medium hover:underline">{item.subject || '(no subject)'}</button>
+                                        <p className="break-words text-[11px] text-text-secondary">{item.fromName || item.fromEmail} · {when(item.sentAt)}</p>
                                     </div>
                                     <ScorePill item={item} threshold={watch.threshold} />
                                 </div>
@@ -221,7 +221,7 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
                                 {deal ? <p className="mt-1 text-xs font-medium">{deal}</p> : null}
                                 {item.summary ? <p className="mt-1 text-sm leading-relaxed">{item.summary}</p> : null}
                                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
-                                    {item.link ? <a href={item.link} target="_blank" rel="noopener noreferrer" className="text-primary underline">Open link</a> : null}
+                                    {item.link ? <a href={item.link} target="_blank" rel="noopener noreferrer" className="touch-link text-primary">Open link</a> : null}
                                     {item.flagged && watch.companyId ? <button type="button" className="ui-button px-2 py-0.5" disabled={drafting === item.id} onClick={() => void draft(item.id)}>{drafting === item.id ? 'Drafting…' : item.hasPost ? 'Posts drafted' : 'Draft posts'}</button> : null}
                                 </div>
                                 {open === item.id ? (
@@ -233,7 +233,7 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
                                         ) : null}
                                         {!detail ? <p className="text-xs text-text-secondary">Loading…</p> : (
                                             <>
-                                                <button type="button" className="text-[11px] underline" onClick={() => setOriginal((v) => !v)}>{original ? 'Show text' : 'Show original email'}</button>
+                                                <button type="button" className="touch-link text-[11px]" onClick={() => setOriginal((v) => !v)}>{original ? 'Show text' : 'Show original email'}</button>
                                                 {original && detail.html ? (
                                                     <iframe title="Original email" sandbox="" srcDoc={detail.html} className="h-80 w-full rounded border border-border bg-white" />
                                                 ) : (

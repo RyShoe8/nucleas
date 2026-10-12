@@ -24,9 +24,9 @@ export default function TopBar() {
     const projectLabel = activeProjectWindow?.payload?.projectName;
 
     return (
-        <header className="relative z-20 h-12 flex-shrink-0 flex items-center gap-3 px-4 border-b border-border bg-background">
+        <header className="relative z-20 h-12 flex-shrink-0 flex items-center gap-2 sm:gap-3 px-2 sm:px-4 border-b border-border bg-background">
             <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
-                <span className="text-sm sm:text-base font-semibold tracking-tight text-text-primary">Nucleas OS</span>
+                <span className="hidden min-[420px]:inline text-sm sm:text-base font-semibold tracking-tight text-text-primary">Nucleas OS</span>
                 <CompanySwitcher />
                 {projectLabel ? (
                     <span className="hidden sm:inline text-xs text-text-secondary truncate max-w-[200px]">{projectLabel}</span>
@@ -35,14 +35,14 @@ export default function TopBar() {
 
             <div className="flex-1 min-w-0" />
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
                 <button
                     type="button"
                     onClick={() => {
                         setAssistantFocus(null);
                         wm.open('assistant');
                     }}
-                    className="px-3 h-8 rounded-md bg-primary text-white text-sm hover:opacity-90"
+                    className="px-3 h-10 sm:h-8 rounded-md bg-primary text-white text-sm hover:opacity-90"
                 >
                     ✨ Ask
                 </button>
@@ -54,7 +54,7 @@ export default function TopBar() {
                     onClick={openCommandPalette}
                     title="Open command palette"
                     aria-label={`Open command palette (${shortcutLabel})`}
-                    className="text-[11px] text-text-secondary bg-background-elevated px-2 py-1 rounded border border-border hover:bg-background-card hover:text-text-primary transition-colors cursor-pointer"
+                    className="hidden sm:inline-block text-[11px] text-text-secondary bg-background-elevated px-2 py-1 rounded border border-border hover:bg-background-card hover:text-text-primary transition-colors cursor-pointer"
                 >
                     {shortcutLabel}
                 </button>

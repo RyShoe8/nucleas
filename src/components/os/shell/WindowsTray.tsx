@@ -10,7 +10,7 @@ export default function WindowsTray() {
     return (
         <footer className="relative z-10 h-14 flex-shrink-0 flex items-center gap-2 px-3 border-t border-border bg-background overflow-x-auto">
             {wm.windows.length === 0 ? (
-                <span className="text-xs text-text-muted">No open modules. Use the Modules menu or press ⌘K.</span>
+                <span className="text-xs text-text-muted">No open modules. Use the ＋ menu<span className="hidden sm:inline"> or press ⌘K</span>.</span>
             ) : (
                 wm.windows.map((w) => {
                     const mod = ModuleRegistry.get(w.moduleId);
@@ -28,7 +28,7 @@ export default function WindowsTray() {
                                 if (w.minimized) wm.restore(w.id);
                                 else wm.focus(w.id);
                             }}
-                            className={`flex items-center gap-2 h-9 px-3 rounded border text-xs transition-colors ${
+                            className={`flex items-center gap-2 h-11 sm:h-9 px-3 rounded border shrink-0 text-xs transition-colors ${
                                 isActive
                                     ? 'bg-primary/20 border-primary/40 text-text-primary'
                                     : w.minimized

@@ -61,12 +61,12 @@ export default function WatchesPanel() {
                 ) : (
                     <ul className="space-y-1">
                         {mailboxes.map((m) => (
-                            <li key={m.id} className="flex items-center gap-2 text-sm">
+                            <li key={m.id} className="flex flex-wrap items-center gap-x-2 text-sm">
                                 <span className={`h-2 w-2 rounded-full ${m.status === 'connected' ? 'bg-emerald-400' : 'bg-red-400'}`} aria-hidden />
-                                <span className="min-w-0 flex-1 truncate">{m.emailAddress}</span>
-                                {m.status === 'needs_reauth' ? <a className="text-xs text-primary underline" href={`/api/os/content/gmail/start?email=${encodeURIComponent(m.emailAddress)}`}>Reconnect</a> : null}
+                                <span className="min-w-0 flex-1 break-all">{m.emailAddress}</span>
+                                {m.status === 'needs_reauth' ? <a className="touch-link text-xs text-primary" href={`/api/os/content/gmail/start?email=${encodeURIComponent(m.emailAddress)}`}>Reconnect</a> : null}
                                 <span className="text-[11px] text-text-secondary">{m.watchCount} watch{m.watchCount === 1 ? '' : 'es'}</span>
-                                <button type="button" className="text-[11px] text-text-secondary underline disabled:no-underline disabled:opacity-40" disabled={m.watchCount > 0} title={m.watchCount > 0 ? 'Remove its watches first' : 'Remove this mailbox'} onClick={() => window.confirm(`Remove ${m.emailAddress} and the emails stored from it?`) && void act(`/api/os/content/mailboxes/${m.id}`, { method: 'DELETE' })}>Remove</button>
+                                <button type="button" className="touch-link text-[11px] text-text-secondary disabled:no-underline disabled:opacity-40" disabled={m.watchCount > 0} title={m.watchCount > 0 ? 'Remove its watches first' : 'Remove this mailbox'} onClick={() => window.confirm(`Remove ${m.emailAddress} and the emails stored from it?`) && void act(`/api/os/content/mailboxes/${m.id}`, { method: 'DELETE' })}>Remove</button>
                             </li>
                         ))}
                     </ul>
@@ -97,16 +97,16 @@ export default function WatchesPanel() {
                 <ul className="space-y-2">
                     {watches.map((w) => (
                         <li key={w.id} className={`ui-card p-3 ${selected === w.id ? 'border-primary' : ''}`}>
-                            <div className="flex items-start gap-2">
+                            <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:gap-2">
                                 <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setSelected(selected === w.id ? null : w.id)}>
-                                    <span className="block truncate text-sm font-medium">{w.name}{!w.active ? <span className="ml-2 text-[11px] text-text-secondary">paused</span> : null}</span>
-                                    <span className="block truncate text-[11px] text-text-secondary">{w.mailboxEmail} · {w.mode === 'deal' ? `deals ≥ ${w.threshold}%` : `score ≥ ${w.threshold}`}{w.companyName ? ` · posts for ${w.companyName}` : ''}</span>
+                                    <span className="block break-words text-sm font-medium">{w.name}{!w.active ? <span className="ml-2 text-[11px] text-text-secondary">paused</span> : null}</span>
+                                    <span className="block break-words text-[11px] text-text-secondary">{w.mailboxEmail} · {w.mode === 'deal' ? `deals ≥ ${w.threshold}%` : `score ≥ ${w.threshold}`}{w.companyName ? ` · posts for ${w.companyName}` : ''}</span>
                                     <span className="block text-[11px] text-text-secondary">{ago(w.lastScanAt)} · {w.flaggedCount} flagged of {w.scannedCount}</span>
                                 </button>
-                                <div className="flex shrink-0 gap-2 text-[11px]">
-                                    <button type="button" className="underline" onClick={() => { setEditing(w); setSelected(w.id); }}>Change</button>
-                                    <button type="button" className="underline" onClick={() => void act(`/api/os/content/watches/${w.id}`, { method: 'PATCH', body: JSON.stringify({ active: !w.active }) })}>{w.active ? 'Pause' : 'Resume'}</button>
-                                    <button type="button" className="underline text-red-300" onClick={() => window.confirm(`Delete “${w.name}” and everything it collected?`) && void act(`/api/os/content/watches/${w.id}`, { method: 'DELETE' }).then(() => setSelected((s) => (s === w.id ? null : s)))}>Delete</button>
+                                <div className="flex shrink-0 gap-1 text-[11px]">
+                                    <button type="button" className="touch-link" onClick={() => { setEditing(w); setSelected(w.id); }}>Change</button>
+                                    <button type="button" className="touch-link" onClick={() => void act(`/api/os/content/watches/${w.id}`, { method: 'PATCH', body: JSON.stringify({ active: !w.active }) })}>{w.active ? 'Pause' : 'Resume'}</button>
+                                    <button type="button" className="touch-link text-red-300" onClick={() => window.confirm(`Delete “${w.name}” and everything it collected?`) && void act(`/api/os/content/watches/${w.id}`, { method: 'DELETE' }).then(() => setSelected((s) => (s === w.id ? null : s)))}>Delete</button>
                                 </div>
                             </div>
                         </li>

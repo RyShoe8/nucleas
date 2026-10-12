@@ -86,7 +86,7 @@ export default function ArticleEditor({ id, onBack }: { id: string; onBack: () =
         <div className="space-y-3 p-3">
             <div className="flex items-center gap-2">
                 <button type="button" className="ui-button" onClick={onBack}>Back</button>
-                <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">{article.title || article.topic}</h3>
+                <h3 className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-semibold">{article.title || article.topic}</h3>
             </div>
             {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
 
@@ -118,12 +118,12 @@ export default function ArticleEditor({ id, onBack }: { id: string; onBack: () =
                     {article.warnings.length ? (
                         <ul className="space-y-1 text-xs text-amber-300">
                             {article.warnings.map((w) => (
-                                <li key={w}>• {w}</li>
+                                <li key={w} className="break-words">• {w}</li>
                             ))}
                         </ul>
                     ) : null}
                     <label className="block space-y-1"><span className="ui-kicker">Title</span><input className={field} value={title} onChange={(e) => { setTitle(e.target.value); setSaved(false); }} maxLength={300} /></label>
-                    <label className="block space-y-1"><span className="ui-kicker">Article (markdown)</span><textarea className={`${field} h-96 resize-y font-mono text-xs leading-relaxed`} value={body} onChange={(e) => { setBody(e.target.value); setSaved(false); }} /></label>
+                    <label className="block space-y-1"><span className="ui-kicker">Article (markdown)</span><textarea className={`${field} h-[55vh] min-h-64 resize-y font-mono text-xs leading-relaxed`} value={body} onChange={(e) => { setBody(e.target.value); setSaved(false); }} /></label>
                     <label className="block space-y-1"><span className="ui-kicker">Meta description</span><input className={field} value={meta} onChange={(e) => { setMeta(e.target.value); setSaved(false); }} maxLength={400} /><span className="block text-[11px] text-text-secondary">{meta.length} characters</span></label>
                     <div className="flex flex-wrap gap-2">
                         <button type="button" className="ui-button-primary" disabled={saved} onClick={() => void save()}>{saved ? 'Saved' : 'Save changes'}</button>
@@ -137,7 +137,7 @@ export default function ArticleEditor({ id, onBack }: { id: string; onBack: () =
                             <summary className="cursor-pointer text-text-secondary">Sources used ({article.sources.length})</summary>
                             <ul className="mt-2 space-y-1">
                                 {article.sources.map((s) => (
-                                    <li key={s} className="truncate"><a className="underline" href={s} target="_blank" rel="noreferrer noopener">{s}</a></li>
+                                    <li key={s}><a className="touch-link break-all" href={s} target="_blank" rel="noreferrer noopener">{s}</a></li>
                                 ))}
                             </ul>
                         </details>

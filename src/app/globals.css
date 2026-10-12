@@ -305,3 +305,36 @@ body.nucleas-minimal {
 .grecaptcha-badge {
   visibility: hidden;
 }
+
+/* Phone comfort for dense tool windows: 16px inputs (no iOS focus zoom) and 44px touch targets. Opt in with .touch-comfort. */
+.touch-link {
+  text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+  .touch-comfort .ui-control {
+    font-size: 1rem;
+    min-height: 2.75rem;
+  }
+
+  .touch-comfort .ui-button,
+  .touch-comfort .ui-button-primary,
+  .touch-comfort .ui-button-danger {
+    min-height: 2.75rem;
+  }
+
+  .touch-comfort .touch-link,
+  .touch-comfort summary {
+    display: inline-flex;
+    min-height: 2.75rem;
+    min-width: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    padding: 0 0.5rem;
+  }
+
+  .touch-comfort summary {
+    justify-content: flex-start;
+    padding-left: 0;
+  }
+}

@@ -6,6 +6,7 @@ import { clampToViewport } from '@/lib/os/clampToViewport';
 import { windowLabel } from '@/lib/os/windowLabel';
 import { getOsCanvasBounds } from '@/lib/os/viewportBounds';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
+import { useNarrowViewport } from '@/hooks/os/useNarrowViewport';
 import { useDraggable } from './useDraggable';
 import { useResizable } from './useResizable';
 
@@ -17,6 +18,7 @@ interface FloatingWindowProps {
 
 export default function FloatingWindow({ window: w, module, children }: FloatingWindowProps) {
     const wm = useWindowManager();
+    const narrow = useNarrowViewport();
     const [popoutError, setPopoutError] = useState<string | null>(null);
 
     const handleDrag = useCallback(
@@ -51,7 +53,7 @@ export default function FloatingWindow({ window: w, module, children }: Floating
         y: w.y,
         onDragStart: handleDragStart,
         onDrag: handleDrag,
-        disabled: w.maximized,
+        disabled: w.maximized || narrow,
     });
 
     const { onPointerDown: onResizePointerDown, resizing } = useResizable({
@@ -60,7 +62,7 @@ export default function FloatingWindow({ window: w, module, children }: Floating
         minWidth: module.minSize.width,
         minHeight: module.minSize.height,
         onResize: handleResize,
-        disabled: w.maximized,
+        disabled: w.maximized || narrow,
     });
 
     const focusOnInteraction = useCallback(() => {
@@ -72,7 +74,9 @@ export default function FloatingWindow({ window: w, module, children }: Floating
     const isActive = wm.activeWindowId === w.id;
     const windowTitle = windowLabel(w, module);
 
-    const style: React.CSSProperties = w.maximized
+    // On a phone every window fills the screen; moving and resizing make no sense there.
+    const fill = w.maximized || narrow;
+    const style: React.CSSProperties = fill
         ? {
               left: 0,
               top: 0,
@@ -91,7 +95,7 @@ export default function FloatingWindow({ window: w, module, children }: Floating
         <div
             role="dialog"
             aria-label={windowTitle}
-            className={`ui-panel absolute ${w.maximized ? '' : 'top-0 left-0'} flex flex-col overflow-hidden ${
+            className={`ui-panel absolute ${fill ? '' : 'top-0 left-0'} flex flex-col overflow-hidden ${
                 isActive ? 'border-primary/40' : 'border-border'
             } ${
                 // Content stays selectable/copyable; selection is only suppressed mid-drag or mid-resize.
@@ -103,15 +107,15 @@ export default function FloatingWindow({ window: w, module, children }: Floating
             <div
                 onPointerDown={draggablePointerDown}
                 onDoubleClick={() => wm.maximize(w.id)}
-                className={`flex items-center gap-2 px-3 h-9 border-b border-border select-none ${
-                    w.maximized ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
+                className={`flex items-center gap-2 px-3 h-11 sm:h-9 border-b border-border select-none ${
+                    fill ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
                 } ${isActive ? 'bg-background-elevated' : 'bg-background-card'}`}
             >
                 <span className="text-sm leading-none" aria-hidden>
                     {module.icon}
                 </span>
                 <span className="flex-1 text-sm font-medium text-text-primary truncate">{windowTitle}</span>
-                {module.canPopout && !w.poppedOut && (
+                {module.canPopout && !w.poppedOut && !narrow && (
                     <WindowButton
                         label="Pop out"
                         onClick={(e) => {
@@ -137,6 +141,7 @@ export default function FloatingWindow({ window: w, module, children }: Floating
                         <line x1="2" y1="8" x2="8" y2="8" stroke="currentColor" strokeWidth="1.5" />
                     </svg>
                 </WindowButton>
+                {!narrow && (
                 <WindowButton
                     label={w.maximized ? 'Restore' : 'Maximize'}
                     onClick={(e) => {
@@ -148,6 +153,7 @@ export default function FloatingWindow({ window: w, module, children }: Floating
                         <rect x="2" y="2" width="6" height="6" fill="none" stroke="currentColor" strokeWidth="1.5" />
                     </svg>
                 </WindowButton>
+                )}
                 <WindowButton
                     label="Close"
                     danger
@@ -172,7 +178,7 @@ export default function FloatingWindow({ window: w, module, children }: Floating
                 {children}
             </div>
 
-            {!w.maximized && (
+            {!fill && (
                 <div
                     onPointerDown={onResizePointerDown}
                     aria-label="Resize"
@@ -202,7 +208,7 @@ function WindowButton({ label, onClick, danger, children }: WindowButtonProps) {
             title={label}
             onClick={onClick}
             onPointerDown={(e) => e.stopPropagation()}
-            className={`w-6 h-6 inline-flex items-center justify-center rounded text-text-secondary hover:text-text-primary ${
+            className={`w-11 h-11 sm:w-6 sm:h-6 inline-flex items-center justify-center rounded text-text-secondary hover:text-text-primary ${
                 danger ? 'hover:bg-error' : 'hover:bg-background-elevated'
             }`}
         >

@@ -42,7 +42,7 @@ export default function CompanySwitcher() {
                     onClick={toggle}
                     aria-haspopup="menu"
                     aria-expanded={isOpen}
-                    className="h-8 px-2 rounded-md hover:bg-background-card border border-transparent hover:border-border text-xs text-text-secondary flex items-center gap-1 max-w-[220px]"
+                    className="h-10 sm:h-8 px-2 rounded-md hover:bg-background-card border border-transparent hover:border-border text-xs text-text-secondary flex items-center gap-1 max-w-[96px] min-[420px]:max-w-[150px] sm:max-w-[220px]"
                 >
                     <span className="truncate">{label}</span>
                     <span aria-hidden>▾</span>

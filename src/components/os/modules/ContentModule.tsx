@@ -17,8 +17,8 @@ const TABS: { id: Tab; label: string }[] = [
 export default function ContentModule() {
     const [tab, setTab] = useState<Tab>('articles');
     return (
-        <div className="flex h-full flex-col text-text-primary">
-            <div className="flex gap-1 border-b border-border px-3 py-2" role="tablist" aria-label="Content">
+        <div className="touch-comfort flex h-full flex-col text-text-primary">
+            <div className="flex gap-1 overflow-x-auto border-b border-border px-3 py-2" role="tablist" aria-label="Content">
                 {TABS.map((t) => (
                     <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'ui-button-primary' : 'ui-button'} onClick={() => setTab(t.id)}>{t.label}</button>
                 ))}

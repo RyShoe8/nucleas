@@ -120,7 +120,7 @@ export default function OsAccountMenu() {
     ];
 
     const trigger = (
-        <span className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-background-elevated border border-transparent hover:border-border">
+        <span className="flex min-h-10 min-w-10 items-center justify-center gap-2 px-1.5 py-1 sm:min-h-0 sm:min-w-0 rounded-md hover:bg-background-elevated border border-transparent hover:border-border">
             {auth.profilePicture ? (
                 <Image
                     src={auth.profilePicture}
