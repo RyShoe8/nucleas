@@ -19,6 +19,7 @@ import JobsModule from './JobsModule';
 import ToolsModule from './ToolsModule';
 import MailModule from './MailModule';
 import BrandVoiceModule from './BrandVoiceModule';
+import ContentModule from './ContentModule';
 
 let registered = false;
 
@@ -157,7 +158,7 @@ export function registerOsModules(): void {
             minSize: { width: 460, height: 320 },
             canPopout: true,
             permissions: 'member',
-            render: () => createElement(JobsModule, { categories: ['content'], title: 'Content' }),
+            render: () => createElement(ContentModule),
         },
         {
             id: 'tools',

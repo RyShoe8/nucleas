@@ -19,6 +19,7 @@ export default function IntegrationNotice() {
         const companyId = params.get('company');
         if (!text && !companyId) return;
         if (params.get('open') === 'mail') wm.open('mail');
+        if (params.get('open') === 'content') wm.open('content');
 
         if (text) setNotice({ kind: params.has('integration_error') || params.has('mail_error') ? 'error' : 'notice', text: text.slice(0, 300) });
         if (companyId && /^[a-f0-9]{24}$/i.test(companyId)) {
