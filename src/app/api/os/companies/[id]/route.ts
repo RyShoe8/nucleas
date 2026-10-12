@@ -9,6 +9,7 @@ import { normalizeProductionDomain } from '@/lib/companies/productionDomain';
 import { normalizeSubreddit } from '@/lib/companies/subreddit';
 import { recordActivity } from '@/lib/companies/activityLog';
 import { CompanyAssistantTurn } from '@/lib/models/CompanyAssistantTurn';
+import { BrandVoice } from '@/lib/models/BrandVoice';
 
 /** Company overview: resolved profile, its projects and its integrations. */
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -20,7 +21,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const profile = await getCompanyProfile(viewer, id);
     if (!profile) return NextResponse.json({ error: 'Company not found' }, { status: 404 });
 
-    const [projects, connections, citationSources] = await Promise.all([
+    const [projects, connections, citationSources, voice] = await Promise.all([
       Project.aggregate<{ _id: Types.ObjectId; name: string; status: string; projectType: string; openTasks: number; totalTasks: number }>([
         { $match: { clientId: new Types.ObjectId(id) } },
         {
@@ -46,6 +47,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         { $group: { _id: '$contextSources', firstSeen: { $min: '$createdAt' } } },
         { $sort: { firstSeen: 1 } },
       ]),
+      BrandVoice.findOne({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(id) }).select('status persona').lean<{ status?: string; persona?: string }>(),
     ]);
 
     const citationSeries = Array.from({ length: 28 }, (_, index) => {
@@ -61,6 +63,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({
       canManage: isCompanyManager(viewer),
       company: profile,
+      // Approved means a persona exists and was approved; anything else (none, draft) is not used by content tools.
+      voiceStatus: voice?.status === 'approved' && voice.persona?.trim() ? 'approved' : voice?.persona?.trim() ? 'draft' : 'none',
       projects: projects.map((p) => ({
         id: String(p._id),
         name: p.name,

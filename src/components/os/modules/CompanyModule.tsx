@@ -11,6 +11,9 @@ import CodeRepositories from './CodeRepositories';
 import AdminAccount from './AdminAccount';
 import CompanyChanges from './CompanyChanges';
 import PropertyOverviewButton from './PropertyOverviewReport';
+import SocialIcon from '@/components/projects/SocialIcon';
+import { SOCIAL_NETWORK_LABELS } from '@/lib/utils/socialUrls';
+import type { SocialNetwork } from '@/lib/models/Project';
 
 export default function CompanyModule({ payload }: ModuleRenderContext) {
     const companyId = payload?.companyId;
@@ -32,6 +35,11 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
 
     useEffect(() => {
         void load();
+    }, [load]);
+
+    useEffect(() => {
+        window.addEventListener('nucleas:voice-changed', load);
+        return () => window.removeEventListener('nucleas:voice-changed', load);
     }, [load]);
 
     if (!companyId) return <div className="p-4 text-sm text-text-secondary">No company selected.</div>;
@@ -75,8 +83,10 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                     {company.description ? (
                         <p className="mt-1 text-sm text-text-secondary line-clamp-2">{company.description}</p>
                     ) : null}
+                    <SocialLinks links={company.socialLinks ?? []} />
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2">
+                    <VoiceButton companyId={company.id} companyName={company.name} status={detail.voiceStatus ?? 'none'} />
                     <PropertyOverviewButton companyId={company.id} companyName={company.name} canManage={detail.canManage} />
                     <MarketingPlanButton companyId={company.id} companyName={company.name} />
                     <AskButton companyId={company.id} companyName={company.name} />
@@ -251,6 +261,58 @@ function AskButton({ companyId, companyName }: { companyId: string; companyName:
         >
             ✨ Ask Nucleas
         </button>
+    );
+}
+
+const VOICE_INDICATOR = {
+    approved: { dot: 'bg-emerald-400', label: 'Voice: approved. Content tools write in it.' },
+    draft: { dot: 'bg-red-400', label: 'Voice: a draft exists but is not approved yet, so content tools do not use it.' },
+    none: { dot: 'bg-red-400', label: 'Voice: not set up yet. Content tools have no brand voice to write in.' },
+} as const;
+
+/** Opens the company's Voice. The dot is green once a Voice is approved, red until then. */
+function VoiceButton({ companyId, companyName, status }: { companyId: string; companyName: string; status: 'approved' | 'draft' | 'none' }) {
+    const wm = useWindowManager();
+    const indicator = VOICE_INDICATOR[status];
+    return (
+        <button type="button" title={indicator.label} onClick={(e) => { e.stopPropagation(); wm.open('brand-voice', { payload: { companyId, companyName } }); }} className="ui-button flex-shrink-0 inline-flex items-center gap-1.5">
+            <span aria-hidden className={`h-2 w-2 rounded-full ${indicator.dot}`} />
+            Voice
+            <span className="sr-only">{indicator.label}</span>
+        </button>
+    );
+}
+
+/** One button per linked account; each goes straight to that page in a new tab. */
+function SocialLinks({ links }: { links: { network: string; url: string }[] }) {
+    const seen = new Set<string>();
+    const shown = links.filter((link) => {
+        if (!/^https?:\/\//i.test(link.url) || seen.has(link.url)) return false;
+        seen.add(link.url);
+        return true;
+    });
+    if (!shown.length) return null;
+    return (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+            {shown.map((link) => {
+                const network = (link.network in SOCIAL_NETWORK_LABELS ? link.network : 'other') as SocialNetwork;
+                const label = SOCIAL_NETWORK_LABELS[network];
+                return (
+                    <a
+                        key={link.url}
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={link.url.replace(/^https?:\/\//, '')}
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[11px] hover:bg-background-card"
+                    >
+                        <SocialIcon network={network} size={14} />
+                        {label}
+                    </a>
+                );
+            })}
+        </div>
     );
 }
 

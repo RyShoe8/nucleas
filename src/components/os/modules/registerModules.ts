@@ -18,6 +18,7 @@ import BuildingModule from './BuildingModule';
 import JobsModule from './JobsModule';
 import ToolsModule from './ToolsModule';
 import MailModule from './MailModule';
+import BrandVoiceModule from './BrandVoiceModule';
 
 let registered = false;
 
@@ -115,6 +116,18 @@ export function registerOsModules(): void {
             canPopout: true,
             permissions: 'manager',
             render: () => createElement(MailModule),
+        },
+        {
+            id: 'brand-voice',
+            title: 'Voice',
+            icon: '🗣️',
+            defaultSize: { width: 760, height: 660 },
+            minSize: { width: 460, height: 360 },
+            canPopout: true,
+            permissions: 'member',
+            launcherHidden: true,
+            windowTitle: (payload) => (payload?.companyName ? `${payload.companyName} · Voice` : undefined),
+            render: (ctx) => createElement(BrandVoiceModule, ctx),
         },
         {
             id: 'jobs',

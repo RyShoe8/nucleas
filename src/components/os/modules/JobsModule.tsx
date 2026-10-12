@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useOsCompanies } from './CompaniesModule';
 import JobCard, { JobStatusBadge, jobIsBusy, jobListProgress, scheduleLabel, type JobView } from './jobs/JobCard';
-import BrandVoicePanel from './jobs/BrandVoicePanel';
 import ArtifactHistory from './jobs/ArtifactHistory';
 import MarketingPlanEditor from './jobs/MarketingPlanEditor';
 
@@ -27,7 +26,7 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
     const { companies } = useOsCompanies();
     const [companyId, setCompanyId] = useState(initialCompanyId ?? '');
     const [request, setRequest] = useState('');
-    const [kind, setKind] = useState<'custom' | 'link_building' | 'marketing_plan' | 'brand_voice'>(initialKind === 'brand_voice' ? 'brand_voice' : initialKind === 'link_building' ? 'link_building' : initialKind === 'custom' ? 'custom' : marketing ? 'marketing_plan' : 'custom');
+    const [kind, setKind] = useState<'custom' | 'link_building' | 'marketing_plan'>(initialKind === 'link_building' ? 'link_building' : initialKind === 'custom' ? 'custom' : marketing ? 'marketing_plan' : 'custom');
     const [projects, setProjects] = useState<{ projectId: string; projectName: string }[]>([]);
     const [projectId, setProjectId] = useState('');
     const [frequency, setFrequency] = useState<'daily' | 'weekly' | 'monthly'>('daily');
@@ -92,7 +91,6 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
             {marketing ? (
                 <div className="flex flex-wrap gap-1">
                     <button type="button" onClick={() => { setKind('marketing_plan'); setProjectId(''); setProjects([]); }} className={kind === 'marketing_plan' ? 'ui-button-primary' : 'ui-button'}>Marketing overview</button>
-                    <button type="button" onClick={() => { setKind('brand_voice'); setProjectId(''); setProjects([]); }} className={kind === 'brand_voice' ? 'ui-button-primary' : 'ui-button'}>Voice</button>
                     <button type="button" onClick={() => { setKind('link_building'); setProjectId(''); }} className={kind === 'link_building' ? 'ui-button-primary' : 'ui-button'}>Link building</button>
                     <button type="button" onClick={() => { setKind('custom'); setProjectId(''); setProjects([]); }} className={kind === 'custom' ? 'ui-button-primary' : 'ui-button'}>Custom job</button>
                 </div>
@@ -112,11 +110,11 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
                     ))}
                 </select> : null}
                 <span className="text-[11px] text-text-secondary self-center">
-                    {kind === 'brand_voice' ? 'Your brand’s persona and writing style.' : kind === 'link_building' ? 'Uses the company’s approved Marketing Plan to reject irrelevant opportunities.' : kind === 'marketing_plan' ? 'Builds a company-wide SEO, AI-citation, and social strategy from the Company Overview.' : 'Describe the work; Nucleas investigates, asks what it must, and designs it for your approval.'}
+                    {kind === 'link_building' ? 'Uses the company’s approved Marketing Plan to reject irrelevant opportunities.' : kind === 'marketing_plan' ? 'Builds a company-wide SEO, AI-citation, and social strategy from the Company Overview.' : 'Describe the work; Nucleas investigates, asks what it must, and designs it for your approval.'}
                 </span>
             </div>
             {kind !== 'custom' && projects.length > 1 ? <label className="block space-y-1"><span className="ui-kicker">Website or project</span><select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="ui-control w-full" aria-label="Website or project"><option value="">Choose a website or project…</option>{projects.map((p) => <option key={p.projectId} value={p.projectId}>{p.projectName}</option>)}</select></label> : null}
-            {kind === 'brand_voice' ? <BrandVoicePanel key={companyId} companyId={companyId} onCreated={onCreated} /> : kind === 'link_building' ? (
+            {kind === 'link_building' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
                     <label className="space-y-1"><span className="text-text-secondary">Frequency</span><select value={frequency} onChange={(e) => setFrequency(e.target.value as typeof frequency)} className="ui-control block w-full"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
                     {frequency === 'weekly' ? <label className="space-y-1"><span className="text-text-secondary">Day</span><select value={weekday} onChange={(e) => setWeekday(Number(e.target.value))} className="block w-full h-7 rounded border border-border bg-background-elevated px-1">{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((d, i) => <option key={d} value={i}>{d}</option>)}</select></label> : null}
@@ -133,14 +131,14 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
             {kind === 'marketing_plan' && companyId ? <div className="space-y-3" key={companyId}><MarketingPlanEditor companyId={companyId} /><ArtifactHistory companyId={companyId} kind="marketing_plan" /></div> : null}
             {kind === 'marketing_plan' ? <p className="text-xs text-text-secondary">A one-time overview, updated only when you request it. Previous saved versions are retained for comparison.</p> : null}
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
-            {kind !== 'brand_voice' ? <button
+            <button
                 type="button"
                 disabled={busy || !companyId || (kind === 'link_building' && !projectId) || (kind === 'custom' && request.trim().length < 10)}
                 onClick={() => void create()}
                 className="ui-button-primary"
             >
                 {busy ? 'Starting…' : kind === 'link_building' ? 'Configure link building' : kind === 'marketing_plan' ? 'Generate marketing plan' : 'Design this job'}
-            </button> : null}
+            </button>
         </div>
     );
 }

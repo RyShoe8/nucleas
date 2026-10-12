@@ -33,12 +33,15 @@ export interface OsConnection {
 
 export interface OsCompanyDetail {
     canManage: boolean;
+    /** approved: the company has an approved Voice that content tools write in. */
+    voiceStatus?: 'approved' | 'draft' | 'none';
     company: OsCompanySummary & {
         description?: string;
         liveUrl?: string;
         urls: string[];
         hubProjectId?: string;
         subreddit?: string;
+        socialLinks?: { network: string; url: string }[];
         profileSource: 'hub_project' | 'client';
     };
     projects: { id: string; name: string; status: string; isHub: boolean; openTasks: number; totalTasks: number }[];

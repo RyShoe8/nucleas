@@ -30,6 +30,7 @@ export default function BrandVoicePanel({ companyId, onCreated }: { companyId: s
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Could not save Voice.');
       setVoice(body.voice);
+      window.dispatchEvent(new Event('nucleas:voice-changed'));
       if (generate) {
         const created = await fetch('/api/os/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ companyId, template: 'brand_voice', config: {} }) });
         const result = await created.json();

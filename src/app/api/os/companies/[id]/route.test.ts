@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   projects: vi.fn(),
   connections: vi.fn(),
   citations: vi.fn(),
+  voice: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -22,6 +23,7 @@ vi.mock('@/lib/companies/companyProfile', () => ({
 }));
 vi.mock('@/lib/models/Client', () => ({ default: { findOne: (...args: unknown[]) => mocks.findCompany(...args) } }));
 vi.mock('@/lib/models/Project', () => ({ default: { aggregate: (...args: unknown[]) => mocks.projects(...args) } }));
+vi.mock('@/lib/models/BrandVoice', () => ({ BrandVoice: { findOne: () => ({ select: () => ({ lean: () => mocks.voice() }) }) } }));
 vi.mock('@/lib/models/CompanyAssistantTurn', () => ({ CompanyAssistantTurn: { aggregate: (...args: unknown[]) => mocks.citations(...args) } }));
 vi.mock('@/lib/integrations/connections', () => ({ listCompanyConnections: (...args: unknown[]) => mocks.connections(...args) }));
 vi.mock('@/lib/companies/activityLog', () => ({ recordActivity: (...args: unknown[]) => mocks.activity(...args) }));
@@ -41,6 +43,7 @@ describe('company production domain', () => {
     mocks.activity.mockResolvedValue(undefined);
     mocks.profile.mockResolvedValue({ id: companyId, name: 'PlayBound', relationship: 'owned' });
     mocks.projects.mockResolvedValue([]);
+    mocks.voice.mockResolvedValue(null);
     mocks.connections.mockResolvedValue([]);
     mocks.citations.mockResolvedValue([
       { _id: 'https://example.com/a', firstSeen: new Date('2026-09-01T00:00:00Z') },
@@ -82,6 +85,18 @@ describe('company production domain', () => {
     const response = await PATCH(new NextRequest(`https://os.nucleas.test/api/os/companies/${companyId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subreddit: 'u/someone' }) }), { params: Promise.resolve({ id: companyId }) });
     expect(response.status).toBe(400);
     expect(mocks.findCompany).not.toHaveBeenCalled();
+  });
+
+  it('reports whether the company has an approved Voice', async () => {
+    const get = async () => (await (await GET(new NextRequest(`https://os.nucleas.test/api/os/companies/${companyId}`), { params: Promise.resolve({ id: companyId }) })).json()).voiceStatus;
+    expect(await get()).toBe('none');
+    mocks.voice.mockResolvedValue({ status: 'draft', persona: 'Write like a fellow player.' });
+    expect(await get()).toBe('draft');
+    mocks.voice.mockResolvedValue({ status: 'approved', persona: 'Write like a fellow player.' });
+    expect(await get()).toBe('approved');
+    // Approved with no persona text is not a usable Voice.
+    mocks.voice.mockResolvedValue({ status: 'approved', persona: '   ' });
+    expect(await get()).toBe('none');
   });
 
   it('allows only managers and administrators', async () => {
