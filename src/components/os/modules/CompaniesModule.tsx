@@ -2,11 +2,21 @@
 
 import { useEffect, useState } from 'react';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
+import { useOsAuth } from '@/hooks/os/useOsAuth';
+import AddCompanyForm from './AddCompanyForm';
 import { RELATIONSHIP_LABEL, type OsCompanySummary } from './companyTypes';
 
 export function useOsCompanies() {
     const [companies, setCompanies] = useState<OsCompanySummary[] | null>(null);
     const [error, setError] = useState<string | null>(null);
+    // Bumped when a company is added anywhere (this window or another), so every list refreshes.
+    const [reload, setReload] = useState(0);
+
+    useEffect(() => {
+        const refresh = () => setReload((n) => n + 1);
+        window.addEventListener('nucleas:companies-changed', refresh);
+        return () => window.removeEventListener('nucleas:companies-changed', refresh);
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -23,7 +33,7 @@ export function useOsCompanies() {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [reload]);
 
     return { companies, error };
 }
@@ -33,13 +43,33 @@ const GROUP_ORDER: OsCompanySummary['relationship'][] = ['internal', 'owned', 'c
 export default function CompaniesModule() {
     const wm = useWindowManager();
     const { companies, error } = useOsCompanies();
+    const auth = useOsAuth();
+    const [adding, setAdding] = useState<'owned' | 'client' | null>(null);
 
     if (error) return <div className="p-4 text-sm text-red-400">Failed to load companies: {error}</div>;
     if (companies === null) return <div className="p-4 text-sm text-text-secondary">Loading companies…</div>;
-    if (companies.length === 0) return <div className="p-4 text-sm text-text-secondary">No companies yet.</div>;
+    const canAdd = auth.isManagerOrAdmin || auth.isAdmin;
 
     return (
-        <div className="h-full overflow-y-auto">
+        <div className="touch-comfort h-full overflow-y-auto">
+            {canAdd ? (
+                <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+                    <button type="button" className={adding === 'owned' ? 'ui-button-primary' : 'ui-button'} onClick={() => setAdding(adding === 'owned' ? null : 'owned')}>Add company</button>
+                    <button type="button" className={adding === 'client' ? 'ui-button-primary' : 'ui-button'} onClick={() => setAdding(adding === 'client' ? null : 'client')}>Add client</button>
+                </div>
+            ) : null}
+            {adding ? (
+                <AddCompanyForm
+                    key={adding}
+                    relationship={adding}
+                    onCancel={() => setAdding(null)}
+                    onCreated={(company) => {
+                        setAdding(null);
+                        wm.open('company', { payload: { companyId: company.id, companyName: company.name } });
+                    }}
+                />
+            ) : null}
+            {companies.length === 0 && !adding ? <div className="p-4 text-sm text-text-secondary">No companies yet.{canAdd ? ' Use Add company or Add client above.' : ''}</div> : null}
             {GROUP_ORDER.map((rel) => {
                 const group = companies.filter((c) => c.relationship === rel);
                 if (group.length === 0) return null;
