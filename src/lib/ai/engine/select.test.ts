@@ -321,3 +321,20 @@ describe('why a model is not auto-ranked', () => {
     expect(out.find((m) => m.profileId === 'anthropic-direct')?.excludedReason).toBeUndefined();
   });
 });
+
+describe('the best writer is picked at free, low and medium', () => {
+  const [gemma, coder] = ROGLY;
+  const withWriting = (m: AvailableModel, writing: number): AvailableModel => ({ ...m, checks: { ...m.checks!, scores: { ...m.checks!.scores, writing } } });
+
+  it('weights the writing test over grounded answers, and falls back for models measured before it existed', () => {
+    const base = measured(gemma, { json: 1, routing: 1, tools: 1, grounded: 0.5 });
+    expect(checkScore(base, 'write')).toBeCloseTo(0.7 * 0.5 + 0.3);
+    expect(checkScore(withWriting(base, 0.9), 'write')).toBeCloseTo(0.6 * 0.9 + 0.3 * 0.5 + 0.1);
+  });
+
+  it('chooses the stronger writer even when another model answers grounded questions better', () => {
+    const grounded = withWriting(measured(gemma, { json: 1, routing: 1, tools: 1, grounded: 1 }), 0.4);
+    const writer = withWriting(measured(coder, { json: 1, routing: 1, tools: 1, grounded: 0.8 }), 0.95);
+    for (const level of ['free', 'low', 'medium'] as const) expect(pick('write', level, [grounded, writer]).primary).toBe(coder.model);
+  });
+});

@@ -1,4 +1,5 @@
 import type { ModelToolRequest, ToolDefinition } from '@nucleas/ai-contracts';
+import { analyzeGenericity, measureStyle, plainText, scoreFidelity } from '@/lib/articles/style';
 
 /**
  * The work samples Nucleas measures free models on. Each is small, but hard enough that models
@@ -253,4 +254,73 @@ export function applyEdits(file: string, edits: unknown): string | null {
     out = out.slice(0, first) + replace + out.slice(first + find.length);
   }
   return out;
+}
+
+// Writing -----------------------------------------------------------------------------------------
+
+/**
+ * Can the model write like a specific voice? Each case gives writing samples in a distinct voice and a short
+ * task with facts that must appear. The reply is scored with the same style engine that grades articles:
+ * how closely it matches the measured voice, how machine-sounding it is, and whether it kept the facts, the
+ * length and the no-dash/no-emoji rule. No model grades another model, so the score is repeatable.
+ */
+export const WRITING_SYSTEM = 'You write in the voice shown by the samples: the same person (we, you or they), sentence length, rhythm and word choice. Reply with the passage only, no title and no preamble. Never use emojis, em dashes or en dashes. Use only the facts given.';
+
+export const WRITING_CASES: { label: string; samples: string; task: string; facts: string[]; minWords: number; maxWords: number }[] = [
+  {
+    label: 'dry, first person plural',
+    samples: [
+      'We test every bonus ourselves. We never recommend one we would not take.',
+      'Most welcome offers hide the catch in the wagering terms. We read them so you do not have to.',
+      'A 35x playthrough on $50 is $1,750 of play. That is the real price. We say so.',
+      'We keep it short. We keep it honest. Then we show the math.',
+    ].join('\n\n'),
+    task: 'Write about 110 words, in three short paragraphs, on why a 40x wagering requirement on a $20 bonus matters. Facts to include: 40x, $20, $800 of play before withdrawing.',
+    facts: ['40x', '$20', '$800'],
+    minWords: 70,
+    maxWords: 170,
+  },
+  {
+    label: 'casual, second person, punchy',
+    samples: [
+      'Your pantry is not a museum. Use the stuff.',
+      'Start with the oldest can. Check the date. If it is dented or bulging, bin it. If not, cook it tonight.',
+      'You do not need a plan. You need a pot and ten minutes. Then you are done.',
+      'Next week, do it again. Your wallet will notice before you do.',
+    ].join('\n\n'),
+    task: 'Write about 110 words, in four short paragraphs, on why you should rotate canned food every six months. Facts to include: six months, canned food, check the date.',
+    facts: ['six months', 'canned food', 'check the date'],
+    minWords: 70,
+    maxWords: 170,
+  },
+  {
+    label: 'measured, third person editorial',
+    samples: [
+      'The county board approved the new library budget on Tuesday, after three hours of public comment that ranged from enthusiastic support to concern about the rising cost of the project.',
+      'Supporters argued that the branch, which has operated out of a converted storefront since 1998, can no longer accommodate the number of residents who rely on it for internet access and programming for children.',
+      'Opponents, many of them from the northern districts, questioned whether a bond measure was the right way to pay for construction, and asked the board to consider a phased approach instead.',
+    ].join('\n\n'),
+    task: 'Write about 110 words, in two paragraphs, reporting that a city council delayed a vote on a bike lane plan until March. Facts to include: council, March, bike lane.',
+    facts: ['council', 'march', 'bike lane'],
+    minWords: 70,
+    maxWords: 170,
+  },
+];
+
+/** 0-1: voice match, human-sounding, and the case's hard requirements. */
+export function scoreWriting(item: (typeof WRITING_CASES)[number], reply: string): { score: number; note: string | null } {
+  const text = reply.trim();
+  const words = plainText(text).split(/\s+/).filter(Boolean).length;
+  if (words < 20) return { score: 0, note: 'Reply was empty or far too short.' };
+  const fidelity = scoreFidelity(text, measureStyle([item.samples]));
+  const fidelityPart = fidelity.measured ? fidelity.score / 100 : 0.5;
+  const genericPart = 1 - Math.min(100, analyzeGenericity(text).score) / 100;
+  const lower = text.toLowerCase();
+  const factsPart = item.facts.filter((f) => lower.includes(f.toLowerCase())).length / item.facts.length;
+  const lengthPart = words >= item.minWords && words <= item.maxWords ? 1 : 0;
+  const cleanPart = /[\u2013\u2014]|[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(text) ? 0 : 1;
+  const requirements = 0.5 * factsPart + 0.3 * lengthPart + 0.2 * cleanPart;
+  const score = Math.round((0.4 * fidelityPart + 0.25 * genericPart + 0.35 * requirements) * 100) / 100;
+  const problems = [fidelity.issues[0], factsPart < 1 ? 'dropped a required fact' : '', lengthPart ? '' : `${words} words`, cleanPart ? '' : 'used a dash or emoji'].filter(Boolean);
+  return { score, note: score < 0.7 ? problems.join('; ') || 'weak voice match' : null };
 }

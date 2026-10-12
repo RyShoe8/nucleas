@@ -86,7 +86,7 @@ interface CheckRow {
     status: 'queued' | 'running' | 'done' | 'failed';
     checkedAt: string | null;
     supports: { jsonSchema: boolean | null; jsonObject: boolean | null; tools: boolean | null };
-    scores: { json: number | null; routing: number | null; tools: number | null; grounded: number | null; code: number | null };
+    scores: { json: number | null; routing: number | null; tools: number | null; grounded: number | null; code: number | null; writing?: number | null };
     overall: number | null;
     avgLatencyMs: number | null;
     notes: string[];
@@ -410,6 +410,7 @@ function FreeModelChecks({ rows, onRun, onCancel }: { rows: CheckRow[]; onRun: (
                             <th className="font-normal py-1 px-1">Tools</th>
                             <th className="font-normal py-1 px-1">Grounded</th>
                             <th className="font-normal py-1 px-1">Code</th>
+                            <th className="font-normal py-1 px-1" title="Writing in a given voice: voice match, natural sounding, facts kept">Writing</th>
                             <th className="font-normal py-1 px-1" title="Host supports: schema-guided JSON / tool calls">Supports</th>
                             <th className="font-normal py-1 pl-1 text-right">Speed</th>
                         </tr>
@@ -440,6 +441,7 @@ function FreeModelChecks({ rows, onRun, onCancel }: { rows: CheckRow[]; onRun: (
                                     <td className="py-1 px-1">{pct(r.scores.tools)}</td>
                                     <td className="py-1 px-1">{pct(r.scores.grounded)}</td>
                                     <td className="py-1 px-1">{pct(r.scores.code)}</td>
+                                    <td className="py-1 px-1">{pct(r.scores.writing ?? null)}</td>
                                     <td className="py-1 px-1 text-[10px] text-text-secondary whitespace-nowrap">
                                         schema {yesNo(r.supports.jsonSchema)} · tools {r.toolMode === 'prompted' ? 'via prompt' : yesNo(r.supports.tools)}
                                     </td>

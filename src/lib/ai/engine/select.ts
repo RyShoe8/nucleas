@@ -103,7 +103,7 @@ function bestUnder(pool: AvailableModel[], need: Need, ceiling: number | null): 
  * How well a free model did on Nucleas's own checks for the kind of work a need is (0–1), or null
  * when it has not been measured. Code weighs exact edits and tool use; research weighs tool use and
  * grounded answers; planning mixes all of them; utilities are mostly routing and forced JSON;
- * writing is grounded answers. Results from before the code check existed skip it.
+ * writing is the voice-writing test plus grounded answers. Results from before the code check existed skip it.
  */
 export function checkScore(m: AvailableModel, need: Need): number | null {
   const s = m.checks?.scores;
@@ -122,8 +122,12 @@ export function checkScore(m: AvailableModel, need: Need): number | null {
         : 0.25 * v(s.routing) + 0.25 * v(s.grounded) + 0.2 * v(s.tools) + 0.15 * v(s.json) + 0.15 * code;
     case 'utility':
       return 0.5 * v(s.routing) + 0.3 * v(s.json) + 0.2 * v(s.grounded);
-    case 'write':
-      return 0.7 * v(s.grounded) + 0.3 * v(s.json);
+    case 'write': {
+      // Writing is judged mainly on the writing test (voice match, natural, facts kept). Models measured
+      // before that test existed fall back to grounded answers so they are not penalised for being old.
+      const writing = s.writing ?? null;
+      return writing === null ? 0.7 * v(s.grounded) + 0.3 * v(s.json) : 0.6 * writing + 0.3 * v(s.grounded) + 0.1 * v(s.json);
+    }
     default:
       return null;
   }

@@ -142,7 +142,7 @@ describe('tool modes', () => {
     const outcome = await checkModel(fakeModel({ nativeTools: 'ignored' }));
     expect(outcome).toMatchObject({ toolMode: 'prompted', supports: { tools: true }, scores: { tools: 1 } });
     // Only the winning mode's notes are kept, and prompted mode got everything right.
-    expect(outcome.notes).toEqual([]);
+    expect(outcome.notes.filter((n) => !n.startsWith('Writing'))).toEqual([]);
     expect((await checkModel(fakeModel())).toolMode).toBe('native');
   });
 });

@@ -21,6 +21,9 @@ import {
   GROUNDED_SYSTEM,
   ROUTING_CASES,
   TOOL_CASES,
+  WRITING_CASES,
+  WRITING_SYSTEM,
+  scoreWriting,
   type ToolMessages,
 } from './checkCases';
 
@@ -81,7 +84,7 @@ const mean = (values: number[]) => (values.length ? values.reduce((a, b) => a + 
 const round = (n: number) => Math.round(n * 100) / 100;
 const clip = (text: string, n = 100) => text.replace(/\s+/g, ' ').trim().slice(0, n);
 
-export const CHECK_STAGES = ['json', 'routing', 'tools', 'grounded', 'code'] as const;
+export const CHECK_STAGES = ['json', 'routing', 'tools', 'grounded', 'code', 'writing'] as const;
 export type CheckStage = (typeof CHECK_STAGES)[number];
 
 /** Everything measured so far; saved after each case so a check cut off mid-way resumes where it stopped. */
@@ -97,6 +100,8 @@ export interface CheckProgress {
   toolScore: number | null;
   grounded: number[];
   coded: number[];
+  /** Writing-in-a-voice case scores, 0-1. */
+  written?: number[];
   /** Gateway timeouts survived so far; the check is re-queued instead of failed until this runs out. */
   transientRetries?: number;
   /** Cases already finished in the stage that is in progress, so a run cut off mid-stage resumes there. */
@@ -125,6 +130,7 @@ export function newProgress(): CheckProgress {
     toolScore: null,
     grounded: [],
     coded: [],
+    written: [],
   };
 }
 
@@ -312,6 +318,26 @@ export async function runCheckStage(caller: CheckCaller, stage: CheckStage, p: C
       }
       break;
     }
+
+    case 'writing': {
+      // Write in a given voice; scored by the same style engine that grades articles.
+      onProgress?.('Checking writing');
+      p.written ??= [];
+      for (let i = startAt; i < WRITING_CASES.length; i += 1) {
+        if (hooks.canCall && !hooks.canCall()) return 'paused';
+        const item = WRITING_CASES[i];
+        const reply = await caller.plain([
+          { role: 'system', content: `${WRITING_SYSTEM}\n\nVoice samples:\n${item.samples}` },
+          { role: 'user', content: item.task },
+        ]);
+        p.latencies.push(reply.latencyMs);
+        const result = scoreWriting(item, reply.text);
+        p.written.push(result.score);
+        if (result.note) p.notes.push(`Writing (${item.label}): ${result.note}`);
+        await finishCase(i);
+      }
+      break;
+    }
   }
   delete p.cursor;
   if (!p.done.includes(stage)) p.done.push(stage);
@@ -325,6 +351,7 @@ export function finishCheck(p: CheckProgress): CheckOutcome {
     tools: round(p.toolScore ?? 0),
     grounded: round(mean(p.grounded)),
     code: round(mean(p.coded)),
+    writing: round(mean(p.written ?? [])),
   };
   return {
     supports: p.supports,

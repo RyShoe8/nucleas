@@ -1,5 +1,5 @@
 import mongoose, { Schema, Types, type InferSchemaType, type Model } from 'mongoose';
-import { EDIT_CASES, GROUNDED_CASES, ROUTING_CASES, TOOL_CASES } from './checkCases';
+import { EDIT_CASES, GROUNDED_CASES, ROUTING_CASES, TOOL_CASES, WRITING_CASES } from './checkCases';
 
 /**
  * What Nucleas measured about each free model by running it (see modelChecks.ts): which request
@@ -19,6 +19,8 @@ const scoresSchema = new Schema(
     grounded: { type: Number, default: null },
     /** Exact code edits, scored by applying them. */
     code: { type: Number, default: null },
+    /** Writing in a given voice, scored by the style engine. */
+    writing: { type: Number, default: null },
   },
   { _id: false }
 );
@@ -63,6 +65,8 @@ export interface CheckScores {
   tools: number | null;
   grounded: number | null;
   code: number | null;
+  /** Absent on checks from before the writing test existed. */
+  writing?: number | null;
 }
 
 export interface ModelCheckSummary {
@@ -101,7 +105,7 @@ type LeanCheck = {
   progress?: { done?: string[]; cursor?: { stage: string; index: number } | null; toolRun?: { mode: string; seed?: { results?: unknown[] } } | null } | null;
 };
 
-const STAGE_TOTALS: Record<string, number> = { routing: ROUTING_CASES.length, grounded: GROUNDED_CASES.length, code: EDIT_CASES.length };
+const STAGE_TOTALS: Record<string, number> = { routing: ROUTING_CASES.length, grounded: GROUNDED_CASES.length, code: EDIT_CASES.length, writing: WRITING_CASES.length };
 
 /** "routing 7 of 12" for the part a check is in the middle of. */
 export function stepDetailFor(progress: LeanCheck['progress']): string | null {
@@ -119,7 +123,7 @@ export function toCheckRow(doc: LeanCheck): ModelCheckRow {
     status: doc.status,
     checkedAt: doc.checkedAt ? doc.checkedAt.toISOString() : null,
     supports: { jsonSchema: doc.supports?.jsonSchema ?? null, jsonObject: doc.supports?.jsonObject ?? null, tools: doc.supports?.tools ?? null },
-    scores: { json: doc.scores?.json ?? null, routing: doc.scores?.routing ?? null, tools: doc.scores?.tools ?? null, grounded: doc.scores?.grounded ?? null, code: doc.scores?.code ?? null },
+    scores: { json: doc.scores?.json ?? null, routing: doc.scores?.routing ?? null, tools: doc.scores?.tools ?? null, grounded: doc.scores?.grounded ?? null, code: doc.scores?.code ?? null, writing: doc.scores?.writing ?? null },
     overall: doc.overall ?? null,
     avgLatencyMs: doc.avgLatencyMs ?? null,
     notes: doc.notes ?? [],

@@ -1,7 +1,5 @@
 import 'server-only';
-import { attemptCompanyCredentialChat } from '@/lib/ai/companyChat';
-import { readEngineSettings, selectModel } from '@/lib/ai/engine/select';
-import { assistantLedgerProjectId } from '@/lib/ai/company/assistantLedger';
+import { askEngine } from '@/lib/ai/engine/ask';
 import { extractJson } from '@/lib/ai/json';
 import type { DealMetricsLlmPartial } from './dealMetrics';
 import { parseKeyPoints } from './keyPoints';
@@ -110,25 +108,16 @@ export function parseAnalysis(raw: unknown, input: Pick<AnalyzeInput, 'mode' | '
 
 /** Runs the analysis on the engine's utility model (a free one when available). Null when no model is available or the reply is unusable. */
 export const analyzeEmail: AnalyzeFn = async (input) => {
-  const settings = await readEngineSettings(input.organizationId);
-  const pick = await selectModel(input.organizationId, 'utility', settings.defaultCostLevel, { settings });
-  if (!pick.primary) return null;
-  const turn = await attemptCompanyCredentialChat({
-    systemPrompt: analysisPrompt(input),
+  const answer = await askEngine({
     organizationId: input.organizationId,
-    projectId: assistantLedgerProjectId(input.organizationId),
     userId: input.userId,
-    userText: `Subject: ${input.subject}\nFrom: ${input.from}\n\n${input.text.slice(0, MAX_INPUT_CHARS)}`,
-    priorTurns: [],
-    modelProfileId: pick.primary.profileId,
-    model: pick.primary.model,
-    includeRepoTools: false,
-    includeImageTool: false,
-    toolProfile: 'none',
-    forcePlain: true,
-    stopOnUpstreamFailure: true,
-    maxOutputTokensOverride: 900,
+    need: 'utility',
+    system: analysisPrompt(input),
+    user: `Subject: ${input.subject}
+From: ${input.from}
+
+${input.text.slice(0, MAX_INPUT_CHARS)}`,
+    maxTokens: 900,
   });
-  if (turn.role !== 'assistant' || !turn.text.trim()) return null;
-  return parseAnalysis(extractJson(turn.text), input);
+  return answer ? parseAnalysis(extractJson(answer.text), input) : null;
 };

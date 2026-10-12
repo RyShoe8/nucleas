@@ -2,9 +2,7 @@ import 'server-only';
 import { Types } from 'mongoose';
 import { ContentWatch, WatchItem, WatchPost } from '@/lib/models/Watch';
 import { BrandVoice } from '@/lib/models/BrandVoice';
-import { attemptCompanyCredentialChat } from '@/lib/ai/companyChat';
-import { readEngineSettings, selectModel } from '@/lib/ai/engine/select';
-import { assistantLedgerProjectId } from '@/lib/ai/company/assistantLedger';
+import { askEngine } from '@/lib/ai/engine/ask';
 import { getCompanyProfile, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { canUseWatches, WATCHES_FORBIDDEN } from './access';
 import { buildDealKey, formatDealLine } from './dealFormat';
@@ -103,29 +101,8 @@ export function postUserPrompt(input: { subject: string; from: string; summary?:
 
 export type AskWriter = (input: { organizationId: string; userId: string; system: string; user: string; maxTokens: number }) => Promise<string | null>;
 
-/** The engine's writing model, at the organization's default level. */
-export const askWriter: AskWriter = async ({ organizationId, userId, system, user, maxTokens }) => {
-  const settings = await readEngineSettings(organizationId);
-  const pick = await selectModel(organizationId, 'write', settings.defaultCostLevel, { settings });
-  if (!pick.primary) return null;
-  const turn = await attemptCompanyCredentialChat({
-    systemPrompt: system,
-    organizationId,
-    projectId: assistantLedgerProjectId(organizationId),
-    userId,
-    userText: user,
-    priorTurns: [],
-    modelProfileId: pick.primary.profileId,
-    model: pick.primary.model,
-    includeRepoTools: false,
-    includeImageTool: false,
-    toolProfile: 'none',
-    forcePlain: true,
-    stopOnUpstreamFailure: true,
-    maxOutputTokensOverride: maxTokens,
-  });
-  return turn.role === 'assistant' && turn.text.trim() ? turn.text.trim() : null;
-};
+export const askWriter: AskWriter = async ({ organizationId, userId, system, user, maxTokens }) =>
+  (await askEngine({ organizationId, userId, need: 'write', system, user, maxTokens }))?.text ?? null;
 
 export interface PostView {
   id: string;
