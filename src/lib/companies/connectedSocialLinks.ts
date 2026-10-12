@@ -11,17 +11,18 @@ export const blueskyProfileUrl = (accountLabel: string | undefined): string | nu
   return handle && /^[A-Za-z0-9._:-]{3,253}$/.test(handle) ? `https://bsky.app/profile/${handle}` : null;
 };
 
-/** The Page's public link, read once through its own token. */
+/** The Page's public link, read once through its own token. Falls back to the Page id, which facebook.com resolves to the Page. */
 export async function facebookPageLink(token: string, fetchImpl: FetchLike = fetch): Promise<string | null> {
-  const res = await fetchImpl(`${FACEBOOK_GRAPH}/me?fields=link`, { headers: { authorization: `Bearer ${token}`, accept: 'application/json' }, signal: AbortSignal.timeout(8_000), redirect: 'error' });
+  const res = await fetchImpl(`${FACEBOOK_GRAPH}/me?fields=link,id`, { headers: { authorization: `Bearer ${token}`, accept: 'application/json' }, signal: AbortSignal.timeout(8_000), redirect: 'error' });
   if (!res.ok) return null;
-  const body = (await res.json().catch(() => null)) as { link?: string } | null;
+  const body = (await res.json().catch(() => null)) as { link?: string; id?: string } | null;
   try {
     const url = new URL(body?.link ?? '');
-    return /^(?:www\.|m\.)?facebook\.com$/i.test(url.hostname) && url.protocol === 'https:' ? url.toString() : null;
+    if (/^(?:www\.|m\.)?facebook\.com$/i.test(url.hostname) && url.protocol === 'https:') return url.toString();
   } catch {
-    return null;
+    // No usable link; try the id.
   }
+  return body?.id && /^\d{5,25}$/.test(body.id) ? `https://www.facebook.com/${body.id}` : null;
 }
 
 /** Pure: listed links first; a connected account fills in any network that has no listed link. */

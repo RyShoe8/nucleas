@@ -39,7 +39,11 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
 
     useEffect(() => {
         window.addEventListener('nucleas:voice-changed', load);
-        return () => window.removeEventListener('nucleas:voice-changed', load);
+        window.addEventListener('nucleas:voice-generated', load);
+        return () => {
+            window.removeEventListener('nucleas:voice-changed', load);
+            window.removeEventListener('nucleas:voice-generated', load);
+        };
     }, [load]);
 
     if (!companyId) return <div className="p-4 text-sm text-text-secondary">No company selected.</div>;

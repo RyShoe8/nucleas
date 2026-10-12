@@ -12,6 +12,13 @@ export default function BrandVoicePanel({ companyId, onCreated }: { companyId: s
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  // Bumped when a generated result is accepted in any window, so this panel never keeps an older persona and revision.
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => {
+    const onGenerated = () => { setReloadKey((n) => n + 1); setMessage('A new draft was saved from the generated result. Review it, then approve it.'); };
+    window.addEventListener('nucleas:voice-generated', onGenerated);
+    return () => window.removeEventListener('nucleas:voice-generated', onGenerated);
+  }, []);
   useEffect(() => {
     if (!companyId) return;
     let cancelled = false;
@@ -21,7 +28,7 @@ export default function BrandVoicePanel({ companyId, onCreated }: { companyId: s
       if (!cancelled) { setVoice(body.voice ?? EMPTY); setLoading(false); setError(''); }
     }).catch((e: Error) => { if (!cancelled) { setError(e.message); setLoading(false); } });
     return () => { cancelled = true; };
-  }, [companyId]);
+  }, [companyId, reloadKey]);
 
   async function save(status: Voice['status'], generate = false) {
     setBusy(true); setError(''); setMessage('');

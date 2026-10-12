@@ -52,5 +52,8 @@ describe('connected social links', () => {
     mocks.credential.mockResolvedValue('t');
     expect(await connectedSocialLinks(org, company, (async () => json({}, 400)) as never)).toEqual([]);
     expect(await facebookPageLink('t', (async () => json({ link: 'https://evil.example/x' })) as never)).toBeNull();
+    // No link from Facebook: the Page id still opens the Page.
+    expect(await facebookPageLink('t', (async () => json({ id: '1234567890123' })) as never)).toBe('https://www.facebook.com/1234567890123');
+    expect(await facebookPageLink('t', (async () => json({ link: 'https://evil.example/x', id: '1234567890123' })) as never)).toBe('https://www.facebook.com/1234567890123');
   });
 });

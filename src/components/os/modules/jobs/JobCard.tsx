@@ -530,8 +530,12 @@ function RunBlock({ job, run, onChange, onView }: { job: JobView; run: JobRunVie
         setError(null);
         const res = await post(job.id, { action, runId: run.id });
         setBusy(null);
+        // Tell every other open window (Marketing, Content, Voice, Jobs) so none keeps showing this run as waiting.
+        // A failed decision usually means the run was already decided somewhere else, so refresh then too.
+        window.dispatchEvent(new Event('nucleas:jobs-changed'));
         if (res.error || !res.job) return setError(res.error ?? 'Failed');
         onChange(res.job);
+        if (action === 'accept_run' && job.design?.skill === 'brand_voice') window.dispatchEvent(new Event('nucleas:voice-generated'));
     };
     return (
         <div className="rounded border border-border p-2 space-y-2">
