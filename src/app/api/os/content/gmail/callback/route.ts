@@ -18,14 +18,18 @@ export async function GET(request: NextRequest) {
   if (viewer instanceof NextResponse) return viewer;
   const params = request.nextUrl.searchParams;
   const state = await verifyWatchState(params.get('state') ?? '');
+  if (!state || state.userId !== viewer.userId) console.error('[os/content/gmail] state rejected', state ? 'different user' : 'invalid or expired');
   if (!state || state.userId !== viewer.userId) return backToContent(request, { integration_error: 'Sign-in expired. Please try again.' });
-  if (params.get('error')) return backToContent(request, { integration_error: 'Google sign-in was cancelled.' });
+  if (params.get('error')) return backToContent(request, { integration_error: `Google sign-in did not finish (${(params.get('error') ?? '').replace(/[^a-z_]/g, '').slice(0, 40) || 'cancelled'}).` });
   const code = params.get('code');
   const redirectUri = watchRedirectUri(request.url);
   if (!code || !redirectUri) return backToContent(request, { integration_error: 'Missing sign-in code.' });
   try {
     const result = await completeWatchMailbox(viewer, { code, redirectUri });
-    if (!result.ok) return backToContent(request, { integration_error: result.error });
+    if (!result.ok) {
+      console.error('[os/content/gmail] connect refused:', result.error);
+      return backToContent(request, { integration_error: result.error });
+    }
     return backToContent(request, { integration_notice: `${result.emailAddress} connected for content watches.` });
   } catch (error) {
     console.error('[os/content/gmail] callback failed', error instanceof Error ? error.message : 'unknown');

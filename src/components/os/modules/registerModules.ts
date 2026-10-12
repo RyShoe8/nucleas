@@ -158,7 +158,7 @@ export function registerOsModules(): void {
             minSize: { width: 460, height: 320 },
             canPopout: true,
             permissions: 'member',
-            render: () => createElement(ContentModule),
+            render: (ctx) => createElement(ContentModule, { initialTab: ctx.payload?.tab }),
         },
         {
             id: 'tools',

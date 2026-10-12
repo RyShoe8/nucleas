@@ -83,13 +83,22 @@ export async function completeWatchMailbox(viewer: CompanyViewer, input: { code:
     body: new URLSearchParams({ code: input.code, client_id: clientId, client_secret: clientSecret, redirect_uri: input.redirectUri, grant_type: 'authorization_code' }),
     signal: AbortSignal.timeout(15_000),
   });
-  if (!res.ok) return { ok: false, error: 'Google did not accept the sign-in. Please try again.' };
+  if (!res.ok) {
+    // Google's error code (for example redirect_uri_mismatch or invalid_client) says exactly what to fix.
+    const detail = (await res.json().catch(() => ({}))) as { error?: unknown };
+    const code = typeof detail.error === 'string' && /^[a-z_]{3,40}$/.test(detail.error) ? detail.error : String(res.status);
+    return { ok: false, error: `Google did not accept the sign-in (${code}). Please try again.` };
+  }
   const tokens = (await res.json()) as { access_token?: string; refresh_token?: string; scope?: string };
   if (!tokens.access_token || !tokens.refresh_token) return { ok: false, error: 'Google did not grant lasting access. Try again and approve the request.' };
   if (!(tokens.scope ?? '').includes(WATCH_GMAIL_SCOPE)) return { ok: false, error: 'Gmail read access was not granted. Try again and approve it.' };
-  const profile = await new GmailApi(tokens.access_token, fetchImpl).profile().catch(() => null);
+  let reason = '';
+  const profile = await new GmailApi(tokens.access_token, fetchImpl).profile().catch((error: unknown) => {
+    reason = error instanceof Error ? error.message.slice(0, 120) : '';
+    return null;
+  });
   const emailAddress = profile?.emailAddress?.toLowerCase();
-  if (!emailAddress) return { ok: false, error: 'Could not read the mailbox address from Google.' };
+  if (!emailAddress) return { ok: false, error: `Could not read the mailbox address from Google${reason ? ` (${reason})` : ''}.` };
   await WatchMailbox.updateOne(
     { organizationId: viewer.organizationId, emailAddress },
     { $set: { refreshTokenSealed: sealSecret(watchMailboxPurpose(emailAddress), tokens.refresh_token), status: 'connected', connectedByUserId: new Types.ObjectId(viewer.userId) }, $unset: { lastError: '' } },
