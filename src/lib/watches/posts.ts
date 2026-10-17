@@ -8,6 +8,8 @@ import { canUseWatches, WATCHES_FORBIDDEN } from './access';
 import { buildDealKey, formatDealLine } from './dealFormat';
 import { dealStrengthPct } from './dealMetrics';
 import { getSocialPlatform, truncateForPlatform, type SocialPlatformId } from './socialPlatforms';
+import { legacyMode, watchSettings } from './settings';
+import { upstreamContext } from '@/lib/companies/upstreamContext';
 import type { DealMetrics } from './types';
 
 /**
@@ -69,7 +71,7 @@ export function dealsToPost(item: { deals?: DealMetrics[]; bestDeal?: DealMetric
     .map((d) => ({ key: buildDealKey(d), deal: d }));
 }
 
-export function postSystemPrompt(input: { persona: string; platform: SocialPlatformId; hasDeal: boolean }): string {
+export function postSystemPrompt(input: { persona: string; platform: SocialPlatformId; hasDeal: boolean; strategy?: string }): string {
   const platform = getSocialPlatform(input.platform);
   return [
     `Write a short social media post promoting this ${input.hasDeal ? 'deal email' : 'email content'} in the brand voice below.`,
@@ -84,6 +86,7 @@ export function postSystemPrompt(input: { persona: string; platform: SocialPlatf
     '',
     'Brand voice:',
     input.persona.trim(),
+    ...(input.strategy ? ['', 'Company strategy (stay on it; never state it as a fact):', input.strategy.trim()] : []),
   ].join('\n');
 }
 
@@ -158,10 +161,12 @@ export async function draftPostsForItem(
   const viewerLike = { userId, organizationId, employeeId: null, role: 'Administrator' as const };
   const profile = await getCompanyProfile(viewerLike, String(watch.companyId));
   const platforms = options.platforms?.length ? options.platforms : platformsForLinks(profile?.socialLinks ?? []);
-  const targets = dealsToPost({ deals: (item.deals ?? []) as DealMetrics[], bestDeal: (item.bestDeal ?? null) as DealMetrics | null }, watch.mode === 'deal' ? 'deal' : 'match', watch.threshold ?? 60);
+  const settings = watchSettings(watch);
+  const targets = dealsToPost({ deals: (item.deals ?? []) as DealMetrics[], bestDeal: (item.bestDeal ?? null) as DealMetrics | null }, legacyMode(settings.rank), settings.minDiscountPct);
   if (!targets.length) return { ok: true, data: { posts: [], created: 0 } };
 
   const ask = options.ask ?? askWriter;
+  const strategy = await upstreamContext(organizationId, watch.companyId).catch(() => '');
   let created = 0;
   const posts: PostView[] = [];
   for (const target of targets) {
@@ -175,7 +180,7 @@ export async function draftPostsForItem(
       const raw = await ask({
         organizationId: String(organizationId),
         userId,
-        system: postSystemPrompt({ persona: voice.persona, platform, hasDeal: Boolean(target.deal) }),
+        system: postSystemPrompt({ persona: voice.persona, platform, hasDeal: Boolean(target.deal), strategy }),
         user: postUserPrompt({ subject: item.subject ?? '', from: item.fromEmail ?? '', summary: item.summary ?? undefined, keyPoints: (item.keyPoints ?? []).map((p) => ({ text: p.text ?? '' })), deal: target.deal, link: item.link, platform }),
         maxTokens: 600,
       }).catch(() => null);

@@ -64,7 +64,7 @@ export default function ArticlesPanel() {
                 {articles.map((a) => (
                     <li key={a.id}>
                         <button type="button" className="ui-card block w-full p-3 text-left" onClick={() => setOpenId(a.id)}>
-                            <span className="line-clamp-2 break-words text-sm font-medium">{a.title || a.topic}</span>
+                            <span className="line-clamp-2 break-words text-sm font-medium">{a.kind === 'digest' ? <span className="mr-1.5 rounded border border-sky-400/40 px-1 py-px text-[10px] font-normal text-sky-300">Digest</span> : null}{a.title || a.topic}</span>
                             <span className="mt-0.5 block break-words text-[11px] text-text-secondary">{nameOf(a.companyId)} · {STATUS_LABEL[a.status]}{a.status === 'done' && a.fidelityMeasured && a.fidelity !== null ? ` · voice match ${a.fidelity}/100` : ''}{a.status === 'queued' || a.status === 'running' ? ` · ${a.progress}` : ''}{a.status === 'failed' && a.error ? ` · ${a.error}` : ''}</span>
                         </button>
                     </li>

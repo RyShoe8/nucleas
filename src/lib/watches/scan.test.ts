@@ -83,9 +83,9 @@ describe('flagging', () => {
     expect(isFlagged(59, 60)).toBe(false);
   });
 
-  it('scores a deal by its strength percent: the larger of the savings and the bonus, capped at 99', () => {
-    // $25 for $100 is 75% off but a 300% bonus; Content Intelligence caps the bonus at 99 and uses the larger.
-    expect(dealScore(buildDealMetricsFromAmounts(25, 100, 'retail_list_vs_sale', 0.55, 'regex', 'USD', 'USD'))).toBe(99);
+  it('scores a deal by its strength percent: the larger of the savings and the bonus, not capped at 100', () => {
+    // $25 for $100 is 75% off but a 300% bonus: the larger counts, so big bonuses still rank above small ones.
+    expect(dealScore(buildDealMetricsFromAmounts(25, 100, 'retail_list_vs_sale', 0.55, 'regex', 'USD', 'USD'))).toBe(300);
     expect(dealScore(buildDealMetricsFromAmounts(20, 26, 'pay_vs_credited_value', 0.5, 'regex', 'USD', 'SC'))).toBe(30);
     expect(dealScore(null)).toBe(0);
   });

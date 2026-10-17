@@ -40,7 +40,7 @@ const valid = () => ({ name: 'Launches', mailboxId, description: 'New product la
 describe('creating and listing watches', () => {
   it('creates a watch with sensible defaults and lists it with its mailbox', async () => {
     const created = await createWatch(viewer(), valid());
-    expect(created).toMatchObject({ ok: true, data: { name: 'Launches', mode: 'match', threshold: 70, lookbackHours: 168, intervalMinutes: 60, aiSummary: true, active: true, mailboxEmail: 'me@example.org', companyId: null } });
+    expect(created).toMatchObject({ ok: true, data: { name: 'Launches', rank: 'fit', fields: [], digest: { enabled: false, cadence: 'weekly', maxItems: 10 }, threshold: 70, lookbackHours: 168, intervalMinutes: 60, aiSummary: true, active: true, mailboxEmail: 'me@example.org', companyId: null } });
     expect(await listWatches(viewer())).toHaveLength(1);
   });
 
@@ -64,8 +64,36 @@ describe('creating and listing watches', () => {
     expect(await createWatch(viewer(), { ...valid(), threshold: 150 })).toMatchObject({ ok: false, status: 400 });
     expect(await createWatch(viewer(), { ...valid(), intervalMinutes: 1 })).toMatchObject({ ok: false, status: 400 });
     expect(await createWatch(viewer(), { ...valid(), surprise: true })).toMatchObject({ ok: false, status: 400 });
-    // A deal watch needs no description: the deal is the thing it looks for.
-    expect(await createWatch(viewer(), { name: 'Deals', mailboxId, mode: 'deal', threshold: 25, dealUnitTokens: ['SC', 'GC'] })).toMatchObject({ ok: true });
+    // A discount watch needs no description: the offer is the thing it looks for.
+    expect(await createWatch(viewer(), { name: 'Deals', mailboxId, rank: 'discount', minDiscountPct: 150, dealUnitTokens: ['SC', 'GC'] })).toMatchObject({ ok: true, data: { rank: 'discount', minDiscountPct: 150 } });
+    // A digest is written in a company's Voice, so it needs one.
+    expect(await createWatch(viewer(), { ...valid(), digest: { enabled: true } })).toMatchObject({ ok: false, status: 400, error: expect.stringContaining('company') });
+  });
+
+  it('stores fields with stable keys and keeps the legacy mode in step with the ranking', async () => {
+    const created = await createWatch(viewer(), { ...valid(), rank: 'discount', fields: [{ label: 'Regular price', kind: 'money' }, { label: 'Regular price', kind: 'text' }, { label: 'Ends', kind: 'date' }] });
+    expect(created).toMatchObject({ ok: true, data: { fields: [{ key: 'regular_price', label: 'Regular price', kind: 'money' }, { key: 'ends', label: 'Ends', kind: 'date' }] } });
+    if (!created.ok) throw new Error('setup');
+    expect(await ContentWatch.findById(created.data.id).lean()).toMatchObject({ mode: 'deal', rank: 'discount' });
+  });
+
+  it("reads a watch saved before rankings: a deal watch's threshold becomes its discount minimum", async () => {
+    const legacy = await ContentWatch.create({ organizationId: org, createdByUserId: new Types.ObjectId(viewer().userId), mailboxId: new Types.ObjectId(mailboxId), name: 'Old deals', mode: 'deal', threshold: 25 });
+    const [view] = (await listWatches(viewer()))!.filter((w) => w.id === String(legacy._id));
+    expect(view).toMatchObject({ rank: 'discount', minDiscountPct: 25, threshold: 0 });
+    // Saving it once stores the new shape without changing what it flags.
+    expect(await updateWatch(viewer(), String(legacy._id), { name: 'Casino deals' })).toMatchObject({ ok: true, data: { rank: 'discount', minDiscountPct: 25, threshold: 0 } });
+    expect(await ContentWatch.findById(legacy._id).lean()).toMatchObject({ rank: 'discount', minDiscountPct: 25, threshold: 0, mode: 'deal' });
+  });
+
+  it('starts a digest period when the digest is switched on, not before', async () => {
+    const created = await createWatch(viewer(), { ...valid(), companyId: company.id });
+    if (!created.ok) throw new Error('setup');
+    expect(created.data.digest.lastRunAt).toBeNull();
+    const on = await updateWatch(viewer(), created.data.id, { digest: { enabled: true, cadence: 'daily', maxItems: 5 } });
+    expect(on).toMatchObject({ ok: true, data: { digest: { enabled: true, cadence: 'daily', maxItems: 5 } } });
+    if (!on.ok) throw new Error('setup');
+    expect(Date.now() - new Date(on.data.digest.lastRunAt!).getTime()).toBeLessThan(60_000);
   });
 
   it('only attaches a company the viewer can see', async () => {

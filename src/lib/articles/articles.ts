@@ -38,20 +38,22 @@ export interface ArticleView {
   researchNote: string | null;
   modelPath: string[];
   targetWords: number;
+  /** digest: a newsletter a watch wrote from its flagged emails. */
+  kind: 'article' | 'digest';
   createdAt: string;
   updatedAt: string;
 }
 
 type Row = {
   _id: Types.ObjectId; companyId: Types.ObjectId; topic: string; title?: string; status: ArticleView['status']; stage?: string; progress?: string; error?: string | null; body?: string; metaDescription?: string;
-  fidelity?: number; fidelityMeasured?: boolean; genericity?: number; warnings?: string[]; sourcesUsed?: string[]; researchNote?: string; modelPath?: string[]; targetWords?: number; createdAt?: Date; updatedAt?: Date;
+  fidelity?: number; fidelityMeasured?: boolean; genericity?: number; warnings?: string[]; sourcesUsed?: string[]; researchNote?: string; modelPath?: string[]; targetWords?: number; kind?: string; createdAt?: Date; updatedAt?: Date;
 };
 
 export function articleView(r: Row): ArticleView {
   return {
     id: String(r._id), companyId: String(r.companyId), topic: r.topic, title: r.title ?? '', status: r.status, stage: r.stage ?? 'research', progress: r.progress ?? '', error: r.error ?? null,
     body: r.body ?? '', metaDescription: r.metaDescription ?? '', fidelity: r.fidelity ?? null, fidelityMeasured: Boolean(r.fidelityMeasured), genericity: r.genericity ?? null,
-    warnings: r.warnings ?? [], sources: r.sourcesUsed ?? [], researchNote: r.researchNote ?? null, modelPath: r.modelPath ?? [], targetWords: r.targetWords ?? 0,
+    warnings: r.warnings ?? [], sources: r.sourcesUsed ?? [], researchNote: r.researchNote ?? null, modelPath: r.modelPath ?? [], targetWords: r.targetWords ?? 0, kind: r.kind === 'digest' ? 'digest' : 'article',
     createdAt: r.createdAt?.toISOString() ?? '', updatedAt: r.updatedAt?.toISOString() ?? '',
   };
 }

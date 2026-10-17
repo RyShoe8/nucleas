@@ -3,7 +3,9 @@ import { Types } from 'mongoose';
 import { Job, JobRun, type JobRunProgressStage } from '@/lib/models/Job';
 import { PublishDelivery, PublishItem } from '@/lib/models/Publishing';
 import { BrandVoice } from '@/lib/models/BrandVoice';
-import { WatchItem } from '@/lib/models/Watch';
+import { ContentWatch, WatchItem } from '@/lib/models/Watch';
+import { upstreamContext } from '@/lib/companies/upstreamContext';
+import { valueLines as watchValueLines, watchSettings } from '@/lib/watches/settings';
 import { IntegrationConnection } from '@/lib/models/Integration';
 import { readConnectionCredential } from '@/lib/integrations/connections';
 import { getCompanyProfile, loadCompanyViewer } from '@/lib/companies/companyProfile';
@@ -110,9 +112,13 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
     const page: PageFacts = await readPageFacts(entry.url!, deps.fetcher);
     return { ...page, title: page.title || entry.title, extra: [], link: entry.url };
   }
-  const item = await WatchItem.findOne({ _id: new Types.ObjectId(entry.key), organizationId: job.organizationId })
-    .select('subject summary keyPoints bestDeal link fromName')
-    .lean<{ subject?: string; summary?: string; keyPoints?: { text?: string }[]; bestDeal?: DealMetrics; link?: string; fromName?: string }>();
+  const [item, watch] = await Promise.all([
+    WatchItem.findOne({ _id: new Types.ObjectId(entry.key), organizationId: job.organizationId })
+      .select('subject summary keyPoints bestDeal values link fromName')
+      .lean<{ subject?: string; summary?: string; keyPoints?: { text?: string }[]; bestDeal?: DealMetrics; values?: Record<string, string>; link?: string; fromName?: string }>(),
+    ContentWatch.findOne({ _id: new Types.ObjectId(config.source.watchId), organizationId: job.organizationId }).select('fields rank mode threshold minDiscountPct').lean(),
+  ]);
+  const fields = watch ? watchSettings(watch).fields : [];
   return {
     title: item?.subject ?? entry.title,
     description: item?.summary ?? '',
@@ -123,6 +129,7 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
     extra: [
       item?.fromName ? `From: ${item.fromName}` : '',
       item?.bestDeal ? `Deal: ${formatDealLine(item.bestDeal)}` : '',
+      ...watchValueLines(item?.values, fields),
       ...(item?.keyPoints ?? []).slice(0, 6).map((p) => `Key fact: ${p.text ?? ''}`),
     ].filter(Boolean),
     link: item?.link ?? entry.url,
@@ -156,7 +163,7 @@ interface Prepared {
   problem?: string;
 }
 
-type DraftContext = { companyName: string; persona: string | null; subreddit: string | null };
+type DraftContext = { companyName: string; persona: string | null; subreddit: string | null; strategy?: string };
 
 async function prepareAdmin(target: AdminTarget, config: PublishingConfig, facts: ItemFacts, context: DraftContext, write: Writer): Promise<Prepared> {
   const filled = await fillValues(target, { title: facts.title, description: facts.description, extra: facts.extra, link: facts.link }, { companyName: context.companyName, noun: config.source.noun, brief: config.brief, persona: context.persona }, write);
@@ -188,6 +195,7 @@ async function draftAll(job: JobLike, config: PublishingConfig, facts: ItemFacts
         facts: { title: facts.title, description: facts.description, text: facts.text, video: facts.video, extra: facts.extra },
         link: facts.link,
         subreddit: context.subreddit,
+        strategy: context.strategy,
       },
       write
     ).catch(() => null);
@@ -336,7 +344,7 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
   // Social posts must sound like the brand; admin records use the Voice for descriptions when there is one.
   if (!persona && config.channels.some((c) => (SOCIAL_PLATFORMS as readonly string[]).includes(c.platform))) return fail(`Approve ${profile.name}’s Voice first, so posts sound like the brand.`);
   const write = deps.write ?? engineWriter(job);
-  const context = { companyName: profile.name, persona, subreddit: profile.subreddit ?? null };
+  const context = { companyName: profile.name, persona, subreddit: profile.subreddit ?? null, strategy: await upstreamContext(job.organizationId, job.companyId).catch(() => '') };
   const noun = config.source.noun;
 
   await progress(run._id, owner, `Checking for new ${noun}s`, 'preparing', 10);

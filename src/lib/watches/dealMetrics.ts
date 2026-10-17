@@ -20,6 +20,12 @@ function clampSavings(pct: number): number {
   return Math.min(0.99, Math.max(0, pct));
 }
 
+/** A bonus is not a saving: getting 4x what you pay is a 300% bonus. Bounded only against absurd parses. */
+function clampBonus(pct: number): number {
+  if (!Number.isFinite(pct)) return 0;
+  return Math.min(10, Math.max(0, pct));
+}
+
 function reEsc(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -57,7 +63,7 @@ function buildIncomparableDealMetrics(
   creditUnit: string,
 ): DealMetrics {
   const bonus_pct =
-    youPay > 0 && baseline > youPay ? clampSavings((baseline - youPay) / youPay) : undefined;
+    youPay > 0 && baseline > youPay ? clampBonus((baseline - youPay) / youPay) : undefined;
   return {
     mode,
     you_pay: youPay,
@@ -92,7 +98,7 @@ export function buildDealMetricsFromAmounts(
   }
 
   const effective_savings_pct = clampSavings(1 - youPay / baseline);
-  const bonus_pct = clampSavings((baseline - youPay) / youPay);
+  const bonus_pct = clampBonus((baseline - youPay) / youPay);
   const value_ratio = baseline / youPay;
   return {
     mode,

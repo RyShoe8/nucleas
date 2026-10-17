@@ -5,6 +5,7 @@ import type { ItemView, PostView, WatchView } from '@/lib/watches/types-client';
 import { formatDealLine } from '@/lib/watches/dealFormat';
 import type { DealMetrics } from '@/lib/watches/types';
 import { getSocialPlatform, type SocialPlatformId } from '@/lib/watches/socialPlatforms';
+import { valueLines } from '@/lib/watches/settings';
 
 type Filter = 'flagged' | 'scored' | 'all';
 type Detail = { text: string; html: string };
@@ -17,10 +18,11 @@ async function api<T>(url: string, init?: RequestInit): Promise<{ ok: true; data
     return res.ok ? { ok: true, data } : { ok: false, error: data.error ?? `Failed (${res.status})`, status: res.status };
 }
 
-function ScorePill({ item, threshold }: { item: ItemView; threshold: number }) {
+function ScorePill({ item, watch }: { item: ItemView; watch: WatchView }) {
     if (item.skipReason) return <span className="rounded border border-border px-1.5 py-0.5 text-[10px] text-text-secondary">skipped</span>;
     const tone = item.flagged ? 'border-emerald-400/50 text-emerald-300' : 'border-border text-text-secondary';
-    return <span className={`rounded border px-1.5 py-0.5 text-[10px] tabular-nums ${tone}`} title={`Flagged at ${threshold} or more`}>{item.flagged ? 'flagged · ' : ''}{item.score}</span>;
+    const discount = watch.rank === 'discount';
+    return <span className={`rounded border px-1.5 py-0.5 text-[10px] tabular-nums ${tone}`} title={discount ? `Flagged at offers of ${watch.minDiscountPct}% or more` : `Flagged at a fit of ${watch.threshold} or more`}>{item.flagged ? 'flagged · ' : ''}{item.score}{discount ? '%' : ''}</span>;
 }
 
 function PostCard({ post, onChange }: { post: PostView; onChange: (p: PostView | null) => void }) {
@@ -99,6 +101,7 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
     const [original, setOriginal] = useState(false);
     const [posts, setPosts] = useState<PostView[]>([]);
     const [drafting, setDrafting] = useState<string | null>(null);
+    const [digesting, setDigesting] = useState(false);
     const [reload, setReload] = useState(0);
 
     useEffect(() => {
@@ -172,6 +175,17 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
         if (res.data.posts.length) setTab('posts');
     };
 
+    const digest = async () => {
+        setDigesting(true);
+        setError(null);
+        setNotice(null);
+        const res = await api<{ articleId: string; items: number }>(`/api/os/content/watches/${watch.id}/digest`, { method: 'POST' });
+        setDigesting(false);
+        if (!res.ok) return setError(res.error);
+        setNotice(`Writing a digest of ${res.data.items} item${res.data.items === 1 ? '' : 's'}. It will appear in Content → Articles in a few minutes.`);
+        onScanned();
+    };
+
     return (
         <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -187,11 +201,13 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
                     </select>
                 ) : null}
                 <span className="flex-1" />
+                {watch.companyId ? <button type="button" className="ui-button" disabled={digesting} onClick={() => void digest()} title={watch.digest.lastRunAt ? `Covers what was flagged since ${when(watch.digest.lastRunAt)}` : 'Covers what was flagged in the last period'}>{digesting ? 'Starting…' : 'Write digest now'}</button> : null}
                 <button type="button" className="ui-button-primary" disabled={scanning || watch.scanning} onClick={() => void scan()}>{scanning || watch.scanning ? 'Scanning…' : 'Scan now'}</button>
             </div>
             {notice ? <p role="status" className="text-xs text-emerald-400">{notice}</p> : null}
             {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
             {watch.lastScanError ? <p className="text-xs text-amber-400">Last scan failed: {watch.lastScanError}</p> : null}
+            {watch.digest.lastError ? <p className="text-xs text-amber-400">Last digest: {watch.digest.lastError}</p> : null}
 
             {tab === 'posts' ? (
                 posts.length ? (
@@ -214,11 +230,16 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
                                         <button type="button" onClick={() => void openItem(item.id)} className="block w-full break-words py-1 text-left text-sm font-medium hover:underline">{item.subject || '(no subject)'}</button>
                                         <p className="break-words text-[11px] text-text-secondary">{item.fromName || item.fromEmail} · {when(item.sentAt)}</p>
                                     </div>
-                                    <ScorePill item={item} threshold={watch.threshold} />
+                                    <ScorePill item={item} watch={watch} />
                                 </div>
                                 {item.skipReason ? <p className="mt-1 text-[11px] text-text-secondary">Skipped: {item.skipReason.replace(/_/g, ' ').replace(/:\d+$/, '')}</p> : null}
                                 {item.reason ? <p className="mt-1 text-xs italic text-text-secondary">{item.reason}</p> : null}
                                 {deal ? <p className="mt-1 text-xs font-medium">{deal}</p> : null}
+                                {Object.keys(item.values).length ? (
+                                    <ul className="mt-1 grid gap-x-3 text-xs sm:grid-cols-2">
+                                        {valueLines(item.values, watch.fields).map((line) => <li key={line} className="break-words">{line}</li>)}
+                                    </ul>
+                                ) : null}
                                 {item.summary ? <p className="mt-1 text-sm leading-relaxed">{item.summary}</p> : null}
                                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
                                     {item.link ? <a href={item.link} target="_blank" rel="noopener noreferrer" className="touch-link text-primary">Open link</a> : null}

@@ -30,20 +30,40 @@ const watchSchema = new Schema(
     /** Optional: the company whose Voice writes this watch's social posts. */
     companyId: { type: Schema.Types.ObjectId, ref: 'Client' },
     name: { type: String, required: true, trim: true, maxlength: 120 },
-    /** match: score each email against the plain-words description. deal: score by deal strength. */
+    /** Legacy, kept in step with rank (discount → deal) for older readers. See lib/watches/settings. */
     mode: { type: String, enum: ['match', 'deal'], default: 'match' },
+    /** The sentence the watch was designed from ("Watch my inbox for AI industry news"). */
+    brief: { type: String, trim: true, maxlength: 500, default: '' },
+    /** Which emails count, in plain words. */
     description: { type: String, trim: true, maxlength: 1000, default: '' },
+    /** What one collected item is called ("deal", "story", "release"), for job and post wording. */
+    noun: { type: String, trim: true, maxlength: 30 },
+    /** The facts pulled out of each flagged email. */
+    fields: { type: [{ key: String, label: String, kind: String, _id: false }], default: [] },
+    /** fit | discount | newest. Missing on watches saved before rankings: derived from mode. */
+    rank: { type: String, enum: ['fit', 'discount', 'newest'] },
+    /** Discount ranking: the smallest saving or bonus (percent) worth flagging. Not capped at 100. */
+    minDiscountPct: { type: Number, min: 0, max: 1000 },
     keywords: { type: [String], default: [] },
     senderAddresses: { type: [String], default: [] },
     senderDomains: { type: [String], default: [] },
     labels: { type: [String], default: [] },
     lookbackHours: { type: Number, default: 168, min: 6, max: 720 },
-    /** 0-100. An email is flagged when its score reaches this. In deal mode the score is the deal strength percent. */
+    /** 0-100: how closely an email must fit the description. (Before rankings, a deal watch's deal strength minimum.) */
     threshold: { type: Number, default: 60, min: 0, max: 100 },
     dealUnitTokens: { type: [String], default: [] },
     aiSummary: { type: Boolean, default: true },
     /** Draft social posts (in the company's Voice) for newly flagged emails. Needs a company. */
     autoPosts: { type: Boolean, default: false },
+    /** A newsletter or roundup written in the company's Voice from what was flagged each period. */
+    digest: {
+      enabled: { type: Boolean, default: false },
+      cadence: { type: String, enum: ['daily', 'weekly'], default: 'weekly' },
+      maxItems: { type: Number, default: 10, min: 3, max: 25 },
+      lastRunAt: { type: Date },
+      lastArticleId: { type: Schema.Types.ObjectId },
+      lastError: { type: String, maxlength: 300 },
+    },
     active: { type: Boolean, default: true },
     intervalMinutes: { type: Number, default: 60, min: 15, max: 1440 },
     lastScanAt: { type: Date },
@@ -77,7 +97,10 @@ const itemSchema = new Schema(
     detectedKeywords: { type: [String], default: [] },
     /** 1-10 heuristic from keyword density, recency and promo wording (Content Intelligence's relevance). */
     relevance: { type: Number, default: 1 },
-    score: { type: Number, default: 0, min: 0, max: 100 },
+    /** The watch's ranking measure: fit (0-100) or, for discount watches, the saving or bonus percent (uncapped). */
+    score: { type: Number, default: 0, min: 0 },
+    /** 0-100 fit to the description; absent when nothing measured it. */
+    fit: { type: Number, min: 0, max: 100 },
     scoreBasis: { type: String, enum: ['ai', 'keywords', 'deal', 'none'], default: 'none' },
     reason: { type: String, maxlength: 300 },
     flagged: { type: Boolean, default: false },
@@ -85,6 +108,8 @@ const itemSchema = new Schema(
     keyPoints: { type: [{ category: String, text: String, _id: false }], default: [] },
     deals: { type: [Schema.Types.Mixed], default: [] },
     bestDeal: { type: Schema.Types.Mixed },
+    /** The watch's fields for this email: { field key: value }. */
+    values: { type: Schema.Types.Mixed },
     link: { type: String, maxlength: 2000 },
     /** Sanitized HTML for display only. */
     htmlPreview: { type: String, maxlength: 80000 },

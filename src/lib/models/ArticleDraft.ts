@@ -48,6 +48,10 @@ const schema = new Schema(
     /** Models that did the work, in order, for the run-cost trail. */
     modelPath: { type: [String], default: [] },
     archived: { type: Boolean, default: false },
+    /** digest: a newsletter or roundup a watch wrote from its flagged emails. */
+    kind: { type: String, enum: ['article', 'digest'], default: 'article' },
+    watchId: { type: Schema.Types.ObjectId },
+    digestItemIds: { type: [Schema.Types.ObjectId], default: [] },
   },
   { timestamps: true }
 );

@@ -36,9 +36,11 @@ export interface ComposeInput {
   facts: { title: string; description?: string; text?: string; video?: string | null; extra?: string[] };
   link: string | null;
   subreddit?: string | null;
+  /** The company's overview and approved marketing plan (upstream context): what to stress and what to avoid. */
+  strategy?: string;
 }
 
-export function composeSystemPrompt(input: Pick<ComposeInput, 'platform' | 'companyName' | 'persona' | 'example' | 'brief' | 'noun' | 'subreddit'>): string {
+export function composeSystemPrompt(input: Pick<ComposeInput, 'platform' | 'companyName' | 'persona' | 'example' | 'brief' | 'noun' | 'subreddit' | 'strategy'>): string {
   const rules = PLATFORM_RULES[input.platform];
   return [
     `You write one ${PLATFORM_LABEL[input.platform]} post for ${input.companyName} announcing a new ${input.noun}.`,
@@ -58,6 +60,7 @@ export function composeSystemPrompt(input: Pick<ComposeInput, 'platform' | 'comp
     '# Brand Voice',
     input.persona.trim(),
     input.example ? `\n# EXAMPLE POST (structure only)\n${input.example.trim()}` : '',
+    input.strategy ? `\n# Company strategy (stay on it; never state it as a fact in the post)\n${input.strategy.trim()}` : '',
   ].filter((line) => line !== '').join('\n');
 }
 

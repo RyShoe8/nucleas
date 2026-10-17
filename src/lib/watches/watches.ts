@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { ContentWatch, WatchItem, WatchMailbox, WatchPost } from '@/lib/models/Watch';
 import { getCompanyProfile, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { canUseWatches, WATCHES_FORBIDDEN } from './access';
+import { cleanFields, FIELD_KINDS, legacyMode, MAX_DISCOUNT_PCT, MAX_FIELDS, WATCH_RANKS, watchSettings, type WatchField, type WatchRank } from './settings';
 
 /** Creating, changing, listing and reading watches. Everything is limited to the viewer's organization. */
 
@@ -14,8 +15,12 @@ export const watchInputSchema = z
     name: z.string().trim().min(1).max(120),
     mailboxId: z.string().refine((v) => Types.ObjectId.isValid(v), 'Choose a mailbox.'),
     companyId: z.string().refine((v) => Types.ObjectId.isValid(v)).nullable().optional(),
-    mode: z.enum(['match', 'deal']).default('match'),
+    brief: z.string().trim().max(500).default(''),
     description: z.string().trim().max(1000).default(''),
+    noun: z.string().trim().max(30).nullable().optional(),
+    fields: z.array(z.object({ key: z.string().trim().max(40).optional(), label: z.string().trim().min(1).max(60), kind: z.enum(FIELD_KINDS).default('text') })).max(MAX_FIELDS).default([]),
+    rank: z.enum(WATCH_RANKS).default('fit'),
+    minDiscountPct: z.number().int().min(0).max(MAX_DISCOUNT_PCT).default(30),
     keywords: list(20, 60),
     senderAddresses: list(20, 200),
     senderDomains: list(20, 120),
@@ -25,13 +30,17 @@ export const watchInputSchema = z
     dealUnitTokens: list(32, 12),
     aiSummary: z.boolean().default(true),
     autoPosts: z.boolean().default(false),
+    digest: z.object({ enabled: z.boolean().default(false), cadence: z.enum(['daily', 'weekly']).default('weekly'), maxItems: z.number().int().min(3).max(25).default(10) }).strict().default({ enabled: false, cadence: 'weekly', maxItems: 10 }),
     active: z.boolean().default(true),
     intervalMinutes: z.number().int().min(15).max(1440).default(60),
   })
   .strict()
   .superRefine((value, ctx) => {
-    if (value.mode === 'match' && !value.description && !value.keywords.length) {
+    if (value.rank !== 'discount' && !value.description && !value.keywords.length) {
       ctx.addIssue({ code: 'custom', path: ['description'], message: 'Describe what to look for, or add at least one keyword.' });
+    }
+    if (value.digest.enabled && !value.companyId) {
+      ctx.addIssue({ code: 'custom', path: ['digest'], message: 'Choose a company for the digest, so it is written in that company’s Voice.' });
     }
   });
 
@@ -44,8 +53,12 @@ export interface WatchView {
   mailboxEmail: string;
   companyId: string | null;
   companyName: string | null;
-  mode: 'match' | 'deal';
+  brief: string;
   description: string;
+  noun: string | null;
+  fields: WatchField[];
+  rank: WatchRank;
+  minDiscountPct: number;
   keywords: string[];
   senderAddresses: string[];
   senderDomains: string[];
@@ -55,6 +68,7 @@ export interface WatchView {
   dealUnitTokens: string[];
   aiSummary: boolean;
   autoPosts: boolean;
+  digest: { enabled: boolean; cadence: 'daily' | 'weekly'; maxItems: number; lastRunAt: string | null; lastArticleId: string | null; lastError: string | null };
   active: boolean;
   intervalMinutes: number;
   lastScanAt: string | null;
@@ -71,7 +85,13 @@ type WatchLean = {
   mailboxId: Types.ObjectId;
   companyId?: Types.ObjectId | null;
   mode?: string;
+  brief?: string;
   description?: string;
+  noun?: string;
+  fields?: unknown;
+  rank?: string;
+  minDiscountPct?: number;
+  digest?: { enabled?: boolean; cadence?: string; maxItems?: number; lastRunAt?: Date; lastArticleId?: Types.ObjectId; lastError?: string };
   keywords?: string[];
   senderAddresses?: string[];
   senderDomains?: string[];
@@ -98,24 +118,38 @@ async function toViews(viewer: CompanyViewer, rows: WatchLean[]): Promise<WatchV
     { $group: { _id: '$watchId', scanned: { $sum: 1 }, flagged: { $sum: { $cond: ['$flagged', 1, 0] } } } },
   ]);
   const byWatch = new Map(counts.map((c) => [String(c._id), c]));
-  return rows.map((r) => ({
+  return rows.map((r) => {
+    const settings = watchSettings(r);
+    return {
     id: String(r._id),
     name: r.name,
     mailboxId: String(r.mailboxId),
     mailboxEmail: emails.get(String(r.mailboxId)) ?? 'Removed mailbox',
     companyId: r.companyId ? String(r.companyId) : null,
     companyName: r.companyId ? companies.get(String(r.companyId)) ?? null : null,
-    mode: r.mode === 'deal' ? 'deal' : 'match',
+    brief: r.brief ?? '',
     description: r.description ?? '',
+    noun: r.noun ?? null,
+    fields: settings.fields,
+    rank: settings.rank,
+    minDiscountPct: settings.minDiscountPct,
     keywords: r.keywords ?? [],
     senderAddresses: r.senderAddresses ?? [],
     senderDomains: r.senderDomains ?? [],
     labels: r.labels ?? [],
     lookbackHours: r.lookbackHours ?? 168,
-    threshold: r.threshold ?? 60,
+    threshold: settings.fitThreshold,
     dealUnitTokens: r.dealUnitTokens ?? [],
     aiSummary: r.aiSummary !== false,
     autoPosts: r.autoPosts === true,
+    digest: {
+      enabled: r.digest?.enabled === true,
+      cadence: r.digest?.cadence === 'daily' ? 'daily' : 'weekly',
+      maxItems: r.digest?.maxItems ?? 10,
+      lastRunAt: r.digest?.lastRunAt?.toISOString() ?? null,
+      lastArticleId: r.digest?.lastArticleId ? String(r.digest.lastArticleId) : null,
+      lastError: r.digest?.lastError ?? null,
+    },
     active: r.active !== false,
     intervalMinutes: r.intervalMinutes ?? 60,
     lastScanAt: r.lastScanAt?.toISOString() ?? null,
@@ -124,7 +158,19 @@ async function toViews(viewer: CompanyViewer, rows: WatchLean[]): Promise<WatchV
     scanning: Boolean(r.scanLeaseUntil && r.scanLeaseUntil.getTime() > Date.now()),
     flaggedCount: byWatch.get(String(r._id))?.flagged ?? 0,
     scannedCount: byWatch.get(String(r._id))?.scanned ?? 0,
-  }));
+    };
+  });
+}
+
+/** What is stored for validated input: clean field keys, and the legacy mode kept in step with the ranking. */
+function storedFields(input: WatchInput) {
+  const rest: Partial<WatchInput> = { ...input };
+  delete rest.companyId;
+  delete rest.mailboxId;
+  delete rest.digest;
+  delete rest.fields;
+  delete rest.noun;
+  return { ...rest, fields: cleanFields(input.fields), mode: legacyMode(input.rank), ...(input.noun ? { noun: input.noun } : {}) };
 }
 
 export type Result<T> = { ok: true; data: T } | { ok: false; status: 400 | 403 | 404; error: string };
@@ -148,8 +194,9 @@ export async function createWatch(viewer: CompanyViewer, raw: unknown): Promise<
   if (!parsed.success) return fail(400, parsed.error.issues[0]?.message ?? 'Check the watch settings.');
   const bad = await checkReferences(viewer, parsed.data);
   if (bad) return fail(404, bad);
-  const { companyId, mailboxId, ...fields } = parsed.data;
-  const doc = await ContentWatch.create({ ...fields, organizationId: viewer.organizationId, createdByUserId: new Types.ObjectId(viewer.userId), mailboxId: new Types.ObjectId(mailboxId), ...(companyId ? { companyId: new Types.ObjectId(companyId) } : {}) });
+  const { companyId, mailboxId, digest } = parsed.data;
+  // A digest's first period starts now: it never sweeps up what arrived before it was switched on.
+  const doc = await ContentWatch.create({ ...storedFields(parsed.data), digest: { ...digest, ...(digest.enabled ? { lastRunAt: new Date() } : {}) }, organizationId: viewer.organizationId, createdByUserId: new Types.ObjectId(viewer.userId), mailboxId: new Types.ObjectId(mailboxId), ...(companyId ? { companyId: new Types.ObjectId(companyId) } : {}) });
   const [view] = await toViews(viewer, [doc.toObject() as unknown as WatchLean]);
   return { ok: true, data: view! };
 }
@@ -160,20 +207,34 @@ export async function updateWatch(viewer: CompanyViewer, id: string, raw: unknow
   const existing = await ContentWatch.findOne({ _id: new Types.ObjectId(id), organizationId: viewer.organizationId }).lean<WatchLean>();
   if (!existing) return fail(404, 'Watch not found.');
   // A change is validated as a whole watch: the stored settings overlaid with what was sent.
+  const settings = watchSettings(existing);
   const merged = {
-    name: existing.name, mailboxId: String(existing.mailboxId), companyId: existing.companyId ? String(existing.companyId) : null, mode: existing.mode, description: existing.description, keywords: existing.keywords,
-    senderAddresses: existing.senderAddresses, senderDomains: existing.senderDomains, labels: existing.labels, lookbackHours: existing.lookbackHours, threshold: existing.threshold,
+    name: existing.name, mailboxId: String(existing.mailboxId), companyId: existing.companyId ? String(existing.companyId) : null, brief: existing.brief ?? '', description: existing.description, noun: existing.noun ?? null,
+    fields: settings.fields, rank: settings.rank, minDiscountPct: settings.minDiscountPct, keywords: existing.keywords,
+    senderAddresses: existing.senderAddresses, senderDomains: existing.senderDomains, labels: existing.labels, lookbackHours: existing.lookbackHours, threshold: settings.fitThreshold,
     dealUnitTokens: existing.dealUnitTokens, aiSummary: existing.aiSummary, autoPosts: existing.autoPosts, active: existing.active, intervalMinutes: existing.intervalMinutes,
+    digest: { enabled: existing.digest?.enabled === true, cadence: existing.digest?.cadence === 'daily' ? 'daily' : 'weekly', maxItems: existing.digest?.maxItems ?? 10 },
     ...(raw && typeof raw === 'object' ? raw : {}),
   };
   const parsed = watchInputSchema.safeParse(merged);
   if (!parsed.success) return fail(400, parsed.error.issues[0]?.message ?? 'Check the watch settings.');
   const bad = await checkReferences(viewer, parsed.data);
   if (bad) return fail(404, bad);
-  const { companyId, mailboxId, ...fields } = parsed.data;
+  const { companyId, mailboxId, digest } = parsed.data;
+  const switchedOn = digest.enabled && existing.digest?.enabled !== true;
+  const unset: Record<string, ''> = { ...(companyId ? {} : { companyId: '' }), ...(parsed.data.noun ? {} : { noun: '' }) };
   await ContentWatch.updateOne(
     { _id: existing._id },
-    { $set: { ...fields, mailboxId: new Types.ObjectId(mailboxId), ...(companyId ? { companyId: new Types.ObjectId(companyId) } : {}) }, ...(companyId ? {} : { $unset: { companyId: '' } }) }
+    {
+      $set: {
+        ...storedFields(parsed.data),
+        'digest.enabled': digest.enabled, 'digest.cadence': digest.cadence, 'digest.maxItems': digest.maxItems,
+        ...(switchedOn ? { 'digest.lastRunAt': new Date() } : {}),
+        mailboxId: new Types.ObjectId(mailboxId),
+        ...(companyId ? { companyId: new Types.ObjectId(companyId) } : {}),
+      },
+      ...(Object.keys(unset).length ? { $unset: unset } : {}),
+    }
   );
   const fresh = await ContentWatch.findById(existing._id).lean<WatchLean>();
   const [view] = await toViews(viewer, [fresh!]);
@@ -206,6 +267,7 @@ export interface ItemView {
   keyPoints: { category: string; text: string }[];
   bestDeal: Record<string, unknown> | null;
   dealCount: number;
+  values: Record<string, string>;
   link: string | null;
   relevance: number;
   detectedKeywords: string[];
@@ -214,7 +276,7 @@ export interface ItemView {
 
 type ItemLean = {
   _id: Types.ObjectId; watchId: Types.ObjectId; fromName?: string; fromEmail?: string; subject?: string; sentAt?: Date; score?: number; scoreBasis?: string; reason?: string; flagged?: boolean;
-  skipReason?: string; summary?: string; keyPoints?: { category: string; text: string }[]; bestDeal?: Record<string, unknown>; deals?: unknown[]; link?: string; relevance?: number; detectedKeywords?: string[];
+  skipReason?: string; summary?: string; keyPoints?: { category: string; text: string }[]; bestDeal?: Record<string, unknown>; deals?: unknown[]; values?: Record<string, string>; link?: string; relevance?: number; detectedKeywords?: string[];
 };
 
 function itemView(row: ItemLean, hasPost: boolean): ItemView {
@@ -234,6 +296,7 @@ function itemView(row: ItemLean, hasPost: boolean): ItemView {
     keyPoints: row.keyPoints ?? [],
     bestDeal: row.bestDeal ?? null,
     dealCount: row.deals?.length ?? 0,
+    values: row.values ?? {},
     link: row.link ?? null,
     relevance: row.relevance ?? 1,
     detectedKeywords: row.detectedKeywords ?? [],

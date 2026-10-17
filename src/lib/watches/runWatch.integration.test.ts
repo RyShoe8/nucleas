@@ -87,6 +87,7 @@ const scoreBy = (scores: Record<string, number>): AnalyzeFn => async (input) => 
   summary: `Summary of ${input.subject}`,
   keyPoints: [{ category: 'offer', text: 'Ships Friday' }],
   deal: null,
+  values: {},
 });
 
 describe('scanning a watch', () => {
@@ -139,6 +140,37 @@ describe('scanning a watch', () => {
     expect(deal).toMatchObject({ flagged: true, scoreBasis: 'deal', score: 30 });
     expect(deal?.bestDeal).toMatchObject({ you_pay: 20, baseline_value: 26 });
     expect(await WatchItem.findOne({ watchId, gmailId: '2' }).lean()).toMatchObject({ flagged: false, score: 0 });
+  });
+
+  it("collects the watch's own fields and ranks by fit", async () => {
+    const watchId = await makeWatch({ rank: 'fit', description: 'AI industry news', threshold: 50, fields: [{ key: 'company', label: 'Company', kind: 'text' }, { key: 'source_link', label: 'Source link', kind: 'url' }] });
+    const { api } = fakeApi([email('1', { subject: 'Lab ships a new model' }), email('2', { subject: 'Webinar invite' })]);
+    const seen: string[][] = [];
+    await scanWatch(watchId, {
+      api,
+      analyze: async (input) => {
+        seen.push(input.fields.map((f) => f.key));
+        const strong = input.subject.startsWith('Lab');
+        const values: Record<string, string> = strong ? { company: 'Acme AI', source_link: 'https://acme.ai/news' } : {};
+        return { match: { score: strong ? 85 : 20, reason: 'r' }, summary: 's', keyPoints: [], deal: null, values };
+      },
+    });
+    expect(seen[0]).toEqual(['company', 'source_link']);
+    expect(await WatchItem.findOne({ watchId, gmailId: '1' }).lean()).toMatchObject({ flagged: true, score: 85, fit: 85, values: { company: 'Acme AI', source_link: 'https://acme.ai/news' } });
+    expect(await WatchItem.findOne({ watchId, gmailId: '2' }).lean()).toMatchObject({ flagged: false, fit: 20 });
+  });
+
+  it('does not cap a discount at 100%, and a discount watch with a rule needs both a fit and an offer', async () => {
+    const watchId = await makeWatch({ rank: 'discount', mode: 'deal', description: 'Sweepstakes casino offers', threshold: 50, minDiscountPct: 50, aiSummary: false });
+    const { api } = fakeApi([
+      email('1', { subject: 'Pay $10 and get $40 in bonus credits', text: `${'Limited time offer for our members. '.repeat(6)}` }),
+      email('2', { subject: 'Pay $10 and get $40 in bonus credits!', text: `${'A different shop with the same promo for you. '.repeat(6)}` }),
+    ]);
+    await scanWatch(watchId, { api, analyze: async (input) => ({ match: { score: input.subject.endsWith('!') ? 10 : 90, reason: 'r' }, summary: '', keyPoints: [], deal: null, values: {} }) });
+    const strong = await WatchItem.findOne({ watchId, gmailId: '1' }).lean();
+    expect(strong).toMatchObject({ flagged: true, scoreBasis: 'deal', fit: 90 });
+    expect(strong?.score).toBeGreaterThan(100);
+    expect(await WatchItem.findOne({ watchId, gmailId: '2' }).lean()).toMatchObject({ flagged: false, fit: 10 });
   });
 
   it('stores the best link and a sanitized preview, never raw scripts', async () => {

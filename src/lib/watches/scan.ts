@@ -1,6 +1,7 @@
 import sanitizeHtml from 'sanitize-html';
 import type { ParsedMessage } from '@/lib/mail/gmailParse';
 import { dealStrengthPct } from './dealMetrics';
+import { MAX_DISCOUNT_PCT } from './settings';
 import type { DealMetrics } from './types';
 
 /** The parts of a watch that decide which emails are looked at. Pure logic: no database, no network. */
@@ -134,9 +135,9 @@ export function keywordMatchScore(text: string, keywords: string[]): { score: nu
   return { score: Math.round((found.length / wanted.length) * 100), reason: found.length ? `Mentions ${found.length} of ${wanted.length} keywords: ${found.slice(0, 5).join(', ')}.` : 'Mentions none of the keywords.' };
 }
 
-/** A deal watch scores an email by its best deal: the larger of the savings and the bonus, as a percent. */
+/** A discount watch scores an email by its best deal: the larger of the savings and the bonus, as a percent. Not capped at 100, so big bonuses still rank. */
 export function dealScore(deal: DealMetrics | null | undefined): number {
-  return deal ? Math.min(100, Math.round(dealStrengthPct(deal) * 100)) : 0;
+  return deal ? Math.min(MAX_DISCOUNT_PCT, Math.max(0, Math.round(dealStrengthPct(deal) * 100))) : 0;
 }
 
 export function isFlagged(score: number, threshold: number): boolean {

@@ -7,7 +7,8 @@ import { parseGmailMessage, type ParsedMessage } from '@/lib/mail/gmailParse';
 import { extractDealMetricsRegex, extractDealsFoundRegex, mergeDealExtractions, pickBestDeal } from './dealMetrics';
 import { extractAnchorHrefs, pickDealLink } from './dealLink';
 import { extractKeyPointsFallback } from './keyPoints';
-import { cleanEmailText, dealScore, detectKeywords, effectiveLookbackHours, gmailQueryFor, isFlagged, keywordMatchScore, prefilter, relevanceScore, type WatchRule } from './scan';
+import { cleanEmailText, dealScore, detectKeywords, effectiveLookbackHours, gmailQueryFor, keywordMatchScore, prefilter, relevanceScore, type WatchRule } from './scan';
+import { isWatchFlagged, legacyMode, watchSettings, type WatchSettings } from './settings';
 import { analyzeEmail, type AnalyzeFn } from './scanAi';
 import { formatDealLine } from './dealFormat';
 import type { DealMetrics } from './types';
@@ -44,16 +45,18 @@ export interface ScanDeps {
 
 type WatchRow = ContentWatchDoc & { _id: Types.ObjectId };
 
-export function ruleOf(watch: Pick<ContentWatchDoc, 'mode' | 'description' | 'keywords' | 'senderAddresses' | 'senderDomains' | 'labels' | 'lookbackHours' | 'threshold' | 'dealUnitTokens'>): WatchRule {
+export function ruleOf(watch: Pick<ContentWatchDoc, 'mode' | 'description' | 'keywords' | 'senderAddresses' | 'senderDomains' | 'labels' | 'lookbackHours' | 'threshold' | 'dealUnitTokens'> & { rank?: string | null; minDiscountPct?: number | null; fields?: unknown }): WatchRule & { settings: WatchSettings } {
+  const settings = watchSettings(watch);
   return {
-    mode: watch.mode === 'deal' ? 'deal' : 'match',
+    settings,
+    mode: legacyMode(settings.rank),
     description: watch.description ?? '',
     keywords: (watch.keywords ?? []).map((k) => k.trim()).filter(Boolean),
     senderAddresses: watch.senderAddresses ?? [],
     senderDomains: watch.senderDomains ?? [],
     labels: watch.labels ?? [],
     lookbackHours: watch.lookbackHours ?? 168,
-    threshold: watch.threshold ?? 60,
+    threshold: settings.fitThreshold,
     dealUnitTokens: (watch.dealUnitTokens ?? []).map((t) => t.trim()).filter(Boolean),
   };
 }
@@ -113,7 +116,8 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
   const sentAtMs = m.internalDate.getTime();
   const detectedKeywords = detectKeywords(`${m.subject}\n${text}`, rule.keywords);
   const relevance = relevanceScore(text, rule.keywords, sentAtMs, rule.mode, nowMs);
-  const needsModel = Boolean(rule.description.trim()) || rule.mode === 'deal' || watch.aiSummary !== false;
+  const { settings } = rule;
+  const needsModel = Boolean(rule.description.trim()) || rule.mode === 'deal' || settings.fields.length > 0 || watch.aiSummary !== false;
   let analysis = null;
   if (needsModel) {
     try {
@@ -123,6 +127,7 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
         mode: rule.mode,
         description: rule.description,
         dealUnitTokens: rule.dealUnitTokens,
+        fields: settings.fields,
         subject: m.subject,
         from: base.fromEmail,
         text,
@@ -134,31 +139,38 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
     if (!analysis) stats.modelFailures += 1;
   }
 
-  let score = 0;
+  // Fit to the rule: the model's judgement, else the keyword share. A discount watch with no rule (or whose
+  // model failed) is not held back by fit: its offer decides.
+  let fit: number | null = null;
   let scoreBasis: 'ai' | 'keywords' | 'deal' | 'none' = 'none';
   let reason = '';
-  let deals: DealMetrics[] = [];
-  let best: DealMetrics | null = null;
-  if (rule.mode === 'deal') {
-    deals = extractDealsFoundRegex(m.subject, text, rule.dealUnitTokens);
-    const regexBest = pickBestDeal(deals) ?? extractDealMetricsRegex(m.subject, text, rule.dealUnitTokens);
-    best = mergeDealExtractions(analysis?.deal ?? null, regexBest, `${m.subject}\n${text}`) ?? null;
-    if (best && !deals.length) deals = [best];
-    score = dealScore(best);
-    scoreBasis = 'deal';
-    reason = best ? formatDealLine(best) : 'No offer found in this email.';
-  } else if (analysis?.match) {
-    score = analysis.match.score;
+  if (analysis?.match) {
+    fit = analysis.match.score;
     scoreBasis = 'ai';
     reason = analysis.match.reason;
-  } else {
+  } else if (settings.rank !== 'discount') {
     const fallback = keywordMatchScore(`${m.subject}\n${text}`, rule.keywords);
-    score = fallback.score;
+    fit = fallback.score;
     scoreBasis = rule.keywords.length ? 'keywords' : 'none';
     reason = fallback.reason;
   }
 
-  const flagged = isFlagged(score, rule.threshold);
+  let deals: DealMetrics[] = [];
+  let best: DealMetrics | null = null;
+  let discountPct: number | null = null;
+  if (settings.rank === 'discount') {
+    deals = extractDealsFoundRegex(m.subject, text, rule.dealUnitTokens);
+    const regexBest = pickBestDeal(deals) ?? extractDealMetricsRegex(m.subject, text, rule.dealUnitTokens);
+    best = mergeDealExtractions(analysis?.deal ?? null, regexBest, `${m.subject}\n${text}`) ?? null;
+    if (best && !deals.length) deals = [best];
+    discountPct = dealScore(best);
+    scoreBasis = 'deal';
+    const line = best ? formatDealLine(best) : 'No offer found in this email.';
+    reason = reason ? `${line} ${reason}` : line;
+  }
+
+  const score = settings.rank === 'discount' ? discountPct ?? 0 : fit ?? 0;
+  const flagged = isWatchFlagged({ fit, discountPct }, settings);
   await WatchItem.updateOne(
     { watchId: watch._id, gmailId: m.gmailId },
     {
@@ -168,6 +180,7 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
         detectedKeywords,
         relevance,
         score,
+        ...(fit != null ? { fit } : {}),
         scoreBasis,
         reason: reason.slice(0, 300),
         flagged,
@@ -175,6 +188,7 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
         keyPoints: analysis?.keyPoints.length ? analysis.keyPoints : extractKeyPointsFallback(text, m.subject),
         deals,
         bestDeal: best ?? undefined,
+        values: analysis?.values && Object.keys(analysis.values).length ? analysis.values : undefined,
         link: pickDealLink(extractAnchorHrefs(m.bodyHtml), { html: m.bodyHtml, subject: m.subject, from: m.from.email }) ?? undefined,
         htmlPreview: m.bodyHtml.slice(0, 80_000) || undefined,
       },

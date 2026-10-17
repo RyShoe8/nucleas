@@ -163,10 +163,10 @@ export async function planRequest(viewer: CompanyViewer, input: { companyId: str
   if (wantsMailbox(request)) {
     const watch = await ContentWatch.findOne({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(input.companyId), active: true })
       .sort({ mode: 1, createdAt: 1 })
-      .select('_id mode')
-      .lean<{ _id: Types.ObjectId; mode?: string }>();
+      .select('_id mode noun')
+      .lean<{ _id: Types.ObjectId; mode?: string; noun?: string }>();
     if (!watch) return { ok: false, status: 400, error: `${profile.name} has no inbox being watched yet. Connect it in Marketing → Inboxes first.` };
-    source = { type: 'mailbox', watchId: String(watch._id), noun: watch.mode === 'deal' ? 'deal' : 'email' };
+    source = { type: 'mailbox', watchId: String(watch._id), noun: watch.noun || (watch.mode === 'deal' ? 'deal' : 'email') };
   } else {
     if (!profile.domain) return { ok: false, status: 400, error: `Add ${profile.name}’s website in the Company window first, so Nucleas knows where to look.` };
     const found = await discoverSiteSource({ domain: profile.domain, brief: request, fetcher: deps.fetcher, pick: deps.pick ?? modelPick(viewer) });

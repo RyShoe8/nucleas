@@ -100,7 +100,7 @@ export default function WatchesPanel() {
                             <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:gap-2">
                                 <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setSelected(selected === w.id ? null : w.id)}>
                                     <span className="block break-words text-sm font-medium">{w.name}{!w.active ? <span className="ml-2 text-[11px] text-text-secondary">paused</span> : null}</span>
-                                    <span className="block break-words text-[11px] text-text-secondary">{w.mailboxEmail} · {w.mode === 'deal' ? `deals ≥ ${w.threshold}%` : `score ≥ ${w.threshold}`}{w.companyName ? ` · posts for ${w.companyName}` : ''}</span>
+                                    <span className="block break-words text-[11px] text-text-secondary">{w.mailboxEmail} · {w.rank === 'discount' ? `offers ≥ ${w.minDiscountPct}%` : `fit ≥ ${w.threshold}`}{w.fields.length ? ` · ${w.fields.length} field${w.fields.length === 1 ? '' : 's'}` : ''}{w.companyName ? ` · for ${w.companyName}` : ''}{w.digest.enabled ? ` · ${w.digest.cadence} digest` : ''}</span>
                                     <span className="block text-[11px] text-text-secondary">{ago(w.lastScanAt)} · {w.flaggedCount} flagged of {w.scannedCount}</span>
                                 </button>
                                 <div className="flex shrink-0 gap-1 text-[11px]">
