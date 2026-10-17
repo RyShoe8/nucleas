@@ -26,6 +26,8 @@ const jobSchema = new Schema(
     request: { type: String, required: true, maxlength: 6000 },
     /** The design (see jobDesignSchema); absent until the designer has run. */
     design: { type: Schema.Types.Mixed },
+    /** Publishing jobs only: source, channels with auto/manual, examples and who is notified (see publishingConfigSchema). */
+    publishing: { type: Schema.Types.Mixed },
     /** The person's answers to the designer's questions: question id → { option?, text? }. */
     answers: { type: Schema.Types.Mixed, default: {} },
     /** Review each run's result, or complete automatically when every check passes. */

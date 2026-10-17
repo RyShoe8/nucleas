@@ -51,6 +51,7 @@ function zonedToUtc(year: number, month: number, day: number, hour: number, minu
 /** Next occurrence strictly after `after`. Repeating job schedules are evaluated in their saved timezone. */
 export function nextScheduledAt(schedule: JobSchedule, after: Date): Date | null {
   if (schedule.kind === 'once') return null;
+  if (schedule.kind === 'hourly') return new Date(after.getTime() + 3_600_000);
   const timezone = validTimezone(schedule.timezone);
   const [hour, minute] = (schedule.time ?? '09:00').split(':').map(Number);
   const local = zonedParts(after, timezone);

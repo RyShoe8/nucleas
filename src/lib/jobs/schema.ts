@@ -16,6 +16,11 @@ export const DELIVERY_METHODS = ['nucleas', 'handoff', 'integration', 'pull_requ
 export type DeliveryMethod = (typeof DELIVERY_METHODS)[number];
 export const RUNNABLE_DELIVERY: DeliveryMethod[] = ['nucleas', 'handoff'];
 
+/** Whether a design's delivery can run today: the runnable methods, plus first-party skills that bring their own delivery. */
+export function deliveryRunnable(design: Pick<JobDesign, 'skill' | 'delivery'>): boolean {
+  return RUNNABLE_DELIVERY.includes(design.delivery.method) || design.skill === 'social_publish';
+}
+
 export const DELIVERY_LABEL: Record<DeliveryMethod, string> = {
   nucleas: 'Kept in Nucleas',
   handoff: 'Handed to a person to apply',
@@ -54,7 +59,7 @@ export const jobQuestionSchema = z.object({
 export type JobQuestion = z.infer<typeof jobQuestionSchema>;
 
 export const jobScheduleSchema = z.object({
-  kind: z.enum(['once', 'daily', 'weekly', 'monthly']).catch('once'),
+  kind: z.enum(['once', 'hourly', 'daily', 'weekly', 'monthly']).catch('once'),
   /** Local time "HH:MM" for repeating jobs. */
   time: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   /** IANA timezone used to turn the local schedule into an exact run time. */
@@ -67,7 +72,7 @@ export type JobSchedule = z.infer<typeof jobScheduleSchema>;
 /** What the designer must return. */
 export const jobDesignSchema = z.object({
   /** First-party skill/template that owns this design, when applicable. */
-  skill: z.enum(['link_building', 'seo_brief', 'marketing_plan', 'brand_voice', 'social_media', 'ai_citations', 'property_overview']).optional(),
+  skill: z.enum(['link_building', 'seo_brief', 'marketing_plan', 'brand_voice', 'social_media', 'ai_citations', 'property_overview', 'social_publish']).optional(),
   title: z.string().min(3).max(120),
   category: z.enum(JOB_CATEGORIES).catch('research'),
   /** Exact, self-contained instructions for each run. */

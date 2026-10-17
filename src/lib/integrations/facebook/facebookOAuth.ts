@@ -4,8 +4,8 @@ import { ALLOWED_CALLBACK_HOSTS } from '@/lib/integrations/google/googleOAuth';
 
 export const FACEBOOK_GRAPH = 'https://graph.facebook.com/v21.0';
 export const FACEBOOK_CALLBACK_PATH = '/api/os/integrations/facebook/callback';
-/** Read-only: the person picks which Pages to share in Facebook's own dialog. Posting (pages_manage_posts) must be added to the Meta app's use case before it can be requested. */
-export const FACEBOOK_SCOPES = ['pages_show_list', 'pages_read_engagement'] as const;
+/** The person picks which Pages to share in Facebook's own dialog. pages_manage_posts lets publishing jobs post to those Pages. */
+export const FACEBOOK_SCOPES = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'] as const;
 
 export function facebookSignInConfigured(): boolean {
   return Boolean(process.env.FACEBOOK_APP_ID?.trim() && process.env.FACEBOOK_APP_SECRET?.trim());

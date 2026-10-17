@@ -6,7 +6,7 @@ function job(overrides: Partial<JobView>): JobView {
     id: 'job-1', companyId: 'company-1', projectId: null, companyName: 'Company', status: 'active', request: 'Run work', design: null,
     answers: {}, completion: 'automatic', level: 'free', monthlyBudgetMicros: 0, spentThisMonthMicros: 0, deliveryLabel: null,
     deliveryRunnable: true, createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z', lastRunAt: null,
-    nextRunAt: null, error: null, runs: [], canManage: true, opportunities: [], ...overrides,
+    nextRunAt: null, error: null, runs: [], canManage: true, opportunities: [], publishing: null, ...overrides,
   };
 }
 
@@ -32,5 +32,13 @@ describe('jobListProgress', () => {
       heartbeatAt: '2026-10-01T00:01:00.000Z', progress: [], progressState: { stage: 'complete', label: 'Run stopped', percent: 100, updatedAt: '2026-10-01T00:01:00.000Z' },
       output: null, issues: [], review: null, costMicros: 0, error: 'The upstream model gateway timed out.',
     }] }))).toEqual({ label: 'The upstream model gateway timed out.', percent: 100, tone: 'failed' });
+  });
+
+  it('puts posts waiting for a person first, and says hourly jobs check every hour', () => {
+    const delivery = { id: 'd', platform: 'reddit' as const, status: 'ready' as const, itemTitle: 'Factorio', title: 'New', body: 'Body', link: null, assets: [], postedUrl: null, postedAt: null, error: null, createdAt: '2026-10-01T00:00:00.000Z' };
+    const publishing = { channels: [], notifyUserIds: [], examples: {}, source: { type: 'site' as const, feedUrl: 'https://a.com/sitemap.xml', feedKind: 'sitemap' as const, pathPrefix: '/games/', noun: 'game' }, notes: {}, ready: [delivery, { ...delivery, id: 'e' }], recent: [], postedThisWeek: 0 };
+    expect(jobListProgress(job({ publishing }))).toEqual({ label: '2 posts ready to post', percent: 100, tone: 'waiting' });
+    const hourly = { title: 'Post new games', category: 'marketing', instructions: '', fields: [], sourcePolicy: '', delivery: { method: 'integration', detail: '', setupSteps: [] }, schedule: { kind: 'hourly' as const }, recordsPerRun: 1, safeguards: [], recommendedCompletion: 'automatic' as const, findings: [], questions: [] };
+    expect(jobListProgress(job({ design: hourly, publishing: { ...publishing, ready: [] } }))).toEqual({ label: 'Checks every hour', percent: 0, tone: 'complete' });
   });
 });

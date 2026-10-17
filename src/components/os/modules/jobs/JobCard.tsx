@@ -7,6 +7,8 @@ import BrandVoiceResult from './BrandVoiceResult';
 import { manualArtifact } from '@/lib/jobs/output';
 import { redditPostFromRecord, subredditSubmitUrl } from '@/lib/jobs/redditPost';
 import { costSummary, type ModelStep } from '@/lib/jobs/modelPath';
+import type { PublishingView } from '@/lib/publishing/engine';
+import PublishingJobBody from './publishing/PublishingJobBody';
 
 // ---------- Types (mirror the server's JobView) ----------
 
@@ -29,14 +31,14 @@ interface JobQuestion {
 }
 
 interface JobDesign {
-    skill?: 'link_building' | 'seo_brief' | 'marketing_plan' | 'brand_voice' | 'social_media' | 'ai_citations' | 'property_overview';
+    skill?: 'link_building' | 'seo_brief' | 'marketing_plan' | 'brand_voice' | 'social_media' | 'ai_citations' | 'property_overview' | 'social_publish';
     title: string;
     category: string;
     instructions: string;
     fields: JobField[];
     sourcePolicy: string;
     delivery: { method: string; detail: string; setupSteps: string[] };
-    schedule: { kind: 'once' | 'daily' | 'weekly' | 'monthly'; time?: string; timezone?: string; weekday?: number; dayOfMonth?: number };
+    schedule: { kind: 'once' | 'hourly' | 'daily' | 'weekly' | 'monthly'; time?: string; timezone?: string; weekday?: number; dayOfMonth?: number };
     recordsPerRun: number;
     safeguards: string[];
     recommendedCompletion: 'review' | 'automatic';
@@ -105,6 +107,7 @@ export interface JobView {
     runs: JobRunView[];
     canManage: boolean;
     opportunities: LinkOpportunityView[];
+    publishing: PublishingView | null;
 }
 
 export const JOB_STATUS_LABEL: Record<JobStatus, string> = {
@@ -153,6 +156,9 @@ export function jobListProgress(job: JobView): JobListProgress {
     const running = job.runs.find((run) => run.status === 'running');
     if (running) return { label: running.progressState.label, percent: running.progressState.percent, tone: 'active' };
 
+    const waiting = job.publishing?.ready.filter((d) => d.status === 'ready').length ?? 0;
+    if (waiting) return { label: `${waiting} post${waiting === 1 ? '' : 's'} ready to post`, percent: 100, tone: 'waiting' };
+
     const review = job.runs.find((run) => run.status === 'needs_review');
     if (review) return { label: review.progressState.label || 'Ready for review', percent: 100, tone: 'waiting' };
 
@@ -164,6 +170,7 @@ export function jobListProgress(job: JobView): JobListProgress {
     if (job.status === 'proposed') return { label: 'Waiting for approval', percent: 25, tone: 'waiting' };
     if (job.status === 'testing') return { label: 'Preparing dry run', percent: 5, tone: 'active' };
     if (job.status === 'ready') return { label: 'Ready to run', percent: 0, tone: 'complete' };
+    if (job.status === 'active' && job.design?.schedule.kind === 'hourly') return { label: 'Checks every hour', percent: 0, tone: 'complete' };
     if (job.status === 'active') return { label: job.nextRunAt ? `Next run ${new Date(job.nextRunAt).toLocaleString()}` : 'Waiting for next run', percent: 0, tone: 'complete' };
     if (job.status === 'paused') return { label: 'Paused', percent: 0, tone: 'muted' };
     if (job.status === 'done') return { label: 'Complete', percent: 100, tone: 'complete' };
@@ -174,6 +181,7 @@ export function jobListProgress(job: JobView): JobListProgress {
 
 export function scheduleLabel(s: JobDesign['schedule'] | undefined): string {
     if (!s || s.kind === 'once') return 'Once';
+    if (s.kind === 'hourly') return 'Every hour';
     const at = s.time ? ` at ${s.time}` : '';
     if (s.kind === 'daily') return `Every day${at}`;
     if (s.kind === 'weekly') return `Every ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][s.weekday ?? 1]}${at}`;
@@ -708,7 +716,7 @@ function SeoBriefEditor({ job }: { job: JobView }) {
  * One job in whatever state it is: questions to answer, a design to approve, a dry run to check,
  * results to review. Refreshes itself while Nucleas is working on it.
  */
-export default function JobCard({ job: initial, compact = false, onChange, onOpenJobs }: { job: JobView; compact?: boolean; onChange?: (j: JobView) => void; onOpenJobs?: () => void }) {
+export default function JobCard({ job: initial, compact = false, onChange, onOpenJobs, readyShownAbove = false }: { job: JobView; compact?: boolean; onChange?: (j: JobView) => void; onOpenJobs?: () => void; readyShownAbove?: boolean }) {
     const [job, setJob] = useState(initial);
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -757,13 +765,15 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                     <p className="text-[11px] text-text-secondary truncate">
                         {job.companyName}
                         {d ? ` · ${scheduleLabel(d.schedule)}` : ''}
-                        {job.completion ? ` · ${job.completion === 'automatic' ? 'automatic' : 'reviewed'}` : ''}
-                        {manualArtifact(job.design?.skill) ? (job.spentThisMonthMicros ? ` · ${usd(job.spentThisMonthMicros)} spent` : '') : job.monthlyBudgetMicros ? ` · ${usd(job.spentThisMonthMicros)} of ${usd(job.monthlyBudgetMicros)} this month` : ''}
+                        {job.completion && d?.skill !== 'social_publish' ? ` · ${job.completion === 'automatic' ? 'automatic' : 'reviewed'}` : ''}
+                        {/* Publishing jobs spend little and per post; their budget line would only be noise. */}
+                        {d?.skill === 'social_publish' ? '' : manualArtifact(job.design?.skill) ? (job.spentThisMonthMicros ? ` · ${usd(job.spentThisMonthMicros)} spent` : '') : job.monthlyBudgetMicros ? ` · ${usd(job.spentThisMonthMicros)} of ${usd(job.monthlyBudgetMicros)} this month` : ''}
                     </p>
                 </div>
                 <JobStatusBadge status={job.status} label={job.status === 'proposed' && failedAttempt ? 'Dry run failed' : undefined} />
             </div>
 
+            {d?.skill === 'social_publish' && !compact ? <PublishingJobBody job={job} onChange={update} readyShownAbove={readyShownAbove} /> : <>
             {job.status === 'designing' ? <p className="text-xs text-sky-400">Nucleas is investigating {job.companyName} and designing this job…</p> : null}
             {job.status === 'failed' || job.error ? <p className="text-xs text-red-400">{job.error}</p> : null}
 
@@ -780,7 +790,8 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                 </>
             ) : null}
 
-            {d && job.status !== 'needs_answers' && job.status !== 'designing' && (!compact || job.status === 'proposed') ? <DesignSummary job={job} /> : null}
+            {/* The design is the decision while approving; afterwards it is reference, kept under Details. */}
+            {d && job.status === 'proposed' ? <DesignSummary job={job} /> : null}
             {job.status === 'proposed' && job.canManage ? <Approve job={job} onChange={update} /> : null}
             {job.status === 'proposed' && !job.canManage ? <p className="text-[11px] text-text-secondary">A manager or administrator approves jobs.</p> : null}
 
@@ -835,12 +846,19 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                         Open in Jobs
                     </button>
                 ) : null}
+                {!compact && d && !['proposed', 'needs_answers', 'designing'].includes(job.status) ? (
+                    <details className="w-full text-xs">
+                        <summary className="cursor-pointer text-text-secondary">Details</summary>
+                        <div className="mt-2"><DesignSummary job={job} /></div>
+                    </details>
+                ) : null}
             </div>
             {!compact && (job.status === 'ready' || job.status === 'active') && d && d.schedule.kind !== 'once' ? (
                 <p className="text-[11px] text-text-secondary">
                     {job.nextRunAt ? `Next scheduled run: ${new Date(job.nextRunAt).toLocaleString()}` : 'Scheduling resumes when this job is active.'}
                 </p>
             ) : null}
+            </>}
             <Modal isOpen={Boolean(resultRun)} onClose={() => setResultRun(null)} title={`${d?.title ?? 'Job'} results`} maxWidth="5xl" appearance="theme">
                 {resultRun ? <Results job={job} run={resultRun} /> : null}
             </Modal>

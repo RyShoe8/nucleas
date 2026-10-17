@@ -5,6 +5,7 @@ import { claimDueJobRuns, executeJobRun, sweepJobs } from '@/lib/jobs/jobs';
 import { runQueuedModelChecks } from '@/lib/ai/engine/modelChecks';
 import { verifyDueLinkOpportunities } from '@/lib/jobs/linkOpportunities';
 import { processPropertyOverviewQueue } from '@/lib/propertyOverview/crawler';
+import { recoverStuckDeliveries } from '@/lib/publishing/engine';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -21,12 +22,13 @@ export async function GET(request: NextRequest) {
   try {
     await connectDB();
     const swept = await sweepJobs();
+    const postsRecovered = await recoverStuckDeliveries();
     const scheduledRunIds = await claimDueJobRuns(new Date(), 2);
     await Promise.all(scheduledRunIds.map((id) => executeJobRun(id)));
     const linksVerified = await verifyDueLinkOpportunities(new Date(), 10);
     const propertyOverviewQueue = await processPropertyOverviewQueue();
     const checks = await runQueuedModelChecks({ budgetMs: 240_000 });
-    return NextResponse.json({ ...swept, scheduledRuns: scheduledRunIds.length, linksVerified, propertyOverviewQueue, modelChecks: checks }, { headers: { 'Cache-Control': 'no-store' } });
+    return NextResponse.json({ ...swept, postsRecovered, scheduledRuns: scheduledRunIds.length, linksVerified, propertyOverviewQueue, modelChecks: checks }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error('[cron/jobs] failed', error instanceof Error ? error.message : 'unknown');
     return NextResponse.json({ error: 'Job sweep failed.' }, { status: 500 });

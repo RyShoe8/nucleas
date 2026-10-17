@@ -30,6 +30,7 @@ import { nextScheduledAt } from './schedule';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import { listCompanyConnections } from '@/lib/integrations/connections';
 import type { TeamChatTurn } from '@/lib/ai/teamChat';
+import { runPublishing } from '@/lib/publishing/engine';
 
 /**
  * Runs a job once: the engine's research model does the work with tools and returns structured,
@@ -334,8 +335,9 @@ export async function executeJobRun(runId: string): Promise<void> {
     createdByUserId: Types.ObjectId;
     design?: unknown;
     completion?: 'review' | 'automatic';
-    level?: 'low' | 'medium' | 'high';
+    level?: 'free' | 'low' | 'medium' | 'high';
     monthlyBudgetMicros?: number;
+    publishing?: unknown;
   }>();
   const modelPath: ModelStep[] = [];
   let costUnknown = false;
@@ -350,6 +352,15 @@ export async function executeJobRun(runId: string): Promise<void> {
   if (!job) return fail('The job no longer exists.');
   const design = jobDesignSchema.safeParse(job.design);
   if (!design.success) return fail('The job has no valid design.');
+  // Publishing jobs check a source and post; they do not research records.
+  if (design.data.skill === 'social_publish') {
+    try {
+      await runPublishing(run, owner, job);
+    } catch (error) {
+      await fail(error instanceof Error ? error.message : 'The run failed.');
+    }
+    return;
+  }
   const activeDesign = currentDesign(design.data);
   await progress(run._id, owner, 'Preparing company, project, and model context', { stage: 'preparing', percent: 8 });
 

@@ -6,6 +6,8 @@ import JobCard, { JobStatusBadge, jobIsBusy, jobListProgress, scheduleLabel, typ
 import ArtifactHistory from './jobs/ArtifactHistory';
 import MarketingPlanEditor from './jobs/MarketingPlanEditor';
 import BrandAssetsPanel from './jobs/BrandAssetsPanel';
+import MarketingComposer from './jobs/MarketingComposer';
+import ReadyPostCard from './jobs/publishing/ReadyPostCard';
 
 type Group = { key: string; label: string; test: (j: JobView) => boolean };
 
@@ -14,7 +16,7 @@ const GROUPS: Group[] = [
     {
         key: 'you',
         label: 'Needs you',
-        test: (j) => j.status === 'needs_answers' || j.status === 'proposed' || j.runs.some((r) => r.status === 'needs_review'),
+        test: (j) => j.status === 'needs_answers' || j.status === 'proposed' || j.runs.some((r) => r.status === 'needs_review') || Boolean(j.publishing?.ready.length),
     },
     { key: 'working', label: 'Working', test: (j) => jobIsBusy(j) || j.status === 'testing' },
     { key: 'set', label: 'Ready and active', test: (j) => ['ready', 'active', 'paused'].includes(j.status) },
@@ -23,11 +25,11 @@ const GROUPS: Group[] = [
     { key: 'closed', label: 'Rejected and archived', test: (j) => j.status === 'rejected' || j.status === 'archived' },
 ];
 
-function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKind, companyLocked = false }: { onCreated: (j: JobView) => void; placeholder: string; marketing?: boolean; initialCompanyId?: string; initialKind?: string; companyLocked?: boolean }) {
+function NewJob({ onCreated, onCancel, placeholder, initialCompanyId, initialKind, companyLocked = false }: { onCreated: (j: JobView) => void; onCancel?: () => void; placeholder: string; initialCompanyId?: string; initialKind?: string; companyLocked?: boolean }) {
     const { companies } = useOsCompanies();
     const [companyId, setCompanyId] = useState(initialCompanyId ?? '');
     const [request, setRequest] = useState('');
-    const [kind, setKind] = useState<'custom' | 'link_building' | 'marketing_plan'>(initialKind === 'link_building' ? 'link_building' : initialKind === 'custom' ? 'custom' : marketing ? 'marketing_plan' : 'custom');
+    const kind: 'custom' | 'link_building' = initialKind === 'link_building' ? 'link_building' : 'custom';
     const [projects, setProjects] = useState<{ projectId: string; projectName: string }[]>([]);
     const [projectId, setProjectId] = useState('');
     const [frequency, setFrequency] = useState<'daily' | 'weekly' | 'monthly'>('daily');
@@ -76,8 +78,6 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
                       exclusions,
                   },
               }
-            : kind === 'marketing_plan'
-              ? { companyId, template: 'marketing_plan', config: { companyName: companies?.find((company) => company.id === companyId)?.name ?? 'Company' } }
             : { companyId, request };
         const res = await fetch('/api/os/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
         const body = (await res.json().catch(() => ({}))) as { job?: JobView; error?: string };
@@ -89,13 +89,6 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
     };
     return (
         <div className="ui-card p-4 space-y-4">
-            {marketing ? (
-                <div className="flex flex-wrap gap-1">
-                    <button type="button" onClick={() => { setKind('marketing_plan'); setProjectId(''); setProjects([]); }} className={kind === 'marketing_plan' ? 'ui-button-primary' : 'ui-button'}>Marketing overview</button>
-                    <button type="button" onClick={() => { setKind('link_building'); setProjectId(''); }} className={kind === 'link_building' ? 'ui-button-primary' : 'ui-button'}>Link building</button>
-                    <button type="button" onClick={() => { setKind('custom'); setProjectId(''); setProjects([]); }} className={kind === 'custom' ? 'ui-button-primary' : 'ui-button'}>Custom job</button>
-                </div>
-            ) : null}
             <div className="flex gap-2">
                 {!companyLocked ? <select
                     value={companyId}
@@ -111,7 +104,7 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
                     ))}
                 </select> : null}
                 <span className="text-[11px] text-text-secondary self-center">
-                    {kind === 'link_building' ? 'Uses the company’s approved Marketing Plan to reject irrelevant opportunities.' : kind === 'marketing_plan' ? 'Builds a company-wide SEO, AI-citation, and social strategy from the Company Overview.' : 'Describe the work; Nucleas investigates, asks what it must, and designs it for your approval.'}
+                    {kind === 'link_building' ? 'Link building: uses the company’s approved Marketing Plan to reject irrelevant opportunities.' : 'Describe the work; Nucleas investigates, asks what it must, and designs it for your approval.'}
                 </span>
             </div>
             {kind !== 'custom' && projects.length > 1 ? <label className="block space-y-1"><span className="ui-kicker">Website or project</span><select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="ui-control w-full" aria-label="Website or project"><option value="">Choose a website or project…</option>{projects.map((p) => <option key={p.projectId} value={p.projectId}>{p.projectName}</option>)}</select></label> : null}
@@ -126,11 +119,9 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
                     <label className="space-y-1"><span className="text-text-secondary">Language</span><input value={language} onChange={(e) => setLanguage(e.target.value)} className="ui-control block w-full" /></label>
                     <label className="space-y-1 col-span-2 sm:col-span-3"><span className="text-text-secondary">Optional exclusions</span><input value={exclusions} onChange={(e) => setExclusions(e.target.value)} placeholder="Sites, categories, or tactics to exclude" className="ui-control block w-full" /></label>
                 </div>
-            ) : kind === 'custom' ? (
+            ) : (
                 <textarea value={request} onChange={(e) => setRequest(e.target.value)} placeholder={placeholder} className="ui-control w-full h-24 resize-y" aria-label="Job request" />
-            ) : <p className="text-xs text-text-secondary">The first run produces a sourced company Marketing Plan. After you accept and approve it, Nucleas creates separate proposed jobs for link building, AI citations, and social drafts.</p>}
-            {kind === 'marketing_plan' && companyId ? <div className="space-y-3" key={companyId}><MarketingPlanEditor companyId={companyId} /><ArtifactHistory companyId={companyId} kind="marketing_plan" /></div> : null}
-            {kind === 'marketing_plan' ? <p className="text-xs text-text-secondary">A one-time overview, updated only when you request it. Previous saved versions are retained for comparison.</p> : null}
+            )}
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
             <button
                 type="button"
@@ -138,8 +129,25 @@ function NewJob({ onCreated, placeholder, marketing, initialCompanyId, initialKi
                 onClick={() => void create()}
                 className="ui-button-primary"
             >
-                {busy ? 'Starting…' : kind === 'link_building' ? 'Configure link building' : kind === 'marketing_plan' ? 'Generate marketing plan' : 'Design this job'}
+                {busy ? 'Starting…' : kind === 'link_building' ? 'Configure link building' : 'Design this job'}
             </button>
+            {onCancel ? <button type="button" onClick={onCancel} className="ui-button ml-2">Cancel</button> : null}
+        </div>
+    );
+}
+
+/** The company's Marketing plan, pinned above the jobs: open it to read or edit, or generate a new version. */
+function MarketingPlanRow({ companyId, initiallyOpen, busy, error, onGenerate }: { companyId: string; initiallyOpen: boolean; busy: boolean; error: string | null; onGenerate: () => void }) {
+    const [open, setOpen] = useState(initiallyOpen);
+    return (
+        <div className="ui-card space-y-3 px-3 py-2">
+            <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 text-sm font-medium">Marketing plan</span>
+                <button type="button" className="ui-button" onClick={() => setOpen((v) => !v)} aria-expanded={open}>{open ? 'Close' : 'Open'}</button>
+                <button type="button" className="ui-button" disabled={busy} onClick={onGenerate} title="A one-time overview, updated only when you ask. Earlier versions are kept.">{busy ? 'Starting…' : 'Generate new version'}</button>
+            </div>
+            {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
+            {open ? <div className="space-y-3"><MarketingPlanEditor companyId={companyId} /><ArtifactHistory companyId={companyId} kind="marketing_plan" /></div> : null}
         </div>
     );
 }
@@ -156,7 +164,11 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
     const [showClosed, setShowClosed] = useState(false);
     const [showAssets, setShowAssets] = useState(false);
     const [open, setOpen] = useState<string | null>(null);
-    const [creating, setCreating] = useState(title === 'Marketing' || Boolean(initialCompanyId && initialKind));
+    const marketing = title === 'Marketing';
+    const [creating, setCreating] = useState(!marketing && Boolean(initialCompanyId && initialKind));
+    const [linkBuilding, setLinkBuilding] = useState(marketing && initialKind === 'link_building');
+    const [planBusy, setPlanBusy] = useState(false);
+    const [planError, setPlanError] = useState<string | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
     const reload = useCallback(() => setReloadKey((k) => k + 1), []);
 
@@ -200,6 +212,23 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
         return [...all.entries()].sort((a, b) => a[1].localeCompare(b[1]));
     }, [jobs, osCompanies]);
     const replace = (next: JobView) => setJobs((list) => (list ?? []).map((j) => (j.id === next.id ? next : j)));
+    const created = useCallback((j: JobView) => {
+        setJobs((list) => [j, ...(list ?? []).filter((x) => x.id !== j.id)]);
+        setOpen(j.id);
+    }, []);
+    const companyName = companies.find(([id]) => id === company)?.[1] ?? 'this company';
+    const generatePlan = async () => {
+        setPlanBusy(true);
+        setPlanError(null);
+        const res = await fetch('/api/os/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ companyId: company, template: 'marketing_plan', config: { companyName } }) });
+        const body = (await res.json().catch(() => ({}))) as { job?: JobView; error?: string };
+        setPlanBusy(false);
+        if (!res.ok || !body.job) return setPlanError(body.error ?? `Failed (${res.status})`);
+        created(body.job);
+        window.dispatchEvent(new Event('nucleas:jobs-changed'));
+    };
+    // Posts waiting for a person, across every job in view: the first thing to see in Marketing.
+    const readyPosts = inView.flatMap((job) => (job.publishing?.ready ?? []).filter((d) => d.status === 'ready').map((delivery) => ({ job, delivery })));
 
     if (error && !jobs) return <div className="p-4 text-sm text-red-400">{error}</div>;
     if (!jobs) return <div className="p-4 text-sm text-text-secondary">Loading…</div>;
@@ -222,12 +251,9 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                         </option>
                     ))}
                 </select>
-                <label className="flex items-center gap-1 text-[11px] text-text-secondary">
-                    <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} />
-                    Show rejected and archived
-                </label>
                 <span className="flex-1" />
                 {busy ? <span className="text-[11px] text-sky-400">Working…</span> : null}
+                <button type="button" onClick={() => setShowClosed((v) => !v)} className={showClosed ? 'ui-button-primary' : 'ui-button'} aria-pressed={showClosed} title="Include rejected and archived jobs">History</button>
                 {title === 'Marketing' ? <button type="button" onClick={() => setShowAssets((v) => !v)} disabled={company === 'all'} title={company === 'all' ? 'Choose a company first' : undefined} className={showAssets && company !== 'all' ? 'ui-button-primary' : 'ui-button'} aria-pressed={showAssets && company !== 'all'}>Assets</button> : null}
                 {title !== 'Marketing' ? <button type="button" onClick={() => setCreating((v) => !v)} className="ui-button-primary">
                     {creating ? 'Close' : 'New job'}
@@ -241,22 +267,39 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
             ) : null}
 
             <div className={`flex-1 overflow-y-auto p-3 space-y-4 ${showAssets && title === 'Marketing' && company !== 'all' ? 'hidden' : ''}`}>
-                {(title === 'Marketing' ? company !== 'all' : creating) ? (
+                {readyPosts.length ? (
+                    <section className="space-y-2">
+                        <h3 className="ui-kicker">Ready to post · {readyPosts.length}</h3>
+                        {readyPosts.map(({ job: j, delivery }) => (
+                            <ReadyPostCard key={delivery.id} jobId={j.id} companyName={company === 'all' ? j.companyName : undefined} delivery={delivery} subreddit={j.companySubreddit ?? null} onChange={replace} />
+                        ))}
+                    </section>
+                ) : null}
+                {marketing && company !== 'all' ? (
+                    <div className="space-y-3" key={company}>
+                        <MarketingPlanRow companyId={company} initiallyOpen={initialKind === 'marketing_plan'} busy={planBusy} error={planError} onGenerate={() => void generatePlan()} />
+                        {linkBuilding ? (
+                            <NewJob placeholder={placeholder} initialCompanyId={company} initialKind="link_building" companyLocked onCancel={() => setLinkBuilding(false)} onCreated={(j) => { setLinkBuilding(false); created(j); }} />
+                        ) : (
+                            <MarketingComposer companyId={company} companyName={companyName} onCreated={created} onMarketingPlan={() => void generatePlan()} renderLinkBuilding={(done) => <NewJob placeholder={placeholder} initialCompanyId={company} initialKind="link_building" companyLocked onCancel={done} onCreated={(j) => { done(); created(j); }} />} />
+                        )}
+                    </div>
+                ) : null}
+                {marketing && company === 'all' ? <p className="text-xs text-text-secondary">Choose a company to start a marketing job.</p> : null}
+                {!marketing && creating ? (
                     <NewJob
                         key={`${company}-${initialKind ?? ''}`}
                         placeholder={placeholder}
-                        marketing={title === 'Marketing'}
                         initialCompanyId={company === 'all' ? initialCompanyId : company}
                         initialKind={initialKind}
                         companyLocked={company !== 'all'}
                         onCreated={(j) => {
-                            setCreating(title === 'Marketing');
-                            setJobs((list) => [j, ...(list ?? [])]);
-                            setOpen(j.id);
+                            setCreating(false);
+                            created(j);
                         }}
                     />
                 ) : null}
-                {inView.length === 0 && !creating ? (
+                {inView.length === 0 && !creating && !marketing ? (
                     <p className="text-sm text-text-secondary">
                         No {title === 'Jobs' ? '' : `${title.toLowerCase()} `}jobs yet. Describe work with New job, or ask Nucleas (&ldquo;every day, …&rdquo;, &ldquo;research … and add it to …&rdquo;).
                     </p>
@@ -275,7 +318,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                                     const progressTone = progress.tone === 'active' ? 'bg-primary' : progress.tone === 'waiting' ? 'bg-amber-400' : progress.tone === 'complete' ? 'bg-emerald-400' : progress.tone === 'failed' ? 'bg-red-400' : 'bg-text-secondary';
                                     return open === j.id ? (
                                         <li key={j.id}>
-                                            <JobCard job={j} onChange={replace} />
+                                            <JobCard job={j} onChange={replace} readyShownAbove />
                                             <button type="button" className="mt-1 text-[11px] text-text-secondary underline" onClick={() => setOpen(null)}>
                                                 Collapse
                                             </button>

@@ -23,7 +23,7 @@ describe('facebook sign-in', () => {
   it('builds the login url with the Page scopes and no secret', () => {
     const url = new URL(buildFacebookAuthUrl({ appId: '123', redirectUri: 'https://os.nucleas.app/cb', state: 's' }));
     expect(url.searchParams.get('client_id')).toBe('123');
-    expect(url.searchParams.get('scope')).toBe('pages_show_list,pages_read_engagement');
+    expect(url.searchParams.get('scope')).toBe('pages_show_list,pages_read_engagement,pages_manage_posts');
     expect(url.toString()).not.toMatch(/secret/i);
   });
 

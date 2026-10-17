@@ -7,7 +7,7 @@ type Notice = { kind: 'notice' | 'error'; text: string };
 
 /**
  * Shows the outcome of an OAuth round-trip (?integration_notice / ?integration_error), reopens the
- * company it started from, then strips the params from the URL.
+ * company it started from or the window an email linked to (?open=), then strips the params from the URL.
  */
 export default function IntegrationNotice() {
     const wm = useWindowManager();
@@ -17,10 +17,13 @@ export default function IntegrationNotice() {
         const params = new URLSearchParams(window.location.search);
         const text = params.get('integration_error') ?? params.get('mail_error') ?? params.get('integration_notice') ?? params.get('mail_notice');
         const companyId = params.get('company');
-        if (!text && !companyId) return;
-        if (params.get('open') === 'mail') wm.open('mail');
+        const open = params.get('open');
+        if (!text && !companyId && !open) return;
+        if (open === 'mail') wm.open('mail');
+        // From a publishing job's email: land on Marketing, where the ready-to-post cards are.
+        if (open === 'marketing') wm.open('marketing');
         // Returning from connecting a mailbox: land on Watches, where the mailbox status is.
-        if (params.get('open') === 'content') wm.open('content', { payload: { tab: 'watches' } });
+        if (open === 'content') wm.open('content', { payload: { tab: 'watches' } });
 
         if (text) setNotice({ kind: params.has('integration_error') || params.has('mail_error') ? 'error' : 'notice', text: text.slice(0, 300) });
         if (companyId && /^[a-f0-9]{24}$/i.test(companyId)) {

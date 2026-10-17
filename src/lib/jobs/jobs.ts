@@ -10,7 +10,7 @@ import { readEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
 import type { ProgressFn } from '@/lib/ai/progress';
 import { designJob } from './designer';
 import { executeJobRun, monthSpendMicros } from './runner';
-import { DELIVERY_LABEL, RUNNABLE_DELIVERY, jobDesignSchema, type JobDesign, type JobRunOutput, type RecordIssue } from './schema';
+import { DELIVERY_LABEL, deliveryRunnable, jobDesignSchema, type JobDesign, type JobRunOutput, type RecordIssue } from './schema';
 import { nextScheduledAt } from './schedule';
 import { linkBuildingConfigSchema, linkBuildingDesign } from './templates/linkBuilding';
 import { seoBriefConfigSchema, seoBriefDesign } from './templates/seoBrief';
@@ -23,6 +23,8 @@ import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import { PROPERTY_OVERVIEW_QUEUE_OWNER } from '@/lib/propertyOverview/job';
 import { cancelPropertyOverviewForJob } from '@/lib/propertyOverview/crawler';
 import { initialRunLease } from './runLifecycle';
+import { editDelivery, markPosted, postDeliveryNow, publishingView, skipDelivery, takeBaseline, type PublishingView } from '@/lib/publishing/engine';
+import { createPublishingJob, updatePublishingSettings } from '@/lib/publishing/setup';
 
 /**
  * Jobs: Nucleas designs them, a manager approves them (choosing review or automatic completion and
@@ -78,6 +80,8 @@ export interface JobView {
   runs: JobRunView[];
   canManage: boolean;
   opportunities: LinkOpportunityView[];
+  /** Publishing jobs: channels, notify list and the posts waiting for a person. */
+  publishing: PublishingView | null;
 }
 
 type JobLean = {
@@ -99,6 +103,7 @@ type JobLean = {
   lastRunAt?: Date;
   nextRunAt?: Date;
   error?: string;
+  publishing?: unknown;
 };
 
 type RunLean = {
@@ -163,7 +168,7 @@ async function toView(job: JobLean, company: { name: string; subreddit?: string 
     monthlyBudgetMicros: job.monthlyBudgetMicros ?? 0,
     spentThisMonthMicros: (await monthSpendMicros(job._id)) + (job.createdAt >= new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)) ? job.designCostMicros ?? 0 : 0),
     deliveryLabel: design ? DELIVERY_LABEL[design.delivery.method] : null,
-    deliveryRunnable: design ? RUNNABLE_DELIVERY.includes(design.delivery.method) : false,
+    deliveryRunnable: design ? deliveryRunnable(design) : false,
     createdAt: job.createdAt.toISOString(),
     updatedAt: job.updatedAt.toISOString(),
     lastRunAt: job.lastRunAt?.toISOString() ?? null,
@@ -172,6 +177,7 @@ async function toView(job: JobLean, company: { name: string; subreddit?: string 
     runs: runs.map(runView),
     canManage,
     opportunities: design?.skill === 'link_building' ? await listLinkOpportunities(job._id) : [],
+    publishing: design?.skill === 'social_publish' ? await publishingView(job) : null,
   };
 }
 
@@ -388,7 +394,7 @@ export async function runNow(viewer: CompanyViewer, id: string): Promise<ActionR
   const design = jobDesignSchema.safeParse(found.job.design);
   if (!design.success) return { ok: false, status: 409, error: 'This job has no design yet.' };
   if (!['ready', 'active'].includes(found.job.status)) return { ok: false, status: 409, error: 'Approve the job and its dry run first.' };
-  if (!RUNNABLE_DELIVERY.includes(design.data.delivery.method)) {
+  if (!deliveryRunnable(design.data)) {
     return { ok: false, status: 409, error: `${DELIVERY_LABEL[design.data.delivery.method]} needs its one-time setup first: ${design.data.delivery.setupSteps.join('; ') || 'see the design'}.` };
   }
   if (await JobRun.exists({ jobId: found.job._id, status: 'running' })) return { ok: false, status: 409, error: 'A run is already in progress.' };
@@ -432,7 +438,7 @@ export async function decideRun(viewer: CompanyViewer, jobId: string, runId: str
   if (run.dryRun) {
     // The sample was right: the job is ready. A one-off job whose results stay in Nucleas is done.
     const once = design.success && design.data.schedule.kind === 'once';
-    const deliverable = design.success && RUNNABLE_DELIVERY.includes(design.data.delivery.method);
+    const deliverable = design.success && deliveryRunnable(design.data);
     const next: JobStatus = decision === 'reject' ? 'proposed' : once && deliverable ? 'done' : 'ready';
     const nextRunAt = decision === 'accept' && design.success && deliverable ? nextScheduledAt(design.data.schedule, new Date()) : null;
     await Job.updateOne(
@@ -443,6 +449,11 @@ export async function decideRun(viewer: CompanyViewer, jobId: string, runId: str
         $push: { events: event(viewer, decision === 'accept' ? 'dry_run_accepted' : 'dry_run_rejected', note) },
       }
     );
+    // Switching a publishing job on records what already exists, so only later items are posted.
+    // If the source cannot be read now, the first hourly run records it instead.
+    if (decision === 'accept' && design.success && design.data.skill === 'social_publish') {
+      await takeBaseline(found.job).catch((error: unknown) => console.error('[jobs/publishing] baseline failed', error instanceof Error ? error.message : 'unknown'));
+    }
   } else {
     await Job.updateOne({ _id: found.job._id }, { $push: { events: event(viewer, decision === 'accept' ? 'run_accepted' : 'run_rejected', note) } });
   }
@@ -483,6 +494,36 @@ export async function archiveJob(viewer: CompanyViewer, id: string): Promise<Act
   return result.ok ? done(viewer, id) : result;
 }
 
+// ---------- Publishing ----------
+
+/** Creates a publishing job from a confirmed plan and starts its dry run at once. */
+export async function createPublishing(viewer: CompanyViewer, raw: unknown): Promise<ActionResult & { dryRunId?: string }> {
+  const created = await createPublishingJob(viewer, raw);
+  if (!created.ok) return created;
+  return approveJob(viewer, created.jobId, { completion: 'automatic' });
+}
+
+export type PublishingAction = 'publishing_settings' | 'mark_posted' | 'skip_post' | 'edit_post' | 'post_now';
+
+/**
+ * Settings are for managers. Anyone who can see the job may handle its ready-to-post cards: they are the
+ * people the job notifies to post them.
+ */
+export async function publishingAction(viewer: CompanyViewer, id: string, action: PublishingAction, body: Record<string, unknown>): Promise<ActionResult> {
+  const found = await managed(viewer, id, { anyMember: action !== 'publishing_settings' });
+  if (!found.ok) return found;
+  if (jobDesignSchema.safeParse(found.job.design).data?.skill !== 'social_publish') return { ok: false, status: 400, error: 'This is not a publishing job.' };
+  const deliveryId = typeof body.deliveryId === 'string' ? body.deliveryId : '';
+  const result =
+    action === 'publishing_settings' ? await updatePublishingSettings(viewer, found.job, body.settings)
+    : action === 'mark_posted' ? await markPosted(found.job, deliveryId, viewer.userId, typeof body.postedUrl === 'string' ? body.postedUrl : undefined)
+    : action === 'skip_post' ? await skipDelivery(found.job, deliveryId, viewer.userId)
+    : action === 'edit_post' ? await editDelivery(found.job, deliveryId, { title: typeof body.title === 'string' ? body.title : undefined, body: typeof body.body === 'string' ? body.body : undefined })
+    : await postDeliveryNow(found.job, deliveryId, viewer.userId);
+  if (!result.ok) return result;
+  return done(viewer, id);
+}
+
 // ---------- Background ----------
 
 export { executeJobRun };
@@ -496,7 +537,7 @@ export async function claimDueJobRuns(now = new Date(), limit = 2): Promise<stri
   const runIds: string[] = [];
   for (const job of candidates) {
     const design = jobDesignSchema.safeParse(job.design);
-    if (!design.success || design.data.schedule.kind === 'once' || !RUNNABLE_DELIVERY.includes(design.data.delivery.method)) continue;
+    if (!design.success || design.data.schedule.kind === 'once' || !deliveryRunnable(design.data)) continue;
     if (await JobRun.exists({ jobId: job._id, status: 'running' })) continue;
     const nextRunAt = nextScheduledAt(design.data.schedule, now);
     const claimed = await Job.findOneAndUpdate(

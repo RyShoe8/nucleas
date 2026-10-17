@@ -8,6 +8,7 @@ import {
   executeJobRun,
   getJob,
   pauseJob,
+  publishingAction,
   rejectJob,
   resumeJob,
   runDesign,
@@ -36,6 +37,8 @@ export async function GET(request: NextRequest, { params }: Context) {
  *   answer: { answers: { [questionId]: { option?, text? } } }
  *   approve: { completion: 'review' | 'automatic', monthlyBudgetUsd? }
  *   accept_run / reject_run: { runId, note? }
+ *   publishing_settings: { settings: { channels?, notifyUserIds?, examples? } }
+ *   mark_posted: { deliveryId, postedUrl? } · skip_post / post_now: { deliveryId } · edit_post: { deliveryId, title?, body? }
  */
 export async function POST(request: NextRequest, { params }: Context) {
   const viewer = await requireCompanyViewer(request);
@@ -51,6 +54,11 @@ export async function POST(request: NextRequest, { params }: Context) {
     opportunityId?: unknown;
     status?: unknown;
     liveLinkUrl?: unknown;
+    deliveryId?: unknown;
+    postedUrl?: unknown;
+    settings?: unknown;
+    title?: unknown;
+    body?: unknown;
   };
   const note = typeof body.note === 'string' ? body.note : undefined;
   let result: ActionResult & { runId?: string; dryRunId?: string };
@@ -108,6 +116,13 @@ export async function POST(request: NextRequest, { params }: Context) {
       result = { ok: true, job };
       break;
     }
+    case 'publishing_settings':
+    case 'mark_posted':
+    case 'skip_post':
+    case 'edit_post':
+    case 'post_now':
+      result = await publishingAction(viewer, id, body.action, body as Record<string, unknown>);
+      break;
     default:
       return NextResponse.json({ error: 'Unknown action.' }, { status: 400 });
   }
