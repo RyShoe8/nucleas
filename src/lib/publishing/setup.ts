@@ -11,12 +11,16 @@ import { askEngine } from '@/lib/ai/engine/ask';
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 import { readEngineSettings } from '@/lib/ai/engine/select';
 import { socialPublishDesign } from '@/lib/jobs/templates/socialPublish';
-import { MANUAL_ONLY, PLATFORM_LABEL, PUBLISH_PLATFORMS, channelSchema, normalizeChannels, publishSourceSchema, sourceLabel, type PublishPlatform, type PublishSource, type PublishingConfig } from './config';
+import { MANUAL_ONLY, PLATFORM_LABEL, PUBLISH_PLATFORMS, SOCIAL_PLATFORMS, adminTargetSchema, channelSchema, type AdminTarget, normalizeChannels, platformsFor, publishSourceSchema, sourceLabel, type PublishPlatform, type PublishSource, type PublishingConfig } from './config';
 import { readExamplePost } from './examples';
 import { discoverSiteSource, type PickPrefix } from './siteSource';
 import { facebookTokenCanPost } from './publishers';
 import { keepOrgPeople, listOrgPeople } from './notify';
 import type { FetchLike } from './fetchPublic';
+import { learnAdminForm, type AdminBrowser, type PickLink } from './admin';
+import { adminBrowserReady, workerAdminBrowser } from './adminBrowser';
+import { adminSessionFor } from '@/lib/companies/adminAccount';
+import { adminPublishDesign } from '@/lib/jobs/templates/socialPublish';
 
 /**
  * Setting up a publishing job from one sentence. Nucleas recognizes what kind of job the request is,
@@ -24,13 +28,14 @@ import type { FetchLike } from './fetchPublic';
  * themselves, and returns a short plan the person confirms. Nothing is created until they do.
  */
 
-export type RequestKind = 'social_publish' | 'link_building' | 'marketing_plan' | 'custom';
+export type RequestKind = 'social_publish' | 'admin_publish' | 'link_building' | 'marketing_plan' | 'custom';
 
 /** Which kind of job a request is. Cheap and predictable: anything not clearly one of ours is a custom job Nucleas designs. */
 export function recognizeRequest(text: string): RequestKind {
   const t = text.toLowerCase();
   if (/\b(backlinks?|link[- ]?building|dofollow)\b/.test(t)) return 'link_building';
   if (/\bmarketing (plan|overview|strategy)\b/.test(t)) return 'marketing_plan';
+  if (/\b(admin|back ?end|backoffice|cms)\b/.test(t) && /\b(add|adds|post|posts|put|publish|create|enter|list|upload)\b/.test(t)) return 'admin_publish';
   const social = /\b(facebook|bluesky|bsky|reddit|subreddit|social|socials|social media)\b/.test(t);
   const announce = /\b(post|posts|posting|share|announce|publish|promote)\b/.test(t);
   if (social && announce) return 'social_publish';
@@ -45,7 +50,7 @@ export function wantsMailbox(text: string): boolean {
 /** Platforms the request names; none named means every platform the company has. */
 export function platformsNamed(text: string): PublishPlatform[] {
   const t = text.toLowerCase();
-  const named = PUBLISH_PLATFORMS.filter((p) => (p === 'bluesky' ? /\b(bluesky|bsky)\b/.test(t) : new RegExp(`\\b${p}\\b`).test(t)));
+  const named = SOCIAL_PLATFORMS.filter((p) => (p === 'bluesky' ? /\b(bluesky|bsky)\b/.test(t) : new RegExp(`\\b${p}\\b`).test(t)));
   return named;
 }
 
@@ -70,14 +75,34 @@ export interface PublishPlan {
   notifyUserIds: string[];
   /** Something to fix before the job can run (e.g. an unapproved Voice). Shown, not hidden. */
   blocker: string | null;
+  /** Admin jobs: the form Nucleas learned, sent back unchanged when the plan is confirmed. */
+  admin: AdminTarget | null;
 }
 
-export type PlanResult = { ok: true; plan: PublishPlan | { kind: Exclude<RequestKind, 'social_publish'> } } | { ok: false; status: 400 | 403 | 404; error: string };
+export type PlanResult = { ok: true; plan: PublishPlan | { kind: Exclude<RequestKind, 'social_publish' | 'admin_publish'> } } | { ok: false; status: 400 | 403 | 404; error: string };
 
 export interface SetupDeps {
   fetcher?: FetchLike;
   pick?: PickPrefix;
   canPostFacebook?: (token: string) => Promise<boolean | null>;
+  admin?: AdminBrowser;
+  adminSession?: { baseUrl: string; cookies: unknown[] } | null;
+  pickLink?: PickLink;
+}
+
+function modelPickLink(viewer: CompanyViewer): PickLink {
+  return async ({ request, noun, links }) => {
+    const answer = await askEngine({
+      organizationId: String(viewer.organizationId),
+      userId: viewer.userId,
+      need: 'plan',
+      system: `Pick the admin link that opens the form for adding a new ${noun}. Reply with exactly one address from the list, or "none".`,
+      user: `Request: ${request}\n\nLinks:\n${links.map((l) => `${l.text || '(no text)'} → ${l.href}`).join('\n')}`,
+      maxTokens: 120,
+    }).catch(() => null);
+    const picked = answer?.text.trim().split(/\s+/)[0] ?? '';
+    return links.some((l) => l.href === picked) ? picked : null;
+  };
 }
 
 function modelPick(viewer: CompanyViewer): PickPrefix {
@@ -102,7 +127,7 @@ async function channelOptions(viewer: CompanyViewer, companyId: string, request:
   const connected = new Map(connections.map((c) => [c.provider, c._id]));
   const named = platformsNamed(request);
   const out: ChannelOption[] = [];
-  for (const platform of PUBLISH_PLATFORMS) {
+  for (const platform of SOCIAL_PLATFORMS) {
     let canAuto = false;
     let note: string | null = null;
     if (MANUAL_ONLY.includes(platform)) {
@@ -128,7 +153,7 @@ export async function planRequest(viewer: CompanyViewer, input: { companyId: str
   const request = input.request.trim();
   if (request.length < 10 || request.length > 2000) return { ok: false, status: 400, error: 'Describe what you want in a sentence (10–2000 characters).' };
   const kind = recognizeRequest(request);
-  if (kind !== 'social_publish') return { ok: true, plan: { kind } };
+  if (kind !== 'social_publish' && kind !== 'admin_publish') return { ok: true, plan: { kind } };
   if (!isCompanyManager(viewer)) return { ok: false, status: 403, error: 'Only managers and administrators can set up publishing jobs.' };
   const profile = await getCompanyProfile(viewer, input.companyId);
   if (!profile) return { ok: false, status: 404, error: 'Company not found.' };
@@ -140,7 +165,7 @@ export async function planRequest(viewer: CompanyViewer, input: { companyId: str
       .sort({ mode: 1, createdAt: 1 })
       .select('_id mode')
       .lean<{ _id: Types.ObjectId; mode?: string }>();
-    if (!watch) return { ok: false, status: 400, error: `${profile.name} has no inbox being watched yet. Connect the mailbox in Content first.` };
+    if (!watch) return { ok: false, status: 400, error: `${profile.name} has no inbox being watched yet. Connect it in Marketing → Inboxes first.` };
     source = { type: 'mailbox', watchId: String(watch._id), noun: watch.mode === 'deal' ? 'deal' : 'email' };
   } else {
     if (!profile.domain) return { ok: false, status: 400, error: `Add ${profile.name}’s website in the Company window first, so Nucleas knows where to look.` };
@@ -150,8 +175,34 @@ export async function planRequest(viewer: CompanyViewer, input: { companyId: str
     newest = found.newest ? { title: found.newest.title ?? new URL(found.newest.url).pathname, url: found.newest.url } : null;
   }
 
-  const voice = await BrandVoice.exists({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(input.companyId), status: 'approved' });
   const people = (await listOrgPeople(viewer.organizationId)).map((p) => ({ userId: p.userId, name: p.name }));
+  const notifyUserIds = people.some((p) => p.userId === viewer.userId) ? [viewer.userId] : [];
+
+  if (kind === 'admin_publish') {
+    if (!deps.admin && !adminBrowserReady()) return { ok: false, status: 400, error: 'The browser worker is not configured on the server, so Nucleas cannot open the admin.' };
+    const session = deps.adminSession !== undefined ? deps.adminSession : await adminSessionFor(viewer.organizationId, input.companyId);
+    if (!session) return { ok: false, status: 400, error: `Connect ${profile.name}’s admin account first (Company → Admin account), so Nucleas can sign in to the admin.` };
+    const learned = await learnAdminForm({ session, request, noun: source.noun, browser: deps.admin ?? workerAdminBrowser, pick: deps.pickLink ?? modelPickLink(viewer) }).catch((error: unknown) => ({ ok: false as const, error: `Nucleas could not open the admin: ${error instanceof Error ? error.message : 'unknown error'}` }));
+    if (!learned.ok) return { ok: false, status: 400, error: learned.error };
+    const host = new URL(learned.target.baseUrl).host;
+    return {
+      ok: true,
+      plan: {
+        kind: 'social_publish',
+        title: `Add new ${source.noun}s to the ${host} admin`,
+        source,
+        sourceLabel: sourceLabel(source, profile.domain ?? null),
+        newest,
+        channels: [{ platform: 'admin', selected: true, canAuto: true, mode: 'auto', note: null }],
+        people,
+        notifyUserIds,
+        blocker: null,
+        admin: learned.target,
+      },
+    };
+  }
+
+  const voice = await BrandVoice.exists({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(input.companyId), status: 'approved' });
   return {
     ok: true,
     plan: {
@@ -162,8 +213,9 @@ export async function planRequest(viewer: CompanyViewer, input: { companyId: str
       newest,
       channels: await channelOptions(viewer, input.companyId, request, profile.subreddit ?? null, profile.socialLinks.map((l) => l.network), deps),
       people,
-      notifyUserIds: people.some((p) => p.userId === viewer.userId) ? [viewer.userId] : [],
+      notifyUserIds,
       blocker: voice ? null : `${profile.name}’s Voice is not approved yet. Approve it (Company → Voice) so posts sound like the brand.`,
+      admin: null,
     },
   };
 }
@@ -175,6 +227,7 @@ const createSchema = z.object({
   channels: z.array(channelSchema).min(1, 'Choose at least one platform.'),
   notifyUserIds: z.array(z.string()).max(50).default([]),
   examples: z.record(z.enum(PUBLISH_PLATFORMS), z.string().max(6000)).default({}),
+  admin: adminTargetSchema.nullable().optional(),
 });
 
 /** An example given as a link is read now; a failure is an error the person can fix by pasting the text. */
@@ -219,9 +272,25 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
   if (!profile) return { ok: false, status: 404, error: 'Company not found.' };
   const bad = await checkSource(viewer, input.companyId, input.source);
   if (bad) return { ok: false, status: 400, error: bad };
+  // An admin job adds records to the company's own admin and nothing else; a social job never touches the admin.
+  const admin = input.channels.some((c) => c.platform === 'admin') ? input.admin ?? null : null;
+  if (input.channels.some((c) => c.platform === 'admin') && !admin) return { ok: false, status: 400, error: 'The admin form is missing. Describe the job again so Nucleas can learn it.' };
+  if (admin && input.channels.some((c) => c.platform !== 'admin')) return { ok: false, status: 400, error: 'An admin job cannot also post to social. Set those up as a separate job.' };
+  if (admin) {
+    const session = await adminSessionFor(viewer.organizationId, input.companyId);
+    const origin = session ? new URL(session.baseUrl).origin : null;
+    const sameSite = (url: string | null) => url === null || (() => {
+      try {
+        return new URL(url).origin === origin;
+      } catch {
+        return false;
+      }
+    })();
+    if (!origin || new URL(admin.baseUrl).origin !== origin || !sameSite(admin.formUrl) || !sameSite(admin.listUrl)) return { ok: false, status: 400, error: 'That form is not on the company’s admin site.' };
+  }
   const sameSource = input.source.type === 'site' ? { 'publishing.source.feedUrl': input.source.feedUrl, 'publishing.source.pathPrefix': input.source.pathPrefix } : { 'publishing.source.watchId': input.source.watchId };
-  if (await Job.exists({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(input.companyId), 'design.skill': 'social_publish', status: { $nin: ['rejected', 'archived', 'done'] }, ...sameSource })) {
-    return { ok: false, status: 409, error: `${profile.name} already has a job posting these ${input.source.noun}s. Open it to change its platforms.` };
+  if (await Job.exists({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(input.companyId), 'design.skill': 'social_publish', status: { $nin: ['rejected', 'archived', 'done'] }, 'publishing.admin': { $exists: Boolean(admin) }, ...sameSource })) {
+    return { ok: false, status: 409, error: `${profile.name} already has a job ${admin ? 'adding' : 'posting'} these ${input.source.noun}s. Open it to change its settings.` };
   }
   const examples = await resolveExamples(input.examples, deps.fetcher);
   if (!examples.ok) return { ok: false, status: 400, error: examples.error };
@@ -232,6 +301,7 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
     examples: examples.examples,
     notifyUserIds: await keepOrgPeople(viewer.organizationId, input.notifyUserIds),
     brief: input.request,
+    ...(admin ? { admin } : {}),
   };
   const level = (await readEngineSettings(String(viewer.organizationId))).defaultCostLevel;
   const doc = await Job.create({
@@ -240,7 +310,9 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
     createdByUserId: new Types.ObjectId(viewer.userId),
     status: 'proposed',
     request: input.request,
-    design: socialPublishDesign({ noun: input.source.noun, sourceLabel: sourceLabel(input.source, profile.domain ?? null), platforms: channels.map((c) => PLATFORM_LABEL[c.platform]) }),
+    design: admin
+      ? adminPublishDesign({ noun: input.source.noun, sourceLabel: sourceLabel(input.source, profile.domain ?? null), host: new URL(admin.baseUrl).host })
+      : socialPublishDesign({ noun: input.source.noun, sourceLabel: sourceLabel(input.source, profile.domain ?? null), platforms: channels.map((c) => PLATFORM_LABEL[c.platform]) }),
     publishing: config,
     level,
     designCostMicros: 0,
@@ -263,6 +335,8 @@ export async function updatePublishingSettings(viewer: CompanyViewer, job: { _id
   const set: Record<string, unknown> = {};
   const unset: Record<string, ''> = {};
   if (parsed.data.channels) {
+    const allowed = platformsFor((job.publishing ?? {}) as { admin?: unknown });
+    if (parsed.data.channels.some((c) => !allowed.includes(c.platform))) return { ok: false, status: 400, error: 'That platform does not belong to this job.' };
     const channels = normalizeChannels(parsed.data.channels);
     set['publishing.channels'] = channels;
     // Switching a channel back to auto means the person fixed the account: drop the old warning.

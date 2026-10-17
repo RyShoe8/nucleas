@@ -18,10 +18,13 @@ export function ChannelPicker({ channels, onChange, disabled = false }: { channe
             {channels.map((c) => (
                 <li key={c.platform} className="space-y-1">
                     <div className="flex items-center gap-2">
-                        <label className="flex min-w-[96px] items-center gap-2 text-sm">
-                            <input type="checkbox" checked={c.selected} disabled={disabled} onChange={(e) => set(c.platform, { selected: e.target.checked })} />
-                            {PLATFORM_LABEL[c.platform]}
-                        </label>
+                        {/* An admin job has one destination: nothing to switch off, only Auto or Manual. */}
+                        {c.platform === 'admin' ? <span className="min-w-[96px] text-sm">Save it</span> : (
+                            <label className="flex min-w-[96px] items-center gap-2 text-sm">
+                                <input type="checkbox" checked={c.selected} disabled={disabled} onChange={(e) => set(c.platform, { selected: e.target.checked })} />
+                                {PLATFORM_LABEL[c.platform]}
+                            </label>
+                        )}
                         {c.selected ? (
                             <div className="inline-flex overflow-hidden rounded border border-border text-xs" role="radiogroup" aria-label={`${PLATFORM_LABEL[c.platform]} posting`}>
                                 {(['auto', 'manual'] as const).map((mode) => (

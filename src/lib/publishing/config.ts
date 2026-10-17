@@ -6,10 +6,13 @@ import { z } from 'zod';
  * Pure and client-safe: the Marketing window renders and edits the same shape.
  */
 
-export const PUBLISH_PLATFORMS = ['facebook', 'bluesky', 'reddit'] as const;
+export const SOCIAL_PLATFORMS = ['facebook', 'bluesky', 'reddit'] as const;
+/** 'admin' is the company's own site admin: records are added through its form with the captured admin session. */
+export const PUBLISH_PLATFORMS = [...SOCIAL_PLATFORMS, 'admin'] as const;
 export type PublishPlatform = (typeof PUBLISH_PLATFORMS)[number];
+export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
 
-export const PLATFORM_LABEL: Record<PublishPlatform, string> = { facebook: 'Facebook', bluesky: 'Bluesky', reddit: 'Reddit' };
+export const PLATFORM_LABEL: Record<PublishPlatform, string> = { facebook: 'Facebook', bluesky: 'Bluesky', reddit: 'Reddit', admin: 'Admin' };
 
 /** Platforms with no publishing API: Nucleas always prepares a ready-to-post card for a person. */
 export const MANUAL_ONLY: readonly PublishPlatform[] = ['reddit'];
@@ -42,6 +45,37 @@ export const mailboxSourceSchema = z.object({
 export const publishSourceSchema = z.discriminatedUnion('type', [siteSourceSchema, mailboxSourceSchema]);
 export type PublishSource = z.infer<typeof publishSourceSchema>;
 
+export const FORM_FIELD_TYPES = ['text', 'textarea', 'number', 'date', 'datetime-local', 'time', 'url', 'email', 'tel', 'select', 'checkbox', 'radio', 'richtext', 'file'] as const;
+
+/** One control of an admin form, as the browser worker read it. */
+export const formFieldSchema = z.object({
+  key: z.string().min(1).max(60),
+  label: z.string().max(200),
+  type: z.enum(FORM_FIELD_TYPES),
+  selector: z.string().min(1).max(500),
+  required: z.boolean(),
+  options: z.array(z.object({ value: z.string().max(300), label: z.string().max(300) })).max(200).optional(),
+  placeholder: z.string().max(200).optional(),
+});
+export type FormField = z.infer<typeof formFieldSchema>;
+
+/** The admin form a job fills, learned when it is set up and re-learned when the form changes. */
+export const adminTargetSchema = z.object({
+  baseUrl: z.string().url().max(500),
+  formUrl: z.string().url().max(2000),
+  /** The page listing the records, read after saving to confirm the new one is there. */
+  listUrl: z.string().url().max(2000).nullable(),
+  fields: z.array(formFieldSchema).min(1).max(60),
+  submit: z.object({ selector: z.string().min(1).max(500), label: z.string().max(200) }),
+  learnedAt: z.string().max(40),
+});
+export type AdminTarget = z.infer<typeof adminTargetSchema>;
+
+/** Same fields in the same places: a form whose fingerprint changed has to be learned again. */
+export function formFingerprint(fields: Pick<FormField, 'key' | 'type' | 'selector'>[]): string {
+  return fields.map((f) => `${f.key}:${f.type}:${f.selector}`).sort().join('|');
+}
+
 export const publishingConfigSchema = z.object({
   source: publishSourceSchema,
   channels: z.array(channelSchema).min(1).max(PUBLISH_PLATFORMS.length),
@@ -49,6 +83,8 @@ export const publishingConfigSchema = z.object({
   examples: z.record(z.enum(PUBLISH_PLATFORMS), z.object({ url: z.string().max(2000).optional(), text: z.string().max(6000).default('') })).default({}),
   /** People told when a card is ready to post or the job needs attention. */
   notifyUserIds: z.array(objectId).max(50).default([]),
+  /** Jobs that add records to the company's own admin (channel 'admin'). */
+  admin: adminTargetSchema.optional(),
   /** The request in the person's words; it steers what each post emphasizes. */
   brief: z.string().max(2000).default(''),
 });
@@ -61,6 +97,11 @@ export function normalizeChannels(channels: PublishChannel[]): PublishChannel[] 
     platform,
     mode: MANUAL_ONLY.includes(platform) ? 'manual' : byPlatform.get(platform)!.mode,
   }));
+}
+
+/** The platforms a job's settings offer: its admin when it has one, otherwise the social networks. */
+export function platformsFor(config: { admin?: unknown }): readonly PublishPlatform[] {
+  return config.admin ? ['admin'] : SOCIAL_PLATFORMS;
 }
 
 /** The plain sentence a job card shows for its source. */

@@ -29,3 +29,28 @@ export function socialPublishDesign(input: { noun: string; sourceLabel: string; 
     questions: [],
   };
 }
+
+/**
+ * An admin publishing job (same engine, skill 'social_publish'): every hour, each new item becomes one record
+ * in the company's own admin, filled through its form with the captured admin session.
+ */
+export function adminPublishDesign(input: { noun: string; sourceLabel: string; host: string }): JobDesign {
+  const social = socialPublishDesign({ noun: input.noun, sourceLabel: input.sourceLabel, platforms: [] });
+  return {
+    ...social,
+    title: `Add new ${input.noun}s to the ${input.host} admin`,
+    instructions: `${input.sourceLabel}. For each new ${input.noun}, fill the ${input.host} admin form with values taken only from the ${input.noun} itself, save it, and confirm it appears on the list page. On automatic, Nucleas saves it; on manual, the team gets a ready-to-add card.`,
+    fields: [
+      { key: 'platform', label: 'Destination', type: 'text', required: true, description: '' },
+      { key: 'post_copy', label: 'Values', type: 'long_text', required: true, description: '' },
+      { key: 'status', label: 'Status', type: 'text', required: false, description: '' },
+    ],
+    delivery: { method: 'browser', detail: `Saved through the ${input.host} admin form with the company's captured admin session.`, setupSteps: [] },
+    safeguards: [
+      `Only ${input.noun}s that arrive after the job is switched on are added.`,
+      `The same ${input.noun} sent again within two weeks is added once.`,
+      'A required field the facts do not give stops the automatic save; the team gets a card instead.',
+      'If the form changes, Nucleas learns it again once; anything else that fails becomes a card.',
+    ],
+  };
+}

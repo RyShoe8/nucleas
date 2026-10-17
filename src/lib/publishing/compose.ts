@@ -1,13 +1,13 @@
 import { z } from 'zod';
 import { extractJson } from '@/lib/ai/json';
-import { PLATFORM_LABEL, type PublishPlatform } from './config';
+import { PLATFORM_LABEL, type SocialPlatform } from './config';
 
 /**
  * Drafting one post for one platform. The company's approved Voice decides how it sounds; the example
  * post decides only its structure; the facts decide what it may claim. Pure: the model is passed in.
  */
 
-export const PLATFORM_RULES: Record<PublishPlatform, { maxChars: number; title: boolean; rules: string }> = {
+export const PLATFORM_RULES: Record<SocialPlatform, { maxChars: number; title: boolean; rules: string }> = {
   bluesky: {
     maxChars: 300,
     title: false,
@@ -26,7 +26,7 @@ export const PLATFORM_RULES: Record<PublishPlatform, { maxChars: number; title: 
 };
 
 export interface ComposeInput {
-  platform: PublishPlatform;
+  platform: SocialPlatform;
   companyName: string;
   persona: string;
   /** The example post for this platform (structure only), or ''. */
@@ -104,7 +104,7 @@ export interface Draft {
 }
 
 /** Turns the model's reply into a draft that fits the platform; null when the reply is unusable. */
-export function parseDraft(platform: PublishPlatform, reply: string | null): Draft | null {
+export function parseDraft(platform: SocialPlatform, reply: string | null): Draft | null {
   if (!reply) return null;
   const parsed = draftSchema.safeParse(extractJson(reply));
   const rules = PLATFORM_RULES[platform];

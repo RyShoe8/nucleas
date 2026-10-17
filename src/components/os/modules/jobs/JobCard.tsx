@@ -157,7 +157,7 @@ export function jobListProgress(job: JobView): JobListProgress {
     if (running) return { label: running.progressState.label, percent: running.progressState.percent, tone: 'active' };
 
     const waiting = job.publishing?.ready.filter((d) => d.status === 'ready').length ?? 0;
-    if (waiting) return { label: `${waiting} post${waiting === 1 ? '' : 's'} ready to post`, percent: 100, tone: 'waiting' };
+    if (waiting) return { label: `${waiting} waiting for you`, percent: 100, tone: 'waiting' };
 
     const review = job.runs.find((run) => run.status === 'needs_review');
     if (review) return { label: review.progressState.label || 'Ready for review', percent: 100, tone: 'waiting' };

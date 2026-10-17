@@ -226,6 +226,21 @@ async function session(viewer: CompanyViewer, companyId: string): Promise<{ base
   }
 }
 
+/**
+ * The session for background work a manager set up (a publishing job adding records). Server-only: the
+ * cookies go to the browser worker and nowhere else. Null when none is saved, it expired, or cannot be read.
+ */
+export async function adminSessionFor(organizationId: Types.ObjectId, companyId: string): Promise<{ baseUrl: string; cookies: SessionCookie[] } | null> {
+  if (!Types.ObjectId.isValid(companyId)) return null;
+  const row = await CompanyAdminAccount.findOne({ organizationId, companyId: new Types.ObjectId(companyId) }).lean<Row>();
+  if (!row?.sessionSealed || (row.expiresAt && row.expiresAt.getTime() < Date.now())) return null;
+  try {
+    return { baseUrl: row.baseUrl, cookies: JSON.parse(openSecret(purpose(companyId), row.sessionSealed)) as SessionCookie[] };
+  } catch {
+    return null;
+  }
+}
+
 /** Open the site's admin area with the session, recording whether it is still signed in. */
 export async function checkAdminAccount(viewer: CompanyViewer, companyId: string): Promise<{ ok: boolean; note: string }> {
   if (!isCompanyManager(viewer)) return { ok: false, note: 'Only managers and administrators can check the session.' };

@@ -35,9 +35,9 @@ describe('jobListProgress', () => {
   });
 
   it('puts posts waiting for a person first, and says hourly jobs check every hour', () => {
-    const delivery = { id: 'd', platform: 'reddit' as const, status: 'ready' as const, itemTitle: 'Factorio', title: 'New', body: 'Body', link: null, assets: [], postedUrl: null, postedAt: null, error: null, createdAt: '2026-10-01T00:00:00.000Z' };
-    const publishing = { channels: [], notifyUserIds: [], examples: {}, source: { type: 'site' as const, feedUrl: 'https://a.com/sitemap.xml', feedKind: 'sitemap' as const, pathPrefix: '/games/', noun: 'game' }, notes: {}, ready: [delivery, { ...delivery, id: 'e' }], recent: [], postedThisWeek: 0 };
-    expect(jobListProgress(job({ publishing }))).toEqual({ label: '2 posts ready to post', percent: 100, tone: 'waiting' });
+    const delivery = { id: 'd', platform: 'reddit' as const, status: 'ready' as const, itemTitle: 'Factorio', title: 'New', body: 'Body', link: null, assets: [], postedUrl: null, postedAt: null, error: null, createdAt: '2026-10-01T00:00:00.000Z', fields: null, screenshot: null };
+    const publishing = { channels: [], notifyUserIds: [], examples: {}, source: { type: 'site' as const, feedUrl: 'https://a.com/sitemap.xml', feedKind: 'sitemap' as const, pathPrefix: '/games/', noun: 'game' }, notes: {}, admin: null, ready: [delivery, { ...delivery, id: 'e' }], recent: [], postedThisWeek: 0 };
+    expect(jobListProgress(job({ publishing }))).toEqual({ label: '2 waiting for you', percent: 100, tone: 'waiting' });
     const hourly = { title: 'Post new games', category: 'marketing', instructions: '', fields: [], sourcePolicy: '', delivery: { method: 'integration', detail: '', setupSteps: [] }, schedule: { kind: 'hourly' as const }, recordsPerRun: 1, safeguards: [], recommendedCompletion: 'automatic' as const, findings: [], questions: [] };
     expect(jobListProgress(job({ design: hourly, publishing: { ...publishing, ready: [] } }))).toEqual({ label: 'Checks every hour', percent: 0, tone: 'complete' });
   });

@@ -17,6 +17,9 @@ import { PublishDelivery, PublishItem } from '@/lib/models/Publishing';
 import { BrandVoice } from '@/lib/models/BrandVoice';
 import { IntegrationConnection, IntegrationSecret } from '@/lib/models/Integration';
 import { sealSecret } from '@/lib/security/secretBox';
+import { CompanyAdminAccount } from '@/lib/models/CompanyAdminAccount';
+import { ContentWatch } from '@/lib/models/Watch';
+import type { AdminBrowser } from './admin';
 import { sendEmail } from '@/lib/services/email';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { claimDueJobRuns, createPublishing, decideRun, executeJobRun, getJob, publishingAction } from '@/lib/jobs/jobs';
@@ -52,7 +55,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.mocked(sendEmail).mockClear();
-  await Promise.all([Client.deleteMany({}), User.deleteMany({}), Employee.collection.deleteMany({}), Job.deleteMany({}), JobRun.deleteMany({}), PublishItem.deleteMany({}), PublishDelivery.deleteMany({}), BrandVoice.deleteMany({}), IntegrationConnection.deleteMany({}), IntegrationSecret.deleteMany({})]);
+  await Promise.all([Client.deleteMany({}), User.deleteMany({}), Employee.collection.deleteMany({}), Job.deleteMany({}), JobRun.deleteMany({}), PublishItem.deleteMany({}), PublishDelivery.deleteMany({}), BrandVoice.deleteMany({}), IntegrationConnection.deleteMany({}), IntegrationSecret.deleteMany({}), CompanyAdminAccount.deleteMany({}), ContentWatch.deleteMany({})]);
   const user = await User.create({ name: 'Ryan Shoe', email: 'owner@example.invalid', password: 'synthetic-pass', organizationId: String(org) });
   await Employee.collection.insertOne({ userId: user._id, organizationId: String(org), role: 'Administrator', name: 'Owner', email: 'owner@example.invalid' });
   admin = { userId: String(user._id), organizationId: org, employeeId: null, role: 'Administrator' };
@@ -128,5 +131,43 @@ describe('setting up a publishing job', () => {
     const plan = await confirmedPlan();
     const result = await createPublishing(admin, { companyId, request: REQUEST, source: plan.source, channels: [{ platform: 'facebook', mode: 'auto' }], examples: { facebook: 'https://www.facebook.com/share/p/197tsmQiEU/' } });
     expect(result).toMatchObject({ ok: false, status: 400, error: expect.stringContaining('Paste the post text') });
+  });
+});
+
+describe('setting up an admin job', () => {
+  const REQUEST_ADMIN = 'Add the best casino deals from our email to the Frugal Gambler admin';
+  const fields = [{ key: 'casino', label: 'Casino', type: 'text' as const, selector: '#casino', required: true }];
+  const browser: AdminBrowser = {
+    inspect: async (_s, url) => url.endsWith('/admin')
+      ? { url, title: 'Admin', loggedIn: true, fields: [], submit: null, links: [{ text: 'New deal', href: 'https://frugalgambler.club/admin/deals/new' }], headings: [] }
+      : { url, title: 'New deal', loggedIn: true, fields, submit: { selector: 'button', label: 'Save deal' }, links: [], headings: ['New deal'] },
+    fill: async () => { throw new Error('not used'); },
+    read: async () => ({ loggedIn: true, text: '' }),
+  };
+  const session = { baseUrl: 'https://frugalgambler.club', cookies: [] };
+
+  beforeEach(async () => {
+    await ContentWatch.create({ organizationId: org, createdByUserId: new Types.ObjectId(admin.userId), mailboxId: new Types.ObjectId(), companyId: new Types.ObjectId(companyId), name: 'Casino deals', mode: 'deal', active: true });
+  });
+
+  it('learns the admin form from one sentence and plans to add each deal automatically', async () => {
+    const planned = await planRequest(admin, { companyId, request: REQUEST_ADMIN }, { admin: browser, adminSession: session });
+    expect(planned).toMatchObject({ ok: true, plan: { title: 'Add new deals to the frugalgambler.club admin', source: { type: 'mailbox', noun: 'deal' }, channels: [{ platform: 'admin', mode: 'auto' }], blocker: null, admin: { formUrl: 'https://frugalgambler.club/admin/deals/new', listUrl: 'https://frugalgambler.club/admin/deals', submit: { label: 'Save deal' } } } });
+    expect(await planRequest(admin, { companyId, request: REQUEST_ADMIN }, { admin: browser, adminSession: null })).toMatchObject({ ok: false, error: expect.stringContaining('Admin account') });
+  });
+
+  it('creates the job only for a form on the company’s own admin, and keeps social channels out of it', async () => {
+    await CompanyAdminAccount.create({ organizationId: org, companyId: new Types.ObjectId(companyId), baseUrl: 'https://frugalgambler.club', sessionSealed: sealSecret(`company-admin-session:${companyId}`, '[]'), cookieCount: 1, capturedAt: new Date() });
+    const planned = await planRequest(admin, { companyId, request: REQUEST_ADMIN }, { admin: browser, adminSession: session });
+    if (!planned.ok || planned.plan.kind !== 'social_publish') throw new Error('expected a plan');
+    const plan = planned.plan as PublishPlan;
+    const base = { companyId, request: REQUEST_ADMIN, source: plan.source, channels: [{ platform: 'admin', mode: 'auto' }], notifyUserIds: plan.notifyUserIds };
+    expect(await createPublishing(admin, { ...base, admin: { ...plan.admin!, formUrl: 'https://evil.example/admin/deals/new' } })).toMatchObject({ ok: false, status: 400, error: expect.stringContaining('not on the company’s admin site') });
+    expect(await createPublishing(admin, { ...base, channels: [{ platform: 'admin', mode: 'auto' }, { platform: 'bluesky', mode: 'auto' }], admin: plan.admin })).toMatchObject({ ok: false, status: 400 });
+    const created = await createPublishing(admin, { ...base, admin: plan.admin });
+    expect(created).toMatchObject({ ok: true, job: { status: 'testing', design: { title: 'Add new deals to the frugalgambler.club admin', delivery: { method: 'browser' } }, publishing: { admin: { formUrl: 'https://frugalgambler.club/admin/deals/new' } } } });
+    if (!created.ok) return;
+    expect(await publishingAction(admin, created.job.id, 'publishing_settings', { settings: { channels: [{ platform: 'facebook', mode: 'auto' }] } })).toMatchObject({ ok: false, status: 400 });
+    expect(await publishingAction(admin, created.job.id, 'publishing_settings', { settings: { channels: [{ platform: 'admin', mode: 'manual' }] } })).toMatchObject({ ok: true, job: { publishing: { channels: [{ platform: 'admin', mode: 'manual' }] } } });
   });
 });

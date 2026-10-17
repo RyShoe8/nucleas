@@ -5,9 +5,10 @@ import { completeWatchMailbox, verifyWatchState, watchRedirectUri } from '@/lib/
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
+/** Back to Marketing → Inboxes, where connected mailboxes and their watches are. */
 function backToContent(request: NextRequest, params: Record<string, string>) {
   const url = new URL('/', request.url);
-  url.searchParams.set('open', 'content');
+  url.searchParams.set('open', 'inboxes');
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   return NextResponse.redirect(url);
 }

@@ -22,8 +22,8 @@ export default function IntegrationNotice() {
         if (open === 'mail') wm.open('mail');
         // From a publishing job's email: land on Marketing, where the ready-to-post cards are.
         if (open === 'marketing') wm.open('marketing');
-        // Returning from connecting a mailbox: land on Watches, where the mailbox status is.
-        if (open === 'content') wm.open('content', { payload: { tab: 'watches' } });
+        // Returning from connecting a mailbox: land on Marketing → Inboxes, where the mailbox status is.
+        if (open === 'inboxes' || open === 'content') wm.open('marketing', { payload: { view: 'inboxes' } });
 
         if (text) setNotice({ kind: params.has('integration_error') || params.has('mail_error') ? 'error' : 'notice', text: text.slice(0, 300) });
         if (companyId && /^[a-f0-9]{24}$/i.test(companyId)) {

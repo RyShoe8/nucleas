@@ -72,7 +72,7 @@ export default function MarketingComposer({ companyId, companyName, onCreated, r
                 onKeyDown={(e) => {
                     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && request.trim().length >= 10 && !busy) void submit();
                 }}
-                placeholder={`What should Nucleas do for ${companyName}? e.g. “When a new game is published, post it to Facebook, Bluesky and Reddit.”`}
+                placeholder={`What should Nucleas do for ${companyName}? e.g. “When something new is published on our site, post it to Facebook and Bluesky” or “Add the best deals from our email to our admin.”`}
                 className="ui-control h-16 w-full resize-y"
                 aria-label="Describe a marketing job"
             />

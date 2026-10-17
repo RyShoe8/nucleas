@@ -32,12 +32,15 @@ const itemSchema = new Schema(
     /** baseline: already there when the job was switched on, never posted. */
     status: { type: String, enum: PUBLISH_ITEM_STATUSES, required: true },
     skipReason: { type: String, maxlength: 300 },
+    /** The same offer arriving in several emails shares this key, so it is added once. */
+    dedupeKey: { type: String, maxlength: 300 },
     facts: { type: factsSchema },
   },
   { timestamps: true }
 );
 itemSchema.index({ jobId: 1, key: 1 }, { unique: true });
 itemSchema.index({ jobId: 1, createdAt: -1 });
+itemSchema.index({ jobId: 1, dedupeKey: 1, createdAt: -1 });
 
 export type PublishItemDoc = InferSchemaType<typeof itemSchema>;
 export const PublishItem: Model<PublishItemDoc> = (mongoose.models.PublishItem as Model<PublishItemDoc> | undefined) ?? mongoose.model<PublishItemDoc>('PublishItem', itemSchema);
@@ -68,6 +71,9 @@ const deliverySchema = new Schema(
     body: { type: String, required: true, maxlength: 40000 },
     link: { type: String, maxlength: 2000 },
     assets: { type: [assetSchema], default: [] },
+    /** Admin records: the form values (field key → value) and the filled form or saved page as a JPEG (base64). */
+    values: { type: Schema.Types.Mixed },
+    screenshot: { type: String, maxlength: 1_200_000, select: false },
     postedUrl: { type: String, maxlength: 2000 },
     postedAt: { type: Date },
     postedByUserId: { type: Schema.Types.ObjectId },

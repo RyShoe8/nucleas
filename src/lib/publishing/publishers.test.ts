@@ -89,6 +89,8 @@ describe('recognizing a request', () => {
     expect(recognizeRequest('Every day, earn one dofollow backlink')).toBe('link_building');
     expect(recognizeRequest('Build a marketing plan for PlayBound')).toBe('marketing_plan');
     expect(recognizeRequest('Research Deadlock and add it to the catalog')).toBe('custom');
+    expect(recognizeRequest('Add the best casino deals from our email to the Frugal Gambler admin')).toBe('admin_publish');
+    expect(recognizeRequest('Post each new deal to our admin section')).toBe('admin_publish');
   });
 
   it('reads named platforms and inbox requests', () => {

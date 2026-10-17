@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { MANUAL_ONLY, PLATFORM_LABEL, PUBLISH_PLATFORMS, sourceLabel, type PublishPlatform } from '@/lib/publishing/config';
+import { MANUAL_ONLY, PLATFORM_LABEL, platformsFor, sourceLabel, type PublishPlatform } from '@/lib/publishing/config';
 import type { JobRunView, JobView } from '../JobCard';
 import ReadyPostCard from './ReadyPostCard';
 import { ChannelPicker, NotifyPicker, type ChannelChoice } from './Pickers';
@@ -51,15 +51,19 @@ function SampleReview({ job, run, onChange }: { job: JobView; run: JobRunView; o
         <section className="space-y-2">
             <p className="text-xs text-text-secondary">{run.output?.summary}</p>
             {run.output?.gaps.length ? <p className="text-xs text-amber-300">{run.output.gaps.join(' ')}</p> : null}
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className={`grid gap-2 ${records.length > 1 ? 'sm:grid-cols-2' : ''}`}>
                 {records.map((r, i) => (
                     <article key={i} className="rounded border border-border p-3 text-sm">
                         <p className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide">
                             {String(r.values.platform ?? '')}
                             <span className="font-normal normal-case text-text-secondary">{String(r.values.mode ?? '')}</span>
                         </p>
-                        {r.values.post_title ? <p className="font-semibold leading-snug">{String(r.values.post_title)}</p> : null}
+                        {r.values.post_title && !r.values.screenshot ? <p className="font-semibold leading-snug">{String(r.values.post_title)}</p> : null}
                         <p className="whitespace-pre-wrap break-words leading-relaxed">{String(r.values.post_copy ?? '')}</p>
+                        {typeof r.values.screenshot === 'string' ? (
+                            // eslint-disable-next-line @next/next/no-img-element -- a screenshot taken by the browser worker
+                            <img src={`data:image/jpeg;base64,${r.values.screenshot}`} alt="The admin form filled in, not saved" className="mt-2 max-h-[520px] w-full rounded border border-border object-contain object-top" />
+                        ) : null}
                     </article>
                 ))}
             </div>
@@ -70,7 +74,7 @@ function SampleReview({ job, run, onChange }: { job: JobView; run: JobRunView; o
                     <button type="button" className="ui-button" disabled={busy !== null} onClick={() => void decide('reject_run')}>Not right</button>
                 </div>
             ) : null}
-            <p className="text-[11px] text-text-secondary">Switching on records what exists now; only {job.publishing?.source.noun ?? 'item'}s that appear later are posted.</p>
+            <p className="text-[11px] text-text-secondary">Switching on records what exists now; only {job.publishing?.source.noun ?? 'item'}s that appear later are {job.publishing?.admin ? 'added' : 'posted'}.</p>
         </section>
     );
 }
@@ -81,12 +85,12 @@ function Settings({ job, onChange }: { job: JobView; onChange: (j: JobView) => v
     // The parent remounts this (by key) when the saved settings change, so local edits start from them.
     const initial = useMemo<ChannelChoice[]>(
         () =>
-            PUBLISH_PLATFORMS.map((platform) => {
+            platformsFor(view).map((platform) => {
                 const current = view.channels.find((c) => c.platform === platform);
                 const manualOnly = MANUAL_ONLY.includes(platform);
                 return { platform, selected: Boolean(current), mode: manualOnly ? 'manual' : current?.mode ?? 'auto', canAuto: !manualOnly, note: view.notes[platform] ?? (manualOnly ? 'Reddit has no posting API: the team gets a ready-to-post card.' : null) };
             }),
-        [view.channels, view.notes]
+        [view]
     );
     const [channels, setChannels] = useState(initial);
     const [notify, setNotify] = useState(view.notifyUserIds);
@@ -110,7 +114,7 @@ function Settings({ job, onChange }: { job: JobView; onChange: (j: JobView) => v
     return (
         <div className="grid gap-4 sm:grid-cols-2">
             <section className="space-y-2">
-                <h4 className="ui-kicker">Post to</h4>
+                <h4 className="ui-kicker">{view.admin ? 'Adding' : 'Post to'}</h4>
                 <ChannelPicker channels={channels} onChange={setChannels} disabled={!job.canManage} />
             </section>
             <section className="space-y-2">
@@ -158,6 +162,7 @@ export default function PublishingJobBody({ job, onChange, readyShownAbove = fal
         <div className="space-y-4">
             <p className="text-xs text-text-secondary">
                 {sourceLabel(view.source)}
+                {view.admin ? <> · adds to <a href={view.admin.formUrl} target="_blank" rel="noreferrer" className="underline">{new URL(view.admin.formUrl).host}{new URL(view.admin.formUrl).pathname}</a></> : null}
                 {on ? ` · last checked ${ago(job.lastRunAt)}` : ''}
                 {on && view.postedThisWeek ? ` · ${view.postedThisWeek} posted this week` : ''}
             </p>
@@ -171,12 +176,12 @@ export default function PublishingJobBody({ job, onChange, readyShownAbove = fal
                 </div>
             ) : null}
 
-            {view.ready.length && readyShownAbove ? <p className="text-xs text-amber-300">{view.ready.length} post{view.ready.length === 1 ? ' is' : 's are'} ready to post, at the top of this window.</p> : null}
+            {view.ready.length && readyShownAbove ? <p className="text-xs text-amber-300">{view.ready.length} {view.ready.length === 1 ? 'is' : 'are'} waiting for you at the top of this window.</p> : null}
             {view.ready.length && !readyShownAbove ? (
                 <section className="space-y-2">
-                    <h4 className="ui-kicker">Ready to post · {view.ready.length}</h4>
+                    <h4 className="ui-kicker">Waiting for you · {view.ready.length}</h4>
                     {view.ready.map((d) => (
-                        <ReadyPostCard key={d.id} jobId={job.id} delivery={d} subreddit={job.companySubreddit ?? null} onChange={onChange} />
+                        <ReadyPostCard key={d.id} jobId={job.id} delivery={d} subreddit={job.companySubreddit ?? null} formUrl={view.admin?.formUrl ?? null} onChange={onChange} />
                     ))}
                 </section>
             ) : null}
@@ -191,7 +196,7 @@ export default function PublishingJobBody({ job, onChange, readyShownAbove = fal
                             <li key={d.id} className="flex items-center gap-2">
                                 <span className="w-16 shrink-0 text-text-secondary">{PLATFORM_LABEL[d.platform as PublishPlatform]}</span>
                                 <span className="min-w-0 flex-1 truncate">{d.itemTitle}</span>
-                                {d.status === 'posted' ? (d.postedUrl ? <a href={d.postedUrl} target="_blank" rel="noreferrer" className="text-primary underline">View ↗</a> : <span className="text-emerald-400">Posted</span>) : <span className="text-text-secondary">{d.status === 'skipped' ? 'Skipped' : 'Failed'}</span>}
+                                {d.status === 'posted' ? (d.postedUrl ? <a href={d.postedUrl} target="_blank" rel="noreferrer" className="text-primary underline">View ↗</a> : <span className="text-emerald-400">{d.platform === 'admin' ? 'Added' : 'Posted'}</span>) : <span className="text-text-secondary">{d.status === 'skipped' ? 'Skipped' : 'Failed'}</span>}
                             </li>
                         ))}
                     </ul>

@@ -17,6 +17,8 @@ import { PublishDelivery, PublishItem } from '@/lib/models/Publishing';
 import { BrandVoice } from '@/lib/models/BrandVoice';
 import { IntegrationConnection } from '@/lib/models/Integration';
 import User from '@/lib/models/User';
+import { WatchItem } from '@/lib/models/Watch';
+import type { AdminBrowser } from './admin';
 import { PublishError } from './publishers';
 import { markPosted, postDeliveryNow, publishingView, recoverStuckDeliveries, runPublishing, skipDelivery, takeBaseline, type PublishDeps } from './engine';
 import type { PublishingConfig } from './config';
@@ -87,7 +89,7 @@ async function newJob() {
 }
 
 beforeEach(async () => {
-  await Promise.all([Job.deleteMany({}), JobRun.deleteMany({}), PublishItem.deleteMany({}), PublishDelivery.deleteMany({}), BrandVoice.deleteMany({}), IntegrationConnection.deleteMany({}), User.deleteMany({})]);
+  await Promise.all([Job.deleteMany({}), JobRun.deleteMany({}), PublishItem.deleteMany({}), PublishDelivery.deleteMany({}), BrandVoice.deleteMany({}), IntegrationConnection.deleteMany({}), User.deleteMany({}), WatchItem.deleteMany({})]);
   userId = (await User.create({ name: 'Ryan Shoe', email: 'ryan@example.com', organizationId: String(org), password: 'x'.repeat(20) }))._id as Types.ObjectId;
   await BrandVoice.create({ organizationId: org, companyId, persona: 'Warm and nerdy. Short sentences.', status: 'approved', updatedByUserId: userId });
   await IntegrationConnection.create([
@@ -208,5 +210,88 @@ describe('publishing jobs', () => {
     await PublishDelivery.collection.updateOne({ _id: stuck._id }, { $set: { updatedAt: new Date(Date.now() - 30 * 60_000) } });
     expect(await recoverStuckDeliveries()).toBe(1);
     expect(await PublishDelivery.findById(stuck._id).lean()).toMatchObject({ status: 'ready', error: expect.stringContaining('may already be live') });
+  });
+});
+
+describe('admin publishing jobs (deals from the inbox into the site admin)', () => {
+  const watchId = new Types.ObjectId();
+  const mailboxId = new Types.ObjectId();
+  const fields = [
+    { key: 'casino', label: 'Casino', type: 'text' as const, selector: '#casino', required: true },
+    { key: 'offer', label: 'Offer', type: 'textarea' as const, selector: '#offer', required: true },
+  ];
+  const adminConfig = {
+    source: { type: 'mailbox' as const, watchId: String(watchId), noun: 'deal' },
+    channels: [{ platform: 'admin' as const, mode: 'auto' as const }],
+    examples: {},
+    notifyUserIds: [] as string[],
+    brief: 'Add the best casino deals from our email to the admin',
+    admin: { baseUrl: 'https://fg.club', formUrl: 'https://fg.club/admin/deals/new', listUrl: 'https://fg.club/admin/deals', fields, submit: { selector: 'button', label: 'Save' }, learnedAt: '2026-10-17' },
+  };
+  const deal = (pay: number, credit: number) => ({ mode: 'pay_vs_credited_value', you_pay: pay, baseline_value: credit, pay_unit: 'USD', credit_unit: 'SC', units_comparable: false, effective_savings_pct: 0, bonus_pct: credit / pay - 1, confidence: 0.9, source: 'regex' });
+  let n = 0;
+  const email = (from: string, subject: string, pay: number, credit: number) =>
+    WatchItem.create({ organizationId: org, watchId, mailboxId, gmailId: `g${(n += 1)}`, fromEmail: from, fromName: 'Golden Hearts', subject, sentAt: new Date(Date.now() - (100 - n) * 60_000), flagged: true, summary: subject, bestDeal: deal(pay, credit) });
+  let saved: Record<string, unknown>[];
+  let signedIn: boolean;
+  const browser: AdminBrowser = {
+    inspect: async () => ({ url: '', title: '', loggedIn: signedIn, fields, submit: { selector: 'button', label: 'Save' }, links: [], headings: [] }),
+    fill: async (_s, input) => {
+      if (!signedIn) return { url: input.url, title: '', loggedIn: false, submitted: false, missing: [], errors: [], text: '', screenshot: null };
+      if (input.submit) saved.push(input.values);
+      return { url: 'https://fg.club/admin/deals', title: '', loggedIn: true, submitted: input.submit, missing: [], errors: [], text: '', screenshot: 'jpeg-base64' };
+    },
+    read: async () => ({ loggedIn: true, text: saved.map((v) => `${v.casino} ${v.offer}`).join('\n') }),
+  };
+  const adminWrite = async ({ user }: { user: string }) => JSON.stringify({ casino: 'Golden Hearts', offer: /Deal: (.*)/.exec(user)?.[1] ?? 'offer' });
+  const adminDeps = (): PublishDeps => ({ ...deps(), write: adminWrite, admin: browser, adminSession: { baseUrl: 'https://fg.club', cookies: [] } });
+  const adminJob = () => Job.create({ organizationId: org, companyId, createdByUserId: userId, status: 'testing', request: adminConfig.brief, publishing: adminConfig, design: { skill: 'social_publish' } });
+
+  beforeEach(async () => {
+    await BrandVoice.deleteMany({});
+    saved = [];
+    signedIn = true;
+  });
+
+  it('fills the real form on a dry run without saving, and works without a Voice', async () => {
+    await email('promo@mail.goldenhearts.com', 'Double your first buy', 20, 40);
+    const job = await adminJob();
+    const run = await newRun(job._id, true);
+    await runPublishing(run, 'owner', job.toObject(), adminDeps());
+    const done = await JobRun.findById(run._id).lean();
+    expect(done?.status).toBe('needs_review');
+    const output = done?.output as { records: { values: Record<string, unknown> }[]; summary: string };
+    expect(output.records[0]!.values).toMatchObject({ platform: 'Admin', mode: 'Adds it automatically', screenshot: 'jpeg-base64', post_copy: 'Casino: Golden Hearts\nOffer: $20 → 40 SC (~100% bonus)' });
+    expect(output.summary).toContain('filled but not saved');
+    expect(saved).toEqual([]);
+  });
+
+  it('adds each new deal once, confirms it on the list page, and skips the same deal sent again', async () => {
+    await email('promo@mail.goldenhearts.com', 'Old deal', 10, 15);
+    const job = await adminJob();
+    await takeBaseline(job.toObject(), adminDeps());
+    await email('promo@mail.goldenhearts.com', 'Double your first buy', 20, 40);
+    await email('news@goldenhearts.com', 'Reminder: double your first buy', 20, 40);
+    const run = await newRun(job._id, false);
+    await runPublishing(run, 'owner', (await Job.findById(job._id).lean())!, adminDeps());
+    expect(saved).toEqual([{ casino: 'Golden Hearts', offer: '$20 → 40 SC (~100% bonus)' }]);
+    expect(await PublishDelivery.findOne({ platform: 'admin' }).lean()).toMatchObject({ status: 'posted', postedUrl: 'https://fg.club/admin/deals' });
+    expect(await PublishDelivery.findOne({ platform: 'admin' }).lean()).not.toHaveProperty('error');
+    expect(await PublishItem.findOne({ title: 'Reminder: double your first buy' }).lean()).toMatchObject({ status: 'skipped', skipReason: 'The same deal as an earlier email.' });
+    expect((await JobRun.findById(run._id).lean())?.output).toMatchObject({ summary: expect.stringContaining('1 repeat of earlier deals skipped') });
+  });
+
+  it('turns a deal into a ready-to-add card when the admin session expired, and switches the job to manual', async () => {
+    const job = await adminJob();
+    await takeBaseline(job.toObject(), adminDeps());
+    await email('promo@goldenhearts.com', 'Weekend reload', 50, 75);
+    signedIn = false;
+    await runPublishing(await newRun(job._id, false), 'owner', (await Job.findById(job._id).lean())!, { ...adminDeps(), adminSession: null });
+    const card = await PublishDelivery.findOne({ platform: 'admin' }).lean();
+    expect(card).toMatchObject({ status: 'ready', values: { casino: 'Golden Hearts' }, error: expect.stringContaining('Log in again') });
+    const view = await publishingView((await Job.findById(job._id).lean())!);
+    expect(view?.channels).toEqual([{ platform: 'admin', mode: 'manual' }]);
+    expect(view?.ready[0]?.fields).toEqual([{ label: 'Casino', value: 'Golden Hearts' }, { label: 'Offer', value: '$50 → 75 SC (~50% bonus)' }]);
+    expect(view?.admin).toMatchObject({ formUrl: 'https://fg.club/admin/deals/new' });
   });
 });

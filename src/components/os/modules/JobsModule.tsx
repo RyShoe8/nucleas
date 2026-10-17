@@ -6,6 +6,7 @@ import JobCard, { JobStatusBadge, jobIsBusy, jobListProgress, scheduleLabel, typ
 import ArtifactHistory from './jobs/ArtifactHistory';
 import MarketingPlanEditor from './jobs/MarketingPlanEditor';
 import BrandAssetsPanel from './jobs/BrandAssetsPanel';
+import WatchesPanel from './content/WatchesPanel';
 import MarketingComposer from './jobs/MarketingComposer';
 import ReadyPostCard from './jobs/publishing/ReadyPostCard';
 
@@ -156,13 +157,15 @@ function MarketingPlanRow({ companyId, initiallyOpen, busy, error, onGenerate }:
  * Jobs: non-code work Nucleas designs and runs for each company. The Marketing and Content windows
  * are this view filtered to their categories.
  */
-export default function JobsModule({ categories, title = 'Jobs', initialCompanyId, initialKind }: { categories?: string[]; title?: string; initialCompanyId?: string; initialKind?: string }) {
+export default function JobsModule({ categories, title = 'Jobs', initialCompanyId, initialKind, initialView }: { categories?: string[]; title?: string; initialCompanyId?: string; initialKind?: string; initialView?: string }) {
     const { companies: osCompanies } = useOsCompanies();
     const [jobs, setJobs] = useState<JobView[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [company, setCompany] = useState(initialCompanyId ?? 'all');
     const [showClosed, setShowClosed] = useState(false);
     const [showAssets, setShowAssets] = useState(false);
+    // Marketing only: the mailboxes and watches that feed its inbox jobs.
+    const [showInboxes, setShowInboxes] = useState(initialView === 'inboxes');
     const [open, setOpen] = useState<string | null>(null);
     const marketing = title === 'Marketing';
     const [creating, setCreating] = useState(!marketing && Boolean(initialCompanyId && initialKind));
@@ -254,11 +257,18 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                 <span className="flex-1" />
                 {busy ? <span className="text-[11px] text-sky-400">Working…</span> : null}
                 <button type="button" onClick={() => setShowClosed((v) => !v)} className={showClosed ? 'ui-button-primary' : 'ui-button'} aria-pressed={showClosed} title="Include rejected and archived jobs">History</button>
-                {title === 'Marketing' ? <button type="button" onClick={() => setShowAssets((v) => !v)} disabled={company === 'all'} title={company === 'all' ? 'Choose a company first' : undefined} className={showAssets && company !== 'all' ? 'ui-button-primary' : 'ui-button'} aria-pressed={showAssets && company !== 'all'}>Assets</button> : null}
+                {title === 'Marketing' ? <button type="button" onClick={() => { setShowInboxes((v) => !v); setShowAssets(false); }} className={showInboxes ? 'ui-button-primary' : 'ui-button'} aria-pressed={showInboxes} title="Mailboxes Nucleas watches for deals and other emails">Inboxes</button> : null}
+                {title === 'Marketing' ? <button type="button" onClick={() => { setShowAssets((v) => !v); setShowInboxes(false); }} disabled={company === 'all'} title={company === 'all' ? 'Choose a company first' : undefined} className={showAssets && company !== 'all' ? 'ui-button-primary' : 'ui-button'} aria-pressed={showAssets && company !== 'all'}>Assets</button> : null}
                 {title !== 'Marketing' ? <button type="button" onClick={() => setCreating((v) => !v)} className="ui-button-primary">
                     {creating ? 'Close' : 'New job'}
                 </button> : null}
             </div>
+
+            {showInboxes && title === 'Marketing' ? (
+                <div className="flex-1 overflow-y-auto">
+                    <WatchesPanel />
+                </div>
+            ) : null}
 
             {showAssets && title === 'Marketing' && company !== 'all' ? (
                 <div className="flex-1 overflow-y-auto p-3">
@@ -266,12 +276,12 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                 </div>
             ) : null}
 
-            <div className={`flex-1 overflow-y-auto p-3 space-y-4 ${showAssets && title === 'Marketing' && company !== 'all' ? 'hidden' : ''}`}>
+            <div className={`flex-1 overflow-y-auto p-3 space-y-4 ${(showAssets && title === 'Marketing' && company !== 'all') || (showInboxes && title === 'Marketing') ? 'hidden' : ''}`}>
                 {readyPosts.length ? (
                     <section className="space-y-2">
-                        <h3 className="ui-kicker">Ready to post · {readyPosts.length}</h3>
+                        <h3 className="ui-kicker">Waiting for you · {readyPosts.length}</h3>
                         {readyPosts.map(({ job: j, delivery }) => (
-                            <ReadyPostCard key={delivery.id} jobId={j.id} companyName={company === 'all' ? j.companyName : undefined} delivery={delivery} subreddit={j.companySubreddit ?? null} onChange={replace} />
+                            <ReadyPostCard key={delivery.id} jobId={j.id} companyName={company === 'all' ? j.companyName : undefined} delivery={delivery} subreddit={j.companySubreddit ?? null} formUrl={j.publishing?.admin?.formUrl ?? null} onChange={replace} />
                         ))}
                     </section>
                 ) : null}

@@ -151,7 +151,7 @@ export async function browserObserve(
  * A call to the browser worker's interactive login (/login/*). Errors carry the worker's own short message
  * (timeouts, bad input); nothing from the page is included, and no request body is logged.
  */
-export async function browserWorkerCall<T>(path: '/login/start' | '/login/frame' | '/login/input' | '/login/finish' | '/login/cancel', body: Record<string, unknown>, options: { signal?: AbortSignal; fetcher?: typeof fetch; timeoutMs?: number } = {}): Promise<T> {
+export async function browserWorkerCall<T>(path: '/login/start' | '/login/frame' | '/login/input' | '/login/finish' | '/login/cancel' | '/admin/inspect' | '/admin/fill', body: Record<string, unknown>, options: { signal?: AbortSignal; fetcher?: typeof fetch; timeoutMs?: number } = {}): Promise<T> {
   if (!isBrowserWorkerConfigured()) throw new Error('Browser worker is not configured.');
   const workerUrl = assertSafePublicHttpsUrl(`${process.env.NUCLEAS_BROWSER_WORKER_URL!.replace(/\/+$/, '')}${path}`);
   const controller = new AbortController();

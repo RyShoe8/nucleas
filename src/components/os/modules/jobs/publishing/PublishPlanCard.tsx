@@ -32,6 +32,7 @@ export default function PublishPlanCard({ companyId, request, plan, onCreated, o
                     source: plan.source,
                     channels: selected.map((c) => ({ platform: c.platform, mode: c.mode })),
                     notifyUserIds: notify,
+                    ...(plan.admin ? { admin: plan.admin } : {}),
                     examples: Object.fromEntries(Object.entries(examples).filter(([platform, value]) => value.trim() && selected.some((c) => c.platform === platform))),
                 },
             }),
@@ -53,17 +54,34 @@ export default function PublishPlanCard({ companyId, request, plan, onCreated, o
             </div>
             {plan.blocker ? <p className="rounded border border-amber-400/40 bg-amber-400/5 p-2 text-xs text-amber-300">{plan.blocker}</p> : null}
 
-            <section className="space-y-2">
-                <h4 className="ui-kicker">Post to</h4>
-                <ChannelPicker channels={channels} onChange={setChannels} />
-            </section>
+            {plan.admin ? (
+                <section className="space-y-2">
+                    <h4 className="ui-kicker">Adds to</h4>
+                    <p className="text-sm">
+                        <a href={plan.admin.formUrl} target="_blank" rel="noreferrer" className="text-primary underline">{new URL(plan.admin.formUrl).host}{new URL(plan.admin.formUrl).pathname}</a>
+                        <span className="text-text-secondary"> · saves with “{plan.admin.submit.label}”</span>
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                        {plan.admin.fields.map((f) => (
+                            <span key={f.key} className="rounded-full border border-border px-2 py-0.5 text-xs">{f.label || f.key}{f.required ? ' *' : ''}</span>
+                        ))}
+                    </div>
+                    <p className="text-[11px] text-text-secondary">Nucleas fills these from each {plan.source.noun} and leaves out anything the {plan.source.noun} does not say. If the form changes, it learns it again.</p>
+                    <ChannelPicker channels={channels} onChange={setChannels} />
+                </section>
+            ) : (
+                <section className="space-y-2">
+                    <h4 className="ui-kicker">Post to</h4>
+                    <ChannelPicker channels={channels} onChange={setChannels} />
+                </section>
+            )}
 
             <section className="space-y-2">
                 <h4 className="ui-kicker">Notify</h4>
                 <NotifyPicker people={plan.people} value={notify} onChange={setNotify} />
             </section>
 
-            {selected.length ? (
+            {selected.length && !plan.admin ? (
                 <details className="text-sm">
                     <summary className="cursor-pointer text-xs text-text-secondary">Example posts (optional): shape each platform&rsquo;s structure</summary>
                     <div className="mt-2 space-y-2">
@@ -89,7 +107,7 @@ export default function PublishPlanCard({ companyId, request, plan, onCreated, o
                     {busy ? 'Starting…' : 'Run a dry run'}
                 </button>
                 <button type="button" className="ui-button" onClick={onCancel}>Cancel</button>
-                <span className="text-[11px] text-text-secondary">Writes sample posts for the newest {plan.source.noun} and posts nothing.</span>
+                <span className="text-[11px] text-text-secondary">{plan.admin ? `Fills the form for the newest ${plan.source.noun} without saving it.` : `Writes sample posts for the newest ${plan.source.noun} and posts nothing.`}</span>
             </div>
         </div>
     );

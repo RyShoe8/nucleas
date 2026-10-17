@@ -29,7 +29,7 @@ function openUrl(delivery: DeliveryView, subreddit: string | null): string | nul
  * One post waiting for a person: the copy to paste, the images to upload, a button that opens the
  * platform, and "Mark as posted" so the rest of the team sees it is done.
  */
-export default function ReadyPostCard({ jobId, companyName, delivery, subreddit, onChange }: { jobId: string; companyName?: string; delivery: DeliveryView; subreddit: string | null; onChange: (job: JobView) => void }) {
+export default function ReadyPostCard({ jobId, companyName, delivery, subreddit, formUrl = null, onChange }: { jobId: string; companyName?: string; delivery: DeliveryView; subreddit: string | null; formUrl?: string | null; onChange: (job: JobView) => void }) {
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [copied, setCopied] = useState<string | null>(null);
@@ -68,7 +68,53 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
     const fullText = isReddit ? delivery.body : [delivery.body, delivery.link].filter(Boolean).join('\n\n');
 
     if (delivery.status === 'publishing') {
-        return <div className="ui-card p-3 text-xs text-sky-400">Posting “{delivery.itemTitle}” to {PLATFORM_LABEL[delivery.platform]}…</div>;
+        return <div className="ui-card p-3 text-xs text-sky-400">{delivery.platform === 'admin' ? `Adding “${delivery.itemTitle}” to the admin…` : `Posting “${delivery.itemTitle}” to ${PLATFORM_LABEL[delivery.platform]}…`}</div>;
+    }
+
+    // An admin record: the values to enter, each copyable, and the form as Nucleas filled it.
+    if (delivery.platform === 'admin') {
+        return (
+            <article className="ui-card space-y-2 p-3 text-sm">
+                <header className="flex items-center gap-2">
+                    <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide">Admin</span>
+                    <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">{companyName ? `${companyName} · ` : ''}{delivery.itemTitle}</span>
+                </header>
+                {delivery.error ? <p className="rounded border border-amber-400/40 bg-amber-400/5 p-2 text-xs text-amber-300">{delivery.error}</p> : null}
+                <dl className="divide-y divide-border rounded border border-border">
+                    {(delivery.fields ?? []).map((f) => (
+                        <div key={f.label} className="flex items-start gap-3 px-2 py-1.5">
+                            <dt className="w-32 shrink-0 text-xs text-text-secondary">{f.label}</dt>
+                            <dd className="min-w-0 flex-1 whitespace-pre-wrap break-words">{f.value}</dd>
+                            <button type="button" className="shrink-0 text-[11px] text-text-secondary hover:text-text-primary" onClick={() => void copy(f.label, f.value)}>{copied === f.label ? 'Copied' : 'Copy'}</button>
+                        </div>
+                    ))}
+                </dl>
+                {delivery.screenshot ? (
+                    <details className="text-xs">
+                        <summary className="cursor-pointer text-text-secondary">How Nucleas filled the form</summary>
+                        {/* eslint-disable-next-line @next/next/no-img-element -- a screenshot taken by the browser worker */}
+                        <img src={`data:image/jpeg;base64,${delivery.screenshot}`} alt="The admin form as Nucleas filled it" className="mt-2 max-h-[480px] w-full rounded border border-border object-contain object-top" />
+                    </details>
+                ) : null}
+                {marking ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                        <input className="ui-control min-w-0 flex-1" value={postedUrl} onChange={(e) => setPostedUrl(e.target.value)} placeholder="Link to the record (optional)" aria-label="Link to the record" />
+                        <button type="button" className="ui-button-primary" disabled={busy !== null} onClick={() => void run('posted', { action: 'mark_posted', postedUrl })}>{busy === 'posted' ? 'Saving…' : 'Done'}</button>
+                        <button type="button" className="ui-button" onClick={() => setMarking(false)}>Cancel</button>
+                    </div>
+                ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                        {formUrl ? <a href={formUrl} target="_blank" rel="noreferrer" className="ui-button">Open the form ↗</a> : null}
+                        <button type="button" className="ui-button" disabled={busy !== null} onClick={() => void run('now', { action: 'post_now' })}>{busy === 'now' ? 'Adding…' : 'Add it for me'}</button>
+                        <button type="button" className="ui-button-primary" onClick={() => setMarking(true)}>Mark as added</button>
+                        <span className="flex-1" />
+                        <button type="button" className="text-[11px] text-text-secondary hover:text-text-primary" disabled={busy !== null} onClick={() => window.confirm('Skip this one? Nobody will be asked to add it.') && void run('skip', { action: 'skip_post' })}>Skip</button>
+                    </div>
+                )}
+                {copied === 'failed' ? <p className="text-[11px] text-red-400">Could not copy. Select the text and copy it by hand.</p> : null}
+                {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
+            </article>
+        );
     }
 
     return (
