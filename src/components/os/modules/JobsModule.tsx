@@ -23,7 +23,6 @@ const GROUPS: Group[] = [
     { key: 'set', label: 'Ready and active', test: (j) => ['ready', 'active', 'paused'].includes(j.status) },
     { key: 'done', label: 'Done', test: (j) => j.status === 'done' },
     { key: 'failed', label: 'Failed', test: (j) => j.status === 'failed' },
-    { key: 'closed', label: 'Rejected and archived', test: (j) => j.status === 'rejected' || j.status === 'archived' },
 ];
 
 function NewJob({ onCreated, onCancel, placeholder, initialCompanyId, initialKind, companyLocked = false }: { onCreated: (j: JobView) => void; onCancel?: () => void; placeholder: string; initialCompanyId?: string; initialKind?: string; companyLocked?: boolean }) {
@@ -137,18 +136,17 @@ function NewJob({ onCreated, onCancel, placeholder, initialCompanyId, initialKin
     );
 }
 
-/** The company's Marketing plan, pinned above the jobs: open it to read or edit, or generate a new version. */
-function MarketingPlanRow({ companyId, initiallyOpen, busy, error, onGenerate }: { companyId: string; initiallyOpen: boolean; busy: boolean; error: string | null; onGenerate: () => void }) {
-    const [open, setOpen] = useState(initiallyOpen);
+/** Overview: the company's Marketing plan to read or edit, its earlier versions, and a button to generate a new one. */
+function MarketingOverview({ companyId, busy, error, onGenerate }: { companyId: string; busy: boolean; error: string | null; onGenerate: () => void }) {
     return (
-        <div className="ui-card space-y-3 px-3 py-2">
+        <div className="space-y-3">
             <div className="flex items-center gap-2">
                 <span className="min-w-0 flex-1 text-sm font-medium">Marketing plan</span>
-                <button type="button" className="ui-button" onClick={() => setOpen((v) => !v)} aria-expanded={open}>{open ? 'Close' : 'Open'}</button>
                 <button type="button" className="ui-button" disabled={busy} onClick={onGenerate} title="A one-time overview, updated only when you ask. Earlier versions are kept.">{busy ? 'Starting…' : 'Generate new version'}</button>
             </div>
             {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
-            {open ? <div className="space-y-3"><MarketingPlanEditor companyId={companyId} /><ArtifactHistory companyId={companyId} kind="marketing_plan" /></div> : null}
+            <MarketingPlanEditor companyId={companyId} />
+            <ArtifactHistory companyId={companyId} kind="marketing_plan" />
         </div>
     );
 }
@@ -162,7 +160,8 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
     const [jobs, setJobs] = useState<JobView[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [company, setCompany] = useState(initialCompanyId ?? 'all');
-    const [showClosed, setShowClosed] = useState(false);
+    // Marketing only: the company's Marketing plan, shown instead of the jobs.
+    const [showOverview, setShowOverview] = useState(initialKind === 'marketing_plan');
     const [showAssets, setShowAssets] = useState(false);
     // Marketing only: the mailboxes and watches that feed its inbox jobs.
     const [showInboxes, setShowInboxes] = useState(initialView === 'inboxes');
@@ -183,7 +182,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
     useEffect(() => {
         let cancelled = false;
         void (async () => {
-            const res = await fetch(`/api/os/jobs${showClosed ? '?all=1' : ''}`, { cache: 'no-store' });
+            const res = await fetch('/api/os/jobs', { cache: 'no-store' });
             const body = (await res.json().catch(() => ({}))) as { jobs?: JobView[]; error?: string };
             if (cancelled) return;
             if (!res.ok) setError(body.error ?? `Failed (${res.status})`);
@@ -195,7 +194,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
         return () => {
             cancelled = true;
         };
-    }, [showClosed, reloadKey]);
+    }, [reloadKey]);
 
     // Refresh while anything is being designed or run.
     const busy = jobs?.some(jobIsBusy) ?? false;
@@ -256,13 +255,19 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                 </select>
                 <span className="flex-1" />
                 {busy ? <span className="text-[11px] text-sky-400">Working…</span> : null}
-                <button type="button" onClick={() => setShowClosed((v) => !v)} className={showClosed ? 'ui-button-primary' : 'ui-button'} aria-pressed={showClosed} title="Include rejected and archived jobs">History</button>
-                {title === 'Marketing' ? <button type="button" onClick={() => { setShowInboxes((v) => !v); setShowAssets(false); }} className={showInboxes ? 'ui-button-primary' : 'ui-button'} aria-pressed={showInboxes} title="Mailboxes Nucleas watches for deals and other emails">Inboxes</button> : null}
-                {title === 'Marketing' ? <button type="button" onClick={() => { setShowAssets((v) => !v); setShowInboxes(false); }} disabled={company === 'all'} title={company === 'all' ? 'Choose a company first' : undefined} className={showAssets && company !== 'all' ? 'ui-button-primary' : 'ui-button'} aria-pressed={showAssets && company !== 'all'}>Assets</button> : null}
+                {title === 'Marketing' ? <button type="button" onClick={() => { setShowOverview((v) => !v); setShowInboxes(false); setShowAssets(false); }} disabled={company === 'all'} title={company === 'all' ? 'Choose a company first' : 'The company’s Marketing plan'} className={showOverview && company !== 'all' ? 'ui-button-primary' : 'ui-button'} aria-pressed={showOverview && company !== 'all'}>Overview</button> : null}
+                {title === 'Marketing' ? <button type="button" onClick={() => { setShowInboxes((v) => !v); setShowAssets(false); setShowOverview(false); }} className={showInboxes ? 'ui-button-primary' : 'ui-button'} aria-pressed={showInboxes} title="Mailboxes Nucleas watches for deals and other emails">Inboxes</button> : null}
+                {title === 'Marketing' ? <button type="button" onClick={() => { setShowAssets((v) => !v); setShowInboxes(false); setShowOverview(false); }} disabled={company === 'all'} title={company === 'all' ? 'Choose a company first' : undefined} className={showAssets && company !== 'all' ? 'ui-button-primary' : 'ui-button'} aria-pressed={showAssets && company !== 'all'}>Assets</button> : null}
                 {title !== 'Marketing' ? <button type="button" onClick={() => setCreating((v) => !v)} className="ui-button-primary">
                     {creating ? 'Close' : 'New job'}
                 </button> : null}
             </div>
+
+            {showOverview && title === 'Marketing' && company !== 'all' ? (
+                <div className="flex-1 overflow-y-auto p-3">
+                    <MarketingOverview key={company} companyId={company} busy={planBusy} error={planError} onGenerate={() => void generatePlan()} />
+                </div>
+            ) : null}
 
             {showInboxes && title === 'Marketing' ? (
                 <div className="flex-1 overflow-y-auto">
@@ -276,7 +281,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                 </div>
             ) : null}
 
-            <div className={`flex-1 overflow-y-auto p-3 space-y-4 ${(showAssets && title === 'Marketing' && company !== 'all') || (showInboxes && title === 'Marketing') ? 'hidden' : ''}`}>
+            <div className={`flex-1 overflow-y-auto p-3 space-y-4 ${(showAssets && title === 'Marketing' && company !== 'all') || (showOverview && title === 'Marketing' && company !== 'all') || (showInboxes && title === 'Marketing') ? 'hidden' : ''}`}>
                 {readyPosts.length ? (
                     <section className="space-y-2">
                         <h3 className="ui-kicker">Waiting for you · {readyPosts.length}</h3>
@@ -287,7 +292,6 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                 ) : null}
                 {marketing && company !== 'all' ? (
                     <div className="space-y-3" key={company}>
-                        <MarketingPlanRow companyId={company} initiallyOpen={initialKind === 'marketing_plan'} busy={planBusy} error={planError} onGenerate={() => void generatePlan()} />
                         {linkBuilding ? (
                             <NewJob placeholder={placeholder} initialCompanyId={company} initialKind="link_building" companyLocked onCancel={() => setLinkBuilding(false)} onCreated={(j) => { setLinkBuilding(false); created(j); }} />
                         ) : (
