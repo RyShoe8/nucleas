@@ -9,6 +9,7 @@ import BrandAssetsPanel from './jobs/BrandAssetsPanel';
 import WatchesPanel from './content/WatchesPanel';
 import MarketingComposer from './jobs/MarketingComposer';
 import ReadyPostCard from './jobs/publishing/ReadyPostCard';
+import { ActivityRows, activityFor, useActivity } from './jobs/ActivityList';
 
 type Group = { key: string; label: string; test: (j: JobView) => boolean };
 
@@ -196,8 +197,11 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
         };
     }, [reloadKey]);
 
+    // Watches and articles run outside of jobs; they are shown here too, so this is one live view of everything.
+    const activity = useActivity(reloadKey);
+
     // Refresh while anything is being designed or run.
-    const busy = jobs?.some(jobIsBusy) ?? false;
+    const busy = (jobs?.some(jobIsBusy) ?? false) || Boolean(activity?.busy);
     useEffect(() => {
         if (!busy) return;
         const timer = window.setInterval(reload, 5000);
@@ -313,20 +317,24 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                         }}
                     />
                 ) : null}
-                {inView.length === 0 && !creating && !marketing ? (
+                {inView.length === 0 && !creating && !marketing && !(['you', 'working', 'set', 'failed'] as const).some((g) => activityFor(activity, g, company, categories).length) ? (
                     <p className="text-sm text-text-secondary">
                         No {title === 'Jobs' ? '' : `${title.toLowerCase()} `}jobs yet. Describe work with New job, or ask Nucleas (&ldquo;every day, …&rdquo;, &ldquo;research … and add it to …&rdquo;).
                     </p>
                 ) : null}
                 {GROUPS.map((g) => {
                     const items = inView.filter((j) => g.test(j) && !GROUPS.slice(0, GROUPS.indexOf(g)).some((earlier) => earlier.test(j)));
-                    if (!items.length) return null;
+                    const activityGroup = g.key === 'you' || g.key === 'working' || g.key === 'set' || g.key === 'failed' ? g.key : null;
+                    const others = activityGroup ? activityFor(activity, activityGroup, company, categories) : [];
+                    const extra = others.length;
+                    if (!items.length && !extra) return null;
                     return (
                         <section key={g.key}>
                             <h3 className="ui-kicker mb-2">
-                                {g.label} · {items.length}
+                                {g.label} · {items.length + extra}
                             </h3>
                             <ul className="space-y-2">
+                                {extra ? <ActivityRows items={others} showCompany={company === 'all'} /> : null}
                                 {items.map((j) => {
                                     const progress = jobListProgress(j);
                                     const progressTone = progress.tone === 'active' ? 'bg-primary' : progress.tone === 'waiting' ? 'bg-amber-400' : progress.tone === 'complete' ? 'bg-emerald-400' : progress.tone === 'failed' ? 'bg-red-400' : 'bg-text-secondary';

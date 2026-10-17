@@ -15,7 +15,8 @@ const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { m
 async function api<T>(url: string, init?: RequestInit): Promise<{ ok: true; data: T } | { ok: false; error: string; status: number }> {
     const res = await fetch(url, { cache: 'no-store', ...init, headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) } });
     const data = (await res.json().catch(() => ({}))) as T & { error?: string };
-    return res.ok ? { ok: true, data } : { ok: false, error: data.error ?? `Failed (${res.status})`, status: res.status };
+    const fallback = res.status === 504 ? 'The server ran out of time (504).' : res.status >= 500 ? `The server failed (${res.status}).` : `Failed (${res.status})`;
+    return res.ok ? { ok: true, data } : { ok: false, error: data.error ?? fallback, status: res.status };
 }
 
 function ScorePill({ item, watch }: { item: ItemView; watch: WatchView }) {
@@ -145,11 +146,26 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
         setScanning(true);
         setError(null);
         setNotice(null);
-        const res = await api<{ stats: { fresh: number; scored: number; flagged: number; partial: boolean } }>(`/api/os/content/watches/${watch.id}/scan`, { method: 'POST' });
+        const res = await api<{ started: boolean }>(`/api/os/content/watches/${watch.id}/scan`, { method: 'POST' });
+        if (!res.ok) {
+            setScanning(false);
+            return setError(res.status === 409 ? res.error : `${res.error}${res.status >= 500 ? ' The scan log below shows each step.' : ''}`);
+        }
+        window.dispatchEvent(new Event('nucleas:jobs-changed'));
+        // The scan runs in the background: follow the watch until it finishes, then show what it found.
+        for (let i = 0; i < 70; i += 1) {
+            await new Promise((r) => window.setTimeout(r, 5000));
+            const list = await api<{ watches: WatchView[] }>('/api/os/content/watches');
+            const now = list.ok ? list.data.watches.find((w) => w.id === watch.id) : null;
+            if (now && !now.scanning) {
+                const s = now.lastScanStats;
+                if (now.lastScanOk === false) setError(`Scan failed: ${now.lastScanError ?? 'unknown error'}. The scan log below shows each step.`);
+                else setNotice(!s || s.fresh === 0 ? 'No new emails.' : `Checked ${s.fresh} new email${s.fresh === 1 ? '' : 's'}: ${s.flagged} flagged${s.modelFailures ? `, ${s.modelFailures} without a model (see the log)` : ''}${s.partial ? '. More remain; the next scan continues.' : '.'}`);
+                break;
+            }
+        }
         setScanning(false);
-        if (!res.ok) return setError(res.status === 409 ? `${res.error} Use Connect mailbox above to sign in again.` : res.error);
-        const s = res.data.stats;
-        setNotice(s.fresh === 0 ? 'No new emails.' : `Checked ${s.fresh} new email${s.fresh === 1 ? '' : 's'}: ${s.flagged} flagged${s.partial ? '. More remain; scan again to continue.' : '.'}`);
+        window.dispatchEvent(new Event('nucleas:jobs-changed'));
         setReload((n) => n + 1);
         onScanned();
     };
@@ -181,6 +197,7 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
         setNotice(null);
         const res = await api<{ articleId: string; items: number }>(`/api/os/content/watches/${watch.id}/digest`, { method: 'POST' });
         setDigesting(false);
+        window.dispatchEvent(new Event('nucleas:jobs-changed'));
         if (!res.ok) return setError(res.error);
         setNotice(`Writing a digest of ${res.data.items} item${res.data.items === 1 ? '' : 's'}. It will appear in Content → Articles in a few minutes.`);
         onScanned();
@@ -208,6 +225,14 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
             {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
             {watch.lastScanError ? <p className="text-xs text-amber-400">Last scan failed: {watch.lastScanError}</p> : null}
             {watch.digest.lastError ? <p className="text-xs text-amber-400">Last digest: {watch.digest.lastError}</p> : null}
+            {watch.lastScanLog.length ? (
+                <details className="text-xs">
+                    <summary className="cursor-pointer text-text-secondary">Last scan log · {watch.lastScanLog.length} steps</summary>
+                    <ul className="mt-1 max-h-60 space-y-0.5 overflow-y-auto rounded bg-background-elevated/50 p-2 font-mono text-[11px]">
+                        {watch.lastScanLog.map((e, i) => <li key={i} className={e.step === 'error' || e.step === 'model_failed' ? 'text-red-300' : ''}>{when(e.at)} · {e.step} · {e.detail}</li>)}
+                    </ul>
+                </details>
+            ) : null}
 
             {tab === 'posts' ? (
                 posts.length ? (
@@ -234,6 +259,7 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
                                 </div>
                                 {item.skipReason ? <p className="mt-1 text-[11px] text-text-secondary">Skipped: {item.skipReason.replace(/_/g, ' ').replace(/:\d+$/, '')}</p> : null}
                                 {item.reason ? <p className="mt-1 text-xs italic text-text-secondary">{item.reason}</p> : null}
+                                {item.analysisError ? <p className="mt-1 text-[11px] text-amber-400">Scored without a model: {item.analysisError}</p> : null}
                                 {deal ? <p className="mt-1 text-xs font-medium">{deal}</p> : null}
                                 {Object.keys(item.values).length ? (
                                     <ul className="mt-1 grid gap-x-3 text-xs sm:grid-cols-2">

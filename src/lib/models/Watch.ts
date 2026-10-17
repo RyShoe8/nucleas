@@ -70,6 +70,10 @@ const watchSchema = new Schema(
     lastScanOk: { type: Boolean },
     lastScanError: { type: String, maxlength: 400 },
     lastScanStats: { type: Schema.Types.Mixed },
+    /** Each step of the last scan (listed, every email checked, model failures, the outcome), for diagnosis. */
+    lastScanLog: { type: [{ at: Date, step: String, detail: String, _id: false }], default: [] },
+    /** While scanning: how far it has got ("Checked 5 of 40"). */
+    scanProgress: { type: String, maxlength: 200 },
     scanLeaseUntil: { type: Date },
   },
   { timestamps: true }
@@ -103,6 +107,8 @@ const itemSchema = new Schema(
     fit: { type: Number, min: 0, max: 100 },
     scoreBasis: { type: String, enum: ['ai', 'keywords', 'deal', 'none'], default: 'none' },
     reason: { type: String, maxlength: 300 },
+    /** Why the model analysis failed for this email (it was then scored without a model). */
+    analysisError: { type: String, maxlength: 500 },
     flagged: { type: Boolean, default: false },
     summary: { type: String, maxlength: 1500 },
     keyPoints: { type: [{ category: String, text: String, _id: false }], default: [] },

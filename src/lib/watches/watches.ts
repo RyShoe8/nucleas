@@ -74,6 +74,12 @@ export interface WatchView {
   lastScanAt: string | null;
   lastScanOk: boolean | null;
   lastScanError: string | null;
+  /** What the last scan found: new emails checked and how many were flagged. */
+  lastScanStats: { fresh: number; flagged: number; partial: boolean; modelFailures: number; durationMs: number | null } | null;
+  /** Each step of the last scan, for diagnosis. */
+  lastScanLog: { at: string; step: string; detail: string }[];
+  /** While scanning: how far it has got. */
+  scanProgress: string | null;
   scanning: boolean;
   flaggedCount: number;
   scannedCount: number;
@@ -106,6 +112,9 @@ type WatchLean = {
   lastScanAt?: Date;
   lastScanOk?: boolean;
   lastScanError?: string;
+  lastScanStats?: { fresh?: number; flagged?: number; partial?: boolean; modelFailures?: number; durationMs?: number };
+  lastScanLog?: { at?: Date; step?: string; detail?: string }[];
+  scanProgress?: string;
   scanLeaseUntil?: Date;
 };
 
@@ -155,6 +164,9 @@ async function toViews(viewer: CompanyViewer, rows: WatchLean[]): Promise<WatchV
     lastScanAt: r.lastScanAt?.toISOString() ?? null,
     lastScanOk: r.lastScanOk ?? null,
     lastScanError: r.lastScanError ?? null,
+    lastScanStats: r.lastScanStats ? { fresh: r.lastScanStats.fresh ?? 0, flagged: r.lastScanStats.flagged ?? 0, partial: r.lastScanStats.partial === true, modelFailures: r.lastScanStats.modelFailures ?? 0, durationMs: r.lastScanStats.durationMs ?? null } : null,
+    lastScanLog: (r.lastScanLog ?? []).map((e) => ({ at: e.at?.toISOString() ?? '', step: e.step ?? '', detail: e.detail ?? '' })),
+    scanProgress: r.scanProgress ?? null,
     scanning: Boolean(r.scanLeaseUntil && r.scanLeaseUntil.getTime() > Date.now()),
     flaggedCount: byWatch.get(String(r._id))?.flagged ?? 0,
     scannedCount: byWatch.get(String(r._id))?.scanned ?? 0,
@@ -263,6 +275,8 @@ export interface ItemView {
   reason: string;
   flagged: boolean;
   skipReason: string | null;
+  /** Why the model analysis failed for this email, when it did. */
+  analysisError: string | null;
   summary: string;
   keyPoints: { category: string; text: string }[];
   bestDeal: Record<string, unknown> | null;
@@ -276,7 +290,7 @@ export interface ItemView {
 
 type ItemLean = {
   _id: Types.ObjectId; watchId: Types.ObjectId; fromName?: string; fromEmail?: string; subject?: string; sentAt?: Date; score?: number; scoreBasis?: string; reason?: string; flagged?: boolean;
-  skipReason?: string; summary?: string; keyPoints?: { category: string; text: string }[]; bestDeal?: Record<string, unknown>; deals?: unknown[]; values?: Record<string, string>; link?: string; relevance?: number; detectedKeywords?: string[];
+  skipReason?: string; analysisError?: string; summary?: string; keyPoints?: { category: string; text: string }[]; bestDeal?: Record<string, unknown>; deals?: unknown[]; values?: Record<string, string>; link?: string; relevance?: number; detectedKeywords?: string[];
 };
 
 function itemView(row: ItemLean, hasPost: boolean): ItemView {
@@ -292,6 +306,7 @@ function itemView(row: ItemLean, hasPost: boolean): ItemView {
     reason: row.reason ?? '',
     flagged: Boolean(row.flagged),
     skipReason: row.skipReason ?? null,
+    analysisError: row.analysisError ?? null,
     summary: row.summary ?? '',
     keyPoints: row.keyPoints ?? [],
     bestDeal: row.bestDeal ?? null,

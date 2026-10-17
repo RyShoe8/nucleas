@@ -27,6 +27,8 @@ export interface AnalyzeInput {
   from: string;
   text: string;
   wantSummary: boolean;
+  /** Abort the model call (a per-email timeout), so one slow call never stalls a scan. */
+  signal?: AbortSignal;
 }
 
 export interface AnalyzeResult {
@@ -123,8 +125,12 @@ export function parseAnalysis(raw: unknown, input: Pick<AnalyzeInput, 'mode' | '
   };
 }
 
-/** Runs the analysis on the engine's utility model (a free one when available). Null when no model is available or the reply is unusable. */
+/** A model gave no usable analysis; the message says why (each model tried and its error). */
+export class AnalysisError extends Error {}
+
+/** Runs the analysis on the engine's utility model (a free one when available). Throws AnalysisError, with the reason, when no model answers usefully. */
 export const analyzeEmail: AnalyzeFn = async (input) => {
+  const failures: string[] = [];
   const answer = await askEngine({
     organizationId: input.organizationId,
     userId: input.userId,
@@ -135,6 +141,11 @@ From: ${input.from}
 
 ${input.text.slice(0, MAX_INPUT_CHARS)}`,
     maxTokens: input.fields.length ? 1300 : 900,
+    signal: input.signal,
+    onFailure: (f) => failures.push(`${f.model}: ${f.reason}`),
   });
-  return answer ? parseAnalysis(extractJson(answer.text), input) : null;
+  if (!answer) throw new AnalysisError(failures.join(' · ') || 'No model answered.');
+  const parsed = parseAnalysis(extractJson(answer.text), input);
+  if (!parsed) throw new AnalysisError(`${answer.model} answered, but not in the expected format.`);
+  return parsed;
 };

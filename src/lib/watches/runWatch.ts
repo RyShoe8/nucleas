@@ -9,17 +9,48 @@ import { extractAnchorHrefs, pickDealLink } from './dealLink';
 import { extractKeyPointsFallback } from './keyPoints';
 import { cleanEmailText, dealScore, detectKeywords, effectiveLookbackHours, gmailQueryFor, keywordMatchScore, prefilter, relevanceScore, type WatchRule } from './scan';
 import { isWatchFlagged, legacyMode, watchSettings, type WatchSettings } from './settings';
-import { analyzeEmail, type AnalyzeFn } from './scanAi';
+import { analyzeEmail, type AnalyzeFn, type AnalyzeResult } from './scanAi';
 import { formatDealLine } from './dealFormat';
 import type { DealMetrics } from './types';
 
 /** Scans one watch: lists new mail in its mailbox, scores each email against the rule, and stores the results. */
 
 export const watchMailboxPurpose = (email: string) => `watch-mailbox:${email.toLowerCase()}`;
-const LEASE_MS = 6 * 60_000;
+/** Longer than any request may run (300 s), so a scan cut off by the platform frees itself soon after. */
+const LEASE_MS = 5.5 * 60_000;
 const RETENTION_DAYS = 90;
 const DEFAULT_MAX_NEW = 40;
-const DEFAULT_BUDGET_MS = 230_000;
+/** Well inside the 300 s request limit, leaving room to save results and draft posts. */
+const DEFAULT_BUDGET_MS = 200_000;
+/** One email's model call may take this long; a slow or queued model never stalls the whole scan. */
+const MODEL_TIMEOUT_MS = 45_000;
+/** Stop starting new emails when less than this remains of the budget. */
+const MIN_REMAINING_MS = 20_000;
+const MAX_LOG_STEPS = 80;
+
+/**
+ * The steps of one scan, kept on the watch (lastScanLog) and written to the server log, so a scan that
+ * fails, stops early or flags nothing can be diagnosed from the window: what was listed, what happened to
+ * each email, which model calls failed and why, and how it ended.
+ */
+export class ScanLog {
+  readonly steps: { at: Date; step: string; detail: string }[] = [];
+  private dropped = 0;
+  constructor(private readonly watchId: string, private readonly now: () => number = Date.now) {}
+  add(step: string, detail: string): void {
+    const entry = { at: new Date(this.now()), step, detail: detail.slice(0, 500) };
+    // Keep the start and the end of a long scan; the middle is summarized by the count.
+    if (this.steps.length >= MAX_LOG_STEPS) {
+      this.steps.splice(10, 1);
+      this.dropped += 1;
+    }
+    this.steps.push(entry);
+    (step === 'error' || step === 'model_failed' ? console.error : console.info)(`[watches] ${this.watchId} ${step}: ${entry.detail}`);
+  }
+  get stored() {
+    return this.dropped ? [...this.steps.slice(0, 10), { at: this.steps[10]?.at ?? new Date(this.now()), step: 'note', detail: `${this.dropped} earlier steps not kept` }, ...this.steps.slice(10)] : this.steps;
+  }
+}
 
 export interface ScanStats {
   listed: number;
@@ -29,6 +60,8 @@ export interface ScanStats {
   scored: number;
   flagged: number;
   modelFailures: number;
+  /** How long the scan took. */
+  durationMs?: number;
   /** More new mail remains than one scan handles; the next scan continues. */
   partial: boolean;
 }
@@ -93,7 +126,9 @@ function itemFields(watch: WatchRow, m: ParsedMessage) {
   };
 }
 
-async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<Pick<ScanDeps, 'analyze'>>, stats: ScanStats, nowMs: number): Promise<void> {
+const subjectOf = (m: ParsedMessage) => `"${(m.subject || '(no subject)').slice(0, 80)}"`;
+
+async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<Pick<ScanDeps, 'analyze'>>, stats: ScanStats, nowMs: number, log: ScanLog, timeoutMs: number): Promise<void> {
   const rule = ruleOf(watch);
   const base = itemFields(watch, m);
   const text = cleanEmailText(m);
@@ -102,6 +137,7 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
     await WatchItem.updateOne({ watchId: watch._id, gmailId: m.gmailId }, { $set: { ...base, skipReason: 'own_or_spam', text: '', flagged: false, score: 0, scoreBasis: 'none' } }, { upsert: true });
     stats.stored += 1;
     stats.skipped += 1;
+    log.add('skipped', `${subjectOf(m)}: sent by you, a draft, spam or trash`);
     return;
   }
 
@@ -110,6 +146,7 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
     await WatchItem.updateOne({ watchId: watch._id, gmailId: m.gmailId }, { $set: { ...base, skipReason: pf.reason.slice(0, 80), text: text.slice(0, 2000), flagged: false, score: 0, scoreBasis: 'none', relevance: 1 } }, { upsert: true });
     stats.stored += 1;
     stats.skipped += 1;
+    log.add('skipped', `${subjectOf(m)}: ${pf.reason.replace(/_/g, ' ')}`);
     return;
   }
 
@@ -118,8 +155,10 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
   const relevance = relevanceScore(text, rule.keywords, sentAtMs, rule.mode, nowMs);
   const { settings } = rule;
   const needsModel = Boolean(rule.description.trim()) || rule.mode === 'deal' || settings.fields.length > 0 || watch.aiSummary !== false;
-  let analysis = null;
+  let analysis: AnalyzeResult | null = null;
+  let analysisError: string | null = null;
   if (needsModel) {
+    const started = Date.now();
     try {
       analysis = await deps.analyze({
         organizationId: String(watch.organizationId),
@@ -132,11 +171,16 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
         from: base.fromEmail,
         text,
         wantSummary: watch.aiSummary !== false,
+        signal: AbortSignal.timeout(timeoutMs),
       });
+      if (!analysis) analysisError = 'No model answered.';
     } catch (error) {
-      console.error('[watches] analysis failed', error instanceof Error ? error.message : 'unknown');
+      analysisError = error instanceof Error ? error.message : 'The analysis failed.';
     }
-    if (!analysis) stats.modelFailures += 1;
+    if (!analysis) {
+      stats.modelFailures += 1;
+      log.add('model_failed', `${subjectOf(m)} after ${Math.round((Date.now() - started) / 1000)}s: ${analysisError}`);
+    }
   }
 
   // Fit to the rule: the model's judgement, else the keyword share. A discount watch with no rule (or whose
@@ -184,6 +228,7 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
         scoreBasis,
         reason: reason.slice(0, 300),
         flagged,
+        ...(analysisError ? { analysisError: analysisError.slice(0, 500) } : {}),
         summary: analysis?.summary || undefined,
         keyPoints: analysis?.keyPoints.length ? analysis.keyPoints : extractKeyPointsFallback(text, m.subject),
         deals,
@@ -192,13 +237,14 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
         link: pickDealLink(extractAnchorHrefs(m.bodyHtml), { html: m.bodyHtml, subject: m.subject, from: m.from.email }) ?? undefined,
         htmlPreview: m.bodyHtml.slice(0, 80_000) || undefined,
       },
-      $unset: { skipReason: '' },
+      $unset: { skipReason: '', ...(analysisError ? {} : { analysisError: '' }) },
     },
     { upsert: true }
   );
   stats.stored += 1;
   stats.scored += 1;
   if (flagged) stats.flagged += 1;
+  log.add(flagged ? 'flagged' : 'scored', `${subjectOf(m)}: ${settings.rank === 'discount' ? `${score}% offer` : `fit ${score}`}${fit != null && settings.rank === 'discount' ? `, fit ${fit}` : ''} (${scoreBasis})${analysisError ? ', scored without a model' : ''}`);
 }
 
 /** Scans one watch now. A lease keeps overlapping runs (button, cron) from scanning the same watch twice. */
@@ -214,6 +260,9 @@ export async function scanWatch(watchId: Types.ObjectId | string, deps: ScanDeps
   if (!watch) return { ok: false, error: 'This watch is already being scanned.' };
 
   const stats: ScanStats = { listed: 0, fresh: 0, stored: 0, skipped: 0, scored: 0, flagged: 0, modelFailures: 0, partial: false };
+  const log = new ScanLog(String(id), nowFn);
+  const budget = deps.budgetMs ?? DEFAULT_BUDGET_MS;
+  log.add('started', `Budget ${Math.round(budget / 1000)}s, up to ${deps.maxNew ?? DEFAULT_MAX_NEW} new emails`);
   try {
     const mailbox = await WatchMailbox.findOne({ _id: watch.mailboxId, organizationId: watch.organizationId }).select('+refreshTokenSealed emailAddress status').lean<{ _id: Types.ObjectId; emailAddress: string; refreshTokenSealed: string; status: string }>();
     if (!mailbox) throw new Error('The mailbox for this watch was removed. Connect it again.');
@@ -221,31 +270,40 @@ export async function scanWatch(watchId: Types.ObjectId | string, deps: ScanDeps
     const api = deps.api ?? (await apiForMailbox(mailbox));
     const rule = ruleOf(watch);
     const lookback = effectiveLookbackHours(rule.lookbackHours, watch.lastScanAt ?? null, 2, started);
-    const listed = await api.listMessageIds({ q: gmailQueryFor(rule, lookback, started), maxResults: 100 });
+    const query = gmailQueryFor(rule, lookback, started);
+    const listed = await api.listMessageIds({ q: query, maxResults: 100 });
     stats.listed = listed.ids.length;
     const known = new Set((await WatchItem.find({ watchId: id, gmailId: { $in: listed.ids } }).select('gmailId').lean<{ gmailId: string }[]>()).map((r) => r.gmailId));
     const fresh = listed.ids.filter((gmailId) => !known.has(gmailId));
     stats.fresh = fresh.length;
+    log.add('listed', `Gmail search "${query}" found ${listed.ids.length} email${listed.ids.length === 1 ? '' : 's'}, ${fresh.length} new`);
     const maxNew = deps.maxNew ?? DEFAULT_MAX_NEW;
-    const budget = deps.budgetMs ?? DEFAULT_BUDGET_MS;
     const analyze = deps.analyze ?? analyzeEmail;
+    let done = 0;
     for (const gmailId of fresh) {
-      if (stats.stored >= maxNew || nowFn() - started > budget) {
+      const remaining = budget - (nowFn() - started);
+      if (stats.stored >= maxNew || remaining < MIN_REMAINING_MS) {
         stats.partial = true;
+        log.add('stopped_early', stats.stored >= maxNew ? `Reached ${maxNew} emails for one scan; the next scan continues.` : `Time budget used (${Math.round((nowFn() - started) / 1000)}s); the next scan continues.`);
         break;
       }
+      await ContentWatch.updateOne({ _id: id }, { $set: { scanProgress: `Checking ${done + 1} of ${Math.min(fresh.length, maxNew)} new emails` } }).catch(() => undefined);
       try {
         const parsed = parseGmailMessage(await api.getMessage(gmailId));
-        await processMessage(watch, parsed, { analyze }, stats, nowFn());
+        await processMessage(watch, parsed, { analyze }, stats, nowFn(), log, Math.max(5_000, Math.min(MODEL_TIMEOUT_MS, remaining - 10_000)));
       } catch (error) {
         if (error instanceof GmailAuthError) throw error;
         // A message deleted between listing and fetching is simply gone; anything else is retried next scan.
-        if (!(error instanceof Error && /returned 404/.test(error.message))) console.error('[watches] message failed', error instanceof Error ? error.message : 'unknown');
+        if (error instanceof Error && /returned 404/.test(error.message)) log.add('skipped', `Email ${gmailId} was deleted before it could be read`);
+        else log.add('error', `Email ${gmailId} could not be processed and will be retried next scan: ${error instanceof Error ? error.message : 'unknown error'}`);
       }
+      done += 1;
     }
     if (listed.nextPageToken && !stats.partial && fresh.length === listed.ids.length) stats.partial = true;
     await WatchItem.deleteMany({ watchId: id, sentAt: { $lt: new Date(started - RETENTION_DAYS * 86400_000) } });
-    await ContentWatch.updateOne({ _id: id }, { $set: { lastScanAt: new Date(started), lastScanOk: true, lastScanStats: stats }, $unset: { lastScanError: '', scanLeaseUntil: '' } });
+    stats.durationMs = nowFn() - started;
+    log.add('finished', `${stats.scored} scored, ${stats.flagged} flagged, ${stats.skipped} skipped${stats.modelFailures ? `, ${stats.modelFailures} model failure${stats.modelFailures === 1 ? '' : 's'}` : ''} in ${Math.round(stats.durationMs / 1000)}s${stats.partial ? '; more remain' : ''}`);
+    await ContentWatch.updateOne({ _id: id }, { $set: { lastScanAt: new Date(started), lastScanOk: true, lastScanStats: stats, lastScanLog: log.stored }, $unset: { lastScanError: '', scanLeaseUntil: '', scanProgress: '' } });
     return { ok: true, stats };
   } catch (error) {
     const reauth = error instanceof GmailAuthError;
@@ -254,13 +312,15 @@ export async function scanWatch(watchId: Types.ObjectId | string, deps: ScanDeps
       tokenCache.delete(String(watch.mailboxId));
       await WatchMailbox.updateOne({ _id: watch.mailboxId }, { $set: { status: 'needs_reauth', lastError: message } });
     }
-    await ContentWatch.updateOne({ _id: id }, { $set: { lastScanAt: new Date(started), lastScanOk: false, lastScanError: message, lastScanStats: stats }, $unset: { scanLeaseUntil: '' } });
+    stats.durationMs = nowFn() - started;
+    log.add('error', `Scan failed after ${Math.round(stats.durationMs / 1000)}s: ${message}`);
+    await ContentWatch.updateOne({ _id: id }, { $set: { lastScanAt: new Date(started), lastScanOk: false, lastScanError: message, lastScanStats: stats, lastScanLog: log.stored }, $unset: { scanLeaseUntil: '', scanProgress: '' } });
     return { ok: false, error: message, needsReauth: reauth };
   }
 }
 
 /** Active watches whose interval has elapsed, oldest scan first (for the cron). Watches on a mailbox that needs reconnecting are skipped. */
-export async function scanDueWatches(options: { limit?: number; now?: number; afterScan?: (watchId: Types.ObjectId, since: Date) => Promise<unknown> } = {}): Promise<{ scanned: number; failed: number }> {
+export async function scanDueWatches(options: { limit?: number; now?: number; afterScan?: (watchId: Types.ObjectId, since: Date) => Promise<unknown>; budgetMs?: number } = {}): Promise<{ scanned: number; failed: number; deferred: number }> {
   const now = options.now ?? Date.now();
   const candidates = await ContentWatch.find({ active: true })
     .sort({ lastScanAt: 1 })
@@ -271,14 +331,24 @@ export async function scanDueWatches(options: { limit?: number; now?: number; af
   const due = candidates.filter((w) => !broken.has(String(w.mailboxId)) && (!w.lastScanAt || now - w.lastScanAt.getTime() >= (w.intervalMinutes ?? 60) * 60_000)).slice(0, options.limit ?? 3);
   let scanned = 0;
   let failed = 0;
+  let deferred = 0;
+  // All scans share one request: each gets what is left of the overall budget, and the rest wait for the next run.
+  const started = Date.now();
+  const overall = options.budgetMs ?? DEFAULT_BUDGET_MS;
   for (const watch of due) {
+    const remaining = overall - (Date.now() - started);
+    if (remaining < 60_000) {
+      deferred += 1;
+      continue;
+    }
     const since = new Date();
-    const outcome = await scanWatch(watch._id);
+    const outcome = await scanWatch(watch._id, { budgetMs: remaining - 20_000 });
     if (outcome.ok) {
       scanned += 1;
       // Optional follow-up for newly flagged mail (social post drafts); a failure here never fails the scan.
       await options.afterScan?.(watch._id, since).catch((error: unknown) => console.error('[watches] follow-up failed', error instanceof Error ? error.message : 'unknown'));
     } else failed += 1;
   }
-  return { scanned, failed };
+  if (deferred) console.info(`[watches] cron deferred ${deferred} due watch${deferred === 1 ? '' : 'es'} to the next run (time budget used)`);
+  return { scanned, failed, deferred };
 }

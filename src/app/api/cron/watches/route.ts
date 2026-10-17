@@ -3,15 +3,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/db/mongodb';
 import { scanDueWatches } from '@/lib/watches/runWatch';
 import { draftPostsForNewlyFlagged } from '@/lib/watches/posts';
-import { startDueDigests } from '@/lib/watches/digest';
-import { resumeStaleArticles } from '@/lib/articles/pipeline';
-import { defaultArticleDeps } from '@/lib/articles/deps';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
-/** Scans the content watches whose interval has passed, starts digests whose period is over, then advances article runs (digests included). */
+/** Scans the content watches whose interval has passed, within one time budget. Digests and articles run on /api/cron/articles. */
 export async function GET(request: NextRequest) {
   const secret = process.env.CRON_SECRET?.trim();
   const actual = Buffer.from(request.headers.get('authorization') ?? '');
@@ -19,11 +16,10 @@ export async function GET(request: NextRequest) {
   if (!secret || actual.length !== expected.length || !timingSafeEqual(actual, expected)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try {
     await connectDB();
-    const scanned = await scanDueWatches({ limit: 3, afterScan: (watchId, since) => draftPostsForNewlyFlagged(watchId, since) });
-    const digests = await startDueDigests({ limit: 2 }).catch(() => ({ started: 0 }));
-    const articlesResumed = await resumeStaleArticles(defaultArticleDeps, 1).catch(() => 0);
-    return NextResponse.json({ ...scanned, digestsStarted: digests.started, articlesResumed }, { headers: { 'Cache-Control': 'no-store' } });
-  } catch {
+    const scanned = await scanDueWatches({ limit: 3, budgetMs: 220_000, afterScan: (watchId, since) => draftPostsForNewlyFlagged(watchId, since) });
+    return NextResponse.json(scanned, { headers: { 'Cache-Control': 'no-store' } });
+  } catch (error) {
+    console.error('[cron/watches] failed', error instanceof Error ? error.message : 'unknown');
     return NextResponse.json({ error: 'Watch scan unavailable.' }, { status: 503 });
   }
 }

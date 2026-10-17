@@ -17,7 +17,19 @@ export interface EngineAnswer {
   usedFallback: boolean;
 }
 
-async function run(choice: ModelChoice, input: { organizationId: string; userId: string; system: string; user: string; maxTokens: number }): Promise<string | null> {
+type AskInput = { organizationId: string; userId: string; system: string; user: string; maxTokens: number; signal?: AbortSignal; onFailure?: (failure: EngineFailure) => void };
+
+/** Why a model gave no answer, for the caller's logs: which model, and what went wrong. */
+export interface EngineFailure {
+  model: string;
+  reason: string;
+}
+
+async function run(choice: ModelChoice, input: AskInput): Promise<string | null> {
+  if (input.signal?.aborted) {
+    input.onFailure?.({ model: choice.model, reason: 'Timed out before the model was called.' });
+    return null;
+  }
   const turn = await attemptCompanyCredentialChat({
     systemPrompt: input.system,
     organizationId: input.organizationId,
@@ -33,14 +45,29 @@ async function run(choice: ModelChoice, input: { organizationId: string; userId:
     forcePlain: true,
     stopOnUpstreamFailure: true,
     maxOutputTokensOverride: input.maxTokens,
-  }).catch(() => null);
-  return turn && turn.role === 'assistant' && turn.text.trim() ? turn.text.trim() : null;
+    signal: input.signal,
+  }).catch((error: unknown) => {
+    input.onFailure?.({ model: choice.model, reason: input.signal?.aborted ? 'Timed out waiting for the model.' : error instanceof Error ? error.message : 'The model call failed.' });
+    return undefined;
+  });
+  if (turn === undefined) return null;
+  if (turn && turn.role === 'assistant' && turn.text.trim()) return turn.text.trim();
+  const reason = input.signal?.aborted ? 'Timed out waiting for the model.' : turn?.role === 'assistant' ? 'The model returned an empty answer.' : `${turn?.text ?? 'No answer.'}${turn?.failureCategory ? ` (${turn.failureCategory}${turn.debugHint ? `: ${turn.debugHint}` : ''})` : ''}`;
+  input.onFailure?.({ model: choice.model, reason: reason.slice(0, 300) });
+  return null;
 }
 
-export async function askEngine(input: { organizationId: string; userId: string; need: Need; level?: CostLevel; system: string; user: string; maxTokens: number }): Promise<EngineAnswer | null> {
+/**
+ * signal: give up (and free the shared free-model queue) when it aborts, e.g. AbortSignal.timeout(45_000).
+ * onFailure: told about each model that gave no answer and why, so callers can record it.
+ */
+export async function askEngine(input: { organizationId: string; userId: string; need: Need; level?: CostLevel; system: string; user: string; maxTokens: number; signal?: AbortSignal; onFailure?: (failure: EngineFailure) => void }): Promise<EngineAnswer | null> {
   const settings = await readEngineSettings(input.organizationId);
   const pick = await selectModel(input.organizationId, input.need, input.level ?? settings.defaultCostLevel, { settings });
-  if (!pick.primary) return null;
+  if (!pick.primary) {
+    input.onFailure?.({ model: 'none', reason: `No model is available for "${input.need}" work. Check AI settings.` });
+    return null;
+  }
   const text = await run(pick.primary, input);
   if (text) return { text, model: pick.primary.model, usedFallback: false };
   if (pick.fallback) {
