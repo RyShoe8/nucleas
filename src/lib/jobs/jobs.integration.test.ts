@@ -264,6 +264,23 @@ describe('approving and the dry run', () => {
     expect(mocks.chat.mock.calls.some(([input]) => input.model === sibling.model)).toBe(false);
   });
 
+  it('continues past consecutive exhausted credentials in work and review', async () => {
+    const google = { profileId: 'a'.repeat(24), model: 'google-model', free: false, label: 'Google', provider: 'google' };
+    const emptyOpenai = { profileId: 'b'.repeat(24), model: 'empty-openai', free: false, label: 'OpenAI empty', provider: 'openai' };
+    const working = { profileId: 'c'.repeat(24), model: 'working-openai', free: false, label: 'OpenAI working', provider: 'openai' };
+    const reviewer = { profileId: 'd'.repeat(24), model: 'empty-reviewer', free: false, label: 'Review', provider: 'openrouter' };
+    mocks.models.mockResolvedValue([google, emptyOpenai, working, reviewer]);
+    mocks.select.mockImplementation(async (_org: string, need: string, _level: string, options?: { models?: { model: string }[] }) => ({ primary: options?.models && options.models.length < 4 ? options.models[0] ?? null : need === 'review' ? reviewer : google, fallback: null }));
+    mocks.chat.mockImplementation(async (input: { systemPrompt: string; model: string }) => {
+      if (input.model !== working.model) return { requestId: 'credits', role: 'status', text: 'Provider returned HTTP 402: credits depleted.', costMicros: 0 };
+      return { requestId: 'success', role: 'assistant', text: input.systemPrompt.startsWith('You check one run') ? '{"verdict":"pass","notes":"Sourced."}' : GOOD, costMicros: 0 };
+    });
+    const job = await proposed();
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    expect(await JobRun.findById(approved.dryRunId).lean()).toMatchObject({ status: 'needs_review', models: [google.model, emptyOpenai.model, working.model, reviewer.model, working.model], review: { verdict: 'pass' } });
+  });
+
   it('tracks link recommendations through approval and submission with feedback history', async () => {
     const config = { projectId, schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
     const created = await createTemplateJob(admin, { companyId, template: 'link_building', config });

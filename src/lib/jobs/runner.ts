@@ -515,20 +515,22 @@ export async function executeJobRun(runId: string): Promise<void> {
     // Free mode intentionally never falls through to a paid provider, but it should not keep
     // retrying one unhealthy Rogly deployment. Refresh LiteLLM's live model list, remove the
     // failed binding for this run, and let the normal quality router choose another free model.
-    if (retryableProviderFailure(turn)) {
+    const attemptedBindings = new Set<string>();
+    while (retryableProviderFailure(turn)) {
+      attemptedBindings.add(`${activeWorker.profileId}:${activeWorker.model}`);
       const refreshCatalog = /httpStatus=5\d\d\b|HTTP 5\d\d\b/i.test(`${turn.debugHint ?? ''} ${turn.text}`);
       const fresh = await listAvailableModels({ force: refreshCatalog }).catch(() => models);
       const creditFailure = /httpStatus=402\b|HTTP 402\b/i.test(`${turn.debugHint ?? ''} ${turn.text}`);
       if (creditFailure) exhaustedProfiles.add(activeWorker.profileId);
       // Credit errors affect the entire credential, not just its selected model.
-      const candidates = fresh.filter((model) => creditFailure
-        ? model.profileId !== activeWorker.profileId
-        : model.profileId !== activeWorker.profileId || model.model !== activeWorker.model);
+      const candidates = fresh.filter((model) => !exhaustedProfiles.has(model.profileId)
+        && !attemptedBindings.has(`${model.profileId}:${model.model}`));
       const directOpenAI = creditFailure ? candidates.filter((model) => model.provider === 'openai') : [];
       const alternate = (directOpenAI.length
         ? (await selectModel(org, workNeed, level, { models: directOpenAI, settings })).primary
         : null) ?? (await selectModel(org, workNeed, level, { models: candidates, settings })).primary;
-      if (alternate && (alternate.profileId !== activeWorker.profileId || alternate.model !== activeWorker.model)) {
+      if (!alternate || exhaustedProfiles.has(alternate.profileId) || attemptedBindings.has(`${alternate.profileId}:${alternate.model}`)) break;
+      if (alternate) {
         onProgress(`${shortModel(activeWorker.model)} ${creditFailure ? 'has insufficient provider credits' : 'did not complete'}; switching to ${shortModel(alternate.model)}`);
         activeWorker = alternate;
         turn = await doWork(activeWorker);
@@ -589,7 +591,9 @@ export async function executeJobRun(runId: string): Promise<void> {
       const replacement = await selectModel(org, 'review', level, { models: directOpenAI.length ? directOpenAI : candidates, settings });
       Object.assign(review, replacement);
     }
-    if (review.primary) {
+    const attemptedReviews = new Set<string>();
+    while (review.primary) {
+      attemptedReviews.add(`${review.primary.profileId}:${review.primary.model}`);
       await progress(run._id, owner, `Independent review with ${shortModel(review.primary.model)}`, { stage: 'reviewing', percent: 84 });
       const reviewTurn = await attemptCompanyCredentialChat({
         systemPrompt: reviewerPrompt(),
@@ -611,8 +615,22 @@ export async function executeJobRun(runId: string): Promise<void> {
       cost += reviewTurn.costMicros ?? 0;
       recordStep('review', 'Independent review', review.primary, review.source === 'pinned' ? 'pinned' : 'auto', false, reviewTurn.costMicros ?? null);
       usedModels.push(review.primary.model);
+      if (retryableProviderFailure(reviewTurn)) {
+        const creditFailure = /httpStatus=402\b|HTTP 402\b/i.test(`${reviewTurn.debugHint ?? ''} ${reviewTurn.text}`);
+        if (creditFailure) exhaustedProfiles.add(review.primary.profileId);
+        const candidates = models.filter((model) => !exhaustedProfiles.has(model.profileId) && !attemptedReviews.has(`${model.profileId}:${model.model}`));
+        const directOpenAI = creditFailure ? candidates.filter((model) => model.provider === 'openai') : [];
+        const replacement = (directOpenAI.length ? (await selectModel(org, 'review', level, { models: directOpenAI, settings })).primary : null)
+          ?? (await selectModel(org, 'review', level, { models: candidates, settings })).primary;
+        if (replacement && !exhaustedProfiles.has(replacement.profileId) && !attemptedReviews.has(`${replacement.profileId}:${replacement.model}`)) {
+          await progress(run._id, owner, `${shortModel(review.primary.model)} could not review: ${reviewTurn.text.slice(0, 240)}. Switching to ${shortModel(replacement.model)}`, { stage: 'reviewing', percent: 84 });
+          review.primary = replacement;
+          continue;
+        }
+      }
       const v = z.object({ verdict: z.enum(['pass', 'fail']), notes: z.string().max(2000).default('') }).safeParse(extractJson(reviewTurn.text));
       if (v.success) verdict = { ...v.data, model: review.primary.model };
+      break;
     }
 
     // Dry runs always wait for a person; real runs complete by themselves only when automatic and clean.
