@@ -49,8 +49,8 @@ function retryableProviderFailure(turn: TeamChatTurn): boolean {
   if (turn.role !== 'status') return false;
   return turn.failureCategory === 'rate_limit'
     || turn.failureCategory === 'unavailable'
-    || /httpStatus=(429|50[234])\b|kind=(timeout|transport)\b/i.test(turn.debugHint ?? '')
-    || /HTTP (429|50[234])\b|upstream (?:model )?gateway timed out/i.test(turn.text);
+    || /httpStatus=(402|429|50[234])\b|kind=(timeout|transport)\b/i.test(turn.debugHint ?? '')
+    || /HTTP (402|429|50[234])\b|upstream (?:model )?gateway timed out/i.test(turn.text);
 }
 
 export function runnerPrompt(design: JobDesign, today: string): string {
@@ -501,12 +501,13 @@ export async function executeJobRun(runId: string): Promise<void> {
     });
     cost += turn.costMicros ?? 0;
     const pinned = work.source === 'pinned' && choice.profileId === work.primary?.profileId && choice.model === work.primary?.model;
-    recordStep('work', compact ? 'Compact retry' : correction ? (researchRetry ? 'Re-research' : 'Format retry') : 'First attempt', choice, pinned ? 'pinned' : 'auto', choice === work.fallback, turn.costMicros ?? null);
+    recordStep('work', compact ? 'Compact retry' : correction ? (researchRetry ? 'Re-research' : 'Format retry') : 'First attempt', choice, pinned ? 'pinned' : 'auto', choice.profileId !== worker.profileId || choice.model !== worker.model, turn.costMicros ?? null);
     return turn;
   };
 
   try {
     let activeWorker = worker;
+    const exhaustedProfiles = new Set<string>();
     let turn = await doWork(activeWorker);
     if (turn.role !== 'assistant' && /context (?:length|window)|maximum context|context.*exceed/i.test(turn.text)) {
       turn = await doWork(activeWorker, 'Use only the verified evidence supplied below. Return the required JSON without additional exploration.', false, true);
@@ -517,10 +518,18 @@ export async function executeJobRun(runId: string): Promise<void> {
     if (retryableProviderFailure(turn)) {
       const refreshCatalog = /httpStatus=5\d\d\b|HTTP 5\d\d\b/i.test(`${turn.debugHint ?? ''} ${turn.text}`);
       const fresh = await listAvailableModels({ force: refreshCatalog }).catch(() => models);
-      const candidates = fresh.filter((model) => model.profileId !== activeWorker.profileId || model.model !== activeWorker.model);
-      const alternate = (await selectModel(org, workNeed, level, { models: candidates, settings })).primary;
+      const creditFailure = /httpStatus=402\b|HTTP 402\b/i.test(`${turn.debugHint ?? ''} ${turn.text}`);
+      if (creditFailure) exhaustedProfiles.add(activeWorker.profileId);
+      // Credit errors affect the entire credential, not just its selected model.
+      const candidates = fresh.filter((model) => creditFailure
+        ? model.profileId !== activeWorker.profileId
+        : model.profileId !== activeWorker.profileId || model.model !== activeWorker.model);
+      const directOpenAI = creditFailure ? candidates.filter((model) => model.provider === 'openai') : [];
+      const alternate = (directOpenAI.length
+        ? (await selectModel(org, workNeed, level, { models: directOpenAI, settings })).primary
+        : null) ?? (await selectModel(org, workNeed, level, { models: candidates, settings })).primary;
       if (alternate && (alternate.profileId !== activeWorker.profileId || alternate.model !== activeWorker.model)) {
-        onProgress(`${shortModel(activeWorker.model)} did not complete; switching to ${shortModel(alternate.model)}`);
+        onProgress(`${shortModel(activeWorker.model)} ${creditFailure ? 'has insufficient provider credits' : 'did not complete'}; switching to ${shortModel(alternate.model)}`);
         activeWorker = alternate;
         turn = await doWork(activeWorker);
         if (turn.role !== 'assistant' && /context (?:length|window)|maximum context|context.*exceed/i.test(turn.text)) {
@@ -529,7 +538,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       }
     }
     // A free worker that fails may retry on the level's paid model, as elsewhere in the engine.
-    if (turn.role !== 'assistant' && work.fallback) { activeWorker = work.fallback; turn = await doWork(activeWorker); }
+    if (turn.role !== 'assistant' && work.fallback && !exhaustedProfiles.has(work.fallback.profileId) && work.fallback.profileId !== activeWorker.profileId) { activeWorker = work.fallback; turn = await doWork(activeWorker); }
     if (turn.role !== 'assistant') return void (await fail(turn.text, { costMicros: cost, models: usedModels }));
     let parsed = parseJobOutput(turn.text, activeDesign.skill);
     if (!parsed.success) {
@@ -574,6 +583,12 @@ export async function executeJobRun(runId: string): Promise<void> {
     }
 
     let verdict: { verdict: 'pass' | 'fail'; notes: string; model: string } | null = null;
+    if (review.primary && exhaustedProfiles.has(review.primary.profileId)) {
+      const candidates = models.filter((model) => !exhaustedProfiles.has(model.profileId));
+      const directOpenAI = candidates.filter((model) => model.provider === 'openai');
+      const replacement = await selectModel(org, 'review', level, { models: directOpenAI.length ? directOpenAI : candidates, settings });
+      Object.assign(review, replacement);
+    }
     if (review.primary) {
       await progress(run._id, owner, `Independent review with ${shortModel(review.primary.model)}`, { stage: 'reviewing', percent: 84 });
       const reviewTurn = await attemptCompanyCredentialChat({

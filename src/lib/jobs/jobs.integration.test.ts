@@ -246,6 +246,24 @@ describe('approving and the dry run', () => {
     expect(mocks.models).toHaveBeenLastCalledWith({ force: true });
   });
 
+  it('reroutes HTTP 402 to another credential, preferring direct OpenAI', async () => {
+    const router = { profileId: 'a'.repeat(24), model: 'router-model', free: false, label: 'OpenRouter', provider: 'openrouter' };
+    const sibling = { ...router, model: 'router-sibling' };
+    const openai = { profileId: 'b'.repeat(24), model: 'openai-model', free: false, label: 'OpenAI', provider: 'openai' };
+    mocks.models.mockResolvedValue([router, sibling, openai]);
+    mocks.select.mockImplementation(async (_org: string, _need: string, _level: string, options?: { models?: { model: string }[] }) => ({ primary: options?.models?.length === 1 && options.models[0].model === openai.model ? openai : router, fallback: null }));
+    mocks.chat.mockImplementation(async (input: { systemPrompt: string; model: string }) => {
+      if (input.systemPrompt.startsWith('You check one run')) return { requestId: 'review', role: 'assistant', text: '{"verdict":"pass","notes":"Sourced."}', costMicros: 0 };
+      if (input.model === router.model) return { requestId: 'credits', role: 'status', text: 'OpenRouter returned HTTP 402: This request requires more credits, or fewer max_tokens.', debugHint: 'httpStatus=402', costMicros: 0 };
+      return { requestId: 'work', role: 'assistant', text: GOOD, costMicros: 0 };
+    });
+    const job = await proposed();
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    expect(await JobRun.findById(approved.dryRunId).lean()).toMatchObject({ status: 'needs_review', models: [router.model, openai.model, openai.model] });
+    expect(mocks.chat.mock.calls.some(([input]) => input.model === sibling.model)).toBe(false);
+  });
+
   it('tracks link recommendations through approval and submission with feedback history', async () => {
     const config = { projectId, schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
     const created = await createTemplateJob(admin, { companyId, template: 'link_building', config });
