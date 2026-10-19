@@ -1,3 +1,4 @@
+import { Job } from '@/lib/models/Job';
 import 'server-only';
 import { Types } from 'mongoose';
 import { z } from 'zod';
@@ -68,6 +69,8 @@ export interface WatchView {
   dealUnitTokens: string[];
   aiSummary: boolean;
   autoPosts: boolean;
+  adminJobId?: string | null;
+  socialJobId?: string | null;
   digest: { enabled: boolean; cadence: 'daily' | 'weekly'; maxItems: number; lastRunAt: string | null; lastArticleId: string | null; lastError: string | null };
   active: boolean;
   intervalMinutes: number;
@@ -127,6 +130,7 @@ async function toViews(viewer: CompanyViewer, rows: WatchLean[]): Promise<WatchV
     { $group: { _id: '$watchId', scanned: { $sum: 1 }, flagged: { $sum: { $cond: ['$flagged', 1, 0] } } } },
   ]);
   const byWatch = new Map(counts.map((c) => [String(c._id), c]));
+  const destinations = await Job.find({ organizationId: viewer.organizationId, 'publishing.source.watchId': { $in: rows.map((r) => String(r._id)) }, status: { $nin: ['archived', 'rejected', 'done', 'paused'] } }).select('publishing status').lean<{ _id: Types.ObjectId; status?: string; publishing?: { source?: { watchId?: string }; channels?: { platform?: string }[] } }[]>();
   return rows.map((r) => {
     const settings = watchSettings(r);
     return {
@@ -151,6 +155,8 @@ async function toViews(viewer: CompanyViewer, rows: WatchLean[]): Promise<WatchV
     dealUnitTokens: r.dealUnitTokens ?? [],
     aiSummary: r.aiSummary !== false,
     autoPosts: r.autoPosts === true,
+    adminJobId: String(destinations.find((j) => ['ready', 'active'].includes(j.status ?? '') && j.publishing?.source?.watchId === String(r._id) && j.publishing?.channels?.some((c) => c.platform === 'admin'))?._id ?? '') || null,
+    socialJobId: String(destinations.find((j) => j.publishing?.source?.watchId === String(r._id) && j.publishing?.channels?.some((c) => c.platform !== 'admin'))?._id ?? '') || null,
     digest: {
       enabled: r.digest?.enabled === true,
       cadence: r.digest?.cadence === 'daily' ? 'daily' : 'weekly',

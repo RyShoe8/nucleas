@@ -20,7 +20,7 @@ import User from '@/lib/models/User';
 import { WatchItem } from '@/lib/models/Watch';
 import type { AdminBrowser } from './admin';
 import { PublishError } from './publishers';
-import { markPosted, postDeliveryNow, publishingView, recoverStuckDeliveries, runPublishing, skipDelivery, takeBaseline, type PublishDeps } from './engine';
+import { queueExistingAdminItem, markPosted, postDeliveryNow, publishingView, recoverStuckDeliveries, runPublishing, skipDelivery, takeBaseline, type PublishDeps } from './engine';
 import type { PublishingConfig } from './config';
 
 let replica: MongoMemoryReplSet;
@@ -272,6 +272,32 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
     await BrandVoice.deleteMany({});
     saved = [];
     signedIn = true;
+  });
+
+  it('filters social value strictly above 30% without filtering admin intake', async () => {
+    await email('a@example.com', 'Low', 100, 120);
+    await email('a@example.com', 'Exactly thirty', 100, 130);
+    await email('a@example.com', 'Above thirty', 100, 131);
+    const job = await adminJob();
+    await Job.updateOne({ _id: job._id }, { $set: { 'publishing.minimumSocialValuePct': 30 } });
+    expect(await takeBaseline((await Job.findById(job._id).lean())!, adminDeps())).toBe(3);
+    await PublishItem.deleteMany({});
+    await Job.updateOne({ _id: job._id }, { $set: { publishing: { source: adminConfig.source, channels: [{ platform: 'bluesky', mode: 'manual' }], minimumSocialValuePct: 30 } } });
+    expect(await takeBaseline((await Job.findById(job._id).lean())!, deps())).toBe(1);
+    expect(await PublishItem.findOne().lean()).toMatchObject({ title: 'Above thirty' });
+  });
+
+  it('queues an existing baselined email once for admin review without saving externally', async () => {
+    const item = await email('a@example.com', 'Existing offer', 20, 40);
+    const job = await adminJob();
+    await Job.updateOne({ _id: job._id }, { $set: { status: 'ready' } });
+    await takeBaseline((await Job.findById(job._id).lean())!, adminDeps());
+    const viewer = { userId: String(userId), organizationId: org, employeeId: null, role: 'Administrator' as const };
+    expect(await queueExistingAdminItem(viewer, String(item._id), adminDeps())).toMatchObject({ status: 'ready' });
+    expect(await queueExistingAdminItem(viewer, String(item._id), adminDeps())).toMatchObject({ status: 'ready' });
+    expect(await PublishDelivery.countDocuments({ jobId: job._id, platform: 'admin' })).toBe(1);
+    expect(saved).toEqual([]);
+    expect((await PublishDelivery.findOne().lean())?.mode).toBe('manual');
   });
 
   it('fills the real form on a dry run without saving, and works without a Voice', async () => {

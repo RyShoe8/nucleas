@@ -191,6 +191,16 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
         if (res.data.posts.length) setTab('posts');
     };
 
+    const queueAdmin = async (id: string) => {
+        setDrafting(id); setError(null);
+        try {
+            const res = await api<{ jobId: string; status: string }>(`/api/os/content/items/${id}/admin`, { method: 'POST' });
+            if (!res.ok) { setError(res.error); return; }
+            setNotice(res.data.status === 'posted' ? 'This deal has already been added.' : 'Admin card is in Marketing → Waiting for you. Review its fields, then click “Add it for me”. It has not been saved to the admin yet.');
+            window.dispatchEvent(new Event('nucleas:jobs-changed'));
+        } finally { setDrafting(null); }
+    };
+
     const digest = async () => {
         setDigesting(true);
         setError(null);
@@ -208,7 +218,7 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
             <div className="flex flex-wrap items-center gap-2">
                 <div className="flex gap-1">
                     <button type="button" className={tab === 'emails' ? 'ui-button-primary' : 'ui-button'} onClick={() => setTab('emails')}>Emails</button>
-                    <button type="button" className={tab === 'posts' ? 'ui-button-primary' : 'ui-button'} onClick={() => setTab('posts')}>Post drafts{posts.length ? ` · ${posts.length}` : ''}</button>
+                    <button type="button" className={tab === 'posts' ? 'ui-button-primary' : 'ui-button'} onClick={() => setTab('posts')}>Legacy drafts{posts.length ? ` · ${posts.length}` : ''}</button>
                 </div>
                 {tab === 'emails' ? (
                     <select value={filter} onChange={(e) => setFilter(e.target.value as Filter)} className="ui-control" aria-label="Show">
@@ -221,6 +231,7 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
                 {watch.companyId ? <button type="button" className="ui-button" disabled={digesting} onClick={() => void digest()} title={watch.digest.lastRunAt ? `Covers what was flagged since ${when(watch.digest.lastRunAt)}` : 'Covers what was flagged in the last period'}>{digesting ? 'Starting…' : 'Write digest now'}</button> : null}
                 <button type="button" className="ui-button-primary" disabled={scanning || watch.scanning} onClick={() => void scan()}>{scanning || watch.scanning ? 'Scanning…' : 'Scan now'}</button>
             </div>
+            {watch.socialJobId || watch.adminJobId ? <p className="text-xs text-text-secondary">This inbox collects items. Review and delivery happen in Marketing{watch.socialJobId ? '; social drafts use the job’s own eligibility rule' : ''}. Preparing an admin card does not save it.</p> : null}
             {notice ? <p role="status" className="text-xs text-emerald-400">{notice}</p> : null}
             {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
             {watch.lastScanError ? <p className="text-xs text-amber-400">Last scan failed: {watch.lastScanError}</p> : null}
@@ -238,7 +249,7 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
                 posts.length ? (
                     <ul className="space-y-2">{posts.map((p) => <PostCard key={p.id} post={p} onChange={(next) => setPosts((list) => (next ? list.map((x) => (x.id === next.id ? next : x)) : list.filter((x) => x.id !== p.id)))} />)}</ul>
                 ) : (
-                    <p className="text-sm text-text-secondary">{watch.companyId ? 'No post drafts yet. Use “Draft posts” on a flagged email.' : 'Link this watch to a company (Change watch) to draft posts in its Voice.'}</p>
+                    <p className="text-sm text-text-secondary">{watch.socialJobId ? 'Social drafts are managed in Marketing. No legacy drafts remain here.' : watch.companyId ? 'No post drafts yet. Use “Draft posts” on a flagged email.' : 'Link this watch to a company (Change watch) to draft posts in its Voice.'}</p>
                 )
             ) : loading ? (
                 <p className="text-sm text-text-secondary">Loading…</p>
@@ -269,7 +280,8 @@ export default function WatchFeed({ watch, onScanned }: { watch: WatchView; onSc
                                 {item.summary ? <p className="mt-1 text-sm leading-relaxed">{item.summary}</p> : null}
                                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
                                     {item.link ? <a href={item.link} target="_blank" rel="noopener noreferrer" className="touch-link text-primary">Open link</a> : null}
-                                    {item.flagged && watch.companyId ? <button type="button" className="ui-button px-2 py-0.5" disabled={drafting === item.id} onClick={() => void draft(item.id)}>{drafting === item.id ? 'Drafting…' : item.hasPost ? 'Posts drafted' : 'Draft posts'}</button> : null}
+                                    {item.flagged && watch.adminJobId ? <button type="button" className="ui-button px-2 py-0.5" disabled={drafting === item.id} onClick={() => void queueAdmin(item.id)}>Prepare admin card</button> : null}
+                                    {item.flagged && watch.companyId && !watch.socialJobId ? <button type="button" className="ui-button px-2 py-0.5" disabled={drafting === item.id} onClick={() => void draft(item.id)}>{drafting === item.id ? 'Drafting…' : item.hasPost ? 'Posts drafted' : 'Draft posts'}</button> : null}
                                 </div>
                                 {open === item.id ? (
                                     <div className="mt-3 space-y-2 border-t border-border pt-3">

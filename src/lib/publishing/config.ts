@@ -78,6 +78,8 @@ export function formFingerprint(fields: Pick<FormField, 'key' | 'type' | 'select
 
 export const publishingConfigSchema = z.object({
   source: publishSourceSchema,
+  /** Mailbox social destinations only: require value strictly greater than this percent. */
+  minimumSocialValuePct: z.number().min(0).max(1000).optional(),
   channels: z.array(channelSchema).min(1).max(PUBLISH_PLATFORMS.length),
   /** Example posts per platform: their structure (not their wording) shapes the drafts. */
   examples: z.record(z.enum(PUBLISH_PLATFORMS), z.object({ url: z.string().max(2000).optional(), text: z.string().max(6000).default('') })).default({}),

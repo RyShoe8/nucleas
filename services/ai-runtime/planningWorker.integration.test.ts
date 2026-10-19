@@ -778,7 +778,7 @@ describe('durable planning on a real isolated replica set', () => {
     await queuePlanning(access, String(objective._id), randomUUID()); await processPlanningQueue();
     await AiDispatchUsage.updateOne({ _id: DISPATCH_USAGE_ID }, { $set: { lastStartedAt: new Date(Date.now() - 360000) } });
     await queuePlanning(access, String(objective._id), randomUUID()); await processPlanningQueue();
-    await expect(queuePlanning(access, String(objective._id), randomUUID())).rejects.toThrow('Budget unavailable');
+    await expect(queuePlanning(access, String(objective._id), randomUUID())).rejects.toThrow('AI budget cannot reserve');
     expect(await AiRun.countDocuments()).toBe(3);
     expect(await AiPlanningJob.countDocuments()).toBe(3);
     expect((await AiBudget.find()).every(budget => budget.reservedMicros === 75)).toBe(true);

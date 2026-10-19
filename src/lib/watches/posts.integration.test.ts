@@ -1,3 +1,4 @@
+import { Job } from '@/lib/models/Job';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import mongoose, { Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
@@ -98,6 +99,15 @@ describe('drafting posts for an email', () => {
     expect(result.data.posts[0]).toMatchObject({ title: 'Big offer', link: 'https://shop.com/claim', status: 'draft', dealSummary: expect.stringContaining('$20') });
     expect(writer.calls).toHaveLength(2);
     expect(writer.calls[0]!.system).toContain('Dry, nostalgic gamer');
+  });
+
+  it('does not run the legacy writer alongside an inbox social publishing job', async () => {
+    const job = await Job.create({ organizationId: org, companyId: new Types.ObjectId(company.id), createdByUserId: user, request: 'Draft eligible deals', status: 'ready', publishing: { source: { type: 'mailbox', watchId: String(watchId) }, channels: [{ platform: 'bluesky', mode: 'manual' }] } });
+    try {
+      const writer = ask();
+      expect(await draftPostsForItem(org, String(user), String(itemId), { source: 'auto', ask: writer })).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('Marketing job') });
+      expect(writer.calls).toHaveLength(0);
+    } finally { await Job.deleteOne({ _id: job._id }); }
   });
 
   it('never writes the same post twice', async () => {

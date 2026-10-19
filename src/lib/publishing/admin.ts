@@ -57,6 +57,7 @@ export function fillSystemPrompt(input: { companyName: string; noun: string; bri
     'Rules:',
     '- Reply with one JSON object that maps field keys to values. Nothing else.',
     '- Use only the facts given. Never invent prices, amounts, codes, dates, links or names.',
+    '- Resolve omitted years and relative dates from the supplied email timestamp and current date, never from training data. Leave dates out if uncertain.',
     '- Leave a field out when the facts do not give its value. Fill a required field only when its value follows from the facts.',
     '- Choice fields: use exactly one of the listed values. Checkboxes: true or false. Dates: YYYY-MM-DD. Date and time: YYYY-MM-DDTHH:MM.',
     '- Titles and names: short and plain, as the site would show them.',
@@ -289,6 +290,10 @@ export async function addRecord(input: {
   let values = input.values;
   let relearned: AdminTarget | null = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const today = new Date().toISOString().slice(0, 10);
+    const end = typeof values.end_date === 'string' ? values.end_date : null;
+    const start = typeof values.start_date === 'string' ? values.start_date : null;
+    if (end && (end.slice(0, 10) < today || (start && end < start))) return { ok: false, code: 'rejected', screenshot: null, relearned, values, error: 'The deal dates are expired or inconsistent. Review the original email and correct the form manually before saving.' };
     let result: FillResult;
     try {
       result = await input.browser.fill(input.session, { url: target.formUrl, fields: target.fields, values, submit: true, submitSelector: target.submit.selector });

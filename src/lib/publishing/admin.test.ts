@@ -92,6 +92,12 @@ describe('adding a record', () => {
   const values = { casino: 'Golden Hearts', offer: '$20 → 40 SC' };
   const ok = { url: 'https://fg.club/admin/deals', title: '', loggedIn: true, submitted: true, missing: [], errors: [], text: '', screenshot: 'img' };
 
+  it('refuses expired dates before sending anything to the admin', async () => {
+    const browser: AdminBrowser = { inspect: vi.fn(), fill: vi.fn(), read: vi.fn() };
+    expect(await addRecord({ session, target, values: { ...values, start_date: '2024-10-13', end_date: '2024-10-20' }, browser, refill: vi.fn() })).toMatchObject({ ok: false, code: 'rejected', error: expect.stringContaining('expired') });
+    expect(browser.fill).not.toHaveBeenCalled();
+  });
+
   it('saves, then confirms the record is on the list page', async () => {
     const browser: AdminBrowser = { inspect: vi.fn(), fill: vi.fn(async () => ok), read: vi.fn(async () => ({ loggedIn: true, text: 'Deals\nGolden Hearts — $20 → 40 SC' })) };
     expect(await addRecord({ session, target, values, browser, refill: vi.fn() })).toMatchObject({ ok: true, verified: true, url: 'https://fg.club/admin/deals', relearned: null });

@@ -89,7 +89,7 @@ export default function WatchForm({ watch, mailboxes, onSaved, onCancel }: { wat
             labels: split(labels),
             dealUnitTokens: rank === 'discount' ? split(units) : [],
             companyId: companyId || null,
-            autoPosts: Boolean(companyId) && autoPosts,
+            autoPosts: Boolean(companyId) && !watch?.socialJobId && autoPosts,
             digest: { enabled: Boolean(companyId) && digestOn, cadence, maxItems },
             aiSummary,
             lookbackHours,
@@ -206,8 +206,8 @@ export default function WatchForm({ watch, mailboxes, onSaved, onCancel }: { wat
                     {companyId ? (
                         <div className="space-y-2 rounded border border-border p-3">
                             <label className="flex items-center gap-2 text-xs">
-                                <input type="checkbox" checked={autoPosts} onChange={(e) => setAutoPosts(e.target.checked)} />
-                                Draft social posts for each new flagged email, in the company’s Voice
+                                <input type="checkbox" disabled={Boolean(watch?.socialJobId)} checked={watch?.socialJobId ? false : autoPosts} onChange={(e) => setAutoPosts(e.target.checked)} />
+                                {watch?.socialJobId ? 'Social posts are managed by the Marketing job (one queue)' : 'Legacy: draft social posts here instead of using a Marketing job'}
                             </label>
                             <label className="flex items-center gap-2 text-xs">
                                 <input type="checkbox" checked={digestOn} onChange={(e) => setDigestOn(e.target.checked)} />

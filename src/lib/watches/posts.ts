@@ -1,3 +1,4 @@
+import { Job } from '@/lib/models/Job';
 import 'server-only';
 import { Types } from 'mongoose';
 import { ContentWatch, WatchItem, WatchPost } from '@/lib/models/Watch';
@@ -154,6 +155,7 @@ export async function draftPostsForItem(
   if (!item) return { ok: false, status: 404, error: 'Email not found.' };
   const watch = await ContentWatch.findOne({ _id: item.watchId, organizationId }).lean();
   if (!watch) return { ok: false, status: 404, error: 'Watch not found.' };
+  if (await Job.exists({ organizationId, 'publishing.source.watchId': String(watch._id), 'publishing.channels.platform': { $in: ['facebook', 'bluesky', 'reddit'] }, status: { $nin: ['archived', 'rejected', 'done', 'paused'] } })) return { ok: false, status: 409, error: 'Social drafts for this inbox are managed by its Marketing job. Open Marketing to review them.' };
   if (!watch.companyId) return { ok: false, status: 409, error: 'Link this watch to a company so posts are written in its Voice.' };
   const voice = await BrandVoice.findOne({ organizationId, companyId: watch.companyId, status: 'approved' }).select('persona').lean<{ persona?: string }>();
   if (!voice?.persona?.trim()) return { ok: false, status: 409, error: 'Approve this company’s Voice first, so posts sound like the brand.' };

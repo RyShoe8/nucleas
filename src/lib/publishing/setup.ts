@@ -144,7 +144,7 @@ async function channelOptions(viewer: CompanyViewer, companyId: string, request:
       canAuto = true;
     }
     const has = connected.has(platform) || socialNetworks.includes(platform) || (platform === 'reddit' && Boolean(subreddit));
-    out.push({ platform, selected: named.length ? named.includes(platform) : has, canAuto, mode: canAuto ? 'auto' : 'manual', note });
+    out.push({ platform, selected: named.length ? named.includes(platform) : has, canAuto, mode: canAuto && !/review|approv|manual|by hand/i.test(request) ? 'auto' : 'manual', note });
   }
   return out;
 }
@@ -193,7 +193,7 @@ export async function planRequest(viewer: CompanyViewer, input: { companyId: str
         source,
         sourceLabel: sourceLabel(source, profile.domain ?? null),
         newest,
-        channels: [{ platform: 'admin', selected: true, canAuto: true, mode: 'auto', note: null }],
+        channels: [{ platform: 'admin', selected: true, canAuto: true, mode: /review|approv|manual|by hand/i.test(request) ? 'manual' : 'auto', note: null }],
         people,
         notifyUserIds,
         blocker: null,
@@ -224,6 +224,7 @@ const createSchema = z.object({
   companyId: z.string().regex(/^[a-f0-9]{24}$/i),
   request: z.string().trim().min(10).max(2000),
   source: publishSourceSchema,
+  minimumSocialValuePct: z.number().min(0).max(1000).optional(),
   channels: z.array(channelSchema).min(1, 'Choose at least one platform.'),
   notifyUserIds: z.array(z.string()).max(50).default([]),
   examples: z.record(z.enum(PUBLISH_PLATFORMS), z.string().max(6000)).default({}),
@@ -297,6 +298,7 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
   const channels = normalizeChannels(input.channels);
   const config: PublishingConfig = {
     source: input.source,
+    ...(input.minimumSocialValuePct !== undefined ? { minimumSocialValuePct: input.minimumSocialValuePct } : {}),
     channels,
     examples: examples.examples,
     notifyUserIds: await keepOrgPeople(viewer.organizationId, input.notifyUserIds),
@@ -318,10 +320,14 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
     designCostMicros: 0,
     events: [{ at: new Date(), userId: new Types.ObjectId(viewer.userId), action: 'skill_configured', note: 'social_publish' }],
   });
+  if (input.source.type === 'mailbox' && channels.some((c) => c.platform !== 'admin')) {
+    await ContentWatch.updateOne({ _id: new Types.ObjectId(input.source.watchId), organizationId: viewer.organizationId }, { $set: { autoPosts: false } });
+  }
   return { ok: true, jobId: String(doc._id) };
 }
 
 const settingsSchema = z.object({
+  minimumSocialValuePct: z.number().min(0).max(1000).nullable().optional(),
   channels: z.array(channelSchema).min(1, 'Keep at least one platform.').optional(),
   notifyUserIds: z.array(z.string()).max(50).optional(),
   examples: z.record(z.enum(PUBLISH_PLATFORMS), z.string().max(6000)).optional(),
@@ -334,6 +340,8 @@ export async function updatePublishingSettings(viewer: CompanyViewer, job: { _id
   if (!parsed.success) return { ok: false, status: 400, error: parsed.error.issues[0]?.message ?? 'Check the settings.' };
   const set: Record<string, unknown> = {};
   const unset: Record<string, ''> = {};
+  if (parsed.data.minimumSocialValuePct === null) unset['publishing.minimumSocialValuePct'] = '';
+  else if (parsed.data.minimumSocialValuePct !== undefined) set['publishing.minimumSocialValuePct'] = parsed.data.minimumSocialValuePct;
   if (parsed.data.channels) {
     const allowed = platformsFor((job.publishing ?? {}) as { admin?: unknown });
     if (parsed.data.channels.some((c) => !allowed.includes(c.platform))) return { ok: false, status: 400, error: 'That platform does not belong to this job.' };

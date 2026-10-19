@@ -56,6 +56,7 @@ function SampleReview({ job, run, onChange }: { job: JobView; run: JobRunView; o
     return (
         <section className="space-y-2">
             <p className="text-xs text-text-secondary">{run.output?.summary}</p>
+            {job.publishing?.admin ? <p className="rounded border border-amber-400/40 p-2 text-xs text-amber-300">Preview only — no admin record has been saved. Accepting starts monitoring future emails; use “Prepare admin card” on an existing email to add that item separately.</p> : null}
             {run.output?.gaps.length ? <p className="text-xs text-amber-300">{run.output.gaps.join(' ')}</p> : null}
             <div className={`grid gap-2 ${records.length > 1 ? 'sm:grid-cols-2' : ''}`}>
                 {records.map((r, i) => (
@@ -101,6 +102,7 @@ function Settings({ job, onChange }: { job: JobView; onChange: (j: JobView) => v
         [view]
     );
     const [channels, setChannels] = useState(initial);
+    const [minimumValue, setMinimumValue] = useState(view.minimumSocialValuePct?.toString() ?? '');
     const [notify, setNotify] = useState(view.notifyUserIds);
     const [people, setPeople] = useState<{ userId: string; name: string }[]>([]);
     const [busy, setBusy] = useState(false);
@@ -110,11 +112,11 @@ function Settings({ job, onChange }: { job: JobView; onChange: (j: JobView) => v
         void loadPeople().then((list) => !cancelled && setPeople(list));
         return () => { cancelled = true; };
     }, []);
-    const dirty = JSON.stringify(channels.map((c) => [c.platform, c.selected, c.mode])) !== JSON.stringify(initial.map((c) => [c.platform, c.selected, c.mode])) || [...notify].sort().join() !== [...view.notifyUserIds].sort().join();
+    const dirty = minimumValue !== (view.minimumSocialValuePct?.toString() ?? '') || JSON.stringify(channels.map((c) => [c.platform, c.selected, c.mode])) !== JSON.stringify(initial.map((c) => [c.platform, c.selected, c.mode])) || [...notify].sort().join() !== [...view.notifyUserIds].sort().join();
     const save = async () => {
         setBusy(true);
         setError(null);
-        const res = await post(job.id, { action: 'publishing_settings', settings: { channels: channels.filter((c) => c.selected).map((c) => ({ platform: c.platform, mode: c.mode })), notifyUserIds: notify } });
+        const res = await post(job.id, { action: 'publishing_settings', settings: { minimumSocialValuePct: minimumValue !== '' ? Number(minimumValue) : null, channels: channels.filter((c) => c.selected).map((c) => ({ platform: c.platform, mode: c.mode })), notifyUserIds: notify } });
         setBusy(false);
         if (res.error || !res.job) return setError(res.error ?? 'Failed');
         onChange(res.job);
@@ -124,6 +126,7 @@ function Settings({ job, onChange }: { job: JobView; onChange: (j: JobView) => v
             <section className="space-y-2">
                 <h4 className="ui-kicker">{view.admin ? 'Adding' : 'Post to'}</h4>
                 <ChannelPicker channels={channels} onChange={setChannels} disabled={!job.canManage} />
+                {view.source.type === 'mailbox' && !view.admin ? <label className="block text-xs">Only social deals strictly over this value (%)<input type="number" min="0" max="1000" step="any" className="ui-control w-full" disabled={!job.canManage} value={minimumValue} onChange={(e) => setMinimumValue(e.target.value)} placeholder="No additional destination filter" /></label> : null}
             </section>
             <section className="space-y-2">
                 <h4 className="ui-kicker">Notify</h4>
@@ -173,6 +176,7 @@ export default function PublishingJobBody({ job, onChange, readyShownAbove = fal
             <p className="text-xs text-text-secondary">
                 {sourceLabel(view.source)}
                 {view.admin ? <> · adds to <a href={view.admin.formUrl} target="_blank" rel="noreferrer" className="underline">{new URL(view.admin.formUrl).host}{new URL(view.admin.formUrl).pathname}</a></> : null}
+                {view.minimumSocialValuePct !== undefined ? ` · social value must be over ${view.minimumSocialValuePct}%` : ''}
                 {on ? ` · last checked ${ago(job.lastRunAt)}` : ''}
                 {on && view.postedThisWeek ? ` · ${view.postedThisWeek} posted this week` : ''}
             </p>
@@ -202,7 +206,7 @@ export default function PublishingJobBody({ job, onChange, readyShownAbove = fal
                 </section>
             ) : null}
 
-            {on ? <Settings key={JSON.stringify([view.channels, view.notes, view.notifyUserIds])} job={job} onChange={onChange} /> : null}
+            {on ? <Settings key={JSON.stringify([view.channels, view.notes, view.notifyUserIds, view.minimumSocialValuePct])} job={job} onChange={onChange} /> : null}
 
             {view.recent.length ? (
                 <section className="space-y-1">
