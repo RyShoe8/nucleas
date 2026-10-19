@@ -777,6 +777,8 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                 <JobStatusBadge status={job.status} label={job.status === 'proposed' && failedAttempt ? 'Dry run failed' : undefined} />
             </div>
 
+            {d?.skill === 'social_media' ? <p className="text-xs text-text-secondary">Evergreen ideas from existing content. This job does not watch new publications. For new items with separate Facebook, Bluesky and Reddit drafts, create a new-item publishing job in Marketing.</p> : null}
+
             {d?.skill === 'ai_citations' ? <p className="text-xs text-text-secondary">Find one researched suggestion each day to help {job.companyName} get mentioned in AI answers. Results are saved here for you to review; this job does not publish social posts or change your website.</p> : null}
 
             {d?.skill === 'social_publish' && !compact ? <PublishingJobBody job={job} onChange={update} readyShownAbove={readyShownAbove} /> : <>

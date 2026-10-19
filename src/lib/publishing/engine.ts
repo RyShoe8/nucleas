@@ -359,7 +359,7 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
   if (run.dryRun) {
     const newest = entries[0];
     if (!newest) return fail(`No ${noun}s were found to try a sample with.`);
-    await progress(run._id, owner, `Writing sample posts for “${newest.title || newest.key}”`, 'researching', 40);
+    await progress(run._id, owner, `Writing a format preview using existing content: “${newest.title || newest.key}”`, 'researching', 40);
     let facts: ItemFacts;
     try {
       facts = await factsFor(job, config, newest, deps);
@@ -396,11 +396,11 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
       records,
       summary: admin
         ? `A sample for the newest ${noun}, “${facts.title}”: the form was filled but not saved. Accept to switch the job on: it checks every hour, and only ${noun}s that arrive after that are added.`
-        : `Sample posts for the newest ${noun}, “${facts.title}”. Nothing was posted. Accept to switch the job on: it checks every hour, and only ${noun}s that appear after that are posted.`,
+        : `Format preview using an existing ${noun}, “${facts.title}”. This sample is not a new-publication notification. Nothing was posted. Accept to switch the job on: it checks every hour, and only ${noun}s that appear after that are posted.`,
       gaps,
     };
     const saved = await finishRun(run._id, owner, 'needs_review', { output });
-    if (saved) await notifyPeople(job.organizationId, config.notifyUserIds, { subject: `Sample posts ready to check · ${profile.name}`, intro: `Nucleas wrote sample posts for the newest ${noun} (“${facts.title}”). Check them, then accept to switch the job on.`, lines: [], action: 'Review the samples' }, deps.send);
+    if (saved) await notifyPeople(job.organizationId, config.notifyUserIds, { subject: `Sample posts ready to check · ${profile.name}`, intro: `Nucleas wrote a format preview using an existing ${noun} (“${facts.title}”). It is not a new-publication notification. Check the drafts, then accept to switch the job on.`, lines: [], action: 'Review the samples' }, deps.send);
     return;
   }
 

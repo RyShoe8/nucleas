@@ -117,6 +117,27 @@ describe('publishing jobs', () => {
     expect(sent).toEqual([{ to: 'ryan@example.com', subject: 'Sample posts ready to check · PlayBound' }]);
   });
 
+  it('keeps platform drafts separate, caps Bluesky, and uses the game page in an explicitly existing-item preview', async () => {
+    const job = await newJob();
+    const run = await newRun(job._id, true);
+    const calls: string[] = [];
+    await runPublishing(run, 'owner', job.toObject(), { ...deps(), write: async ({ system }) => {
+      calls.push(system);
+      return JSON.stringify({ title: 'Game title', body: 'Useful game facts. '.repeat(50) });
+    } });
+    const done = await JobRun.findById(run._id).lean();
+    const output = done?.output as { summary: string; records: { values: Record<string, unknown> }[] };
+    const bluesky = output.records.find((r) => r.values.platform === 'Bluesky')!;
+    const facebook = output.records.find((r) => r.values.platform === 'Facebook')!;
+    expect([...String(bluesky.values.post_copy)].length).toBeLessThanOrEqual(300);
+    expect(String(facebook.values.post_copy).length).toBeGreaterThan(300);
+    expect(output.records.every((r) => r.values.target_url === 'https://playbound.club/games/openra')).toBe(true);
+    expect(output.summary).toContain('existing game');
+    expect(output.summary).toContain('not a new-publication notification');
+    expect(calls.some((system) => system.includes('Bluesky'))).toBe(true);
+    expect(published).toEqual([]);
+  });
+
   it('posts only what appears after the baseline: auto channels publish, manual ones become cards', async () => {
     const job = await newJob();
     expect(await takeBaseline(job.toObject(), deps())).toBe(2);

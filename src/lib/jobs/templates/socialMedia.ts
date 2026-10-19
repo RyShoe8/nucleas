@@ -3,8 +3,8 @@ import type { JobDesign } from '../schema';
 export function socialMediaDesign(platforms: string[]): JobDesign {
   const selected = platforms.filter((value) => value && value.toLowerCase() !== 'not established');
   return {
-    skill: 'social_media', title: 'Social media drafts', category: 'marketing',
-    instructions: `Create one timely social post draft using the approved Marketing Plan. Choose the best current content pillar and priority page. ${selected.length ? `Target only these approved platforms: ${selected.join(', ')}.` : 'Choose a platform only when the approved plan establishes one; otherwise explain the gap.'} Adapt format, voice, length, hook, and call to action to the platform. For Reddit, write the title in post_title and a body in post_copy that suits the community: useful first, no sales pitch. Do not publish.`,
+    skill: 'social_media', title: 'Evergreen social post ideas', category: 'marketing',
+    instructions: `Create one evergreen social post idea from existing catalog content using the approved Marketing Plan. Choose the best current content pillar and priority page. ${selected.length ? `Target only these approved platforms: ${selected.join(', ')}.` : 'Choose a platform only when the approved plan establishes one; otherwise explain the gap.'} Adapt format, voice, length, hook, and call to action to the platform. For Reddit, write the title in post_title and a body in post_copy that suits the community: useful first, no sales pitch. This is not a new-publication watcher: never describe an existing item as newly published without verified publication evidence. Use the specific item page, not a general discovery or catalog index. Do not publish.`,
     fields: [
       { key: 'platform', label: 'Platform', type: 'text', required: true, description: 'Approved social platform.' },
       { key: 'objective', label: 'Objective', type: 'text', required: true, description: 'Goal and funnel stage.' },
