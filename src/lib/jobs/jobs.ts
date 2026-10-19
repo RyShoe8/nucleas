@@ -193,7 +193,16 @@ export async function listJobs(viewer: CompanyViewer, options: { includeClosed?:
   const companies = await listCompanyProfiles(viewer);
   const byCompany = new Map(companies.map((c) => [c.id, { name: c.name, subreddit: c.subreddit }]));
   const allowed = companies.map((c) => new Types.ObjectId(c.id)).filter((id) => !options.companyId || String(id) === options.companyId);
-  const jobs = await Job.find({ organizationId: viewer.organizationId, companyId: { $in: allowed }, ...(options.includeClosed ? {} : { status: { $in: [...OPEN, 'done'] } }) })
+  const cutoff = new Date(Date.now() - 3 * 86_400_000);
+  // Older jobs predate completedAt. Their completion event keeps later edits from
+  // restarting the three-day display window; updatedAt is the final legacy fallback.
+  const completedAt = { $ifNull: ['$completedAt', { $ifNull: [{ $max: { $map: {
+    input: { $filter: { input: { $ifNull: ['$events', []] }, as: 'event', cond: { $in: ['$$event.action', ['dry_run_accepted', 'property_crawl_completed']] } } },
+    as: 'event', in: '$$event.at',
+  } } }, '$updatedAt'] }] };
+  const jobs = await Job.find({ organizationId: viewer.organizationId, companyId: { $in: allowed }, ...(options.includeClosed ? {} : {
+    $or: [{ status: { $in: OPEN } }, { status: 'done', $expr: { $gt: [completedAt, cutoff] } }],
+  }) })
     .sort({ updatedAt: -1 })
     .limit(200)
     .lean<JobLean[]>();
@@ -457,7 +466,7 @@ export async function decideRun(viewer: CompanyViewer, jobId: string, runId: str
     await Job.updateOne(
       { _id: found.job._id, status: 'testing' },
       {
-        $set: { status: next, ...(nextRunAt ? { nextRunAt } : {}) },
+        $set: { status: next, ...(next === 'done' ? { completedAt: new Date() } : {}), ...(nextRunAt ? { nextRunAt } : {}) },
         ...(!nextRunAt ? { $unset: { nextRunAt: '' } } : {}),
         $push: { events: event(viewer, decision === 'accept' ? 'dry_run_accepted' : 'dry_run_rejected', note) },
       }

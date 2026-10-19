@@ -29,7 +29,7 @@ import { brandVoiceContext, getBrandVoice, updateBrandVoice } from '@/lib/brandV
 import { ArtifactRevision, artifactHistory } from './artifactHistory';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
-import { answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, pauseJob, runDesign, runNow, sweepJobs } from './jobs';
+import { answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, listJobs, pauseJob, runDesign, runNow, sweepJobs } from './jobs';
 import type { JobDesign } from './schema';
 import { updateLinkOpportunity, verifyLinkOpportunity } from './linkOpportunities';
 import { completePropertyOverviewJob, createPropertyOverviewJob, startPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
@@ -121,6 +121,29 @@ async function proposed(design: JobDesign = DESIGN) {
   if (!created.ok) throw new Error(created.error);
   return created.job;
 }
+
+describe('completed job visibility', () => {
+  it('hides completed jobs at three days, keeps active jobs and preserves history access', async () => {
+    const now = Date.now();
+    const cutoff = now - 3 * 86_400_000;
+    const make = (title: string, extra: Record<string, unknown>) => Job.create({ organizationId: org, companyId, createdByUserId: admin.userId, request: title, design: { ...DESIGN, title }, status: 'done', ...extra });
+    const [recent, boundary, old, legacy, active] = await Promise.all([
+      make('Recent completion', { completedAt: new Date(cutoff + 1) }),
+      make('Exactly three days', { completedAt: new Date(cutoff) }),
+      make('Older completion', { completedAt: new Date(cutoff - 1) }),
+      make('Legacy completion edited today', { events: [{ action: 'dry_run_accepted', at: new Date(cutoff - 1) }] }),
+      make('Recurring job', { status: 'ready', completedAt: new Date(cutoff - 1) }),
+    ]);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      expect((await listJobs(admin)).map((j) => j.id).sort()).toEqual([String(recent._id), String(active._id)].sort());
+      expect((await listJobs(admin, { includeClosed: true })).map((j) => j.id)).toEqual(expect.arrayContaining([String(boundary._id), String(old._id), String(legacy._id)]));
+      expect(await getJob(admin, String(old._id))).toMatchObject({ status: 'done' });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+});
 
 describe('designing', () => {
   it('persists generated Voice as a draft, then uses only approved company-scoped personas', async () => {

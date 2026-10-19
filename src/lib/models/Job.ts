@@ -37,6 +37,8 @@ const jobSchema = new Schema(
     monthlyBudgetMicros: { type: Number, default: 2_000_000 },
     designCostMicros: { type: Number, default: 0 },
     lastRunAt: { type: Date },
+    /** When the whole job completed; separate from later edits to its history. */
+    completedAt: { type: Date },
     /** Exact next scheduled run; claimed atomically by the jobs cron. */
     nextRunAt: { type: Date },
     error: { type: String, maxlength: 1000 },

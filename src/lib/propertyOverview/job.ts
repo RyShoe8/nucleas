@@ -126,7 +126,7 @@ export async function completePropertyOverviewJob(input: { jobId?: Types.ObjectI
   };
   await Promise.all([
     JobRun.updateOne({ _id: input.runId, status: 'running', leaseOwner: PROPERTY_OVERVIEW_OWNER }, { $set: { status: 'completed', output, finishedAt: now, progressState: { stage: 'complete', label: 'Company Overview complete', percent: 100, updatedAt: now } }, $unset: { leaseExpiresAt: '' }, $push: { progress: 'Company Overview complete' } }),
-    Job.updateOne({ _id: input.jobId, status: 'active' }, { $set: { status: 'done' }, $push: { events: { at: now, action: 'property_crawl_completed' } } }),
+    Job.updateOne({ _id: input.jobId, status: 'active' }, { $set: { status: 'done', completedAt: now }, $push: { events: { at: now, action: 'property_crawl_completed' } } }),
   ]);
 }
 
