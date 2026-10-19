@@ -1,3 +1,4 @@
+import { retryDatabaseRead } from '@/lib/db/retryRead';
 import { randomUUID } from 'node:crypto';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
@@ -26,7 +27,7 @@ export const maxDuration = 800;
 type Context = { params: Promise<{ id: string }> };
 
 export async function GET(request: NextRequest, { params }: Context) {
-  const viewer = await requireCompanyViewer(request);
+  const viewer = await retryDatabaseRead('jobs.viewer', () => requireCompanyViewer(request));
   if (viewer instanceof NextResponse) return viewer;
   const job = await getJob(viewer, (await params).id);
   if (!job) return NextResponse.json({ error: 'Job not found.' }, { status: 404 });
@@ -53,7 +54,7 @@ export async function POST(request: NextRequest, context: Context) {
 }
 
 async function performAction(request: NextRequest, { params }: Context) {
-  const viewer = await requireCompanyViewer(request);
+  const viewer = await retryDatabaseRead('jobs.viewer', () => requireCompanyViewer(request));
   if (viewer instanceof NextResponse) return viewer;
   const id = (await params).id;
   const body = (await request.json().catch(() => ({}))) as {

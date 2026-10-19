@@ -179,7 +179,14 @@ describe('publishing jobs', () => {
 
     // Once the account is fixed, the card can be posted through the API.
     failFacebook = null;
+    const itemRead = vi.spyOn(PublishItem, 'findById').mockImplementationOnce(() => {
+      throw Object.assign(new Error('TLS pool reset'), { name: 'MongoNetworkError' });
+    });
+    const before = published.length;
     expect(await postDeliveryNow(job.toObject(), String(facebook!._id), String(userId), deps())).toEqual({ ok: true });
+    expect(itemRead).toHaveBeenCalledTimes(2);
+    itemRead.mockRestore();
+    expect(published).toHaveLength(before + 1);
     expect(await PublishDelivery.findById(facebook!._id).lean()).toMatchObject({ status: 'posted', postedUrl: expect.stringContaining('facebook.com') });
   });
 

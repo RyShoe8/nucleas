@@ -1,3 +1,4 @@
+import { retryDatabaseRead } from '@/lib/db/retryRead';
 import { dealStrengthPct } from '@/lib/watches/dealMetrics';
 import 'server-only';
 import { Types } from 'mongoose';
@@ -248,7 +249,7 @@ type AdminPostOutcome = PostOutcome & { screenshot: string | null; warning?: str
 async function postToAdmin(job: JobLike, config: PublishingConfig, values: Record<string, string | boolean>, facts: ItemFacts, context: DraftContext, write: Writer, deps: PublishDeps): Promise<AdminPostOutcome> {
   if (!config.admin) return { ok: false, error: new PublishError('rejected', 'This job has no admin form set up.'), screenshot: null };
   const session = deps.adminSession !== undefined ? deps.adminSession : await adminSessionFor(job.organizationId, String(job.companyId));
-  if (!session) return { ok: false, error: new PublishError('needs_reauth', 'The admin session has expired or is missing. Log in again (Company → Admin account), then switch Admin back to Auto.'), screenshot: null };
+  if (!session) return { ok: false, error: new PublishError('needs_reauth', 'The admin session has expired or is missing. Reconnect it in Company → Admin account, then retry this card.'), screenshot: null };
   const outcome = await addRecord({
     session,
     target: config.admin,
@@ -599,24 +600,29 @@ export async function editDelivery(job: { _id: Types.ObjectId; organizationId: T
 export async function postDeliveryNow(job: JobLike, deliveryId: string, userId: string, deps: PublishDeps = {}): Promise<DeliveryResult> {
   const filter = deliveryFilter(job, deliveryId);
   if (!filter) return { ok: false, status: 404, error: 'Post not found.' };
-  const candidate = await PublishDelivery.findOne({ ...filter, status: 'ready' }).select('platform itemId').lean();
-  const currentJob = await Job.findOne({ _id: job._id, organizationId: job.organizationId }).select('publishing').lean();
+  const candidate = await retryDatabaseRead('publishing.delivery', () => PublishDelivery.findOne({ ...filter, status: 'ready' }).lean().exec());
+  const currentJob = await retryDatabaseRead('publishing.settings', () => Job.findOne({ _id: job._id, organizationId: job.organizationId }).select('publishing').lean().exec());
   const socialConfig = currentJob ? readConfig(currentJob) : null;
   if (candidate && candidate.platform !== 'admin' && socialConfig?.source.type === 'mailbox' && socialConfig.minimumSocialValuePct !== undefined) {
     const source = await PublishItem.findOne({ _id: candidate.itemId, organizationId: job.organizationId }).select('key').lean();
     const email = source && Types.ObjectId.isValid(source.key) ? await WatchItem.findOne({ _id: new Types.ObjectId(source.key), organizationId: job.organizationId }).select('bestDeal').lean() : null;
     if (!email?.bestDeal || !(dealStrengthPct(email.bestDeal as DealMetrics) > socialConfig.minimumSocialValuePct / 100 + Number.EPSILON)) return { ok: false, status: 409, error: `This deal does not have confirmed value over ${socialConfig.minimumSocialValuePct}%; it cannot be posted to social.` };
   }
+  if (!candidate) return { ok: false, status: 409, error: 'This post was already handled.' };
+  // Finish read-only preparation before claiming or making an external change.
+  const item = await retryDatabaseRead('publishing.item', () => PublishItem.findById(candidate.itemId).select('facts title').lean<{ title?: string; facts?: { title?: string; description?: string } }>().exec());
+  const persona = candidate.platform === 'admin' ? await retryDatabaseRead('publishing.voice', () => approvedPersona(job)) : '';
+  const preparedDeps = candidate.platform === 'admin' && deps.adminSession === undefined
+    ? { ...deps, adminSession: await retryDatabaseRead('publishing.admin-session', () => adminSessionFor(job.organizationId, String(job.companyId))) }
+    : deps;
   const delivery = await PublishDelivery.findOneAndUpdate({ ...filter, status: 'ready', platform: { $nin: MANUAL_ONLY } }, { $set: { status: 'publishing' } }, { new: true }).lean<{ _id: Types.ObjectId; platform: PublishPlatform; body: string; link?: string; assets?: { kind: string; url: string }[]; itemId: Types.ObjectId; values?: Record<string, string | boolean> }>();
   if (!delivery) return { ok: false, status: 409, error: 'This post cannot be posted automatically, or it was already handled.' };
-  const item = await PublishItem.findById(delivery.itemId).select('facts title').lean<{ title?: string; facts?: { title?: string; description?: string } }>();
   let outcome: PostOutcome & { screenshot?: string | null; warning?: string };
   if (delivery.platform === 'admin') {
-    const config = readConfig((await Job.findById(job._id).select('publishing').lean<{ publishing?: unknown }>()) ?? {});
-    const persona = await approvedPersona(job);
+    const config = socialConfig;
     const facts: ItemFacts = { title: item?.facts?.title ?? item?.title ?? '', description: item?.facts?.description ?? '', text: '', image: null, images: [], video: null, extra: [], link: delivery.link ?? null };
     outcome = config
-      ? await postToAdmin(job, config, delivery.values ?? {}, facts, { companyName: '', persona, subreddit: null }, deps.write ?? engineWriter(job), deps)
+      ? await postToAdmin(job, config, delivery.values ?? {}, facts, { companyName: '', persona, subreddit: null }, deps.write ?? engineWriter(job), preparedDeps)
       : { ok: false, error: new PublishError('rejected', 'This job’s settings are missing.') };
   } else {
     outcome = await postTo(job, delivery.platform, postInput(delivery, item?.facts ?? {}), deps);

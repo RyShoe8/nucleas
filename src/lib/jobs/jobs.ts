@@ -1,3 +1,4 @@
+import { retryDatabaseRead } from '@/lib/db/retryRead';
 import type { ModelStep } from '@/lib/jobs/modelPath';
 import 'server-only';
 import { manualArtifact } from './output';
@@ -522,7 +523,7 @@ export type PublishingAction = 'publishing_settings' | 'mark_posted' | 'skip_pos
  * people the job notifies to post them.
  */
 export async function publishingAction(viewer: CompanyViewer, id: string, action: PublishingAction, body: Record<string, unknown>): Promise<ActionResult> {
-  const found = await managed(viewer, id, { anyMember: action !== 'publishing_settings' });
+  const found = await retryDatabaseRead('publishing.authorize', () => managed(viewer, id, { anyMember: action !== 'publishing_settings' }));
   if (!found.ok) return found;
   if (jobDesignSchema.safeParse(found.job.design).data?.skill !== 'social_publish') return { ok: false, status: 400, error: 'This is not a publishing job.' };
   const deliveryId = typeof body.deliveryId === 'string' ? body.deliveryId : '';
@@ -533,7 +534,7 @@ export async function publishingAction(viewer: CompanyViewer, id: string, action
     : action === 'edit_post' ? await editDelivery(found.job, deliveryId, { title: typeof body.title === 'string' ? body.title : undefined, body: typeof body.body === 'string' ? body.body : undefined })
     : await postDeliveryNow(found.job, deliveryId, viewer.userId);
   if (!result.ok) return result;
-  return done(viewer, id);
+  return retryDatabaseRead('publishing.refresh', () => done(viewer, id));
 }
 
 // ---------- Background ----------
