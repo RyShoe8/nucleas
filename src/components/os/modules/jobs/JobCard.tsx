@@ -471,10 +471,11 @@ function ModelPath({ run }: { run: JobRunView }) {
                         <span className={`ml-2 rounded border px-1.5 py-0.5 text-[10px] ${step.free ? 'border-border text-text-secondary' : 'border-primary/40 text-primary'}`}>{step.free ? 'Free' : 'Paid'}</span>
                         <span className="ml-2 text-xs text-text-secondary">{step.costMicros === null ? (step.free ? '' : 'cost unknown') : usd(step.costMicros)}</span>
                         <p className="text-xs text-text-secondary">{step.reason}</p>
+                        {step.error ? <p className="text-xs text-amber-300">Failed: {step.error}</p> : null}
                     </li>
                 ))}
             </ol>
-            {unknownModels.length ? <p className="mt-2 text-xs text-amber-300">No token price is on file for {unknownModels.join(', ')}, so its cost is not included below. It was not free.</p> : null}
+            {unknownModels.length ? <p className="mt-2 text-xs text-amber-300">Cost could not be confirmed for {unknownModels.join(', ')}. This can happen after a provider error or when usage or pricing is unavailable; any unconfirmed charges are not included below.</p> : null}
         </section>
     );
 }

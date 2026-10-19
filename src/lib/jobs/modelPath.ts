@@ -14,6 +14,8 @@ export interface ModelStep {
   /** Null when the model is paid but no token price is on file, so the real cost is unknown. */
   costMicros: number | null;
   reason: string;
+  /** Provider failure for this attempt, when no usable answer was returned. */
+  error?: string;
 }
 
 const LEVEL_LABEL: Record<ModelPathLevel, string> = { free: 'Free', low: 'Low', medium: 'Medium', high: 'High' };
@@ -23,12 +25,14 @@ export function modelStepReason(input: { stage: 'work' | 'review'; level: ModelP
   const level = LEVEL_LABEL[input.level];
   if (input.source === 'pinned') return 'Chosen for this task and level in AI Engine settings.';
   if (input.level === 'free') return 'The Free level uses only free models.';
+  if (input.fallback && input.free) return `${level} level: another free model was tried after an earlier attempt failed.`;
+  if (input.fallback && input.stage === 'review') return `${level} level: another paid reviewer was tried after an earlier attempt failed.`;
   if (input.stage === 'review') {
     return input.free
       ? 'No paid model was eligible to review, so a free model did.'
       : `${level} level: the strongest paid model within its price ceiling reviews.`;
   }
-  if (input.fallback) return `${level} level: a paid retry, used only because the free model failed.`;
+  if (input.fallback) return `${level} level: a paid retry after an earlier model failed.`;
   if (input.free) {
     return `${level} level: the free model does the work${input.level === 'medium' ? ', with a paid retry only if it fails' : ' and never pays to retry'}.`;
   }

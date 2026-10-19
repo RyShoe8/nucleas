@@ -11,6 +11,10 @@ describe('modelStepReason', () => {
     expect(modelStepReason({ stage: 'review', level: 'medium', free: false, source: 'auto', fallback: false })).toMatch(/strongest paid model within its price ceiling reviews/);
   });
 
+  it('describes a free alternate as free, not as a paid retry', () => {
+    expect(modelStepReason({ stage: 'work', level: 'medium', free: true, source: 'auto', fallback: true })).toContain('another free model');
+  });
+
   it('says when no paid model could review', () => {
     expect(modelStepReason({ stage: 'review', level: 'medium', free: true, source: 'auto', fallback: false })).toMatch(/No paid model was eligible/);
   });

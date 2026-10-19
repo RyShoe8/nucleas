@@ -40,6 +40,8 @@ import { runPublishing } from '@/lib/publishing/engine';
  */
 
 const RUN_MAX_TOKENS = 3000;
+const MAX_WORK_CALLS = 5;
+const MAX_REVIEW_CALLS = 3;
 const COMPACT_RUN_MAX_TOKENS = 1800;
 /** Earlier records shown to a run so repeating jobs do not redo work. */
 const MEMORY_RECORDS = 40;
@@ -49,8 +51,8 @@ function retryableProviderFailure(turn: TeamChatTurn): boolean {
   if (turn.role !== 'status') return false;
   return turn.failureCategory === 'rate_limit'
     || turn.failureCategory === 'unavailable'
-    || /httpStatus=(402|429|50[234])\b|kind=(timeout|transport)\b/i.test(turn.debugHint ?? '')
-    || /HTTP (402|429|50[234])\b|upstream (?:model )?gateway timed out/i.test(turn.text);
+    || /httpStatus=(401|402|403|429|50[234])\b|kind=(timeout|transport)\b/i.test(turn.debugHint ?? '')
+    || /HTTP (401|402|403|429|50[234])\b|upstream (?:model )?gateway timed out/i.test(turn.text);
 }
 
 export function runnerPrompt(design: JobDesign, today: string): string {
@@ -464,8 +466,8 @@ export async function executeJobRun(runId: string): Promise<void> {
   const done = activeDesign.skill === 'link_building' ? await linkOpportunityMemory(job._id) : await earlierRecords(job._id, run._id);
   let cost = 0;
   const usedModels: string[] = [];
-  const recordStep = (stage: ModelStep['stage'], note: string, choice: { model: string; free: boolean }, source: ModelStep['source'], fallback: boolean, costMicros: number | null) => {
-    modelPath.push({ stage, note, model: choice.model, free: choice.free, source, level, fallback, costMicros, reason: modelStepReason({ stage, level, free: choice.free, source, fallback }) });
+  const recordStep = (stage: ModelStep['stage'], note: string, choice: { model: string; free: boolean }, source: ModelStep['source'], fallback: boolean, costMicros: number | null, error?: string) => {
+    modelPath.push({ stage, note, model: choice.model, free: choice.free, source, level, fallback, costMicros, ...(error ? { error: error.slice(0, 600) } : {}), reason: modelStepReason({ stage, level, free: choice.free, source, fallback }) });
     if (costMicros === null && !choice.free) costUnknown = true;
   };
   let researchPercent = 28;
@@ -476,7 +478,10 @@ export async function executeJobRun(runId: string): Promise<void> {
     void progress(run._id, owner, t, { stage: 'researching', percent: researchPercent });
   };
 
+  let workCalls = 0;
   const doWork = async (choice: typeof worker, correction?: string, researchRetry = false, compact = false) => {
+    if (workCalls >= MAX_WORK_CALLS) return { requestId: 'attempt-limit', role: 'status' as const, text: `Stopped after ${MAX_WORK_CALLS} work calls. Check the recorded provider errors before retrying.` };
+    workCalls += 1;
     onProgress(compact ? `Retrying within ${shortModel(choice.model)}'s context limit` : correction ? `${researchRetry ? 'Re-researching' : 'Fixing the result format'} with ${shortModel(choice.model)}` : `Researching with ${shortModel(choice.model)}`);
     usedModels.push(choice.model);
     const turn = await attemptCompanyCredentialChat({
@@ -501,7 +506,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     });
     cost += turn.costMicros ?? 0;
     const pinned = work.source === 'pinned' && choice.profileId === work.primary?.profileId && choice.model === work.primary?.model;
-    recordStep('work', compact ? 'Compact retry' : correction ? (researchRetry ? 'Re-research' : 'Format retry') : 'First attempt', choice, pinned ? 'pinned' : 'auto', choice.profileId !== worker.profileId || choice.model !== worker.model, turn.costMicros ?? null);
+    recordStep('work', compact ? 'Compact retry' : correction ? (researchRetry ? 'Re-research' : 'Format retry') : 'First attempt', choice, pinned ? 'pinned' : 'auto', choice.profileId !== worker.profileId || choice.model !== worker.model, turn.costMicros ?? null, turn.role === 'assistant' ? undefined : turn.text);
     return turn;
   };
 
@@ -516,11 +521,11 @@ export async function executeJobRun(runId: string): Promise<void> {
     // retrying one unhealthy Rogly deployment. Refresh LiteLLM's live model list, remove the
     // failed binding for this run, and let the normal quality router choose another free model.
     const attemptedBindings = new Set<string>();
-    while (retryableProviderFailure(turn)) {
+    while (retryableProviderFailure(turn) && workCalls < MAX_WORK_CALLS) {
       attemptedBindings.add(`${activeWorker.profileId}:${activeWorker.model}`);
       const refreshCatalog = /httpStatus=5\d\d\b|HTTP 5\d\d\b/i.test(`${turn.debugHint ?? ''} ${turn.text}`);
       const fresh = await listAvailableModels({ force: refreshCatalog }).catch(() => models);
-      const creditFailure = /httpStatus=402\b|HTTP 402\b/i.test(`${turn.debugHint ?? ''} ${turn.text}`);
+      const creditFailure = /httpStatus=(401|402|403|429)\b|HTTP (401|402|403|429)\b/i.test(`${turn.debugHint ?? ''} ${turn.text}`);
       if (creditFailure) exhaustedProfiles.add(activeWorker.profileId);
       // Credit errors affect the entire credential, not just its selected model.
       const candidates = fresh.filter((model) => !exhaustedProfiles.has(model.profileId)
@@ -592,7 +597,9 @@ export async function executeJobRun(runId: string): Promise<void> {
       Object.assign(review, replacement);
     }
     const attemptedReviews = new Set<string>();
-    while (review.primary) {
+    let reviewCalls = 0;
+    while (review.primary && reviewCalls < MAX_REVIEW_CALLS) {
+      reviewCalls += 1;
       attemptedReviews.add(`${review.primary.profileId}:${review.primary.model}`);
       await progress(run._id, owner, `Independent review with ${shortModel(review.primary.model)}`, { stage: 'reviewing', percent: 84 });
       const reviewTurn = await attemptCompanyCredentialChat({
@@ -613,10 +620,10 @@ export async function executeJobRun(runId: string): Promise<void> {
         maxOutputTokensOverride: 2000,
       });
       cost += reviewTurn.costMicros ?? 0;
-      recordStep('review', 'Independent review', review.primary, review.source === 'pinned' ? 'pinned' : 'auto', false, reviewTurn.costMicros ?? null);
+      recordStep('review', 'Independent review', review.primary, review.source === 'pinned' ? 'pinned' : 'auto', reviewCalls > 1, reviewTurn.costMicros ?? null, reviewTurn.role === 'assistant' ? undefined : reviewTurn.text);
       usedModels.push(review.primary.model);
       if (retryableProviderFailure(reviewTurn)) {
-        const creditFailure = /httpStatus=402\b|HTTP 402\b/i.test(`${reviewTurn.debugHint ?? ''} ${reviewTurn.text}`);
+        const creditFailure = /httpStatus=(401|402|403|429)\b|HTTP (401|402|403|429)\b/i.test(`${reviewTurn.debugHint ?? ''} ${reviewTurn.text}`);
         if (creditFailure) exhaustedProfiles.add(review.primary.profileId);
         const candidates = models.filter((model) => !exhaustedProfiles.has(model.profileId) && !attemptedReviews.has(`${model.profileId}:${model.model}`));
         const directOpenAI = creditFailure ? candidates.filter((model) => model.provider === 'openai') : [];
@@ -632,6 +639,8 @@ export async function executeJobRun(runId: string): Promise<void> {
       if (v.success) verdict = { ...v.data, model: review.primary.model };
       break;
     }
+
+    if (!verdict) issues.push({ record: 0, field: 'review', problem: 'Independent review did not complete. Check Models used for provider errors; human review is required.' });
 
     // Dry runs always wait for a person; real runs complete by themselves only when automatic and clean.
     const clean = issues.length === 0 && verdict?.verdict !== 'fail';

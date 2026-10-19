@@ -281,6 +281,22 @@ describe('approving and the dry run', () => {
     expect(await JobRun.findById(approved.dryRunId).lean()).toMatchObject({ status: 'needs_review', models: [google.model, emptyOpenai.model, working.model, reviewer.model, working.model], review: { verdict: 'pass' } });
   });
 
+  it('caps failing review calls and keeps the missing review visible', async () => {
+    const pool = Array.from({ length: 12 }, (_, i) => ({ profileId: 'a'.repeat(24), model: `candidate-${i}`, free: false, label: 'Provider', provider: 'openai' }));
+    mocks.models.mockResolvedValue(pool);
+    mocks.select.mockImplementation(async (_org: string, _need: string, _level: string, options?: { models?: typeof pool }) => ({ primary: options?.models?.[0] ?? null, fallback: null }));
+    mocks.chat.mockImplementation(async (input: { systemPrompt: string }) => input.systemPrompt.startsWith('You check one run')
+      ? { requestId: 'error', role: 'status', text: 'HTTP 503: provider unavailable', costMicros: null }
+      : { requestId: 'work', role: 'assistant', text: GOOD, costMicros: 0 });
+    const job = await proposed();
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    const run = await JobRun.findById(approved.dryRunId).lean();
+    expect(mocks.chat.mock.calls.filter(([input]) => input.systemPrompt.startsWith('You check one run'))).toHaveLength(3);
+    expect(run).toMatchObject({ status: 'needs_review', issues: expect.arrayContaining([expect.objectContaining({ field: 'review' })]) });
+    expect((run?.modelPath as { error?: string }[]).filter((step) => step.error)).toHaveLength(3);
+  });
+
   it('tracks link recommendations through approval and submission with feedback history', async () => {
     const config = { projectId, schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
     const created = await createTemplateJob(admin, { companyId, template: 'link_building', config });
