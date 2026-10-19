@@ -96,6 +96,7 @@ export const publishingConfigSchema = z.object({
   admin: adminTargetSchema.optional(),
   /** Explicit field mappings override generated values, with optional verified-value conditions. */
   adminFieldRules: adminFieldRulesSchema.optional(),
+  adminLinkField: z.string().min(1).max(100).optional(),
   adminValueField: z.string().min(1).max(100).optional(),
   /** The request in the person's words; it steers what each post emphasizes. */
   brief: z.string().max(2000).default(''),

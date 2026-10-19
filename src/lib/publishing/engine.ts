@@ -178,7 +178,7 @@ type DraftContext = { companyName: string; persona: string | null; subreddit: st
 async function prepareAdmin(target: AdminTarget, config: PublishingConfig, facts: ItemFacts, context: DraftContext, write: Writer): Promise<Prepared> {
   const filled = await fillValues(target, { title: facts.title, description: facts.description, extra: facts.extra, link: facts.link }, { companyName: context.companyName, noun: config.source.noun, brief: config.brief, persona: context.persona }, write);
   if (!filled) return { draft: { title: null, body: `${facts.title}\n\n${facts.description}`.trim() }, written: false, values: {}, problem: 'Nucleas could not fill the form, so it was not added automatically. Add it by hand.' };
-  filled.values = applyAdminFieldRules(config, filled.values, facts.dealValuePct);
+  filled.values = applyAdminFieldRules(config, filled.values, facts.dealValuePct, facts.link);
   filled.unfilled = target.fields.filter((f) => f.required && f.type !== 'file' && (filled.values[f.key] === undefined || filled.values[f.key] === '')).map((f) => f.label || f.key);
   const lines = valueLines(target.fields, filled.values);
   return {
@@ -252,7 +252,7 @@ type AdminPostOutcome = PostOutcome & { screenshot: string | null; warning?: str
 
 /** Adds one record through the admin form; a changed form is learned again (and saved to the job) once. */
 async function postToAdmin(job: JobLike, config: PublishingConfig, values: Record<string, string | boolean>, facts: ItemFacts, context: DraftContext, write: Writer, deps: PublishDeps): Promise<AdminPostOutcome> {
-  values = applyAdminFieldRules(config, values, facts.dealValuePct);
+  values = applyAdminFieldRules(config, values, facts.dealValuePct, facts.link);
   if (!config.admin) return { ok: false, error: new PublishError('rejected', 'This job has no admin form set up.'), screenshot: null };
   const missingRules = (config.adminFieldRules ?? []).filter((rule) => !config.admin!.fields.some((field) => field.key === rule.field));
   if (missingRules.length) return { ok: false, error: new PublishError('rejected', `The admin form is missing configured controls: ${missingRules.map((r) => r.field).join(', ')}. Learn the form again before saving.`), screenshot: null };

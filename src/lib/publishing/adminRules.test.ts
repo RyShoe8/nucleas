@@ -18,3 +18,11 @@ it('writes verified percentage points rather than an AI-generated ratio', () => 
   expect(applyAdminFieldRules({ adminValueField: 'value' }, { value: '0.24' }, (18 / 14.49 - 1) * 100).value).toBe('24.22');
   expect(applyAdminFieldRules({ adminValueField: 'value' }, { value: '0.24' }).value).toBeUndefined();
 });
+
+it('copies the exact original offer link and refuses fabricated or unsafe replacements', () => {
+  const config = { adminLinkField: 'offer_url' };
+  const url = 'https://offers.example.com/click?offer=123&code=MONDAY';
+  expect(applyAdminFieldRules(config, { offer_url: 'https://invented.example' }, undefined, url).offer_url).toBe(url);
+  expect(applyAdminFieldRules(config, { offer_url: 'https://invented.example' }, undefined, null).offer_url).toBeUndefined();
+  expect(applyAdminFieldRules(config, {}, undefined, 'javascript:alert(1)').offer_url).toBeUndefined();
+});
