@@ -281,6 +281,31 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
     signedIn = true;
   });
 
+  it('publishes admin records but only enables site sharing above 30% verified value', async () => {
+    const ruleFields = [
+      ...fields,
+      { key: 'status', label: 'Status', type: 'select' as const, selector: '#status', required: true, options: [{ value: 'published', label: 'Published' }] },
+      { key: 'facebook', label: 'Facebook', type: 'checkbox' as const, selector: '#facebook', required: false },
+      { key: 'bluesky', label: 'Bluesky', type: 'checkbox' as const, selector: '#bluesky', required: false },
+    ];
+    const job = await adminJob();
+    await Job.updateOne({ _id: job._id }, { $set: { 'publishing.admin.fields': ruleFields, 'publishing.adminFieldRules': [
+      { field: 'status', value: 'published' },
+      { field: 'facebook', value: true, otherwise: false, whenValueOverPct: 30 },
+      { field: 'bluesky', value: true, otherwise: false, whenValueOverPct: 30 },
+    ] } });
+    const current = (await Job.findById(job._id).lean())!;
+    await takeBaseline(current, adminDeps());
+    await email('a@example.com', 'Below thirty', 100, 120);
+    await email('b@example.com', 'Exactly thirty', 100, 130);
+    await email('c@example.com', 'Above thirty', 100, 140);
+    await runPublishing(await newRun(job._id, false), 'owner', current, adminDeps());
+    expect(saved).toHaveLength(3);
+    expect(saved.map((v) => [v.status, v.facebook, v.bluesky])).toEqual([
+      ['published', false, false], ['published', false, false], ['published', true, true],
+    ]);
+  });
+
   it('filters social value strictly above 30% without filtering admin intake', async () => {
     await email('a@example.com', 'Low', 100, 120);
     await email('a@example.com', 'Exactly thirty', 100, 130);

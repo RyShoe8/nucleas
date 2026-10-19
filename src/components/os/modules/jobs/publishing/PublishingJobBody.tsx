@@ -181,6 +181,14 @@ export default function PublishingJobBody({ job, onChange, readyShownAbove = fal
                 {on && view.postedThisWeek ? ` · ${view.postedThisWeek} posted this week` : ''}
             </p>
 
+            {view.adminFieldRules?.length ? <p className="text-xs text-text-secondary">
+                {view.adminFieldRules.map((rule) => {
+                    const label = view.admin?.fields.find((field) => field.label.toLowerCase().replace(/[^a-z0-9]+/g, '_') === rule.field)?.label ?? rule.field.replaceAll('_', ' ');
+                    const value = typeof rule.value === 'boolean' ? (rule.value ? 'on' : 'off') : rule.value;
+                    return `${label}: ${value}${rule.whenValueOverPct !== undefined ? ` only over ${rule.whenValueOverPct}% value; otherwise ${rule.otherwise === true ? 'on' : 'off'}` : ''}`;
+                }).join(' · ')}
+            </p> : null}
+
             {job.status === 'proposed' && !running && !sample ? (
                 <section className="space-y-2">
                     <p className="text-xs text-text-secondary">{view.channels.map((c) => `${PLATFORM_LABEL[c.platform]}: ${c.mode === 'manual' ? 'manual review card' : 'automatic'}`).join(' · ')}</p>

@@ -11,7 +11,7 @@ import { askEngine } from '@/lib/ai/engine/ask';
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 import { readEngineSettings } from '@/lib/ai/engine/select';
 import { socialPublishDesign } from '@/lib/jobs/templates/socialPublish';
-import { MANUAL_ONLY, PLATFORM_LABEL, PUBLISH_PLATFORMS, SOCIAL_PLATFORMS, adminTargetSchema, channelSchema, type AdminTarget, normalizeChannels, platformsFor, publishSourceSchema, sourceLabel, type PublishPlatform, type PublishSource, type PublishingConfig } from './config';
+import { MANUAL_ONLY, PLATFORM_LABEL, PUBLISH_PLATFORMS, SOCIAL_PLATFORMS, adminFieldRulesSchema, adminTargetSchema, channelSchema, type AdminTarget, normalizeChannels, platformsFor, publishSourceSchema, sourceLabel, type PublishPlatform, type PublishSource, type PublishingConfig } from './config';
 import { readExamplePost } from './examples';
 import { discoverSiteSource, type PickPrefix } from './siteSource';
 import { facebookTokenCanPost } from './publishers';
@@ -224,6 +224,7 @@ const createSchema = z.object({
   companyId: z.string().regex(/^[a-f0-9]{24}$/i),
   request: z.string().trim().min(10).max(2000),
   source: publishSourceSchema,
+  adminFieldRules: adminFieldRulesSchema.optional(),
   minimumSocialValuePct: z.number().min(0).max(1000).optional(),
   channels: z.array(channelSchema).min(1, 'Choose at least one platform.'),
   notifyUserIds: z.array(z.string()).max(50).default([]),
@@ -298,6 +299,7 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
   const channels = normalizeChannels(input.channels);
   const config: PublishingConfig = {
     source: input.source,
+    ...(input.adminFieldRules ? { adminFieldRules: input.adminFieldRules } : {}),
     ...(input.minimumSocialValuePct !== undefined ? { minimumSocialValuePct: input.minimumSocialValuePct } : {}),
     channels,
     examples: examples.examples,
@@ -327,6 +329,7 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
 }
 
 const settingsSchema = z.object({
+  adminFieldRules: adminFieldRulesSchema.optional(),
   minimumSocialValuePct: z.number().min(0).max(1000).nullable().optional(),
   channels: z.array(channelSchema).min(1, 'Keep at least one platform.').optional(),
   notifyUserIds: z.array(z.string()).max(50).optional(),
@@ -339,6 +342,7 @@ export async function updatePublishingSettings(viewer: CompanyViewer, job: { _id
   const parsed = settingsSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, status: 400, error: parsed.error.issues[0]?.message ?? 'Check the settings.' };
   const set: Record<string, unknown> = {};
+  if (parsed.data.adminFieldRules) set['publishing.adminFieldRules'] = parsed.data.adminFieldRules;
   const unset: Record<string, ''> = {};
   if (parsed.data.minimumSocialValuePct === null) unset['publishing.minimumSocialValuePct'] = '';
   else if (parsed.data.minimumSocialValuePct !== undefined) set['publishing.minimumSocialValuePct'] = parsed.data.minimumSocialValuePct;

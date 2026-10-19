@@ -76,6 +76,13 @@ export function formFingerprint(fields: Pick<FormField, 'key' | 'type' | 'select
   return fields.map((f) => `${f.key}:${f.type}:${f.selector}`).sort().join('|');
 }
 
+export const adminFieldRulesSchema = z.array(z.object({
+  field: z.string().min(1).max(100),
+  value: z.union([z.string().max(5000), z.boolean()]),
+  whenValueOverPct: z.number().min(0).max(1000).optional(),
+  otherwise: z.union([z.string().max(5000), z.boolean()]).optional(),
+})).max(60);
+
 export const publishingConfigSchema = z.object({
   source: publishSourceSchema,
   /** Mailbox social destinations only: require value strictly greater than this percent. */
@@ -87,6 +94,8 @@ export const publishingConfigSchema = z.object({
   notifyUserIds: z.array(objectId).max(50).default([]),
   /** Jobs that add records to the company's own admin (channel 'admin'). */
   admin: adminTargetSchema.optional(),
+  /** Explicit field mappings override generated values, with optional verified-value conditions. */
+  adminFieldRules: adminFieldRulesSchema.optional(),
   /** The request in the person's words; it steers what each post emphasizes. */
   brief: z.string().max(2000).default(''),
 });

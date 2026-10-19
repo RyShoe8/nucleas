@@ -1,3 +1,4 @@
+import { applyAdminFieldRules } from './adminRules';
 import { retryDatabaseRead } from '@/lib/db/retryRead';
 import { dealStrengthPct } from '@/lib/watches/dealMetrics';
 import 'server-only';
@@ -71,6 +72,7 @@ interface SourceEntry {
 }
 
 interface ItemFacts {
+  dealValuePct?: number;
   title: string;
   description: string;
   text: string;
@@ -125,6 +127,7 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
   ]);
   const fields = watch ? watchSettings(watch).fields : [];
   return {
+    ...(item?.bestDeal ? { dealValuePct: dealStrengthPct(item.bestDeal) * 100 } : {}),
     title: item?.subject ?? entry.title,
     description: item?.summary ?? '',
     text: '',
@@ -175,6 +178,8 @@ type DraftContext = { companyName: string; persona: string | null; subreddit: st
 async function prepareAdmin(target: AdminTarget, config: PublishingConfig, facts: ItemFacts, context: DraftContext, write: Writer): Promise<Prepared> {
   const filled = await fillValues(target, { title: facts.title, description: facts.description, extra: facts.extra, link: facts.link }, { companyName: context.companyName, noun: config.source.noun, brief: config.brief, persona: context.persona }, write);
   if (!filled) return { draft: { title: null, body: `${facts.title}\n\n${facts.description}`.trim() }, written: false, values: {}, problem: 'Nucleas could not fill the form, so it was not added automatically. Add it by hand.' };
+  filled.values = applyAdminFieldRules(config, filled.values, facts.dealValuePct);
+  filled.unfilled = target.fields.filter((f) => f.required && f.type !== 'file' && (filled.values[f.key] === undefined || filled.values[f.key] === '')).map((f) => f.label || f.key);
   const lines = valueLines(target.fields, filled.values);
   return {
     draft: { title: facts.title.slice(0, 300) || null, body: lines.map((l) => `${l.label}: ${l.value}`).join('\n') || facts.title },
@@ -247,7 +252,10 @@ type AdminPostOutcome = PostOutcome & { screenshot: string | null; warning?: str
 
 /** Adds one record through the admin form; a changed form is learned again (and saved to the job) once. */
 async function postToAdmin(job: JobLike, config: PublishingConfig, values: Record<string, string | boolean>, facts: ItemFacts, context: DraftContext, write: Writer, deps: PublishDeps): Promise<AdminPostOutcome> {
+  values = applyAdminFieldRules(config, values, facts.dealValuePct);
   if (!config.admin) return { ok: false, error: new PublishError('rejected', 'This job has no admin form set up.'), screenshot: null };
+  const missingRules = (config.adminFieldRules ?? []).filter((rule) => !config.admin!.fields.some((field) => field.key === rule.field));
+  if (missingRules.length) return { ok: false, error: new PublishError('rejected', `The admin form is missing configured controls: ${missingRules.map((r) => r.field).join(', ')}. Learn the form again before saving.`), screenshot: null };
   const session = deps.adminSession !== undefined ? deps.adminSession : await adminSessionFor(job.organizationId, String(job.companyId));
   if (!session) return { ok: false, error: new PublishError('needs_reauth', 'The admin session has expired or is missing. Reconnect it in Company → Admin account, then retry this card.'), screenshot: null };
   const outcome = await addRecord({
@@ -610,7 +618,10 @@ export async function postDeliveryNow(job: JobLike, deliveryId: string, userId: 
   }
   if (!candidate) return { ok: false, status: 409, error: 'This post was already handled.' };
   // Finish read-only preparation before claiming or making an external change.
-  const item = await retryDatabaseRead('publishing.item', () => PublishItem.findById(candidate.itemId).select('facts title').lean<{ title?: string; facts?: { title?: string; description?: string } }>().exec());
+  const item = await retryDatabaseRead('publishing.item', () => PublishItem.findById(candidate.itemId).select('facts title key').lean<{ key?: string; title?: string; facts?: { title?: string; description?: string } }>().exec());
+  const adminFacts = candidate.platform === 'admin' && socialConfig?.source.type === 'mailbox' && item?.key
+    ? await retryDatabaseRead('publishing.source-facts', () => factsFor(job, socialConfig, { key: item.key!, title: item.title ?? '', url: candidate.link ?? null, date: null }, deps))
+    : null;
   const persona = candidate.platform === 'admin' ? await retryDatabaseRead('publishing.voice', () => approvedPersona(job)) : '';
   const preparedDeps = candidate.platform === 'admin' && deps.adminSession === undefined
     ? { ...deps, adminSession: await retryDatabaseRead('publishing.admin-session', () => adminSessionFor(job.organizationId, String(job.companyId))) }
@@ -620,7 +631,7 @@ export async function postDeliveryNow(job: JobLike, deliveryId: string, userId: 
   let outcome: PostOutcome & { screenshot?: string | null; warning?: string };
   if (delivery.platform === 'admin') {
     const config = socialConfig;
-    const facts: ItemFacts = { title: item?.facts?.title ?? item?.title ?? '', description: item?.facts?.description ?? '', text: '', image: null, images: [], video: null, extra: [], link: delivery.link ?? null };
+    const facts: ItemFacts = adminFacts ?? { title: item?.facts?.title ?? item?.title ?? '', description: item?.facts?.description ?? '', text: '', image: null, images: [], video: null, extra: [], link: delivery.link ?? null };
     outcome = config
       ? await postToAdmin(job, config, delivery.values ?? {}, facts, { companyName: '', persona, subreddit: null }, deps.write ?? engineWriter(job), preparedDeps)
       : { ok: false, error: new PublishError('rejected', 'This job’s settings are missing.') };
@@ -671,6 +682,7 @@ export interface DeliveryView {
 type DeliveryLean = { _id: Types.ObjectId; itemId: Types.ObjectId; platform: string; status: DeliveryView['status']; title?: string; body: string; link?: string; assets?: { kind: 'image' | 'video'; url: string }[]; postedUrl?: string; postedAt?: Date; error?: string; createdAt: Date; values?: Record<string, string | boolean>; screenshot?: string };
 
 export interface PublishingView {
+  adminFieldRules?: PublishingConfig['adminFieldRules'];
   channels: PublishChannel[];
   minimumSocialValuePct?: number;
   notifyUserIds: string[];
@@ -715,6 +727,7 @@ export async function publishingView(job: { _id: Types.ObjectId; publishing?: un
   const raw = (job.publishing ?? {}) as { notes?: Record<string, string> };
   return {
     channels: config.channels,
+    adminFieldRules: config.adminFieldRules,
     minimumSocialValuePct: config.minimumSocialValuePct,
     notifyUserIds: config.notifyUserIds,
     examples: Object.fromEntries(Object.entries(config.examples).map(([k, v]) => [k, { url: v.url ?? null, text: v.text }])),

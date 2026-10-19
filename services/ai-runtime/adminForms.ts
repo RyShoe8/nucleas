@@ -62,6 +62,7 @@ type Locator = {
   getByRole: (role: string, options: { name: string; exact: boolean }) => Locator;
   count: () => Promise<number>;
   isVisible: (o?: { timeout: number }) => Promise<boolean>;
+  getAttribute: (name: string) => Promise<string | null>;
   focus: (options?: { timeout: number }) => Promise<void>;
   fill: (value: string, o?: { timeout: number }) => Promise<void>;
   selectOption: (value: { value?: string; label?: string }, o?: { timeout: number }) => Promise<unknown>;
@@ -169,9 +170,9 @@ const INSPECT_SCRIPT = `(() => {
   const clean = (t) => String(t || '').replace(/\\s+/g, ' ').trim().slice(0, 160);
   const visible = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
   const SKIP = ['hidden', 'submit', 'button', 'reset', 'image', 'search', 'password'];
-  const controlsIn = (root) => Array.from(root.querySelectorAll('input, select, textarea, [contenteditable="true"], [contenteditable=""]')).filter((el) => {
+  const controlsIn = (root) => Array.from(root.querySelectorAll('input, select, textarea, [role="switch"], [contenteditable="true"], [contenteditable=""]')).filter((el) => {
     const type = (el.getAttribute('type') || '').toLowerCase();
-    if (SKIP.includes(type)) return false;
+    if (SKIP.includes(type) && el.getAttribute('role') !== 'switch') return false;
     if (el.closest('[contenteditable="true"]') && el.closest('[contenteditable="true"]') !== el) return false;
     return visible(el) || type === 'file' || type === 'radio' || type === 'checkbox';
   });
@@ -211,6 +212,7 @@ const INSPECT_SCRIPT = `(() => {
     return clean(el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '');
   };
   const typeOf = (el) => {
+    if (el.getAttribute('role') === 'switch') return 'checkbox';
     if (el.isContentEditable) return 'richtext';
     const tag = el.tagName.toLowerCase();
     if (tag === 'select') return 'select';
@@ -331,7 +333,12 @@ export async function fillAdminForm(
         const control = page.locator(field.selector).first();
         if (!(await control.count())) { missing.push(field.key); continue; }
         if (field.type === 'file') continue;
-        if (field.type === 'checkbox') await control.setChecked(value === true || value === 'true' || value === 'yes', { timeout: 5000 });
+        if (field.type === 'checkbox') {
+          const checked = value === true || value === 'true' || value === 'yes';
+          if (await control.getAttribute('role') === 'switch') {
+            if ((await control.getAttribute('aria-checked') === 'true') !== checked) await control.click({ timeout: 5000 });
+          } else await control.setChecked(checked, { timeout: 5000 });
+        }
         else if (field.type === 'select' && field.selector.includes('.fi-select-input')) {
           await control.locator('.fi-select-input-btn').click({ timeout: 5000 });
           const search = control.locator('input').first();
