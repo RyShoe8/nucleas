@@ -62,6 +62,7 @@ type Locator = {
   getByRole: (role: string, options: { name: string; exact: boolean }) => Locator;
   count: () => Promise<number>;
   isVisible: (o?: { timeout: number }) => Promise<boolean>;
+  allTextContents: () => Promise<string[]>;
   getAttribute: (name: string) => Promise<string | null>;
   focus: (options?: { timeout: number }) => Promise<void>;
   fill: (value: string, o?: { timeout: number }) => Promise<void>;
@@ -252,7 +253,8 @@ const INSPECT_SCRIPT = `(() => {
   for (const widget of root.querySelectorAll('.fi-select-input')) {
     const wrapper = widget.closest('.fi-fo-field');
     const labelEl = wrapper && wrapper.querySelector('label');
-    if (!labelEl || !visible(widget)) continue;
+    if (!labelEl || !visible(widget) || !widget.querySelector('.fi-select-input-btn')) continue;
+    if (fields.some((field) => field.selector === '#' + CSS.escape(labelEl.htmlFor))) continue;
     const label = clean(labelEl.textContent).replace(/\\s*\\*$/, '');
     const options = Array.from(widget.querySelectorAll('[role="option"]')).map((o) => ({ value: clean(o.textContent), label: clean(o.textContent) })).filter((o) => o.value).slice(0, 200);
     fields.push({ key: keyFor(label), label, type: 'select', selector: labelEl.htmlFor ? '.fi-fo-field:has(label[for="' + CSS.escape(labelEl.htmlFor) + '"]) .fi-select-input' : selectorFor(widget) + '.fi-select-input', required: Boolean(labelEl.querySelector('sup')) || /\\*\\s*$/.test(clean(labelEl.textContent)), options });
@@ -343,7 +345,19 @@ export async function fillAdminForm(
           await control.locator('.fi-select-input-btn').click({ timeout: 5000 });
           const search = control.locator('input').first();
           if (await search.count()) { await search.fill(String(value), { timeout: 5000 }); await page.waitForTimeout(600); }
-          await control.getByRole('option', { name: String(value), exact: true }).click({ timeout: 5000 });
+          const normalized = (text: string) => text.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+          let label: string | undefined;
+          for (let attempt = 0; attempt < 12; attempt++) {
+            if (attempt === 6 && await search.count()) {
+              await search.fill(String(value).replace(/\s+/g, ''), { timeout: 5000 });
+            }
+            const labels = await control.locator('[role="option"]').allTextContents();
+            const matches = labels.map((text) => text.trim()).filter((text) => normalized(text) === normalized(String(value)));
+            if (matches.length === 1) { label = matches[0]; break; }
+            await page.waitForTimeout(500);
+          }
+          if (!label) throw new Error('No unique matching choice was returned by the site.');
+          await control.getByRole('option', { name: label, exact: true }).click({ timeout: 5000 });
         }
         else if (field.type === 'select') await control.selectOption({ value: String(value) }, { timeout: 5000 }).catch(() => control.selectOption({ label: String(value) }, { timeout: 5000 }));
         else {

@@ -225,6 +225,7 @@ const createSchema = z.object({
   request: z.string().trim().min(10).max(2000),
   source: publishSourceSchema,
   adminFieldRules: adminFieldRulesSchema.optional(),
+  adminValueField: z.string().min(1).max(100).optional(),
   minimumSocialValuePct: z.number().min(0).max(1000).optional(),
   channels: z.array(channelSchema).min(1, 'Choose at least one platform.'),
   notifyUserIds: z.array(z.string()).max(50).default([]),
@@ -299,6 +300,7 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
   const channels = normalizeChannels(input.channels);
   const config: PublishingConfig = {
     source: input.source,
+    ...(input.adminValueField ? { adminValueField: input.adminValueField } : {}),
     ...(input.adminFieldRules ? { adminFieldRules: input.adminFieldRules } : {}),
     ...(input.minimumSocialValuePct !== undefined ? { minimumSocialValuePct: input.minimumSocialValuePct } : {}),
     channels,
@@ -330,6 +332,7 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
 
 const settingsSchema = z.object({
   adminFieldRules: adminFieldRulesSchema.optional(),
+  adminValueField: z.string().min(1).max(100).optional(),
   minimumSocialValuePct: z.number().min(0).max(1000).nullable().optional(),
   channels: z.array(channelSchema).min(1, 'Keep at least one platform.').optional(),
   notifyUserIds: z.array(z.string()).max(50).optional(),
@@ -342,6 +345,7 @@ export async function updatePublishingSettings(viewer: CompanyViewer, job: { _id
   const parsed = settingsSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, status: 400, error: parsed.error.issues[0]?.message ?? 'Check the settings.' };
   const set: Record<string, unknown> = {};
+  if (parsed.data.adminValueField) set['publishing.adminValueField'] = parsed.data.adminValueField;
   if (parsed.data.adminFieldRules) set['publishing.adminFieldRules'] = parsed.data.adminFieldRules;
   const unset: Record<string, ''> = {};
   if (parsed.data.minimumSocialValuePct === null) unset['publishing.minimumSocialValuePct'] = '';

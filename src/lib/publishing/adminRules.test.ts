@@ -13,3 +13,8 @@ it('publishes records and opts into site sharing only above the verified thresho
   }
   expect(applyAdminFieldRules(config, {}, 33.42)).toMatchObject({ status: 'published', facebook: true, bluesky: true, reddit: false });
 });
+
+it('writes verified percentage points rather than an AI-generated ratio', () => {
+  expect(applyAdminFieldRules({ adminValueField: 'value' }, { value: '0.24' }, (18 / 14.49 - 1) * 100).value).toBe('24.22');
+  expect(applyAdminFieldRules({ adminValueField: 'value' }, { value: '0.24' }).value).toBeUndefined();
+});

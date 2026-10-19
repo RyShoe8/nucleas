@@ -260,7 +260,9 @@ async function postToAdmin(job: JobLike, config: PublishingConfig, values: Recor
   if (!session) return { ok: false, error: new PublishError('needs_reauth', 'The admin session has expired or is missing. Reconnect it in Company → Admin account, then retry this card.'), screenshot: null };
   const outcome = await addRecord({
     session,
-    target: config.admin,
+    // Reactive forms may recalculate a value after spend/get lose focus. Apply
+    // the explicitly mapped percentage last, after every dependent control.
+    target: config.adminValueField ? { ...config.admin, fields: [...config.admin.fields].sort((a, b) => Number(a.key === config.adminValueField) - Number(b.key === config.adminValueField)) } : config.admin,
     values,
     browser: deps.admin ?? workerAdminBrowser,
     refill: async (target) => {
