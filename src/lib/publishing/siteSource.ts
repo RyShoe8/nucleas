@@ -170,8 +170,25 @@ export function newestFirst(entries: SiteEntry[]): SiteEntry[] {
 const MAX_CHILD_SITEMAPS = 20;
 
 async function readFeed(url: string, fetcher?: FetchLike): Promise<ParsedFeed> {
-  const res = await fetchPublicText(url, { accept: 'application/xml,text/xml,application/rss+xml,application/atom+xml;q=0.9,*/*;q=0.5', maxBytes: 8_000_000, fetcher });
-  return parseFeed(res.text);
+  const target = new URL(url);
+  const label = `${target.origin}${target.pathname}`;
+  const timeoutMs = 30_000;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const started = Date.now();
+    console.info('[publishing/source] fetching', { url: label, attempt, timeoutMs });
+    try {
+      const res = await fetchPublicText(url, { accept: 'application/xml,text/xml,application/rss+xml,application/atom+xml;q=0.9,*/*;q=0.5', maxBytes: 8_000_000, timeoutMs, fetcher });
+      const parsed = parseFeed(res.text);
+      console.info('[publishing/source] fetched', { url: label, attempt, elapsedMs: Date.now() - started, kind: parsed.kind });
+      return parsed;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown fetch error';
+      const retryable = error instanceof Error && (['AbortError', 'TimeoutError', 'TypeError'].includes(error.name) || /timeout|timed out|returned (408|429|5\d\d)\b/i.test(message));
+      console.warn('[publishing/source] fetch failed', { url: label, attempt, elapsedMs: Date.now() - started, message, retrying: retryable && attempt < 2 });
+      if (!retryable || attempt === 2) throw new Error(`Could not fetch ${label} (${attempt} attempt${attempt === 1 ? '' : 's'}, up to 30 seconds each): ${message}`);
+    }
+  }
+  throw new Error(`Could not fetch ${label}.`);
 }
 
 /** Every entry a feed lists; a sitemap index is followed into its children, the ones named like the section first. */

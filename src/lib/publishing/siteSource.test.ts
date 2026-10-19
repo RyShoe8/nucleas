@@ -115,3 +115,29 @@ describe('discovering a site source', () => {
     expect(found.ok).toBe(false);
   });
 });
+
+describe('source fetch resilience', () => {
+  it('retries a timeout and reads the sitemap instead of failing the dry run', async () => {
+    let calls = 0;
+    const entries = await listSitePages({ feedUrl: 'https://playbound.club/sitemap.xml', pathPrefix: '/games/' }, async () => {
+      calls += 1;
+      if (calls === 1) throw new DOMException('Request timed out', 'TimeoutError');
+      return new Response(SITEMAP);
+    });
+    expect(calls).toBe(2);
+    expect(entries.length).toBeGreaterThan(0);
+  });
+  it('stops after two timeouts and names the failing source', async () => {
+    let calls = 0;
+    await expect(listSitePages({ feedUrl: 'https://playbound.club/sitemap.xml', pathPrefix: '/games/' }, async () => {
+      calls += 1;
+      throw new DOMException('Request timed out', 'TimeoutError');
+    })).rejects.toThrow('https://playbound.club/sitemap.xml (2 attempts');
+    expect(calls).toBe(2);
+  });
+  it('does not retry a permanent missing feed', async () => {
+    let calls = 0;
+    await expect(listSitePages({ feedUrl: 'https://playbound.club/missing.xml', pathPrefix: '/games/' }, async () => { calls += 1; return new Response('', { status: 404 }); })).rejects.toThrow('404');
+    expect(calls).toBe(1);
+  });
+});
