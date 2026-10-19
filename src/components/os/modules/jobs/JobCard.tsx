@@ -188,6 +188,14 @@ export function scheduleLabel(s: JobDesign['schedule'] | undefined): string {
     return `Monthly on day ${s.dayOfMonth ?? 1}${at}`;
 }
 
+export function JobLastChecked({ job }: { job: JobView }) {
+    if (!job.design || job.design.schedule.kind === 'once') return null;
+    if (!job.lastRunAt) return <span> · Not checked yet</span>;
+    const date = new Date(job.lastRunAt);
+    const label = date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return <span> · Last checked <time dateTime={job.lastRunAt} title={date.toLocaleString()}>{label}</time></span>;
+}
+
 const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(micros < 100_000 ? 3 : 2)}`;
 const BUTTON = 'ui-button';
 const PRIMARY = 'ui-button-primary';
@@ -769,6 +777,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                     <p className="text-[11px] text-text-secondary truncate">
                         {job.companyName}
                         {d ? ` · ${scheduleLabel(d.schedule)}` : ''}
+                        <JobLastChecked job={job} />
                         {job.completion && d?.skill !== 'social_publish' ? ` · ${job.completion === 'automatic' ? 'automatic' : 'reviewed'}` : ''}
                         {/* Publishing jobs spend little and per post; their budget line would only be noise. */}
                         {d?.skill === 'social_publish' ? '' : manualArtifact(job.design?.skill) ? (job.spentThisMonthMicros ? ` · ${usd(job.spentThisMonthMicros)} spent` : '') : job.monthlyBudgetMicros ? ` · ${usd(job.spentThisMonthMicros)} of ${usd(job.monthlyBudgetMicros)} this month` : ''}

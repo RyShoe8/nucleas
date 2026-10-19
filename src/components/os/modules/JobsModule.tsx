@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useOsCompanies } from './CompaniesModule';
-import JobCard, { JobStatusBadge, jobIsBusy, jobListProgress, scheduleLabel, type JobView } from './jobs/JobCard';
+import JobCard, { JobLastChecked, JobStatusBadge, jobIsBusy, jobListProgress, scheduleLabel, type JobView } from './jobs/JobCard';
 import ArtifactHistory from './jobs/ArtifactHistory';
 import MarketingPlanEditor from './jobs/MarketingPlanEditor';
 import BrandAssetsPanel from './jobs/BrandAssetsPanel';
@@ -371,6 +371,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                                                         <span className="block text-[11px] text-text-secondary truncate">
                                                             {j.companyName}
                                                             {j.design ? ` · ${j.design.category} · ${scheduleLabel(j.design.schedule)}` : ''}
+                                                            <JobLastChecked job={j} />
                                                         </span>
                                                     </span>
                                                     <JobStatusBadge status={j.status} />
