@@ -20,6 +20,7 @@ export default function IntegrationNotice() {
         const open = params.get('open');
         if (!text && !companyId && !open) return;
         if (open === 'mail') wm.open('mail');
+        if (open === 'ai-budgets') wm.open('ai-budgets');
         // From a publishing job's email: land on Marketing, where the ready-to-post cards are.
         if (open === 'marketing') wm.open('marketing');
         // Returning from connecting a mailbox: land on Marketing → Inboxes, where the mailbox status is.

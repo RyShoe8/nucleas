@@ -145,6 +145,12 @@ export function middleware(request: NextRequest) {
   }
 
   if (isOsHost) {
+    // Keep the legacy AI settings link inside OS rather than crossing domains and losing its session.
+    if (pathname === '/admin/ai' || pathname === '/admin/ai/') {
+      url.pathname = '/';
+      url.search = '?open=ai-budgets';
+      return NextResponse.redirect(url);
+    }
     // OS shell home
     if (pathname === '/') {
       url.pathname = '/os';

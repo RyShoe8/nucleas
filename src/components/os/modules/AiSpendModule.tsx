@@ -1,5 +1,7 @@
 'use client';
 
+import { useWindowManager } from '@/hooks/os/useWindowManager';
+
 import { useEffect, useMemo, useState } from 'react';
 
 interface Row {
@@ -137,6 +139,7 @@ function Breakdown({ title, rows, total }: { title: string; rows: Row[]; total: 
 
 /** Organization-wide AI spend (administrators). */
 export default function AiSpendModule() {
+    const wm = useWindowManager();
     const months = useMemo(() => recentMonths(6), []);
     const [period, setPeriod] = useState(months[0]);
     const [data, setData] = useState<Spend | null>(null);
@@ -165,6 +168,7 @@ export default function AiSpendModule() {
         <div className="h-full overflow-y-auto p-4 space-y-4 text-text-primary">
             <div className="flex items-center justify-between gap-2">
                 <h2 className="text-sm font-semibold">AI spend · whole organization</h2>
+                    <button type="button" className="ui-button" onClick={() => wm.open('ai-budgets')}>Budgets</button>
                 <select value={period} onChange={(e) => setPeriod(e.target.value)} className="h-7 px-2 rounded border border-border bg-background-elevated text-xs" aria-label="Month">
                     {months.map((m) => (
                         <option key={m} value={m}>

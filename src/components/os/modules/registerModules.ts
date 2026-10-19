@@ -13,6 +13,7 @@ import TodayModule from './TodayModule';
 import IntegrationsModule from './IntegrationsModule';
 import AssistantModule from './AssistantModule';
 import AiSpendModule from './AiSpendModule';
+import AiBudgetsModule from './AiBudgetsModule';
 import AiRoutingModule from './AiRoutingModule';
 import BuildingModule from './BuildingModule';
 import JobsModule from './JobsModule';
@@ -77,6 +78,16 @@ export function registerOsModules(): void {
             canPopout: true,
             permissions: 'member',
             render: () => createElement(AssistantModule),
+        },
+        {
+            id: 'ai-budgets',
+            title: 'AI Budgets',
+            icon: '$',
+            defaultSize: { width: 560, height: 580 },
+            minSize: { width: 360, height: 320 },
+            canPopout: true,
+            permissions: 'admin',
+            render: () => createElement(AiBudgetsModule),
         },
         {
             id: 'ai-spend',

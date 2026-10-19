@@ -1,5 +1,7 @@
 'use client';
 
+import { useWindowManager } from '@/hooks/os/useWindowManager';
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 type Level = 'free' | 'low' | 'medium' | 'high';
@@ -460,6 +462,7 @@ function FreeModelChecks({ rows, onRun, onCancel }: { rows: CheckRow[]; onRun: (
 
 /** The AI engine: default cost level, what it picks per need and level, and optional pins (administrators). */
 export default function AiRoutingModule() {
+    const wm = useWindowManager();
     const [data, setData] = useState<EngineData | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [refreshingModels, setRefreshingModels] = useState(false);
@@ -554,6 +557,7 @@ export default function AiRoutingModule() {
             <section className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                     <h2 className="text-sm font-semibold">Cost levels</h2>
+                    <button type="button" className="ui-button" onClick={() => wm.open('ai-budgets')}>Budgets</button>
                     <button type="button" disabled={refreshingModels} onClick={() => reload(true)} className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card disabled:opacity-50">
                         {refreshingModels ? 'Refreshing models…' : 'Refresh model lists'}
                     </button>
@@ -648,7 +652,7 @@ export default function AiRoutingModule() {
                     </button>
                 </div>
                 <p className="text-[11px] text-text-secondary mb-2">
-                    Chosen automatically from every enabled credential. Rogly uses its best-checked model for the job (by name until checks have run). Use Change to choose a provider and model for one task at one plan level; Auto returns it to the engine's pick.
+                    Chosen automatically from every enabled credential. Rogly uses its best-checked model for the job (by name until checks have run). Use Change to choose a provider and model for one task at one plan level; Auto returns it to the engine&apos;s pick.
                 </p>
                 <table className="w-full text-sm">
                     <thead>
