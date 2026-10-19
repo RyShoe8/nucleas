@@ -1098,4 +1098,20 @@ describe('attemptCompanyCredentialChat commercial', () => {
       noProviderFee: false,
     });
   });
+  it.each([400, 402])('releases a paid hold after an initial HTTP %i rejection', async (httpStatus) => {
+    mocks.invokeModel.mockRejectedValue(new GatewayError('unavailable', { kind: 'http', httpStatus }));
+    const turn = await attemptCompanyCredentialChat({ systemPrompt: 'Assistant', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'hello', priorTurns: [], modelProfileId: 'b'.repeat(24), model: 'gpt', forcePlain: true, toolProfile: 'none' });
+    expect(turn).toMatchObject({ role: 'status', costMicros: 0 });
+    expect(mocks.settle).toHaveBeenCalledWith('org', runId, 0, expect.anything());
+  });
+  it('retains the hold when a tool response preceded a rejected follow-up', async () => {
+    mocks.toolLoop.mockImplementation(async (input: { onModelResponse?: () => void }) => {
+      input.onModelResponse?.();
+      throw new GatewayError('unavailable', { kind: 'http', httpStatus: 402 });
+    });
+    const turn = await attemptCompanyCredentialChat({ systemPrompt: 'Assistant', organizationId: 'org', projectId: new Types.ObjectId(), userId: 'a'.repeat(24), userText: 'hello', priorTurns: [], modelProfileId: 'b'.repeat(24), model: 'gpt', forceToolLoop: true, stopOnUpstreamFailure: true });
+    expect(turn).toMatchObject({ role: 'status', costMicros: null });
+    expect(mocks.settle).toHaveBeenCalledWith('org', runId, null, expect.anything());
+  });
+
 });

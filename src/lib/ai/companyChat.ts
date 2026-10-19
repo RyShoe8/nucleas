@@ -414,6 +414,11 @@ export async function attemptCompanyCredentialChat(input: {
   maxOutputTokens = outputBudgetTokens(contextTokens, maxOutputTokens);
   let contextChars = contextBudgetChars(contextTokens, maxOutputTokens);
 
+  // Only release a rejection automatically when no earlier call could have incurred usage.
+  let priorInference = false;
+  let uncertainInference = false;
+  const rejectedBeforeInference = (error: unknown) => error instanceof GatewayError
+    && [400, 401, 402, 403, 404, 422, 429].includes(error.details?.httpStatus ?? 0);
   try {
     let loop: Awaited<ReturnType<typeof runIdeToolLoop>> | undefined;
     let browseAssisted = false;
@@ -474,7 +479,7 @@ export async function attemptCompanyCredentialChat(input: {
         { role: 'user' as const, content: args.userContent },
       ];
       const budgeted = budgetContextMessages(rawMessages, contextChars, contextChars);
-      try { return await invokeModel(
+      try { const result = await invokeModel(
         gateway,
         {
           role: 'architect',
@@ -482,7 +487,8 @@ export async function attemptCompanyCredentialChat(input: {
           maxOutputTokens,
         },
         { signal: input.signal }
-      ); } catch (error) {
+      ); priorInference = true; return result; } catch (error) {
+        if (!rejectedBeforeInference(error)) uncertainInference = true;
         if (!contextRetry && await learnContextLimit(error)) return plainInvoke(args, true);
         throw error;
       }
@@ -681,7 +687,7 @@ export async function attemptCompanyCredentialChat(input: {
         { role: 'user' as const, content: userTextForModel },
       ];
       const budgeted = budgetContextMessages(rawMessages, contextChars, contextChars);
-      return runIdeToolLoop({
+      try { const result = await runIdeToolLoop({
         gateway,
         messages: budgeted,
         contextChars,
@@ -697,7 +703,11 @@ export async function attemptCompanyCredentialChat(input: {
         signal: input.signal,
         extraTools: input.extraTools,
         onToolCall: input.onProgress ? (name, argsJson) => input.onProgress!(describeToolCall(name, argsJson)) : undefined,
-      });
+        onModelResponse: () => { priorInference = true; },
+      }); priorInference = true; return result; } catch (error) {
+        if (!rejectedBeforeInference(error)) uncertainInference = true;
+        throw error;
+      }
     }
 
     if (usePlain) {
@@ -1049,7 +1059,9 @@ export async function attemptCompanyCredentialChat(input: {
       ...gatewayDebugParts(error),
       probe: failureCode,
     });
-    const errorCost = noProviderFee
+    const confirmedRejection = rejectedBeforeInference(error) && !priorInference && !uncertainInference
+      && !(errorUsage?.inputTokens || errorUsage?.outputTokens);
+    const errorCost = noProviderFee || confirmedRejection
       ? 0
       : errorUsage
       ? await settleChatCostMicros({
@@ -1064,7 +1076,7 @@ export async function attemptCompanyCredentialChat(input: {
     await finish({
       actualMicros: errorCost,
       status: 'blocked',
-      summary: `Chat model/tool call failed after admission. ${hint}`.slice(0, 500),
+      summary: `Chat model/tool call failed after admission. ${confirmedRejection ? "Confirmed rejection before inference; unused reservation released. " : ""}${hint}`.slice(0, 500),
       failureCode,
     }).catch(() => undefined);
 

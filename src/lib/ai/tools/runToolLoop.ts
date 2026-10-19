@@ -56,6 +56,8 @@ export async function runIdeToolLoop(input: {
   contextChars?: number;
   /** Called before each tool runs (for live progress). */
   onToolCall?: (name: string, argumentsJson: string) => void;
+  /** Signals that a model response was received, even when token usage was omitted. */
+  onModelResponse?: () => void;
   organizationId: string;
   projectId: Types.ObjectId;
   userId: string;
@@ -128,6 +130,7 @@ export async function runIdeToolLoop(input: {
         },
         { signal: input.signal }
       );
+      input.onModelResponse?.();
       latencyMs += result.latencyMs;
       if (result.inputTokens != null) inputTokens = (inputTokens ?? 0) + result.inputTokens;
       if (result.outputTokens != null) outputTokens = (outputTokens ?? 0) + result.outputTokens;
@@ -258,6 +261,7 @@ export async function runIdeToolLoop(input: {
       { role: 'architect', messages: finalAnswerMessages(initialSystemMessage.content ?? '', initialTaskMessage?.content ?? '', messages, input.contextChars ?? DEFAULT_CONTEXT_CHARS), maxOutputTokens: input.maxOutputTokens },
       { signal: input.signal }
     );
+    input.onModelResponse?.();
     latencyMs += final.latencyMs;
     if (final.inputTokens != null) inputTokens = (inputTokens ?? 0) + final.inputTokens;
     if (final.outputTokens != null) outputTokens = (outputTokens ?? 0) + final.outputTokens;
