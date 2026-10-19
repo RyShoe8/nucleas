@@ -176,8 +176,17 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
     const reload = useCallback(() => setReloadKey((k) => k + 1), []);
 
     useEffect(() => {
+        const refreshVisible = () => {
+            if (document.visibilityState === 'visible') reload();
+        };
         window.addEventListener('nucleas:jobs-changed', reload);
-        return () => window.removeEventListener('nucleas:jobs-changed', reload);
+        window.addEventListener('focus', refreshVisible);
+        document.addEventListener('visibilitychange', refreshVisible);
+        return () => {
+            window.removeEventListener('nucleas:jobs-changed', reload);
+            window.removeEventListener('focus', refreshVisible);
+            document.removeEventListener('visibilitychange', refreshVisible);
+        };
     }, [reload]);
 
     useEffect(() => {
@@ -191,7 +200,9 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                 setJobs(body.jobs ?? []);
                 setError(null);
             }
-        })();
+        })().catch(() => {
+            if (!cancelled) setError('Could not refresh jobs. Retrying shortly.');
+        });
         return () => {
             cancelled = true;
         };
@@ -200,11 +211,13 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
     // Watches and articles run outside of jobs; they are shown here too, so this is one live view of everything.
     const activity = useActivity(reloadKey);
 
-    // Refresh while anything is being designed or run.
+    // Other teammates can handle review cards even when no worker is running.
+    // Keep the shared list fresh while idle too, and refresh immediately on return.
     const busy = (jobs?.some(jobIsBusy) ?? false) || Boolean(activity?.busy);
     useEffect(() => {
-        if (!busy) return;
-        const timer = window.setInterval(reload, 5000);
+        const timer = window.setInterval(() => {
+            if (document.visibilityState === 'visible') reload();
+        }, busy ? 5000 : 15_000);
         return () => window.clearInterval(timer);
     }, [busy, reload]);
 
