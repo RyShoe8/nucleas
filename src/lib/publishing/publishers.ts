@@ -124,7 +124,36 @@ function facebookError(status: number, body: GraphError): PublishError {
   return new PublishError('rejected', `Facebook refused the post${body.error?.message ? `: ${body.error.message.slice(0, 200)}` : ` (${status})`}.`);
 }
 
+/** A Facebook post with the cover image shown large: a photo post whose caption carries the link. */
+async function publishFacebookPhoto(token: string, input: PostInput & { imageUrl: string }, fetcher: FetchLike): Promise<{ url: string } | null> {
+  const caption = input.link && !input.text.includes(input.link) ? `${input.text}
+
+${input.link}` : input.text;
+  let res: Response;
+  try {
+    res = await fetcher(`${FACEBOOK_GRAPH}/me/photos`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+      body: new URLSearchParams({ url: input.imageUrl, caption, published: 'true' }).toString(),
+      redirect: 'error',
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch {
+    throw new PublishError('unreachable', 'Facebook did not respond. It will be tried again.');
+  }
+  const body = (await res.json().catch(() => ({}))) as GraphError & { id?: string; post_id?: string };
+  if (res.ok && (body.post_id || body.id)) return { url: `https://www.facebook.com/${body.post_id ?? body.id}` };
+  const error = facebookError(res.status, body);
+  // Permission, token and busy-server problems apply to any post; only an image Facebook would not take falls back to a link post.
+  if (error.code !== 'rejected') throw error;
+  return null;
+}
+
 export async function publishToFacebook(token: string, input: PostInput, fetcher: FetchLike = fetch): Promise<{ url: string }> {
+  if (input.imageUrl) {
+    const photo = await publishFacebookPhoto(token, { ...input, imageUrl: input.imageUrl }, fetcher);
+    if (photo) return photo;
+  }
   const form = new URLSearchParams({ message: input.text });
   if (input.link) form.set('link', input.link);
   let res: Response;

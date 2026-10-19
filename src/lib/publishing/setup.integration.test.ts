@@ -116,7 +116,7 @@ describe('setting up a publishing job', () => {
     const ready = (await getJob(admin, created.job.id))!.publishing!.ready;
     // Facebook refused the automatic post (the stubbed Graph API answers 404), so it became a card too.
     expect(ready.map((d) => d.platform).sort()).toEqual(['bluesky', 'facebook', 'reddit']);
-    expect(ready.find((d) => d.platform === 'reddit')).toMatchObject({ title: 'New Game Release: Factorio', itemTitle: 'factorio' });
+    expect(ready.find((d) => d.platform === 'reddit')).toMatchObject({ title: 'New Game: Factorio', itemTitle: 'factorio' });
     expect(vi.mocked(sendEmail).mock.calls.at(-1)?.[0]).toMatchObject({ to: 'owner@example.invalid', subject: '3 posts ready to post · PlayBound' });
 
     // Anyone on the team can post a card by hand; only managers change the settings.

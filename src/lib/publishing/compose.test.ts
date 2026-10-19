@@ -1,6 +1,6 @@
 import { manualPostText } from './compose';
 import { describe, expect, it, vi } from 'vitest';
-import { charCount, composePost, composeSystemPrompt, composeUserPrompt, fitToLimit, parseDraft } from './compose';
+import { charCount, composePost, composeSystemPrompt, composeUserPrompt, fitToLimit, newItemTitle, parseDraft, relabelNewItemTitle } from './compose';
 import { extractPageFacts } from './pageFacts';
 
 const base = { companyName: 'PlayBound', persona: 'Warm, nerdy, plain-spoken. Short sentences.', brief: 'Post every new game', noun: 'game', facts: { title: 'Deus Ex', description: 'Online co-op is back.' }, link: 'https://playbound.club/games/deus-ex' };
@@ -85,5 +85,20 @@ describe('manual post links', () => {
   it('does not duplicate a link already present in Reddit text', () => {
     const body = 'Play this: https://example.com/games/a';
     expect(manualPostText('Reddit', body, 'https://example.com/games/a')).toBe(body);
+  });
+});
+
+describe('Reddit title for a new item', () => {
+  it('relabels a copied "New …:" prefix with the source noun and leaves other titles alone', () => {
+    expect(relabelNewItemTitle('New Add: Wreckage - Free FPS', 'game')).toBe('New Game: Wreckage - Free FPS');
+    expect(relabelNewItemTitle('new game: Wreckage', 'game')).toBe('New Game: Wreckage');
+    expect(relabelNewItemTitle('New Game Release', 'game')).toBe('New Game Release');
+    expect(relabelNewItemTitle('Wreckage - Free FPS', 'game')).toBe('Wreckage - Free FPS');
+    expect(relabelNewItemTitle('New Release: A Mod: Part Two', 'case study')).toBe('New Case Study: A Mod: Part Two');
+  });
+
+  it('builds "New Game: Name" for a plain name, within the Reddit limit', () => {
+    expect(newItemTitle('Wreckage - Free FPS', 'game')).toBe('New Game: Wreckage - Free FPS');
+    expect(newItemTitle('x'.repeat(400), 'game').length).toBeLessThanOrEqual(300);
   });
 });

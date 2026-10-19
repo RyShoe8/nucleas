@@ -115,6 +115,23 @@ export interface Draft {
   body: string;
 }
 
+const titleCase = (noun: string) => noun.replace(/\b[a-z]/g, (c) => c.toUpperCase());
+
+const NEW_LABEL = /^\s*new\s+[a-z][a-z -]{0,30}:\s*/i;
+
+/** "New Game: Name" for an item with a plain name. */
+export function newItemTitle(name: string, noun: string): string {
+  return fitToLimit(`New ${titleCase(noun.trim())}: ${name.replace(NEW_LABEL, '').trim()}`, 300);
+}
+
+/**
+ * A model may copy a differently worded label from an example post (for instance "New Add:"). When its title starts
+ * with a "New …:" label, the label becomes the source's own noun ("New Game:"); any other title is left as written.
+ */
+export function relabelNewItemTitle(title: string, noun: string): string {
+  return NEW_LABEL.test(title) ? newItemTitle(title, noun) : title;
+}
+
 /** Turns the model's reply into a draft that fits the platform; null when the reply is unusable. */
 export function parseDraft(platform: SocialPlatform, reply: string | null): Draft | null {
   if (!reply) return null;

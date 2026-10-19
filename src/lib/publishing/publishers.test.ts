@@ -52,6 +52,44 @@ describe('Facebook', () => {
     expect(await publishToFacebook('tok', { text: 'Hi', link: 'https://playbound.club/g' }, fetcher)).toEqual({ url: 'https://www.facebook.com/123_456' });
   });
 
+  it('posts the cover image as a photo with the link in the caption', async () => {
+    const calls: { url: string; body: string }[] = [];
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, body: String(init?.body) });
+      return json(200, { id: '999', post_id: '123_777' });
+    });
+    const out = await publishToFacebook('tok', { text: 'New: Wreckage', link: 'https://playbound.club/games/wreckage', imageUrl: 'https://media.moddb.com/cover.jpg' }, fetcher);
+    expect(out).toEqual({ url: 'https://www.facebook.com/123_777' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain('/me/photos');
+    const body = new URLSearchParams(calls[0]!.body);
+    expect(body.get('url')).toBe('https://media.moddb.com/cover.jpg');
+    expect(body.get('caption')).toBe('New: Wreckage\n\nhttps://playbound.club/games/wreckage');
+    expect(calls[0]!.body).not.toContain('tok');
+  });
+
+  it('does not repeat a link that is already in the text', async () => {
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(new URLSearchParams(String(init?.body)).get('caption')).toBe('See https://playbound.club/g');
+      return json(200, { id: '5' });
+    });
+    await publishToFacebook('t', { text: 'See https://playbound.club/g', link: 'https://playbound.club/g', imageUrl: 'https://x.example/c.jpg' }, fetcher);
+  });
+
+  it('falls back to a link post only when Facebook will not take the image, never on a permission or token problem', async () => {
+    const seen: string[] = [];
+    const refusesImage = vi.fn(async (url: string) => {
+      seen.push(url);
+      return url.includes('/me/photos') ? json(400, { error: { code: 100, message: 'Invalid image' } }) : json(200, { id: '1_2' });
+    });
+    expect(await publishToFacebook('t', { text: 'Hi', link: 'https://playbound.club/g', imageUrl: 'https://x.example/c.jpg' }, refusesImage)).toEqual({ url: 'https://www.facebook.com/1_2' });
+    expect(seen.map((u) => (u.includes('/me/photos') ? 'photo' : 'feed'))).toEqual(['photo', 'feed']);
+
+    const noPermission = vi.fn(async () => json(403, { error: { code: 200 } }));
+    await expect(publishToFacebook('t', { text: 'x', link: null, imageUrl: 'https://x.example/c.jpg' }, noPermission)).rejects.toMatchObject({ code: 'needs_permission' });
+    expect(noPermission).toHaveBeenCalledTimes(1);
+  });
+
   it('tells a missing permission from an expired token from a busy server', async () => {
     await expect(publishToFacebook('t', { text: 'x', link: null }, async () => json(403, { error: { code: 200, message: 'Requires pages_manage_posts' } }))).rejects.toMatchObject({ code: 'needs_permission' });
     await expect(publishToFacebook('t', { text: 'x', link: null }, async () => json(400, { error: { code: 190 } }))).rejects.toMatchObject({ code: 'needs_reauth' });

@@ -22,7 +22,7 @@ import type { JobRunOutput } from '@/lib/jobs/schema';
 import { MANUAL_ONLY, PLATFORM_LABEL, SOCIAL_PLATFORMS, publishingConfigSchema, type AdminTarget, type PublishChannel, type PublishPlatform, type PublishingConfig } from './config';
 import { addRecord, fillValues, valueLines, type AdminBrowser, type AdminSession } from './admin';
 import { workerAdminBrowser } from './adminBrowser';
-import { composePost, type Draft, type Writer } from './compose';
+import { composePost, newItemTitle, relabelNewItemTitle, type Draft, type Writer } from './compose';
 import type { FetchLike } from './fetchPublic';
 import { readPageFacts, type PageFacts } from './pageFacts';
 import { listSitePages } from './siteSource';
@@ -161,7 +161,7 @@ function engineWriter(job: JobLike): Writer {
 /** When no model can write, a plain post from the facts still lets a person post it (never auto-posted). */
 function fallbackDraft(platform: PublishPlatform, facts: ItemFacts, noun: string): Draft {
   const body = [facts.description || `A new ${noun} is here.`, platform === 'reddit' && facts.link ? facts.link : ''].filter(Boolean).join('\n\n');
-  return { title: platform === 'reddit' ? `New ${noun}: ${facts.title}`.slice(0, 300) : null, body: platform === 'bluesky' ? body.slice(0, 290) : body };
+  return { title: platform === 'reddit' ? newItemTitle(facts.title, noun) : null, body: platform === 'bluesky' ? body.slice(0, 290) : body };
 }
 
 interface Prepared {
@@ -211,6 +211,8 @@ async function draftAll(job: JobLike, config: PublishingConfig, facts: ItemFacts
       },
       write
     ).catch(() => null);
+    // A "New …:" label copied from an example post becomes the source's noun ("New Game:").
+    if (draft?.title && channel.platform === 'reddit' && config.source.type === 'site') draft.title = relabelNewItemTitle(draft.title, config.source.noun);
     out.set(channel.platform, draft ? { draft, written: true } : { draft: fallbackDraft(channel.platform, facts, config.source.noun), written: false });
   }
   return out;
