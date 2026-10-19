@@ -145,11 +145,13 @@ export default function PublishingJobBody({ job, onChange, readyShownAbove = fal
     const act = async (action: string) => {
         setBusy(action);
         setError(null);
-        const res = await post(job.id, { action });
-        setBusy(null);
-        if (res.error || !res.job) return setError(res.error ?? 'Failed');
-        onChange(res.job);
-        window.dispatchEvent(new Event('nucleas:jobs-changed'));
+        try {
+            const res = await post(job.id, { action, ...(action === 'approve' ? { completion: 'automatic' } : {}) });
+            if (res.error || !res.job) return setError(res.error ?? 'Failed');
+            onChange(res.job);
+            window.dispatchEvent(new Event('nucleas:jobs-changed'));
+        } catch (err) { setError(err instanceof Error ? err.message : 'The request failed. Please try again.'); }
+        finally { setBusy(null); }
     };
 
     const running = job.runs.find((r) => r.status === 'running');
@@ -167,14 +169,20 @@ export default function PublishingJobBody({ job, onChange, readyShownAbove = fal
                 {on && view.postedThisWeek ? ` · ${view.postedThisWeek} posted this week` : ''}
             </p>
 
+            {job.status === 'proposed' && !running && !sample ? (
+                <section className="space-y-2">
+                    <p className="text-xs text-text-secondary">{view.channels.map((c) => `${PLATFORM_LABEL[c.platform]}: ${c.mode === 'manual' ? 'manual review card' : 'automatic'}`).join(' · ')}</p>
+                    {failedSample ? <p role="alert" className="text-xs text-red-400">{failedSample.error}</p> : null}
+                    {job.canManage ? <div className="flex flex-wrap gap-2">
+                        <button type="button" className="ui-button-primary" disabled={busy !== null} onClick={() => void act('approve')}>{busy === 'approve' ? 'Starting dry run…' : failedSample ? 'Retry dry run' : 'Approve and run a dry run'}</button>
+                        <button type="button" className="ui-button" disabled={busy !== null} onClick={() => void act('reject')}>Reject</button>
+                    </div> : <p className="text-xs text-text-secondary">A manager or administrator must approve this job.</p>}
+                    <p className="text-xs text-text-secondary">The dry run previews existing content without posting or saving anything externally. Review the sample before switching the job on. Manual destinations remain manual.</p>
+                </section>
+            ) : null}
             {running ? <p className="text-xs text-sky-400" role="status">{running.dryRun ? 'Writing sample posts' : 'Checking for new posts'}: {running.progressState.label}…</p> : null}
             {sample ? <SampleReview job={job} run={sample} onChange={onChange} /> : null}
-            {failedSample ? (
-                <div className="space-y-2">
-                    <p className="text-xs text-red-400">{failedSample.error}</p>
-                    {job.canManage ? <button type="button" className="ui-button-primary" disabled={busy !== null} onClick={() => void post(job.id, { action: 'approve', completion: 'automatic' }).then((res) => (res.job ? onChange(res.job) : setError(res.error ?? 'Failed')))}>Try the dry run again</button> : null}
-                </div>
-            ) : null}
+
 
             {view.ready.length && readyShownAbove ? <p className="text-xs text-amber-300">{view.ready.length} {view.ready.length === 1 ? 'is' : 'are'} waiting for you at the top of this window.</p> : null}
             {view.ready.length && !readyShownAbove ? (
