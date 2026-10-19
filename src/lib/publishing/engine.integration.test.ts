@@ -342,7 +342,7 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
     signedIn = false;
     await runPublishing(await newRun(job._id, false), 'owner', (await Job.findById(job._id).lean())!, { ...adminDeps(), adminSession: null });
     const card = await PublishDelivery.findOne({ platform: 'admin' }).lean();
-    expect(card).toMatchObject({ status: 'ready', values: { casino: 'Golden Hearts' }, error: expect.stringContaining('Log in again') });
+    expect(card).toMatchObject({ status: 'ready', values: { casino: 'Golden Hearts' }, error: expect.stringContaining('Reconnect it in Company') });
     const view = await publishingView((await Job.findById(job._id).lean())!);
     expect(view?.channels).toEqual([{ platform: 'admin', mode: 'manual' }]);
     expect(view?.ready[0]?.fields).toEqual([{ label: 'Casino', value: 'Golden Hearts' }, { label: 'Offer', value: '$50 → 75 SC (~50% bonus)' }]);

@@ -12,10 +12,19 @@ const state = {
 };
 
 describe('sanitizeSessionCookies', () => {
-  it('keeps only the site’s own cookies from a storageState and reports the earliest expiry', () => {
+  it('keeps only the site’s own cookies from a storageState and leaves authentication expiry to the site', () => {
     const { cookies, expiresAt } = sanitizeSessionCookies(state, 'https://playbound.club');
     expect(cookies.map((c) => c.name)).toEqual(['session', 'csrf']);
-    expect(expiresAt?.getUTCFullYear()).toBe(2100);
+    expect(expiresAt).toBeNull();
+  });
+
+  it('does not expire a login when a bot-check cookie expires first', () => {
+    const { cookies, expiresAt } = sanitizeSessionCookies([
+      { name: '__cf_bm', value: 'bot-check', expires: Math.floor(Date.now() / 1000) - 1 },
+      { name: 'site_session', value: 'session', expires: Math.floor(Date.now() / 1000) + 604800 },
+    ], 'https://example.com');
+    expect(cookies).toHaveLength(2);
+    expect(expiresAt).toBeNull();
   });
 
   it('accepts a plain cookie list in the browser-extension format', () => {

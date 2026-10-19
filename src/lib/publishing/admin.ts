@@ -70,7 +70,7 @@ export function fillSystemPrompt(input: { companyName: string; noun: string; bri
 export function fillUserPrompt(fields: FormField[], facts: RecordFacts, noun: string): string {
   const describe = (f: FormField) => {
     const choices = f.options?.filter((o) => o.value !== '').map((o) => `${o.value}=${o.label}`).join(', ');
-    return `- ${f.key} (${f.type}${f.required ? ', required' : ''}): ${f.label}${choices ? ` [values: ${choices}]` : ''}${f.placeholder ? ` (e.g. ${f.placeholder})` : ''}`;
+    return `- ${f.key} (${f.type}${f.required ? ', required' : ''}): ${f.label}${choices ? ` [values: ${choices}]` : ''}${f.selector.includes('.fi-select-input') ? ' (searchable: use the exact name from the source even if absent from these initial choices)' : ''}${f.placeholder ? ` (e.g. ${f.placeholder})` : ''}`;
   };
   return [
     '# Form fields',
@@ -100,7 +100,7 @@ export function coerceValue(field: FormField, raw: unknown): string | boolean | 
   if (field.type === 'select' || field.type === 'radio') {
     const options = (field.options ?? []).filter((o) => o.value !== '');
     const hit = options.find((o) => o.value === text) ?? options.find((o) => o.value.toLowerCase() === text.toLowerCase() || o.label.toLowerCase() === text.toLowerCase());
-    return hit?.value;
+    return hit?.value ?? (field.selector.includes('.fi-select-input') ? text : undefined);
   }
   if (field.type === 'number') {
     const n = Number(text.replace(/[$,%\s]/g, ''));

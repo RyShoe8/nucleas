@@ -63,8 +63,8 @@ export async function getAdminAccount(viewer: CompanyViewer, companyId: string):
     baseUrl: row?.baseUrl ?? null,
     cookieCount: row?.cookieCount ?? 0,
     capturedAt: row?.capturedAt?.toISOString() ?? null,
-    expiresAt: row?.expiresAt?.toISOString() ?? null,
-    expired: Boolean(row?.expiresAt && row.expiresAt.getTime() < Date.now()),
+    expiresAt: null, // Legacy cookie-derived expiry is not the login expiry.
+    expired: false, // The authenticated page check determines whether re-login is needed.
     lastCheckedAt: row?.lastCheckedAt?.toISOString() ?? null,
     lastCheckOk: row?.lastCheckOk ?? null,
     lastCheckNote: row?.lastCheckNote ?? null,
@@ -218,7 +218,6 @@ export async function clearAdminAccount(viewer: CompanyViewer, companyId: string
 async function session(viewer: CompanyViewer, companyId: string): Promise<{ baseUrl: string; cookies: SessionCookie[] } | null> {
   const row = await CompanyAdminAccount.findOne(scope(viewer, companyId)).lean<Row>();
   if (!row?.sessionSealed) return null;
-  if (row.expiresAt && row.expiresAt.getTime() < Date.now()) return null;
   try {
     return { baseUrl: row.baseUrl, cookies: JSON.parse(openSecret(purpose(companyId), row.sessionSealed)) as SessionCookie[] };
   } catch {
@@ -228,12 +227,12 @@ async function session(viewer: CompanyViewer, companyId: string): Promise<{ base
 
 /**
  * The session for background work a manager set up (a publishing job adding records). Server-only: the
- * cookies go to the browser worker and nowhere else. Null when none is saved, it expired, or cannot be read.
+ * cookies go to the browser worker and nowhere else. Null when none is saved or it cannot be read. The site checks whether the login is still valid.
  */
 export async function adminSessionFor(organizationId: Types.ObjectId, companyId: string): Promise<{ baseUrl: string; cookies: SessionCookie[] } | null> {
   if (!Types.ObjectId.isValid(companyId)) return null;
   const row = await CompanyAdminAccount.findOne({ organizationId, companyId: new Types.ObjectId(companyId) }).lean<Row>();
-  if (!row?.sessionSealed || (row.expiresAt && row.expiresAt.getTime() < Date.now())) return null;
+  if (!row?.sessionSealed) return null;
   try {
     return { baseUrl: row.baseUrl, cookies: JSON.parse(openSecret(purpose(companyId), row.sessionSealed)) as SessionCookie[] };
   } catch {

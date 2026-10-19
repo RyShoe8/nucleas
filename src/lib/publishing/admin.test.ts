@@ -2,6 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { addLinkCandidates, addRecord, coerceValue, fillUserPrompt, learnAdminForm, listShows, listUrlFor, parseFill, valueLines, type AdminBrowser, type FormSnapshot } from './admin';
 import type { AdminTarget, FormField } from './config';
 
+it('allows a sourced name to be searched beyond the dropdown’s initial choices', () => {
+  const field: FormField = { key: 'vendor', label: 'Vendor', type: 'select', selector: '.fi-select-input', required: true, options: [{ value: 'Alpha', label: 'Alpha' }] };
+  expect(coerceValue(field, 'Zeta')).toBe('Zeta');
+  expect(coerceValue({ ...field, selector: '#native' }, 'Zeta')).toBeUndefined();
+  expect(fillUserPrompt([field], { title: 'Zeta offer' }, 'offer')).toContain('exact name from the source');
+});
+
 const FIELDS: FormField[] = [
   { key: 'casino', label: 'Casino', type: 'text', selector: '#casino', required: true },
   { key: 'offer', label: 'Offer', type: 'textarea', selector: 'textarea[name="offer"]', required: true },

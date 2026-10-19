@@ -54,7 +54,8 @@ export function sanitizeSessionCookies(raw: unknown, baseUrl: string): { cookies
     if (cookies.length >= 60) break;
   }
   if (!cookies.length) throw new Error(`None of those cookies belong to ${host}. Log in to that site and export again.`);
-  const now = Date.now() / 1000;
-  const expiries = cookies.map((c) => c.expires).filter((e) => e > now);
-  return { cookies, expiresAt: expiries.length ? new Date(Math.min(...expiries) * 1000) : null };
+  // Cookie lifetimes do not identify authentication lifetime. A short-lived bot-check,
+  // analytics or CSRF cookie must never expire the entire saved login. The site
+  // validates authentication when the worker opens it.
+  return { cookies, expiresAt: null };
 }

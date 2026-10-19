@@ -1,8 +1,9 @@
+import { isReadOnlyFormLookup } from './adminLookups';
 /**
  * Reading and filling a form in a company's own admin, with the admin session a person captured by
  * logging in themselves. Used by publishing jobs that add records (a deal, an event) to the company's site.
  *
- * inspect: read-only, exactly like /observe: every request that is not GET/HEAD/OPTIONS is aborted.
+ * inspect: read-only: GET/HEAD/OPTIONS and narrowly validated choice lookups only.
  * fill:    fills the form and takes a screenshot. Without `submit` it stays read-only (a dry run). With
  *          `submit`, writes are allowed to the site's own origin only; other hosts stay read-only.
  * Cookies never appear in a return value or a log.
@@ -56,8 +57,12 @@ export interface AdminSession {
 
 type Locator = {
   first: () => Locator;
+  waitFor: (options: { state: 'visible'; timeout: number }) => Promise<void>;
+  locator: (selector: string) => Locator;
+  getByRole: (role: string, options: { name: string; exact: boolean }) => Locator;
   count: () => Promise<number>;
   isVisible: (o?: { timeout: number }) => Promise<boolean>;
+  focus: (options?: { timeout: number }) => Promise<void>;
   fill: (value: string, o?: { timeout: number }) => Promise<void>;
   selectOption: (value: { value?: string; label?: string }, o?: { timeout: number }) => Promise<unknown>;
   setChecked: (checked: boolean, o?: { timeout: number }) => Promise<void>;
@@ -75,7 +80,7 @@ type Page = {
   screenshot: (o: Record<string, unknown>) => Promise<Buffer>;
   on: (event: 'dialog', handler: (dialog: { accept: () => Promise<void>; dismiss: () => Promise<void> }) => void) => void;
 };
-type Route = { request: () => { method: () => string; url: () => string; headers: () => Record<string, string> }; abort: () => Promise<void>; continue: (o?: { headers: Record<string, string> }) => Promise<void> };
+type Route = { request: () => { postDataJSON: () => unknown; method: () => string; url: () => string; headers: () => Record<string, string> }; abort: () => Promise<void>; continue: (o?: { headers: Record<string, string> }) => Promise<void> };
 
 interface Options {
   allowInsecure?: boolean;
@@ -125,6 +130,9 @@ async function openPage<T>(input: AdminSession, options: Options, writesToSite: 
         sameOrigin = false;
       }
       if (writesToSite && sameOrigin) return route.continue(withSiteHeader(request, host));
+      if (sameOrigin && method === 'POST' && /\/livewire(?:-[a-z0-9]+)?\/update$/.test(new URL(request.url()).pathname)) {
+        try { if (isReadOnlyFormLookup(request.postDataJSON())) return route.continue(withSiteHeader(request, host)); } catch { /* Invalid bodies remain blocked. */ }
+      }
       return route.abort();
     });
     await context.addCookies(cookies.map((c) => ({
@@ -139,6 +147,7 @@ async function openPage<T>(input: AdminSession, options: Options, writesToSite: 
     page.on('dialog', (dialog) => void (writesToSite ? dialog.accept() : dialog.dismiss()).catch(() => undefined));
     await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => undefined);
+    if (await page.locator('.fi-select-input').count()) await page.locator('.fi-select-input-btn').first().waitFor({ state: 'visible', timeout: 5000 }).catch(() => undefined);
     if (new URL(page.url()).origin !== origin.origin) throw new Error('Redirected outside the site.');
     return await work(page, origin);
   } finally {
@@ -237,6 +246,15 @@ const INSPECT_SCRIPT = `(() => {
     const ph = el.getAttribute('placeholder'); if (ph) field.placeholder = clean(ph);
     fields.push(field);
   }
+  // Filament's searchable selects are buttons/listboxes, not native <select>s.
+  for (const widget of root.querySelectorAll('.fi-select-input')) {
+    const wrapper = widget.closest('.fi-fo-field');
+    const labelEl = wrapper && wrapper.querySelector('label');
+    if (!labelEl || !visible(widget)) continue;
+    const label = clean(labelEl.textContent).replace(/\\s*\\*$/, '');
+    const options = Array.from(widget.querySelectorAll('[role="option"]')).map((o) => ({ value: clean(o.textContent), label: clean(o.textContent) })).filter((o) => o.value).slice(0, 200);
+    fields.push({ key: keyFor(label), label, type: 'select', selector: labelEl.htmlFor ? '.fi-fo-field:has(label[for="' + CSS.escape(labelEl.htmlFor) + '"]) .fi-select-input' : selectorFor(widget) + '.fi-select-input', required: Boolean(labelEl.querySelector('sup')) || /\\*\\s*$/.test(clean(labelEl.textContent)), options });
+  }
   for (const [name, group] of radios) fields.push({ key: keyFor(group.label), label: group.label, type: 'radio', selector: 'input[type="radio"][name="' + name.replace(/"/g, '\\\\"') + '"]', required: group.required, options: group.options });
   const buttons = Array.from(root.querySelectorAll('button, input[type="submit"]')).filter(visible);
   const submitEl = buttons.find((b) => (b.getAttribute('type') || 'submit').toLowerCase() === 'submit' && b.closest('form'))
@@ -297,7 +315,10 @@ export async function fillAdminForm(
     if (await signedOut(page)) return { url: page.url(), title, loggedIn: false, submitted: false, missing: [], errors: ['The admin session is no longer signed in.'], text: '', screenshot: null };
     const missing: string[] = [];
     const errors: string[] = [];
-    for (const field of input.fields.slice(0, 60)) {
+    // Search remote choices before filling other controls, so lookup requests
+    // contain no pending form updates during a read-only preview.
+    const ordered = [...input.fields.slice(0, 60)].sort((a, b) => Number(b.selector.includes('.fi-select-input')) - Number(a.selector.includes('.fi-select-input')));
+    for (const field of ordered) {
       const value = input.values[field.key];
       if (value === undefined || value === null || value === '') continue;
       try {
@@ -311,8 +332,20 @@ export async function fillAdminForm(
         if (!(await control.count())) { missing.push(field.key); continue; }
         if (field.type === 'file') continue;
         if (field.type === 'checkbox') await control.setChecked(value === true || value === 'true' || value === 'yes', { timeout: 5000 });
+        else if (field.type === 'select' && field.selector.includes('.fi-select-input')) {
+          await control.locator('.fi-select-input-btn').click({ timeout: 5000 });
+          const search = control.locator('input').first();
+          if (await search.count()) { await search.fill(String(value), { timeout: 5000 }); await page.waitForTimeout(600); }
+          await control.getByRole('option', { name: String(value), exact: true }).click({ timeout: 5000 });
+        }
         else if (field.type === 'select') await control.selectOption({ value: String(value) }, { timeout: 5000 }).catch(() => control.selectOption({ label: String(value) }, { timeout: 5000 }));
-        else await control.fill(String(value), { timeout: 5000 });
+        else {
+          // Blurring a previous control can trigger a reactive recalculation. Let
+          // that finish before applying the next explicitly prepared value.
+          await control.focus({ timeout: 5000 });
+          await page.waitForLoadState('networkidle', { timeout: 1500 }).catch(() => undefined);
+          await control.fill(String(value), { timeout: 5000 });
+        }
       } catch (error) {
         errors.push(`${field.label}: could not be filled (${error instanceof Error ? error.message.split('\n')[0]!.slice(0, 120) : 'unknown'})`);
       }
