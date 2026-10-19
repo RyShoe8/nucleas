@@ -316,12 +316,10 @@ export async function attemptCompanyCredentialChat(input: {
     if (error instanceof GatewayError) {
       return statusTurn(companyChatAdmissionMessage(error.code), error.code);
     }
-    return statusTurn(
-      freeCredential
-        ? 'Enable Remote connection and Processing in Admin → AI Settings before free/local chat can run.'
-        : 'Paid chat needs processing enabled and a positive reservation within budget ceilings.',
-      'unavailable'
-    );
+    if (error instanceof Error && error.name === 'BudgetAdmissionError') return statusTurn(error.message, 'budget_exhausted', undefined, { costMicros: 0, reservedMicros: 0, noProviderFee: freeCredential });
+    const reference = randomUUID();
+    console.error('[companyChat] admission failed', { reference, model: input.model, error });
+    return statusTurn(`AI admission failed before contacting the provider. ${error instanceof Error && /^Mongo/.test(error.name) ? 'The database connection was interrupted.' : 'An internal error prevented the request from starting.'} Reference: ${reference}`, 'admission_failed');
   }
 
   // Company credentials: only free/local are truly no-fee. Platform Admin "no provider fee"

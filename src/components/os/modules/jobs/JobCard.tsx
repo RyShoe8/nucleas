@@ -572,6 +572,9 @@ function RunBlock({ job, run, onChange, onView }: { job: JobView; run: JobRunVie
                 </div>
             ) : null}
             {run.error ? <p className="text-xs text-red-400">{run.error}</p> : null}
+            {run.status === 'failed' && run.modelPath?.length ? (
+                <details><summary className="cursor-pointer text-xs text-text-secondary">Models tried and errors</summary><div className="mt-2"><ModelPath run={run} /></div></details>
+            ) : null}
             {run.output ? (
                 <div className="flex items-center justify-between gap-3 rounded border border-border bg-background-elevated/40 p-2">
                     <div className="min-w-0"><p className="text-xs line-clamp-2">{run.output.summary || `${run.output.records.length} result${run.output.records.length === 1 ? '' : 's'}`}</p><p className="text-[10px] text-text-secondary">{run.output.records.length} detailed result{run.output.records.length === 1 ? '' : 's'} · {run.issues.length} flagged check{run.issues.length === 1 ? '' : 's'}</p></div>

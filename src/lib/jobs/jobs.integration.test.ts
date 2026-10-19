@@ -309,6 +309,22 @@ describe('approving and the dry run', () => {
     expect(await JobRun.countDocuments({ jobId: job.id })).toBe(1);
   });
 
+  it('skips a gateway-wide outage and stops at a shared budget refusal', async () => {
+    const free = { profileId: 'a'.repeat(24), model: 'free-a', free: true, label: 'Rogly', provider: 'custom' };
+    const sibling = { ...free, model: 'free-b' };
+    const paid = { profileId: 'b'.repeat(24), model: 'paid', free: false, label: 'OpenAI', provider: 'openai' };
+    mocks.models.mockResolvedValue([free, sibling, paid]);
+    mocks.select.mockImplementation(async (_org: string, _need: string, _level: string, options?: { models?: { model: string }[] }) => ({ primary: options?.models?.length === 1 ? paid : free, fallback: paid }));
+    mocks.chat.mockImplementation(async (input: { model: string }) => input.model === free.model
+      ? { requestId: 'outage', role: 'status', text: 'Rogly returned HTTP 503: the authentication database is temporarily unreachable.', costMicros: 0 }
+      : { requestId: 'budget', role: 'status', text: 'AI budget cannot reserve $1.00: $0.66 available.', failureCategory: 'budget_exhausted', costMicros: 0 });
+    const job = await proposed();
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    expect(mocks.chat.mock.calls.map(([input]) => input.model)).toEqual([free.model, paid.model]);
+    expect(await JobRun.findById(approved.dryRunId).lean()).toMatchObject({ status: 'failed', error: expect.stringContaining('AI budget cannot reserve') });
+  });
+
   it('tracks link recommendations through approval and submission with feedback history', async () => {
     const config = { projectId, schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
     const created = await createTemplateJob(admin, { companyId, template: 'link_building', config });

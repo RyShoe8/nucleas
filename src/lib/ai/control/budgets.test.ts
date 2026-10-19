@@ -23,7 +23,8 @@ describe('transactional budget repository', () => {
   });
   it('does not create a reservation if the conditional budget update fails', async () => {
     vi.spyOn(AiBudget, 'updateOne').mockResolvedValue({ matchedCount: 0 } as Awaited<ReturnType<typeof AiBudget.updateOne>>);
-    await expect(reserveRunBudget('org-a', runId, [budgetId], 25)).rejects.toThrow('Budget unavailable');
+    vi.spyOn(AiBudget, 'findOne').mockReturnValue({ session: () => ({ lean: async () => ({ limitMicros: 25000000, spentMicros: 5344680, reservedMicros: 19000000 }) }) } as unknown as ReturnType<typeof AiBudget.findOne>);
+    await expect(reserveRunBudget('org-a', runId, [budgetId], 25)).rejects.toThrow('AI budget cannot reserve');
     expect(AiBudgetReservation.create).not.toHaveBeenCalled();
   });
   it('rejects missing scopes before opening a transaction', async () => {

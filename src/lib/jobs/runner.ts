@@ -480,7 +480,7 @@ export async function executeJobRun(runId: string): Promise<void> {
 
   let workCalls = 0;
   const doWork = async (choice: typeof worker, correction?: string, researchRetry = false, compact = false) => {
-    if (workCalls >= MAX_WORK_CALLS) return { requestId: 'attempt-limit', role: 'status' as const, text: `Stopped after ${MAX_WORK_CALLS} work calls. Check the recorded provider errors before retrying.` };
+    if (workCalls >= MAX_WORK_CALLS) return { requestId: 'attempt-limit', role: 'status' as const, text: `Stopped after ${MAX_WORK_CALLS} work calls. ${modelPath.filter((step) => step.error).slice(-2).map((step) => `${step.model}: ${step.error}`).join(' ') || 'No more work calls are allowed for this run.'}` };
     workCalls += 1;
     onProgress(compact ? `Retrying within ${shortModel(choice.model)}'s context limit` : correction ? `${researchRetry ? 'Re-researching' : 'Fixing the result format'} with ${shortModel(choice.model)}` : `Researching with ${shortModel(choice.model)}`);
     usedModels.push(choice.model);
@@ -525,7 +525,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       attemptedBindings.add(`${activeWorker.profileId}:${activeWorker.model}`);
       const refreshCatalog = /httpStatus=5\d\d\b|HTTP 5\d\d\b/i.test(`${turn.debugHint ?? ''} ${turn.text}`);
       const fresh = await listAvailableModels({ force: refreshCatalog }).catch(() => models);
-      const creditFailure = /httpStatus=(401|402|403|429)\b|HTTP (401|402|403|429)\b/i.test(`${turn.debugHint ?? ''} ${turn.text}`);
+      const creditFailure = /httpStatus=(401|402|403|429)\b|HTTP (401|402|403|429)\b|authentication database.{0,80}(unreachable|unavailable)/i.test(`${turn.debugHint ?? ''} ${turn.text}`);
       if (creditFailure) exhaustedProfiles.add(activeWorker.profileId);
       // Credit errors affect the entire credential, not just its selected model.
       const candidates = fresh.filter((model) => !exhaustedProfiles.has(model.profileId)
@@ -544,9 +544,11 @@ export async function executeJobRun(runId: string): Promise<void> {
         }
       }
     }
+    // A local admission failure affects every provider; changing models cannot resolve it.
+    const admissionBlocked = turn.role !== 'assistant' && /AI budget cannot reserve|AI budget scope is unavailable|AI admission failed|Paid chat needs processing|Enable Remote connection and Processing/.test(turn.text);
     // A free worker that fails may retry on the level's paid model, as elsewhere in the engine.
-    if (turn.role !== 'assistant' && work.fallback && !exhaustedProfiles.has(work.fallback.profileId) && work.fallback.profileId !== activeWorker.profileId) { activeWorker = work.fallback; turn = await doWork(activeWorker); }
-    if (turn.role !== 'assistant') return void (await fail(turn.text, { costMicros: cost, models: usedModels }));
+    if (turn.role !== 'assistant' && !admissionBlocked && work.fallback && !exhaustedProfiles.has(work.fallback.profileId) && work.fallback.profileId !== activeWorker.profileId) { activeWorker = work.fallback; turn = await doWork(activeWorker); }
+    if (turn.role !== 'assistant') return void (await fail([turn.text, ...modelPath.filter((step) => step.error && step.error !== turn.text).slice(-1).map((step) => `${step.model}: ${step.error}`)].join(' '), { costMicros: cost, models: usedModels }));
     let parsed = parseJobOutput(turn.text, activeDesign.skill);
     if (!parsed.success) {
       const errors = parsed.error.issues.map((issue) => `${issue.path.join('.') || 'response'}: ${issue.message}`).join('; ');
