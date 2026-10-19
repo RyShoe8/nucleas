@@ -4,6 +4,7 @@ import { manualArtifact } from './output';
 import { brandVoiceDesign } from './templates/brandVoice';
 import { generatedVoice, saveGeneratedVoice } from '@/lib/brandVoice/service';
 import { Types } from 'mongoose';
+import { aiTransaction } from '@/lib/ai/control/transaction';
 import { Job, JobRun, type JobRunProgressStage, type JobRunStatus, type JobStatus } from '@/lib/models/Job';
 import { getCompanyProfile, isCompanyManager, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { readEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
@@ -372,15 +373,26 @@ export async function approveJob(viewer: CompanyViewer, id: string, input: { com
   if (!uncapped && !(budget > 0 && budget <= 1_000_000_000)) return { ok: false, status: 400, error: 'Set a monthly budget above $0.' };
   const manual = parsedDesign.success && manualArtifact(parsedDesign.data.skill);
   const completion = manual ? 'review' : input.completion;
-  const result = await transition(viewer, found.job, ['proposed'], { status: 'testing', completion, monthlyBudgetMicros: budget, ...(manual ? { design: { ...parsedDesign.data, schedule: { kind: 'once' }, recommendedCompletion: 'review' }, nextRunAt: null } : {}) }, 'approved', completion);
-  if (!result.ok) return result;
+  // Keep the approval and its dry run together. Driver-managed transaction retries are safe: an
+  // interrupted create cannot leave a testing job without a run or create a second committed run.
+  const runId = new Types.ObjectId();
   const startedAt = new Date();
-  const run = await JobRun.create({ organizationId: found.job.organizationId, jobId: found.job._id, companyId: found.job.companyId, dryRun: true, status: 'running', startedAt, ...initialRunLease(undefined, startedAt), progress: ['Starting the dry run'], progressState: { stage: 'preparing', label: 'Preparing the dry run', percent: 5, updatedAt: startedAt } });
+  const approved = await aiTransaction(async (session) => {
+    const changed = await Job.updateOne(
+      { _id: found.job._id, organizationId: viewer.organizationId, status: 'proposed' },
+      { $set: { status: 'testing', completion, monthlyBudgetMicros: budget, ...(manual ? { design: { ...parsedDesign.data, schedule: { kind: 'once' }, recommendedCompletion: 'review' }, nextRunAt: null } : {}) }, $push: { events: event(viewer, 'approved', completion) } },
+      { session }
+    );
+    if (!changed.modifiedCount) return false;
+    await JobRun.create([{ _id: runId, organizationId: found.job.organizationId, jobId: found.job._id, companyId: found.job.companyId, dryRun: true, status: 'running', startedAt, ...initialRunLease(undefined, startedAt), progress: ['Starting the dry run'], progressState: { stage: 'preparing', label: 'Preparing the dry run', percent: 5, updatedAt: startedAt } }], { session });
+    return true;
+  });
+  if (!approved) return { ok: false, status: 409, error: 'This job has already changed. Refresh to see its current status.' };
   // Return the view after the run exists. Returning the transition's earlier view leaves the
   // client without the running dry run and allows a stale "awaiting approval" list response to
   // win the UI race immediately after approval.
   const refreshed = await done(viewer, id);
-  return refreshed.ok ? { ...refreshed, dryRunId: String(run._id) } : refreshed;
+  return refreshed.ok ? { ...refreshed, dryRunId: String(runId) } : refreshed;
 }
 
 export function rejectJob(viewer: CompanyViewer, id: string, note?: string): Promise<ActionResult> {

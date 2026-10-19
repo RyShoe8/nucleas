@@ -297,6 +297,18 @@ describe('approving and the dry run', () => {
     expect((run?.modelPath as { error?: string }[]).filter((step) => step.error)).toHaveLength(3);
   });
 
+  it('rolls back approval when creating the dry run fails', async () => {
+    const job = await proposed();
+    const create = vi.spyOn(JobRun, 'create').mockRejectedValueOnce(new Error('Connection interrupted'));
+    try {
+      await expect(approveJob(admin, job.id, { completion: 'review' })).rejects.toThrow('Connection interrupted');
+    } finally { create.mockRestore(); }
+    expect(await Job.findById(job.id).lean()).toMatchObject({ status: 'proposed' });
+    expect(await JobRun.countDocuments({ jobId: job.id })).toBe(0);
+    expect(await approveJob(admin, job.id, { completion: 'review' })).toMatchObject({ ok: true, dryRunId: expect.any(String) });
+    expect(await JobRun.countDocuments({ jobId: job.id })).toBe(1);
+  });
+
   it('tracks link recommendations through approval and submission with feedback history', async () => {
     const config = { projectId, schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
     const created = await createTemplateJob(admin, { companyId, template: 'link_building', config });

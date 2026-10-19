@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import {
@@ -40,7 +41,18 @@ export async function GET(request: NextRequest, { params }: Context) {
  *   publishing_settings: { settings: { channels?, notifyUserIds?, examples? } }
  *   mark_posted: { deliveryId, postedUrl? } · skip_post / post_now: { deliveryId } · edit_post: { deliveryId, title?, body? }
  */
-export async function POST(request: NextRequest, { params }: Context) {
+export async function POST(request: NextRequest, context: Context) {
+  const reference = randomUUID();
+  try {
+    return await performAction(request, context);
+  } catch (error) {
+    const databaseUnavailable = error instanceof Error && /MongoNetwork|MongoServerSelection|MongoTopologyClosed|MongoNotConnected/.test(error.name);
+    console.error('[os/jobs] action failed', { reference, path: request.nextUrl.pathname, error });
+    return NextResponse.json({ error: `${databaseUnavailable ? 'The database connection was interrupted. Refresh to check the job status before retrying.' : 'The job action failed. Refresh to check its status before retrying.'} Reference: ${reference}`, reference }, { status: databaseUnavailable ? 503 : 500 });
+  }
+}
+
+async function performAction(request: NextRequest, { params }: Context) {
   const viewer = await requireCompanyViewer(request);
   if (viewer instanceof NextResponse) return viewer;
   const id = (await params).id;

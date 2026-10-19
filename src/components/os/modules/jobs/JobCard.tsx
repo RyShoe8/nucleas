@@ -774,6 +774,8 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                 <JobStatusBadge status={job.status} label={job.status === 'proposed' && failedAttempt ? 'Dry run failed' : undefined} />
             </div>
 
+            {d?.skill === 'ai_citations' ? <p className="text-xs text-text-secondary">Find one researched suggestion each day to help {job.companyName} get mentioned in AI answers. Results are saved here for you to review; this job does not publish social posts or change your website.</p> : null}
+
             {d?.skill === 'social_publish' && !compact ? <PublishingJobBody job={job} onChange={update} readyShownAbove={readyShownAbove} /> : <>
             {job.status === 'designing' ? <p className="text-xs text-sky-400">Nucleas is investigating {job.companyName} and designing this job…</p> : null}
             {job.status === 'failed' || job.error ? <p className="text-xs text-red-400">{job.error}</p> : null}
