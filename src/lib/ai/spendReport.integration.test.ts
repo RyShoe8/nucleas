@@ -1,7 +1,8 @@
+import { pendingHolds, reconcileHold } from './pendingHolds';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import mongoose, { Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
-import { AiBudget, AiRun, AiSearchApiUsage } from '@/lib/models/AiControl';
+import { AiBudget, AiBudgetReservation, AiRunEvent, AiRun, AiSearchApiUsage } from '@/lib/models/AiControl';
 import Project from '@/lib/models/Project';
 import Client from '@/lib/models/Client';
 import User from '@/lib/models/User';
@@ -44,7 +45,7 @@ function run(fields: { projectId: Types.ObjectId; user: Types.ObjectId; costMicr
 }
 
 beforeEach(async () => {
-  await Promise.all([AiRun.deleteMany({}), AiBudget.deleteMany({}), AiSearchApiUsage.deleteMany({}), Project.deleteMany({}), Client.deleteMany({}), User.collection.deleteMany({})]);
+  await Promise.all([AiRun.deleteMany({}), AiBudgetReservation.deleteMany({}), AiRunEvent.deleteMany({}), AiBudget.deleteMany({}), AiSearchApiUsage.deleteMany({}), Project.deleteMany({}), Client.deleteMany({}), User.collection.deleteMany({})]);
   await User.collection.insertMany([
     { _id: ryan, name: 'Ryan', email: 'ryan@example.com' },
     { _id: sam, name: 'Sam', email: 'sam@example.com' },
@@ -101,5 +102,31 @@ describe('organization AI spend', () => {
     expect(isValidPeriod('2026-09')).toBe(true);
     expect(isValidPeriod('2026-13')).toBe(false);
     expect(isValidPeriod('26-9')).toBe(false);
+  });
+});
+
+describe('pending hold reconciliation', () => {
+  it('lists organization holds once and settles both scopes with an audit event', async () => {
+    const projectId = new Types.ObjectId();
+    const inserted = await run({ projectId, user: ryan, createdAt: '2026-10-18T12:00:00Z', status: 'blocked' });
+    const budgetIds = [];
+    for (const scopeKey of ['organization', `project:${projectId}`]) {
+      const budget = await AiBudget.create({ organizationId: org, scopeKey, period: '2026-10', limitMicros: 25000000, spentMicros: 0, reservedMicros: 1000000 });
+      budgetIds.push(budget._id);
+      await AiBudgetReservation.create({ organizationId: org, runId: inserted.insertedId, budgetId: budget._id, amountMicros: 1000000 });
+    }
+    expect(await pendingHolds(org, '2026-10')).toHaveLength(1);
+    expect(await pendingHolds('different-org', '2026-10')).toHaveLength(0);
+    await expect(reconcileHold('different-org', String(inserted.insertedId), String(ryan), 40000, 'Verified provider usage record')).rejects.toThrow();
+    await reconcileHold(org, String(inserted.insertedId), String(ryan), 40000, 'Verified provider usage record');
+    for (const budget of await AiBudget.find({ _id: { $in: budgetIds } }).lean()) expect(budget).toMatchObject({ reservedMicros: 0, spentMicros: 40000 });
+    expect(await pendingHolds(org, '2026-10')).toHaveLength(0);
+    expect(await AiRun.findById(inserted.insertedId).lean()).toMatchObject({ costMicros: 40000 });
+    expect(await AiRunEvent.findOne({ runId: inserted.insertedId, type: 'budget.reconciled' }).lean()).toMatchObject({ summary: expect.stringContaining('Verified provider usage record') });
+    await expect(reconcileHold(org, String(inserted.insertedId), String(ryan), 0, 'Try to release the same hold twice')).rejects.toThrow('already been reconciled');
+  });
+  it('does not permit releasing active calls', async () => {
+    const inserted = await run({ projectId: new Types.ObjectId(), user: ryan, createdAt: '2026-10-18T12:00:00Z', status: 'running' });
+    await expect(reconcileHold(org, String(inserted.insertedId), String(ryan), 0, 'Confirmed no billable usage')).rejects.toThrow('Only finished runs');
   });
 });

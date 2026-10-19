@@ -2,6 +2,7 @@
 
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 
+import type { PendingHold } from '@/lib/ai/pendingHolds';
 import { useEffect, useMemo, useState } from 'react';
 
 interface Row {
@@ -13,6 +14,7 @@ interface Row {
 }
 
 interface Spend {
+    pendingHolds: PendingHold[];
     period: string;
     budget: { limitMicros: number | null; spentMicros: number; reservedMicros: number };
     totals: { costMicros: number; runs: number; unknownCostRuns: number; inputTokens: number; outputTokens: number };
@@ -21,6 +23,39 @@ interface Spend {
     byModel: Row[];
     byUser: Row[];
     search: { braveQueries: number; googleQueries: number; estimatedMicros: number };
+}
+
+function HoldCard({ hold, onSaved }: { hold: PendingHold; onSaved: () => void }) {
+    const [editing, setEditing] = useState(false);
+    const [actualUsd, setActualUsd] = useState('');
+    const [reason, setReason] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState('');
+    const save = async (event: React.FormEvent) => {
+        event.preventDefault(); setBusy(true); setError('');
+        try {
+            const res = await fetch('/api/os/ai-spend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: hold.runId, actualUsd, reason }) });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(body.error ?? `Failed (${res.status})`);
+            onSaved();
+        } catch (err) { setError(err instanceof Error ? err.message : 'Unable to reconcile hold.'); }
+        finally { setBusy(false); }
+    };
+    return <li className="ui-card space-y-2 p-3 text-xs">
+        <div className="flex justify-between gap-2"><strong className="break-all">{hold.model}</strong><span>{usd(hold.amountMicros)} held</span></div>
+        <p>{new Date(hold.createdAt).toLocaleString()} · {hold.status}</p>
+        <p>{hold.source} · {hold.person}</p>
+        <p className="break-all text-text-secondary">Run {hold.runId}</p>
+        <p className="whitespace-pre-wrap break-words">{hold.reason}</p>
+        {hold.canReconcile ? <button type="button" className="ui-button" onClick={() => setEditing(!editing)}>Reconcile confirmed cost</button> : <p className="text-text-secondary">Active or missing runs cannot be reconciled here.</p>}
+        {editing ? <form onSubmit={save} className="space-y-2">
+            <p>Check the provider usage record first. Enter 0 only when you have verified there was no billable work. Saving releases the hold and records the confirmed cost across both budget scopes.</p>
+            <label className="block">Confirmed cost (USD)<input required inputMode="decimal" value={actualUsd} onChange={(e) => setActualUsd(e.target.value)} className="ui-control w-full" /></label>
+            <label className="block">Evidence or reason<textarea required minLength={10} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} className="ui-control w-full" placeholder="Provider usage reference, or evidence that the request was rejected before inference" /></label>
+            <button type="submit" className="ui-button-primary" disabled={busy}>{busy ? 'Saving…' : 'Save confirmed cost and release hold'}</button>
+        </form> : null}
+        {error ? <p role="alert" className="text-red-400">{error}</p> : null}
+    </li>;
 }
 
 function usd(micros: number): string {
@@ -142,6 +177,7 @@ export default function AiSpendModule() {
     const wm = useWindowManager();
     const months = useMemo(() => recentMonths(6), []);
     const [period, setPeriod] = useState(months[0]);
+    const [reloadKey, setReloadKey] = useState(0);
     const [data, setData] = useState<Spend | null>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -162,7 +198,7 @@ export default function AiSpendModule() {
         return () => {
             cancelled = true;
         };
-    }, [period]);
+    }, [period, reloadKey]);
 
     return (
         <div className="h-full overflow-y-auto p-4 space-y-4 text-text-primary">
@@ -204,6 +240,11 @@ export default function AiSpendModule() {
                         </p>
                     ) : null}
 
+                    <section className="space-y-2">
+                        <div className="flex justify-between gap-2"><h3 className="text-sm font-semibold">Pending holds · {data.pendingHolds?.length ?? 0}</h3><button type="button" className="ui-button" onClick={() => setReloadKey((n) => n + 1)}>Refresh</button></div>
+                        <p className="text-xs text-text-secondary">Each hold below reduces your available budget. These are unconfirmed costs, not confirmed provider charges. Project holds mirror the organization hold and are counted once here.</p>
+                        {data.pendingHolds?.length ? <ul className="space-y-2">{data.pendingHolds.map((hold) => <HoldCard key={hold.runId} hold={hold} onSaved={() => setReloadKey((n) => n + 1)} />)}</ul> : <p className="text-xs">No pending holds recorded for this month.</p>}
+                    </section>
                     <section>
                         <h3 className="text-[11px] uppercase tracking-wider text-text-secondary mb-1">Per day</h3>
                         {data.totals.runs ? <DailyBars days={data.byDay} period={data.period} /> : <p className="text-sm text-text-secondary">No AI usage this month.</p>}
