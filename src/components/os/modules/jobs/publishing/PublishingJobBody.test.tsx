@@ -4,10 +4,10 @@ import { describe, expect, it } from 'vitest';
 import type { JobView } from '../JobCard';
 import PublishingJobBody from './PublishingJobBody';
 
-function render(canManage: boolean, failed = false) {
+function render(canManage: boolean, failed = false, sample = false) {
     const job = {
         id: 'job', status: 'proposed', canManage, request: 'Post new games',
-        runs: failed ? [{ id: 'run', dryRun: true, status: 'failed', error: 'Provider unavailable' }] : [],
+        runs: sample ? [{ id: 'sample', dryRun: true, status: 'needs_review', output: { summary: 'Preview', gaps: [], records: [{ values: { platform: 'Bluesky', post_copy: 'A new game.', target_url: 'https://example.com/games/test' } }] } }] : failed ? [{ id: 'run', dryRun: true, status: 'failed', error: 'Provider unavailable' }] : [],
         publishing: {
             source: { type: 'site', feedUrl: 'https://example.com/sitemap.xml', pathPrefix: '/games/', noun: 'game' },
             channels: [{ platform: 'bluesky', mode: 'manual' }], ready: [], recent: [], examples: {},
@@ -27,6 +27,11 @@ describe('publishing approval controls', () => {
         const html = render(true, true);
         expect(html).toContain('Retry dry run');
         expect(html).toContain('Provider unavailable');
+    });
+    it('shows the separate game URL and copy action on sample previews', () => {
+        const html = render(true, false, true);
+        expect(html).toContain('href="https://example.com/games/test"');
+        expect(html).toContain('Copy post with link');
     });
     it('does not offer approval to a viewer', () => {
         expect(render(false)).not.toContain('Approve and run a dry run');

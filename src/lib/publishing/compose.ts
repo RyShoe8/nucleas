@@ -101,6 +101,15 @@ export function fitToLimit(text: string, max: number): string {
   return `${cut.replace(/[\s,;:.-]+$/, '')}…`;
 }
 
+/** Manual copy must include the separate link-card URL, reserving room in Bluesky's text limit. */
+export function manualPostText(platform: string, body: string, link: string | null): string {
+  if (!link || body.includes(link)) return body;
+  const limit = platform.toLowerCase() === 'bluesky' ? 300 : platform.toLowerCase() === 'facebook' ? 1500 : 10000;
+  const room = Math.max(0, limit - charCount(link) - 2);
+  const text = room ? fitToLimit(body, room) : '';
+  return [text, link].filter(Boolean).join('\n\n');
+}
+
 export interface Draft {
   title: string | null;
   body: string;

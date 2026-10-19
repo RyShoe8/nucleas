@@ -1,3 +1,4 @@
+import { manualPostText } from './compose';
 import { describe, expect, it, vi } from 'vitest';
 import { charCount, composePost, composeSystemPrompt, composeUserPrompt, fitToLimit, parseDraft } from './compose';
 import { extractPageFacts } from './pageFacts';
@@ -71,5 +72,18 @@ describe('page facts', () => {
     const facts = extractPageFacts('<meta property="og:image" content="https://127.0.0.1/a.png"><main><img src="https://10.0.0.5/b.jpg"></main>', 'https://a.com/x');
     expect(facts.image).toBeNull();
     expect(facts.images).toEqual([]);
+  });
+});
+
+describe('manual post links', () => {
+  it('includes the game URL within Bluesky’s full 300-character limit', () => {
+    const link = 'https://playbound.club/games/ground-control-2-operation-exodus';
+    const copy = manualPostText('Bluesky', 'A useful game announcement. '.repeat(20), link);
+    expect(copy).toContain(link);
+    expect([...copy].length).toBeLessThanOrEqual(300);
+  });
+  it('does not duplicate a link already present in Reddit text', () => {
+    const body = 'Play this: https://example.com/games/a';
+    expect(manualPostText('Reddit', body, 'https://example.com/games/a')).toBe(body);
   });
 });

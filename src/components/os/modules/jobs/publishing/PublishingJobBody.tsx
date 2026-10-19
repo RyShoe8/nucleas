@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { MANUAL_ONLY, PLATFORM_LABEL, platformsFor, sourceLabel, type PublishPlatform } from '@/lib/publishing/config';
 import type { JobRunView, JobView } from '../JobCard';
 import ReadyPostCard from './ReadyPostCard';
+import { manualPostText } from '@/lib/publishing/compose';
 import { ChannelPicker, NotifyPicker, type ChannelChoice } from './Pickers';
 
 async function post(jobId: string, body: Record<string, unknown>): Promise<{ job?: JobView; error?: string }> {
@@ -46,6 +47,11 @@ function SampleReview({ job, run, onChange }: { job: JobView; run: JobRunView; o
         if (res.error || !res.job) return setError(res.error ?? 'Failed');
         onChange(res.job);
     };
+    const [copied, setCopied] = useState<number | null>(null);
+    const copySample = async (index: number, platform: string, body: string, link: string | null) => {
+        try { await navigator.clipboard.writeText(manualPostText(platform, body, link)); setCopied(index); }
+        catch { setError('Could not copy the post. Copy the text and game link below manually.'); }
+    };
     const records = run.output?.records ?? [];
     return (
         <section className="space-y-2">
@@ -60,6 +66,8 @@ function SampleReview({ job, run, onChange }: { job: JobView; run: JobRunView; o
                         </p>
                         {r.values.post_title && !r.values.screenshot ? <p className="font-semibold leading-snug">{String(r.values.post_title)}</p> : null}
                         <p className="whitespace-pre-wrap break-words leading-relaxed">{String(r.values.post_copy ?? '')}</p>
+                        {typeof r.values.target_url === 'string' && !r.values.screenshot ? <a href={r.values.target_url} target="_blank" rel="noreferrer" className="mt-2 block break-all text-xs text-primary underline">{r.values.target_url}</a> : null}
+                        {!r.values.screenshot ? <button type="button" className="ui-button mt-2" onClick={() => void copySample(i, String(r.values.platform ?? ''), String(r.values.post_copy ?? ''), typeof r.values.target_url === 'string' ? r.values.target_url : null)}>{copied === i ? 'Copied' : 'Copy post with link'}</button> : null}
                         {typeof r.values.screenshot === 'string' ? (
                             // eslint-disable-next-line @next/next/no-img-element -- a screenshot taken by the browser worker
                             <img src={`data:image/jpeg;base64,${r.values.screenshot}`} alt="The admin form filled in, not saved" className="mt-2 max-h-[520px] w-full rounded border border-border object-contain object-top" />

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { manualPostText } from '@/lib/publishing/compose';
 import { PLATFORM_LABEL, MANUAL_ONLY } from '@/lib/publishing/config';
 import type { DeliveryView } from '@/lib/publishing/engine';
 import type { JobView } from '../JobCard';
@@ -21,7 +22,7 @@ function openUrl(delivery: DeliveryView, subreddit: string | null): string | nul
         if (delivery.body.length < 6000) url.searchParams.set('text', delivery.body);
         return url.toString();
     }
-    if (delivery.platform === 'bluesky') return `https://bsky.app/intent/compose?text=${encodeURIComponent([delivery.body, delivery.link].filter(Boolean).join('\n\n'))}`;
+    if (delivery.platform === 'bluesky') return `https://bsky.app/intent/compose?text=${encodeURIComponent(manualPostText(delivery.platform, delivery.body, delivery.link))}`;
     return 'https://www.facebook.com/';
 }
 
@@ -65,7 +66,7 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
     const canPostNow = !MANUAL_ONLY.includes(delivery.platform) && delivery.status === 'ready';
     const images = delivery.assets.filter((a) => a.kind === 'image');
     const video = delivery.assets.find((a) => a.kind === 'video');
-    const fullText = isReddit ? delivery.body : [delivery.body, delivery.link].filter(Boolean).join('\n\n');
+    const fullText = isReddit ? delivery.body : manualPostText(delivery.platform, delivery.body, delivery.link);
 
     if (delivery.status === 'publishing') {
         return <div className="ui-card p-3 text-xs text-sky-400">{delivery.platform === 'admin' ? `Adding “${delivery.itemTitle}” to the admin…` : `Posting “${delivery.itemTitle}” to ${PLATFORM_LABEL[delivery.platform]}…`}</div>;
