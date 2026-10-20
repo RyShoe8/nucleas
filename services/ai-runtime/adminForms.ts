@@ -1,3 +1,4 @@
+import { readAfterNavigation } from './navigationRead';
 import { isReadOnlyFormLookup } from './adminLookups';
 /**
  * Reading and filling a form in a company's own admin, with the admin session a person captured by
@@ -277,7 +278,7 @@ export async function inspectAdminPage(input: AdminSession, options: Options = {
   return openPage(input, options, false, async (page) => {
     const title = (await page.title()).slice(0, 200);
     if (await signedOut(page)) return { url: page.url(), title, loggedIn: false, fields: [], submit: null, links: [], headings: [] };
-    const found = await page.evaluate<Omit<FormSnapshot, 'url' | 'title' | 'loggedIn'>>(INSPECT_SCRIPT);
+    const found = await readAfterNavigation(page, 'admin.inspect', () => page.evaluate<Omit<FormSnapshot, 'url' | 'title' | 'loggedIn'>>(INSPECT_SCRIPT));
     return { url: page.url(), title, loggedIn: true, ...found };
   });
 }
@@ -374,15 +375,15 @@ export async function fillAdminForm(
     if (!input.submit || missing.length || errors.length) {
       return { url: page.url(), title, loggedIn: true, submitted: false, missing, errors, text: '', screenshot: await shot(page) };
     }
-    const invalid = await page.evaluate<string[]>(ERRORS_SCRIPT);
+    const invalid = await readAfterNavigation(page, 'admin.validation', () => page.evaluate<string[]>(ERRORS_SCRIPT));
     if (invalid.length) return { url: page.url(), title, loggedIn: true, submitted: false, missing, errors: invalid, text: '', screenshot: await shot(page) };
     const button = input.submitSelector ? page.locator(input.submitSelector).first() : null;
     if (!button || !(await button.count())) return { url: page.url(), title, loggedIn: true, submitted: false, missing: ['submit'], errors: ['The save button was not found.'], text: '', screenshot: await shot(page) };
     await button.click({ timeout: 10000 });
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => undefined);
     await page.waitForTimeout(800);
-    const after = await page.evaluate<string[]>(ERRORS_SCRIPT);
-    const text = String(await page.evaluate<string>('document.body ? document.body.innerText : ""')).replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, 4000);
+    const after = await readAfterNavigation(page, 'admin.validation', () => page.evaluate<string[]>(ERRORS_SCRIPT));
+    const text = String(await readAfterNavigation(page, 'admin.confirmation', () => page.evaluate<string>('document.body ? document.body.innerText : ""'))).replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, 4000);
     return { url: page.url(), title: (await page.title()).slice(0, 200), loggedIn: true, submitted: true, missing, errors: after, text, screenshot: await shot(page) };
   });
 }

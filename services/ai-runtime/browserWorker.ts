@@ -1,3 +1,4 @@
+import { readAfterNavigation } from './navigationRead';
 /**
  * Optional Playwright browser worker for cost-aware escalate browsing.
  *
@@ -136,6 +137,7 @@ type Locator = {
   isVisible: (o?: { timeout: number }) => Promise<boolean>;
 };
 type ObservePage = {
+  waitForTimeout: (ms: number) => Promise<void>;
   goto: (u: string, o: { waitUntil: string; timeout: number }) => Promise<unknown>;
   title: () => Promise<string>;
   evaluate: <T>(fn: (() => T) | string) => Promise<T>;
@@ -238,7 +240,7 @@ export async function observeAuthenticated(input: ObserveInput, options: { allow
     const finalUrl = page.url();
     if (new URL(finalUrl).origin !== origin.origin) throw new Error('Redirected outside the site.');
     const title = await page.title();
-    const raw = signedOut ? '' : await page.evaluate('document.body ? document.body.innerText : ""');
+    const raw = signedOut ? '' : await readAfterNavigation(page, 'observe.text', () => page.evaluate('document.body ? document.body.innerText : ""'));
     return {
       url: finalUrl,
       title: title.slice(0, 200),
@@ -339,7 +341,7 @@ export function startBrowserWorkerServer() {
       res.end(JSON.stringify(result));
     } catch (err) {
       // Never log the request body: /observe and /login carry session cookies.
-      console.error('browser worker error', err instanceof Error ? err.message : 'unknown');
+      console.error('browser worker error', { operation: req.url?.split('?')[0], error: err instanceof Error ? err.message : 'unknown' });
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'navigate_failed' }));
     }
