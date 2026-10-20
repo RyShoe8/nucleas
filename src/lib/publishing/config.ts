@@ -85,6 +85,8 @@ export const adminFieldRulesSchema = z.array(z.object({
 
 export const publishingConfigSchema = z.object({
   source: publishSourceSchema,
+  /** Public record URL for mailbox social posts; {slug} comes from the matching admin card. */
+  socialLinkTemplate: z.string().max(2000).refine((value) => { try { return value.includes('{slug}') && new URL(value.replace('{slug}', 'example')).protocol === 'https:'; } catch { return false; } }, 'Use an https URL containing {slug}.').optional(),
   /** Mailbox social destinations only: require value strictly greater than this percent. */
   minimumSocialValuePct: z.number().min(0).max(1000).optional(),
   channels: z.array(channelSchema).min(1).max(PUBLISH_PLATFORMS.length),

@@ -226,6 +226,7 @@ const createSchema = z.object({
   source: publishSourceSchema,
   adminFieldRules: adminFieldRulesSchema.optional(),
   adminTimezone: publishingConfigSchema.shape.adminTimezone,
+  socialLinkTemplate: publishingConfigSchema.shape.socialLinkTemplate,
   adminLinkField: z.string().min(1).max(100).optional(),
   adminValueField: z.string().min(1).max(100).optional(),
   minimumSocialValuePct: z.number().min(0).max(1000).optional(),
@@ -302,6 +303,7 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
   const channels = normalizeChannels(input.channels);
   const config: PublishingConfig = {
     source: input.source,
+    ...(input.socialLinkTemplate ? { socialLinkTemplate: input.socialLinkTemplate } : {}),
     ...(input.adminTimezone ? { adminTimezone: input.adminTimezone } : {}),
     ...(input.adminLinkField ? { adminLinkField: input.adminLinkField } : {}),
     ...(input.adminValueField ? { adminValueField: input.adminValueField } : {}),
@@ -337,6 +339,7 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
 const settingsSchema = z.object({
   adminFieldRules: adminFieldRulesSchema.optional(),
   adminTimezone: publishingConfigSchema.shape.adminTimezone,
+  socialLinkTemplate: publishingConfigSchema.shape.socialLinkTemplate,
   adminLinkField: z.string().min(1).max(100).optional(),
   adminValueField: z.string().min(1).max(100).optional(),
   minimumSocialValuePct: z.number().min(0).max(1000).nullable().optional(),
@@ -351,6 +354,7 @@ export async function updatePublishingSettings(viewer: CompanyViewer, job: { _id
   const parsed = settingsSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, status: 400, error: parsed.error.issues[0]?.message ?? 'Check the settings.' };
   const set: Record<string, unknown> = {};
+  if (parsed.data.socialLinkTemplate) set['publishing.socialLinkTemplate'] = parsed.data.socialLinkTemplate;
   if (parsed.data.adminTimezone) set['publishing.adminTimezone'] = parsed.data.adminTimezone;
   if (parsed.data.adminLinkField) set['publishing.adminLinkField'] = parsed.data.adminLinkField;
   if (parsed.data.adminValueField) set['publishing.adminValueField'] = parsed.data.adminValueField;

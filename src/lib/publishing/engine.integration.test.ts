@@ -306,6 +306,26 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
     ]);
   });
 
+  it('waits for admin submission and links mailbox social drafts to the public record', async () => {
+    await BrandVoice.create({ organizationId: org, companyId, persona: 'Helpful.', status: 'approved', updatedByUserId: userId });
+    const item = await email('a@example.com', 'New deal', 50, 75);
+    const admin = await adminJob();
+    await Job.updateOne({ _id: admin._id }, { $set: { status: 'ready' } });
+    await queueExistingAdminItem({ userId: String(userId), organizationId: org, employeeId: null, role: 'Administrator' }, String(item._id), adminDeps());
+    const card = await PublishDelivery.findOne({ jobId: admin._id, platform: 'admin' });
+    await PublishDelivery.updateOne({ _id: card!._id }, { $set: { 'values.slug': 'new-deal' } });
+    const social = await newJob();
+    await Job.updateOne({ _id: social._id }, { $set: { publishing: { source: adminConfig.source, channels: [{ platform: 'reddit', mode: 'manual' }], socialLinkTemplate: 'https://fg.club/deals/{slug}' } } });
+    const current = (await Job.findById(social._id).lean())!;
+    expect(await takeBaseline(current, deps())).toBe(0);
+    await PublishDelivery.updateOne({ _id: card!._id }, { $set: { status: 'posted' } });
+    await runPublishing(await newRun(social._id, false), 'owner', current, deps());
+    const draft = await PublishDelivery.findOne({ jobId: social._id, platform: 'reddit' }).lean();
+    expect(draft?.link).toBe('https://fg.club/deals/new-deal');
+    expect(draft?.body).toContain('https://fg.club/deals/new-deal');
+    expect(draft?.body).not.toContain('https://offer');
+  });
+
   it('filters social value strictly above 30% without filtering admin intake', async () => {
     await email('a@example.com', 'Low', 100, 120);
     await email('a@example.com', 'Exactly thirty', 100, 130);

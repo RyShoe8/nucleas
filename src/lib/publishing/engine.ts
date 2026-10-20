@@ -102,9 +102,15 @@ async function listEntries(job: JobLike, config: PublishingConfig, deps: Publish
     .limit(100)
     .select('_id subject sentAt link fromEmail bestDeal')
     .lean<{ _id: Types.ObjectId; subject?: string; sentAt?: Date; link?: string; fromEmail?: string; bestDeal?: DealMetrics }[]>();
-  const eligible = config.minimumSocialValuePct !== undefined && config.channels.some((c) => c.platform !== 'admin')
+  let eligible = config.minimumSocialValuePct !== undefined && config.channels.some((c) => c.platform !== 'admin')
     ? rows.filter((r) => r.bestDeal && dealStrengthPct(r.bestDeal) > config.minimumSocialValuePct! / 100 + Number.EPSILON)
     : rows;
+  if (config.socialLinkTemplate && !config.channels.some((channel) => channel.platform === 'admin')) {
+    const deliveries = await PublishDelivery.find({ organizationId: job.organizationId, companyId: job.companyId, platform: 'admin', status: 'posted', 'values.slug': { $type: 'string', $ne: '' } }).select('itemId').lean();
+    const items = await PublishItem.find({ _id: { $in: deliveries.map((delivery) => delivery.itemId) }, organizationId: job.organizationId, companyId: job.companyId, key: { $in: eligible.map((row) => String(row._id)) } }).select('key').lean();
+    const publishedKeys = new Set(items.map((item) => item.key));
+    eligible = eligible.filter((row) => publishedKeys.has(String(row._id)));
+  }
   return eligible.map((r) => ({ key: String(r._id), url: r.link ?? null, title: r.subject ?? '', date: r.sentAt ?? null, dedupe: dedupeKeyFor(r.fromEmail, r.bestDeal) }));
 }
 
@@ -126,6 +132,13 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
     ContentWatch.findOne({ _id: new Types.ObjectId(config.source.watchId), organizationId: job.organizationId }).select('fields rank mode threshold minDiscountPct').lean(),
   ]);
   const fields = watch ? watchSettings(watch).fields : [];
+  let link = item?.link ?? entry.url;
+  if (config.socialLinkTemplate && !config.channels.some((channel) => channel.platform === 'admin')) {
+    const siblings = await PublishItem.find({ organizationId: job.organizationId, companyId: job.companyId, key: entry.key }).select('_id').lean();
+    const admin = await PublishDelivery.findOne({ organizationId: job.organizationId, companyId: job.companyId, itemId: { $in: siblings.map((row) => row._id) }, platform: 'admin', status: 'posted', 'values.slug': { $type: 'string', $ne: '' } }).sort({ createdAt: -1 }).select('values').lean();
+    // The original email link belongs in admin intake; social copy uses the site's public record.
+    link = typeof admin?.values?.slug === 'string' ? config.socialLinkTemplate.replace('{slug}', encodeURIComponent(admin.values.slug)) : null;
+  }
   return {
     ...(item?.bestDeal ? { dealValuePct: dealStrengthPct(item.bestDeal) * 100 } : {}),
     title: item?.subject ?? entry.title,
@@ -143,7 +156,7 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
       ...watchValueLines(item?.values, fields),
       ...(item?.keyPoints ?? []).slice(0, 6).map((p) => `Key fact: ${p.text ?? ''}`),
     ].filter(Boolean),
-    link: item?.link ?? entry.url,
+    link,
   };
 }
 
@@ -212,6 +225,10 @@ async function draftAll(job: JobLike, config: PublishingConfig, facts: ItemFacts
       },
       write
     ).catch(() => null);
+    if (draft && config.socialLinkTemplate && facts.link && channel.platform === 'reddit') {
+      draft.body = draft.body.replace(/https?:\/\/[^\s<>\)\]]+/g, facts.link);
+      if (!draft.body.includes(facts.link)) draft.body = `${draft.body}\n\n${facts.link}`;
+    }
     // A "New …:" label copied from an example post becomes the source's noun ("New Game:").
     if (draft?.title && channel.platform === 'reddit' && config.source.type === 'site') draft.title = relabelNewItemTitle(draft.title, config.source.noun);
     out.set(channel.platform, draft ? { draft, written: true } : { draft: fallbackDraft(channel.platform, facts, config.source.noun), written: false });
