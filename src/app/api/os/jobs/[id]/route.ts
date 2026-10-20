@@ -10,6 +10,7 @@ import {
   executeJobRun,
   getJob,
   pauseJob,
+  renameJob,
   publishingAction,
   rejectJob,
   resumeJob,
@@ -38,6 +39,7 @@ export async function GET(request: NextRequest, { params }: Context) {
  * { action: answer | approve | reject | run_now | accept_run | reject_run | pause | resume | archive, ... }
  *   answer: { answers: { [questionId]: { option?, text? } } }
  *   approve: { completion: 'review' | 'automatic', monthlyBudgetUsd? }
+ *   rename: { title }
  *   accept_run / reject_run: { runId, note? }
  *   publishing_settings: { settings: { channels?, notifyUserIds?, examples? } }
  *   mark_posted: { deliveryId, postedUrl? } · skip_post / post_now: { deliveryId } · edit_post: { deliveryId, title?, body? }
@@ -97,6 +99,9 @@ async function performAction(request: NextRequest, { params }: Context) {
     case 'accept_run':
     case 'reject_run':
       result = await decideRun(viewer, id, typeof body.runId === 'string' ? body.runId : '', body.action === 'accept_run' ? 'accept' : 'reject', note);
+      break;
+    case 'rename':
+      result = await renameJob(viewer, id, body.title);
       break;
     case 'pause':
       result = await pauseJob(viewer, id);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { choosePrefix, discoverSiteSource, entriesUnder, feedCandidates, listSitePages, newestFirst, nounForPrefix, parseFeed, pathGroups } from './siteSource';
+import { choosePrefix, discoverSiteSource, entriesUnder, feedCandidates, listSitePages, newestFirst, nounForPrefix, nounFromRequest, parseFeed, pathGroups } from './siteSource';
 
 const SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -52,6 +52,16 @@ describe('choosing the section', () => {
     expect(nounForPrefix('/games/')).toBe('game');
     expect(nounForPrefix('/stories/')).toBe('story');
     expect(nounForPrefix('/case-studies/')).toBe('case study');
+    // "news" is not the plural of "new".
+    expect(nounForPrefix('/news/')).toBe('article');
+    expect(nounForPrefix('/blog/')).toBe('post');
+  });
+
+  it('uses the word the person used for one item', () => {
+    expect(nounFromRequest('Post one article from frugalgambler.club/news every 3 weeks')).toBe('article');
+    expect(nounFromRequest('share an evergreen guide every other week')).toBe('guide');
+    expect(nounFromRequest('post each new game to Facebook')).toBe('game');
+    expect(nounFromRequest('post to Facebook every week')).toBeNull();
   });
 
   it('keeps only direct pages under the section on the same host, once each', () => {

@@ -13,7 +13,7 @@ import { readEngineSettings } from '@/lib/ai/engine/select';
 import { socialPublishDesign } from '@/lib/jobs/templates/socialPublish';
 import { MANUAL_ONLY, PLATFORM_LABEL, PUBLISH_PLATFORMS, cadenceLabel, SOCIAL_PLATFORMS, publishingConfigSchema, adminFieldRulesSchema, adminTargetSchema, channelSchema, type AdminTarget, normalizeChannels, platformsFor, publishSourceSchema, sourceLabel, type PublishPlatform, type PublishSource, type PublishingConfig } from './config';
 import { readExamplePost } from './examples';
-import { discoverSiteSource, type PickPrefix } from './siteSource';
+import { discoverSiteSource, nounFromRequest, type PickPrefix } from './siteSource';
 import { facebookTokenCanPost } from './publishers';
 import { keepOrgPeople, listOrgPeople } from './notify';
 import type { FetchLike } from './fetchPublic';
@@ -194,7 +194,8 @@ export async function planRequest(viewer: CompanyViewer, input: { companyId: str
     const found = await discoverSiteSource({ domain: profile.domain, brief: request, fetcher: deps.fetcher, pick: deps.pick ?? modelPick(viewer) });
     if (!found.ok) return { ok: false, status: 400, error: found.error };
     const rotation = parseRotation(request);
-    source = { type: 'site', feedUrl: found.feedUrl, feedKind: found.feedKind, pathPrefix: found.pathPrefix, noun: found.noun, ...(rotation ? { rotation } : {}) };
+    // For a rotation, the noun is what the person called one item ("one article"); otherwise the section's own name.
+    source = { type: 'site', feedUrl: found.feedUrl, feedKind: found.feedKind, pathPrefix: found.pathPrefix, noun: (rotation && nounFromRequest(request)) || found.noun, ...(rotation ? { rotation } : {}) };
     newest = found.newest ? { title: found.newest.title ?? new URL(found.newest.url).pathname, url: found.newest.url } : null;
   }
 

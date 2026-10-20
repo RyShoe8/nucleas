@@ -132,8 +132,21 @@ export function choosePrefix(brief: string, groups: { prefix: string; count: num
 
 /** What one item is called: the section's name in the singular ("/games/" → "game"). */
 export function nounForPrefix(prefix: string): string {
-  const word = singular(prefix.replace(/\//g, '').replace(/[-_]+/g, ' ').trim());
+  const section = prefix.replace(/\//g, '').replace(/[-_]+/g, ' ').trim().toLowerCase();
+  // "news" is not the plural of "new": a news section holds articles.
+  if (section === 'news' || section === 'latest news') return 'article';
+  if (section === 'blog' || section === 'blogs') return 'post';
+  const word = singular(section);
   return word || 'page';
+}
+
+const REQUEST_NOUNS = ['article', 'post', 'guide', 'story', 'page', 'review', 'tutorial', 'entry', 'episode', 'game', 'recipe', 'resource', 'newsletter', 'update'];
+
+/** What the person called one item ("one article every 3 weeks" -> "article"), when they said. */
+export function nounFromRequest(text: string): string | null {
+  const t = text.toLowerCase();
+  const match = new RegExp(`\\b(?:one|an?|each|every|per)\\s+(?:(?:evergreen|new|latest|existing)\\s+)?(${REQUEST_NOUNS.join('|')})\\b`).exec(t);
+  return match?.[1] ?? null;
 }
 
 /** Pages directly under the section (not the section page itself or deeper sub-pages), on the site's own host. */

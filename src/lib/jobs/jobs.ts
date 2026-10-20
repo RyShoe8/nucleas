@@ -482,6 +482,17 @@ export async function decideRun(viewer: CompanyViewer, jobId: string, runId: str
   return done(viewer, jobId);
 }
 
+/** Renames a job (the name shown in lists and on its card). It changes nothing about what the job does. */
+export async function renameJob(viewer: CompanyViewer, id: string, title: unknown): Promise<ActionResult> {
+  const found = await managed(viewer, id);
+  if (!found.ok) return found;
+  const name = typeof title === 'string' ? title.replace(/\s+/g, ' ').trim() : '';
+  if (name.length < 3 || name.length > 120) return { ok: false, status: 400, error: 'Give the job a name of 3 to 120 characters.' };
+  if (!found.job.design) return { ok: false, status: 409, error: 'This job has no design yet, so it has no name to change.' };
+  await Job.updateOne({ _id: found.job._id, organizationId: viewer.organizationId }, { $set: { 'design.title': name }, $push: { events: event(viewer, 'renamed', name) } });
+  return done(viewer, id);
+}
+
 export function pauseJob(viewer: CompanyViewer, id: string): Promise<ActionResult> {
   return managed(viewer, id).then(async (f) => {
     if (!f.ok) return f;

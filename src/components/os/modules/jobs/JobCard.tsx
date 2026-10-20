@@ -736,6 +736,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [resultRun, setResultRun] = useState<JobRunView | null>(null);
+    const [renaming, setRenaming] = useState<string | null>(null);
     const update = (next: JobView) => {
         setJob(next);
         onChange?.(next);
@@ -776,7 +777,35 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
         <div className="ui-card p-4 space-y-4 text-sm">
             <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                    <p className="font-medium leading-snug">{d?.title ?? 'New job'}</p>
+                    {renaming !== null ? (
+                        <form
+                            className="flex flex-wrap items-center gap-1"
+                            onSubmit={(e) => {
+                                e.preventDefault();
+                                const name = renaming.trim();
+                                if (name.length < 3) return setError('Give the job a name of at least 3 characters.');
+                                void (async () => {
+                                    setBusy('rename');
+                                    setError(null);
+                                    const res = await post(job.id, { action: 'rename', title: name });
+                                    setBusy(null);
+                                    if (res.error || !res.job) return setError(res.error ?? 'Failed');
+                                    update(res.job);
+                                    setRenaming(null);
+                                    window.dispatchEvent(new Event('nucleas:jobs-changed'));
+                                })();
+                            }}
+                        >
+                            <input autoFocus value={renaming} maxLength={120} aria-label="Job name" className="ui-control min-w-0 flex-1" onChange={(e) => setRenaming(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setRenaming(null); }} />
+                            <button type="submit" className={PRIMARY} disabled={busy === 'rename'}>Save</button>
+                            <button type="button" className={BUTTON} onClick={() => setRenaming(null)}>Cancel</button>
+                        </form>
+                    ) : (
+                        <p className="flex items-start gap-1 font-medium leading-snug">
+                            <span className="min-w-0 break-words">{d?.title ?? 'New job'}</span>
+                            {d && job.canManage && !compact ? <button type="button" aria-label="Rename job" title="Rename" className="shrink-0 px-1 text-text-secondary hover:text-text-primary" onClick={() => setRenaming(d.title)}>✎</button> : null}
+                        </p>
+                    )}
                     <p className="text-[11px] text-text-secondary truncate">
                         {job.companyName}
                         {d ? ` · ${scheduleLabel(d.schedule)}` : ''}

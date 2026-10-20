@@ -31,7 +31,7 @@ import { brandVoiceContext, getBrandVoice, updateBrandVoice } from '@/lib/brandV
 import { ArtifactRevision, artifactHistory } from './artifactHistory';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
-import { answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, listJobs, pauseJob, runDesign, runNow, sweepJobs } from './jobs';
+import { answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, listJobs, pauseJob, renameJob, runDesign, runNow, sweepJobs } from './jobs';
 import type { JobDesign } from './schema';
 import { updateLinkOpportunity, verifyLinkOpportunity } from './linkOpportunities';
 import { completePropertyOverviewJob, createPropertyOverviewJob, startPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
@@ -380,6 +380,25 @@ describe('approving and the dry run', () => {
     expect(await LinkOpportunity.findById(view!.opportunities[0].id).lean()).toMatchObject({ status: 'submitted', note: 'Good fit', liveLinkUrl: 'https://directory.example.org/listing/playbound' });
     expect(await verifyLinkOpportunity(view!.opportunities[0].id)).toBe('found');
     expect(await LinkOpportunity.findById(view!.opportunities[0].id).lean()).toMatchObject({ status: 'live', verificationMessage: expect.stringContaining('found') });
+  });
+
+  it('renames a job for managers only, with a sensible name, and records it', async () => {
+    const config = { projectId, schedule: { kind: 'daily' as const, time: '09:00', timezone: 'UTC' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
+    const created = await createTemplateJob(admin, { companyId, template: 'link_building', config });
+    if (!created.ok) throw new Error(created.error);
+    const before = created.job.design?.title;
+    expect(before).toBeTruthy();
+
+    expect(await renameJob(admin, created.job.id, '  Frugal   Gambler backlinks  ')).toMatchObject({ ok: true, job: { design: { title: 'Frugal Gambler backlinks' } } });
+    expect((await Job.findById(created.job.id).lean())?.events?.some((e) => e.action === 'renamed' && e.note === 'Frugal Gambler backlinks')).toBe(true);
+    expect((await getJob(admin, created.job.id))?.design?.skill).toBe('link_building');
+
+    expect(await renameJob(admin, created.job.id, 'ab')).toMatchObject({ ok: false, status: 400 });
+    expect(await renameJob(admin, created.job.id, 'x'.repeat(121))).toMatchObject({ ok: false, status: 400 });
+    expect(await renameJob(admin, created.job.id, 42)).toMatchObject({ ok: false, status: 400 });
+    expect(await renameJob({ ...admin, role: 'User' }, created.job.id, 'A fine name')).toMatchObject({ ok: false, status: 403 });
+    expect(await renameJob(admin, 'not-an-id', 'A fine name')).toMatchObject({ ok: false, status: 404 });
+    expect((await getJob(admin, created.job.id))?.design?.title).toBe('Frugal Gambler backlinks');
   });
 
   it('keeps recurring link building scheduled while earlier recommendations await review', async () => {

@@ -87,7 +87,11 @@ type JobLike = { _id: Types.ObjectId; organizationId: Types.ObjectId; companyId:
 
 export function readConfig(job: { publishing?: unknown }): PublishingConfig | null {
   const parsed = publishingConfigSchema.safeParse(job.publishing);
-  return parsed.success ? parsed.data : null;
+  if (!parsed.success) return null;
+  // Jobs set up before "news" was recognised stored the section's name wrongly singularised ("new"): use the right word.
+  const source = parsed.data.source;
+  if (source.type === 'site' && source.noun === 'new' && /^\/news\/?$/i.test(source.pathPrefix)) return { ...parsed.data, source: { ...source, noun: 'article' } };
+  return parsed.data;
 }
 
 // ---------- Sources ----------
@@ -534,7 +538,7 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
       gaps,
     };
     const saved = await finishRun(run._id, owner, 'needs_review', { output });
-    if (saved) await notifyPeople(job.organizationId, config.notifyUserIds, { subject: `Sample posts ready to check · ${profile.name}`, intro: `Nucleas wrote a format preview using an existing ${noun} (“${facts.title}”). It is not a new-publication notification. Check the drafts, then accept to switch the job on.`, lines: [], action: 'Review the samples' }, deps.send);
+    if (saved) await notifyPeople(job.organizationId, config.notifyUserIds, { subject: `Sample posts ready to check · ${profile.name}`, intro: rotation ? `Nucleas wrote sample posts for the first ${noun} in the rotation (“${facts.title}”). Nothing was posted. Check the drafts, then accept to switch the job on.` : `Nucleas wrote a format preview using an existing ${noun} (“${facts.title}”). It is not a new-publication notification. Check the drafts, then accept to switch the job on.`, lines: [], action: 'Review the samples' }, deps.send);
     return;
   }
 
