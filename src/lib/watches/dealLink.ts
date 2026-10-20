@@ -1,3 +1,5 @@
+import { inflateSync } from 'node:zlib';
+
 /** Picks the one link an email is really about, ignoring unsubscribe, social, tracking and asset links. */
 const NON_DEAL_URL_RE =
   /w3\.org\/1999\/xhtml|w3\.org\/TR\/|w3\.org\/2000\/|schemas\.microsoft\.com|xmlns|\.dtd(?:\?|$)|fonts\.googleapis\.com|fonts\.gstatic\.com|\/css(?:\?|\/|$)|\.css(?:\?|$)/i;
@@ -49,10 +51,10 @@ const PROMO_URL_RE =
   /shop|play|claim|bonus|promo|offer|deposit|spin|register|signup|sign-up|get-started|cta|reward|package|bundle|buy|purchase|article|post|story|news|read|learn/i;
 
 const PROMO_ANCHOR_RE =
-  /shop now|play now|claim|get bonus|get offer|deposit|spin|buy now|purchase|redeem|click here|play free|join now|tap the button|read more|learn more|view|see (?:the )?(?:offer|details|deal)|get started/i;
+  /let['’]?s (?:roll|ride|play)|grab (?:your|the)|get deal|shop now|play now|claim|get bonus|get offer|deposit|spin|buy now|purchase|redeem|click here|play free|join now|tap the button|read more|learn more|view|see (?:the )?(?:offer|details|deal)|get started/i;
 
 function normalizeUrl(url: string): string {
-  return url.replace(/[,.)]+$/, "").trim();
+  return url.replace(/&amp;/gi, "&").replace(/[,.)]+$/, "").trim();
 }
 
 function isHttpUrl(url: string): boolean {
@@ -60,7 +62,20 @@ function isHttpUrl(url: string): boolean {
 }
 
 function isDenied(url: string): boolean {
-  return DENY_URL_RE.test(url) || isNonDealUrl(url);
+  if (DENY_URL_RE.test(url) || isNonDealUrl(url)) return true;
+  // Bloomreach/Exponea embeds the destination in a signed base64 payload. Inspect it
+  // locally: following a footer URL could itself unsubscribe the mailbox.
+  try {
+    const parsed = new URL(url);
+    if (!/(^|\.)exponea\.com$/i.test(parsed.hostname)) return false;
+    const token = parsed.pathname.split('/e/')[1]?.split('/')[0];
+    if (!token || token.length > 20000) return false;
+    const compressed = token.startsWith('.');
+    const encoded = token.split('.')[compressed ? 1 : 0];
+    const bytes = Buffer.from(encoded, 'base64url');
+    const payload = compressed ? inflateSync(bytes, { maxOutputLength: 65536 }) : bytes;
+    return DENY_URL_RE.test(payload.toString('utf8'));
+  } catch { return false; }
 }
 
 function parseSenderDomain(from: string | undefined): string | null {
@@ -94,6 +109,7 @@ function scoreUrl(
 
   let score = 0;
   if (PROMO_URL_RE.test(url)) score += 3;
+  if (anchorText && /unsubscribe|opt[ -]?out|preferences|privacy|terms|contact|support|faq/i.test(anchorText)) return -50;
   if (anchorText && PROMO_ANCHOR_RE.test(anchorText)) score += 4;
   if (anchorText && PROMO_URL_RE.test(anchorText)) score += 2;
   if (subject && PROMO_URL_RE.test(subject)) score += 1;
@@ -147,12 +163,14 @@ export function pickDealLink(links: string[], context?: PickDealLinkContext): st
   const subject = context?.subject;
   const from = context?.from;
   const candidates = new Map<string, number>();
+  const deniedAnchors = new Set<string>();
 
   const addCandidate = (url: string, anchorText?: string) => {
     const normalized = normalizeUrl(url);
     if (!isHttpUrl(normalized) || isNonDealUrl(normalized)) return;
+    if (deniedAnchors.has(normalized)) return;
     const score = scoreUrl(normalized, anchorText, subject, from);
-    if (score <= -50) return;
+    if (score <= -50) { deniedAnchors.add(normalized); candidates.delete(normalized); return; }
     const prev = candidates.get(normalized) ?? -100;
     candidates.set(normalized, Math.max(prev, score));
   };
@@ -178,5 +196,5 @@ export function pickDealLink(links: string[], context?: PickDealLinkContext): st
 
   if (bestUrl && bestScore > 0) return sanitizeDealUrl(bestUrl);
 
-  return fallbackLink(links, context);
+  return fallbackLink(links.filter((link) => !deniedAnchors.has(normalizeUrl(link))), context);
 }

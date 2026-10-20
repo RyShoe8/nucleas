@@ -1,3 +1,4 @@
+import { deflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { cleanEmailText, dealScore, detectKeywords, effectiveLookbackHours, gmailQueryFor, isFlagged, keywordMatchScore, prefilter, relevanceScore, sendersMatch } from './scan';
 import { buildDealMetricsFromAmounts } from './dealMetrics';
@@ -105,6 +106,22 @@ describe('key points', () => {
 });
 
 describe('the main link', () => {
+  it('rejects compressed tracking destinations that point to unsubscribe without visiting them', () => {
+    const payload = deflateSync(Buffer.from('https://example.com/unsubscribe')) .toString('base64url');
+    const bad = `https://cdn.uk.exponea.com/brand/e/.${payload}.signature/click`;
+    const good = 'https://brand.onelink.me/offer';
+    expect(pickDealLink([bad], { html: `<a href="${good}">LET'S ROLL!</a><a href="${bad}">click here</a>`, subject: 'Offer' })).toBe(good);
+    expect(pickDealLink([bad], { subject: 'Offer' })).toBeNull();
+  });
+  it('rejects opaque unsubscribe anchors even when the raw URL appears again', () => {
+    const bad = 'https://track.example.com/click/opaque';
+    const good = 'https://brand.example.com/buy';
+    const html = `<a href="${good}">LET'S ROLL!</a><a href="${bad}">Unsubscribe</a>`;
+    expect(pickDealLink([bad], { html, subject: 'Deal' })).toBe(good);
+  });
+  it('decodes HTML entities without changing signed tracking tokens', () => {
+    expect(pickDealLink([], { html: '<a href="https://shop.example.com/buy?a=1&amp;b=2">Get Deal</a>' })).toBe('https://shop.example.com/buy?a=1&b=2');
+  });
   it('prefers the call-to-action over unsubscribe, social and asset links', () => {
     const html = '<a href="https://example.com/unsubscribe">Unsubscribe</a><a href="https://twitter.com/x">X</a><a href="https://cdn.example.com/hero.png">img</a><a href="https://shop.example.com/claim-offer">Claim now</a>';
     expect(pickDealLink([], { html, subject: 'Offer', from: 'Shop <hi@example.com>' })).toBe('https://shop.example.com/claim-offer');
