@@ -57,7 +57,7 @@ export function fillSystemPrompt(input: { companyName: string; noun: string; bri
     'Rules:',
     '- Reply with one JSON object that maps field keys to values. Nothing else.',
     '- Use only the facts given. Never invent prices, amounts, codes, dates, links or names.',
-    '- Resolve omitted years and relative dates from the supplied email timestamp and current date, never from training data. Leave dates out if uncertain.',
+    '- Resolve relative dates such as today from the email timestamp in the timezone stated in the email, then convert the complete date and time into the supplied site timezone. Never substitute the server date or training data. Fill start_time/end_time when given. Leave dates out if uncertain.',
     '- Leave a field out when the facts do not give its value. Fill a required field only when its value follows from the facts.',
     '- Choice fields: use exactly one of the listed values. Checkboxes: true or false. Dates: YYYY-MM-DD. Date and time: YYYY-MM-DDTHH:MM.',
     '- Titles and names: short and plain, as the site would show them.',
@@ -283,6 +283,7 @@ export async function addRecord(input: {
   target: AdminTarget;
   values: Record<string, string | boolean>;
   browser: AdminBrowser;
+  timezone?: string;
   /** Recomputes values for re-learned fields. */
   refill: (target: AdminTarget) => Promise<Record<string, string | boolean> | null>;
 }): Promise<AddOutcome> {
@@ -290,10 +291,11 @@ export async function addRecord(input: {
   let values = input.values;
   let relearned: AdminTarget | null = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: input.timezone ?? 'UTC' }).format(new Date());
     const end = typeof values.end_date === 'string' ? values.end_date : null;
     const start = typeof values.start_date === 'string' ? values.start_date : null;
     if (end && (end.slice(0, 10) < today || (start && end < start))) return { ok: false, code: 'rejected', screenshot: null, relearned, values, error: 'The deal dates are expired or inconsistent. Review the original email and correct the form manually before saving.' };
+    if (start && end === start && typeof values.start_time === 'string' && typeof values.end_time === 'string' && values.end_time <= values.start_time) return { ok: false, code: 'rejected', screenshot: null, relearned, values, error: 'The end time must be after the start time for a same-day offer.' };
     let result: FillResult;
     try {
       result = await input.browser.fill(input.session, { url: target.formUrl, fields: target.fields, values, submit: true, submitSelector: target.submit.selector });

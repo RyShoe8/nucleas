@@ -96,6 +96,7 @@ export const publishingConfigSchema = z.object({
   admin: adminTargetSchema.optional(),
   /** Explicit field mappings override generated values, with optional verified-value conditions. */
   adminFieldRules: adminFieldRulesSchema.optional(),
+  adminTimezone: z.string().max(100).refine((value) => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }, 'Choose a valid timezone.').optional(),
   adminLinkField: z.string().min(1).max(100).optional(),
   adminValueField: z.string().min(1).max(100).optional(),
   /** The request in the person's words; it steers what each post emphasizes. */

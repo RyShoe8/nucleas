@@ -11,7 +11,7 @@ import { askEngine } from '@/lib/ai/engine/ask';
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 import { readEngineSettings } from '@/lib/ai/engine/select';
 import { socialPublishDesign } from '@/lib/jobs/templates/socialPublish';
-import { MANUAL_ONLY, PLATFORM_LABEL, PUBLISH_PLATFORMS, SOCIAL_PLATFORMS, adminFieldRulesSchema, adminTargetSchema, channelSchema, type AdminTarget, normalizeChannels, platformsFor, publishSourceSchema, sourceLabel, type PublishPlatform, type PublishSource, type PublishingConfig } from './config';
+import { MANUAL_ONLY, PLATFORM_LABEL, PUBLISH_PLATFORMS, SOCIAL_PLATFORMS, publishingConfigSchema, adminFieldRulesSchema, adminTargetSchema, channelSchema, type AdminTarget, normalizeChannels, platformsFor, publishSourceSchema, sourceLabel, type PublishPlatform, type PublishSource, type PublishingConfig } from './config';
 import { readExamplePost } from './examples';
 import { discoverSiteSource, type PickPrefix } from './siteSource';
 import { facebookTokenCanPost } from './publishers';
@@ -225,6 +225,7 @@ const createSchema = z.object({
   request: z.string().trim().min(10).max(2000),
   source: publishSourceSchema,
   adminFieldRules: adminFieldRulesSchema.optional(),
+  adminTimezone: publishingConfigSchema.shape.adminTimezone,
   adminLinkField: z.string().min(1).max(100).optional(),
   adminValueField: z.string().min(1).max(100).optional(),
   minimumSocialValuePct: z.number().min(0).max(1000).optional(),
@@ -301,6 +302,7 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
   const channels = normalizeChannels(input.channels);
   const config: PublishingConfig = {
     source: input.source,
+    ...(input.adminTimezone ? { adminTimezone: input.adminTimezone } : {}),
     ...(input.adminLinkField ? { adminLinkField: input.adminLinkField } : {}),
     ...(input.adminValueField ? { adminValueField: input.adminValueField } : {}),
     ...(input.adminFieldRules ? { adminFieldRules: input.adminFieldRules } : {}),
@@ -334,6 +336,7 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
 
 const settingsSchema = z.object({
   adminFieldRules: adminFieldRulesSchema.optional(),
+  adminTimezone: publishingConfigSchema.shape.adminTimezone,
   adminLinkField: z.string().min(1).max(100).optional(),
   adminValueField: z.string().min(1).max(100).optional(),
   minimumSocialValuePct: z.number().min(0).max(1000).nullable().optional(),
@@ -348,6 +351,7 @@ export async function updatePublishingSettings(viewer: CompanyViewer, job: { _id
   const parsed = settingsSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, status: 400, error: parsed.error.issues[0]?.message ?? 'Check the settings.' };
   const set: Record<string, unknown> = {};
+  if (parsed.data.adminTimezone) set['publishing.adminTimezone'] = parsed.data.adminTimezone;
   if (parsed.data.adminLinkField) set['publishing.adminLinkField'] = parsed.data.adminLinkField;
   if (parsed.data.adminValueField) set['publishing.adminValueField'] = parsed.data.adminValueField;
   if (parsed.data.adminFieldRules) set['publishing.adminFieldRules'] = parsed.data.adminFieldRules;

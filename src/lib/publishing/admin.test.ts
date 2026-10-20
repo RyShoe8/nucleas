@@ -105,6 +105,21 @@ describe('adding a record', () => {
     expect(browser.fill).not.toHaveBeenCalled();
   });
 
+  it('allows same-day windows and checks dates in the configured site timezone', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-20T01:00:00Z'));
+    const browser: AdminBrowser = { inspect: vi.fn(), fill: vi.fn(async () => ok), read: vi.fn(async () => ({ loggedIn: true, text: 'Golden Hearts' })) };
+    try {
+      const input = { session, target, values: { ...values, start_date: '2026-10-19', end_date: '2026-10-19', start_time: '19:00', end_time: '22:00' }, browser, refill: vi.fn(), timezone: 'America/Chicago' };
+      expect(await addRecord(input)).toMatchObject({ ok: true });
+      expect(await addRecord({ ...input, timezone: 'UTC' })).toMatchObject({ ok: false, code: 'rejected' });
+      expect(await addRecord({ ...input, values: { ...input.values, end_time: '18:00' } })).toMatchObject({ ok: false, code: 'rejected' });
+      expect(browser.fill).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('saves, then confirms the record is on the list page', async () => {
     const browser: AdminBrowser = { inspect: vi.fn(), fill: vi.fn(async () => ok), read: vi.fn(async () => ({ loggedIn: true, text: 'Deals\nGolden Hearts — $20 → 40 SC' })) };
     expect(await addRecord({ session, target, values, browser, refill: vi.fn() })).toMatchObject({ ok: true, verified: true, url: 'https://fg.club/admin/deals', relearned: null });

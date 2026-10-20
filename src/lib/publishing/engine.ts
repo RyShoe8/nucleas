@@ -136,6 +136,7 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
     video: null,
     extra: [
       item?.fromName ? `From: ${item.fromName}` : '',
+      ...(config.adminTimezone ? [`Site timezone: ${config.adminTimezone}. Use this timezone for all admin dates and times.`, `Today at the site: ${new Intl.DateTimeFormat('en-CA', { timeZone: config.adminTimezone }).format(new Date())}`, ...(item?.sentAt ? [`Email sent at the site: ${new Intl.DateTimeFormat('en-US', { timeZone: config.adminTimezone, dateStyle: 'full', timeStyle: 'short' }).format(item.sentAt)}`] : [])] : []),
       `Today (UTC): ${new Date().toISOString().slice(0, 10)}`,
       ...(item?.sentAt ? [`Email sent (UTC): ${item.sentAt.toISOString()}`] : []),
       item?.bestDeal ? `Deal: ${formatDealLine(item.bestDeal)}` : '',
@@ -262,6 +263,7 @@ async function postToAdmin(job: JobLike, config: PublishingConfig, values: Recor
   if (!session) return { ok: false, error: new PublishError('needs_reauth', 'The admin session has expired or is missing. Reconnect it in Company → Admin account, then retry this card.'), screenshot: null };
   const outcome = await addRecord({
     session,
+    timezone: config.adminTimezone,
     // Reactive forms may recalculate a value after spend/get lose focus. Apply
     // the explicitly mapped percentage last, after every dependent control.
     target: config.adminValueField ? { ...config.admin, fields: [...config.admin.fields].sort((a, b) => Number(a.key === config.adminValueField) - Number(b.key === config.adminValueField)) } : config.admin,
