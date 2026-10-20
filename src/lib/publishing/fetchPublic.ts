@@ -1,4 +1,5 @@
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
+import { withBrowserFallback } from './browserFallback';
 
 /**
  * Fetches a public HTTPS resource for publishing (sitemaps, pages, images). Every redirect target is
@@ -8,6 +9,9 @@ import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 const MAX_REDIRECTS = 4;
+
+let fallbackFetcher: FetchLike | null = null;
+const defaultFetcher = (): FetchLike => (fallbackFetcher ??= withBrowserFallback());
 
 export interface PublicResponse {
   url: string;
@@ -19,7 +23,8 @@ export async function fetchPublic(
   rawUrl: string,
   options: { accept?: string; maxBytes?: number; timeoutMs?: number; fetcher?: FetchLike; headers?: Record<string, string> } = {}
 ): Promise<PublicResponse> {
-  const fetcher = options.fetcher ?? fetch;
+  // Pages that refuse Nucleas's servers are fetched through the browser worker; an injected fetcher (tests) is used as given.
+  const fetcher = options.fetcher ?? defaultFetcher();
   const maxBytes = options.maxBytes ?? 2_000_000;
   let url = assertSafePublicHttpsUrl(rawUrl);
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {

@@ -130,6 +130,37 @@ async function navigate(url: string, maxChars: number) {
   }
 }
 
+/**
+ * The raw document at a URL (status, type and body), fetched by the real browser. Some sites refuse requests from
+ * cloud-provider addresses but serve this machine, so Nucleas asks it for pages and sitemaps it cannot fetch directly.
+ * Unlike navigate, the body is the response itself, so <head> tags, JSON-LD and XML sitemaps come back intact.
+ */
+async function fetchRaw(url: string, maxBytes: number) {
+  const playwright = (await import(/* webpackIgnore: true */ 'playwright' as string)) as {
+    chromium: {
+      launch: (opts: { headless: boolean }) => Promise<{
+        newPage: () => Promise<{
+          goto: (u: string, o: { waitUntil: string; timeout: number }) => Promise<{ status: () => number; headers: () => Record<string, string>; text: () => Promise<string> } | null>;
+          url: () => string;
+        }>;
+        close: () => Promise<void>;
+      }>;
+    };
+  };
+  const browser = await playwright.chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] } as { headless: boolean });
+  try {
+    const page = await browser.newPage();
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    const finalUrl = page.url();
+    if (!isSafePublicHttpsUrl(finalUrl)) throw new Error('Unsafe redirected URL.');
+    if (!response) throw new Error('No response.');
+    const contentType = String(response.headers()['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
+    const body = await response.text();
+    return { url: finalUrl, status: response.status(), contentType, body: body.length > maxBytes ? body.slice(0, maxBytes) : body, truncated: body.length > maxBytes };
+  } finally {
+    await browser.close();
+  }
+}
 
 type Locator = {
   first: () => Locator;
@@ -265,7 +296,7 @@ export function startBrowserWorkerServer() {
         res.end(JSON.stringify({ ok: true }));
         return;
       }
-      if (req.method !== 'POST' || !['/navigate', '/observe', '/admin/inspect', '/admin/fill', '/login/start', '/login/frame', '/login/input', '/login/finish', '/login/cancel'].includes(req.url ?? '')) {
+      if (req.method !== 'POST' || !['/navigate', '/fetch', '/observe', '/admin/inspect', '/admin/fill', '/login/start', '/login/frame', '/login/input', '/login/finish', '/login/cancel'].includes(req.url ?? '')) {
         res.writeHead(404);
         res.end();
         return;
@@ -333,6 +364,12 @@ export function startBrowserWorkerServer() {
       if (!isSafePublicHttpsUrl(url)) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Unsafe URL' }));
+        return;
+      }
+      if (req.url === '/fetch') {
+        const fetched = await fetchRaw(url, 3_000_000);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(fetched));
         return;
       }
       const maxChars = Math.min(Math.max(Number(body.maxChars) || 12000, 1000), 20000);

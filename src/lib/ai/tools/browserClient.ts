@@ -96,6 +96,43 @@ export async function browserNavigate(
   }
 }
 
+export type BrowserFetchResult = { url: string; status: number; contentType: string; body: string };
+
+/**
+ * The raw document at a URL as the browser worker's machine receives it. For pages and sitemaps that refuse requests
+ * from Nucleas's own servers. Fails closed when the worker is unset or does not have this endpoint yet.
+ */
+export async function browserFetch(rawUrl: string, options: { signal?: AbortSignal; fetcher?: typeof fetch } = {}): Promise<BrowserFetchResult> {
+  if (!isBrowserWorkerConfigured()) throw new Error('Browser worker is not configured.');
+  const target = assertSafePublicHttpsUrl(rawUrl);
+  const workerUrl = assertSafePublicHttpsUrl(`${process.env.NUCLEAS_BROWSER_WORKER_URL!.replace(/\/+$/, '')}/fetch`);
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  if (options.signal?.aborted) throw new Error('Browser fetch cancelled.');
+  options.signal?.addEventListener('abort', cancel, { once: true });
+  const timeout = setTimeout(cancel, 45000);
+  try {
+    const response = await (options.fetcher ?? fetch)(workerUrl, {
+      method: 'POST',
+      redirect: 'error',
+      cache: 'no-store',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.NUCLEAS_BROWSER_WORKER_SECRET!.trim()}` },
+      body: JSON.stringify({ url: target.toString() }),
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error('Browser worker could not fetch the page.');
+    }
+    const body = (await response.json()) as { url?: unknown; status?: unknown; contentType?: unknown; body?: unknown };
+    if (typeof body.body !== 'string' || typeof body.status !== 'number') throw new Error('Browser worker sent an unreadable answer.');
+    return { url: typeof body.url === 'string' ? body.url : target.toString(), status: body.status, contentType: typeof body.contentType === 'string' ? body.contentType : '', body: body.body };
+  } finally {
+    clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', cancel);
+  }
+}
+
 export type BrowserObserveResult = { url: string; title: string | null; loggedIn: boolean; text: string; note: string };
 
 /**
