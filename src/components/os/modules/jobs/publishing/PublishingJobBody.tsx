@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { MANUAL_ONLY, PLATFORM_LABEL, platformsFor, sourceLabel, type PublishPlatform } from '@/lib/publishing/config';
 import type { JobRunView, JobView } from '../JobCard';
 import ReadyPostCard from './ReadyPostCard';
+import RotationEditor from './RotationEditor';
 import { manualPostText } from '@/lib/publishing/compose';
 import { ChannelPicker, NotifyPicker, type ChannelChoice } from './Pickers';
 
@@ -180,6 +181,8 @@ export default function PublishingJobBody({ job, onChange, readyShownAbove = fal
                 {on ? ` · last checked ${ago(job.lastRunAt)}` : ''}
                 {on && view.postedThisWeek ? ` · ${view.postedThisWeek} posted this week` : ''}
             </p>
+
+            {view.source.type === 'site' && view.source.rotation ? <RotationEditor jobId={job.id} canManage={job.canManage} /> : null}
 
             {view.adminFieldRules?.length ? <p className="text-xs text-text-secondary">
                 {view.adminFieldRules.map((rule) => {

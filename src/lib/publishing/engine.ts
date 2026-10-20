@@ -19,7 +19,7 @@ import { adminSessionFor } from '@/lib/companies/adminAccount';
 import type { DealMetrics } from '@/lib/watches/types';
 import { heartbeatJobRun } from '@/lib/jobs/runLifecycle';
 import type { JobRunOutput } from '@/lib/jobs/schema';
-import { MANUAL_ONLY, PLATFORM_LABEL, SOCIAL_PLATFORMS, publishingConfigSchema, type AdminTarget, type PublishChannel, type PublishPlatform, type PublishingConfig } from './config';
+import { MANUAL_ONLY, PLATFORM_LABEL, SOCIAL_PLATFORMS, cadenceLabel, publishingConfigSchema, type AdminTarget, type PublishChannel, type PublishPlatform, type PublishingConfig } from './config';
 import { addRecord, fillValues, valueLines, type AdminBrowser, type AdminSession } from './admin';
 import { workerAdminBrowser } from './adminBrowser';
 import { composePost, newItemTitle, relabelNewItemTitle, type Draft, type Writer } from './compose';
@@ -346,10 +346,99 @@ function record(platform: PublishPlatform, draft: Draft, facts: ItemFacts, extra
   };
 }
 
+type RotationTurn = { wait: string } | { entry: SourceEntry | null };
+
+/**
+ * Evergreen rotation: one existing item every N days, oldest first, then start over. The item is the first one in
+ * order not yet posted in this pass; a finished pass begins the next (its keys carry the pass number, so every item
+ * can be posted again). Nothing is due until N days (less an hour of slack) after the last post.
+ */
+export async function nextRotationItem(job: JobLike, entries: SourceEntry[], rotation: { everyDays: number; pool?: { url: string; title: string }[] }, cycleSetting: number | undefined, noun: string, now = new Date()): Promise<RotationTurn> {
+  const everyDays = rotation.everyDays;
+  const last = await PublishItem.findOne({ jobId: job._id, status: 'processed' }).sort({ createdAt: -1 }).select('createdAt').lean<{ createdAt?: Date }>();
+  if (last?.createdAt) {
+    const due = new Date(last.createdAt.getTime() + everyDays * 86_400_000 - 3_600_000);
+    if (now < due) return { wait: `The next ${noun} is due ${due.toISOString().slice(0, 10)}. One ${noun} is posted every ${cadenceLabel(everyDays)}.` };
+  }
+  // A chosen list is posted in the order given; otherwise every page in the section, oldest first (the source lists newest first).
+  const ordered: SourceEntry[] = rotation.pool ? rotation.pool.map((p) => ({ key: p.url, url: p.url, title: p.title, date: null })) : [...entries].reverse();
+  if (!ordered.length) return { entry: null };
+  let cycle = cycleSetting ?? 1;
+  const keyFor = (entry: SourceEntry, pass: number) => (pass > 1 ? `${entry.key}#${pass}` : entry.key);
+  const posted = async (pass: number) => new Set((await PublishItem.find({ jobId: job._id, key: { $in: ordered.map((e) => keyFor(e, pass)) } }).select('key').lean<{ key: string }[]>()).map((r) => r.key));
+  const seen = await posted(cycle);
+  let next = ordered.find((e) => !seen.has(keyFor(e, cycle)));
+  if (!next) {
+    cycle += 1;
+    await Job.updateOne({ _id: job._id }, { $set: { 'publishing.rotationCycle': cycle } });
+    next = ordered[0];
+  }
+  return { entry: { ...next!, key: keyFor(next!, cycle) } };
+}
+
+export interface RotationView {
+  everyDays: number;
+  cycle: number;
+  /** True once the list has been chosen or reordered by hand; false while it is every page, oldest first. */
+  explicit: boolean;
+  /** When the next one is due (ISO), or null when nothing has been posted yet (the first goes at the next check). */
+  nextDue: string | null;
+  pool: { url: string; title: string; postedAt: string | null; skipped: boolean; next: boolean }[];
+  /** Pages in the section that are not in the list, to add. */
+  available: { url: string; title: string }[];
+  /** Set when the site's page list could not be read (the list shown is what was saved). */
+  problem: string | null;
+}
+
+/** "how-to-be-a-frugal-gambler" -> "How to be a frugal gambler", for pages whose title is not known yet. */
+export function titleFromUrl(url: string): string {
+  try {
+    const slug = decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() ?? '').replace(/[-_]+/g, ' ').trim();
+    return slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : url;
+  } catch {
+    return url;
+  }
+}
+
+/** The rotation as a person edits it: the list in posting order, what is posted, what is next, and what could be added. */
+export async function rotationView(job: JobLike, deps: PublishDeps = {}): Promise<RotationView | null> {
+  const config = readConfig(job);
+  if (!config || config.source.type !== 'site' || !config.source.rotation) return null;
+  const rotation = config.source.rotation;
+  let pages: { url: string; title: string }[] = [];
+  let problem: string | null = null;
+  try {
+    pages = (await listSitePages(config.source, deps.fetcher)).reverse().map((p) => ({ url: p.url, title: p.title || titleFromUrl(p.url) }));
+  } catch {
+    problem = 'The site’s page list could not be read right now. The saved list is shown.';
+  }
+  const cycle = config.rotationCycle ?? 1;
+  const keyFor = (url: string, pass: number) => (pass > 1 ? `${url}#${pass}` : url);
+  const base = rotation.pool ? rotation.pool.map((p) => ({ url: p.url, title: p.title || pages.find((g) => g.url === p.url)?.title || titleFromUrl(p.url) })) : pages;
+  const items = await PublishItem.find({ jobId: job._id, key: { $in: base.map((p) => keyFor(p.url, cycle)) } }).select('key status createdAt').lean<{ key: string; status: string; createdAt?: Date }[]>();
+  const byKey = new Map(items.map((i) => [i.key, i]));
+  const rows = base.map((p) => {
+    const item = byKey.get(keyFor(p.url, cycle));
+    return { ...p, postedAt: item?.status === 'processed' ? item.createdAt?.toISOString() ?? null : null, skipped: item?.status === 'skipped', next: false };
+  });
+  const nextIndex = rows.findIndex((r) => !r.postedAt && !r.skipped);
+  const upNext = nextIndex >= 0 ? nextIndex : rows.length ? 0 : -1;
+  if (upNext >= 0) rows[upNext]!.next = true;
+  const last = await PublishItem.findOne({ jobId: job._id, status: 'processed' }).sort({ createdAt: -1 }).select('createdAt').lean<{ createdAt?: Date }>();
+  const nextDue = last?.createdAt ? new Date(last.createdAt.getTime() + rotation.everyDays * 86_400_000).toISOString() : null;
+  const inList = new Set(base.map((p) => p.url));
+  return { everyDays: rotation.everyDays, cycle, explicit: Boolean(rotation.pool), nextDue, pool: rows, available: pages.filter((p) => !inList.has(p.url)), problem };
+}
+
 /** Marks everything the source lists right now as already seen, so switching a job on never posts the back catalog. */
 export async function takeBaseline(job: JobLike, deps: PublishDeps = {}): Promise<number> {
   const config = readConfig(job);
   if (!config) return 0;
+  // An evergreen rotation posts the existing library one item at a time, so nothing counts as already seen.
+  if (config.source.type === 'site' && config.source.rotation) {
+    await Job.updateOne({ _id: job._id }, { $set: { 'publishing.baselineAt': new Date() } });
+    return 0;
+  }
   const entries = await listEntries(job, config, deps);
   if (entries.length) {
     await PublishItem.bulkWrite(
@@ -395,10 +484,12 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
   } catch (error) {
     return fail(`Could not read the source: ${error instanceof Error ? error.message : 'unknown error'}`);
   }
+  const rotation = config.source.type === 'site' ? config.source.rotation : undefined;
 
   // A dry run drafts posts for the newest item and delivers nothing.
   if (run.dryRun) {
-    const newest = entries[0];
+    const first = rotation?.pool?.[0];
+    const newest = rotation ? (first ? { key: first.url, url: first.url, title: first.title, date: null } : [...entries].reverse()[0]) : entries[0];
     if (!newest) return fail(`No ${noun}s were found to try a sample with.`);
     await progress(run._id, owner, `Writing a format preview using existing content: “${newest.title || newest.key}”`, 'researching', 40);
     let facts: ItemFacts;
@@ -437,7 +528,9 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
       records,
       summary: admin
         ? `A sample for the newest ${noun}, “${facts.title}”: the form was filled but not saved. Accept to switch the job on: it checks every hour, and only ${noun}s that arrive after that are added.`
-        : `Format preview using an existing ${noun}, “${facts.title}”. This sample is not a new-publication notification. Nothing was posted. Accept to switch the job on: it checks every hour, and only ${noun}s that appear after that are posted.`,
+        : rotation
+          ? `A sample for the first ${noun} in the rotation, “${facts.title}”. Nothing was posted. Accept to switch the job on: it posts this ${noun} at the next hourly check, then one ${noun} every ${cadenceLabel(rotation.everyDays)}, oldest first, starting over when it reaches the end.`
+          : `Format preview using an existing ${noun}, “${facts.title}”. This sample is not a new-publication notification. Nothing was posted. Accept to switch the job on: it checks every hour, and only ${noun}s that appear after that are posted.`,
       gaps,
     };
     const saved = await finishRun(run._id, owner, 'needs_review', { output });
@@ -446,16 +539,26 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
   }
 
   const current = await Job.findById(job._id).select('publishing.baselineAt').lean<{ publishing?: { baselineAt?: Date } }>();
-  if (!current?.publishing?.baselineAt) {
+  if (!rotation && !current?.publishing?.baselineAt) {
     const count = await takeBaseline(job, deps);
     await finishRun(run._id, owner, 'completed', { output: { records: [], summary: `Recorded the ${count} ${noun}${count === 1 ? '' : 's'} that already exist. New ones are posted from now on.`, gaps: [] } });
     return;
   }
 
-  const known = new Set((await PublishItem.find({ jobId: job._id, key: { $in: entries.map((e) => e.key) } }).select('key').lean<{ key: string }[]>()).map((r) => r.key));
-  const fresh = entries.filter((e) => !known.has(e.key)).reverse(); // oldest first, so posts go out in release order
+  let fresh: SourceEntry[];
+  if (rotation) {
+    const turn = await nextRotationItem(job, entries, rotation, config.rotationCycle, noun);
+    if ('wait' in turn) {
+      await finishRun(run._id, owner, 'completed', { output: { records: [], summary: turn.wait, gaps: [] } });
+      return;
+    }
+    fresh = turn.entry ? [turn.entry] : [];
+  } else {
+    const known = new Set((await PublishItem.find({ jobId: job._id, key: { $in: entries.map((e) => e.key) } }).select('key').lean<{ key: string }[]>()).map((r) => r.key));
+    fresh = entries.filter((e) => !known.has(e.key)).reverse(); // oldest first, so posts go out in release order
+  }
 
-  if (fresh.length > MAX_NEW_PER_RUN) {
+  if (!rotation && fresh.length > MAX_NEW_PER_RUN) {
     await PublishItem.bulkWrite(
       fresh.map((e) => ({
         updateOne: {
@@ -563,8 +666,9 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
   }
 
   const handled = fresh.length - repeats;
+  const newWord = rotation ? 'evergreen ' : 'new ';
   const summary = handled
-    ? `${handled} new ${noun}${handled === 1 ? '' : 's'}. ${posted} ${posted === 1 ? 'was' : 'were'} published or added${ready.length ? `, ${ready.length} ready to do by hand` : ''}.${repeats ? ` ${repeats} repeat${repeats === 1 ? '' : 's'} of earlier ${noun}s skipped.` : ''}`
+    ? `${handled} ${newWord}${noun}${handled === 1 ? '' : 's'}. ${posted} ${posted === 1 ? 'was' : 'were'} published or added${ready.length ? `, ${ready.length} ready to do by hand` : ''}.${repeats ? ` ${repeats} repeat${repeats === 1 ? '' : 's'} of earlier ${noun}s skipped.` : ''}`
     : repeats ? `No new ${noun}s (${repeats} repeat${repeats === 1 ? '' : 's'} of earlier ones skipped).` : `No new ${noun}s.`;
   await finishRun(run._id, owner, 'completed', { output: { records, summary, gaps: problems.slice(0, 20) } });
   const adminOnly = config.channels.every((c) => c.platform === 'admin');

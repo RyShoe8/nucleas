@@ -11,7 +11,7 @@ import { askEngine } from '@/lib/ai/engine/ask';
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 import { readEngineSettings } from '@/lib/ai/engine/select';
 import { socialPublishDesign } from '@/lib/jobs/templates/socialPublish';
-import { MANUAL_ONLY, PLATFORM_LABEL, PUBLISH_PLATFORMS, SOCIAL_PLATFORMS, publishingConfigSchema, adminFieldRulesSchema, adminTargetSchema, channelSchema, type AdminTarget, normalizeChannels, platformsFor, publishSourceSchema, sourceLabel, type PublishPlatform, type PublishSource, type PublishingConfig } from './config';
+import { MANUAL_ONLY, PLATFORM_LABEL, PUBLISH_PLATFORMS, cadenceLabel, SOCIAL_PLATFORMS, publishingConfigSchema, adminFieldRulesSchema, adminTargetSchema, channelSchema, type AdminTarget, normalizeChannels, platformsFor, publishSourceSchema, sourceLabel, type PublishPlatform, type PublishSource, type PublishingConfig } from './config';
 import { readExamplePost } from './examples';
 import { discoverSiteSource, type PickPrefix } from './siteSource';
 import { facebookTokenCanPost } from './publishers';
@@ -40,6 +40,28 @@ export function recognizeRequest(text: string): RequestKind {
   const announce = /\b(post|posts|posting|share|announce|publish|promote)\b/.test(t);
   if (social && announce) return 'social_publish';
   return 'custom';
+}
+
+const NUMBER_WORDS: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, eight: 8 };
+
+/**
+ * "one article every 3 weeks, in order": an evergreen rotation rather than posting what is new. It needs a cadence
+ * ("every 3 weeks", "every other week", "monthly") and must not be about new or latest pages.
+ */
+export function parseRotation(text: string): { everyDays: number } | null {
+  const t = text.toLowerCase();
+  const evergreen = /\bever[- ]?green\b|\bin order\b|\bone (?:article|post|guide|page)\b.*\bevery\b/.test(t);
+  if (!evergreen && /\b(new|newly|latest|fresh|just published)\b/.test(t)) return null;
+  const every = /\bevery\s+(other\s+)?(?:(\d{1,3})|(a|an|one|two|three|four|five|six|eight))?\s*(day|week|month)s?\b/.exec(t);
+  let days: number | null = null;
+  if (every) {
+    const count = every[2] ? Number(every[2]) : every[3] ? NUMBER_WORDS[every[3]]! : 1;
+    const unit = every[4] === 'day' ? 1 : every[4] === 'week' ? 7 : 30;
+    days = (every[1] ? 2 : 1) * count * unit;
+  } else if (/\bweekly\b/.test(t)) days = 7;
+  else if (/\bmonthly\b/.test(t)) days = 30;
+  else if (/\bdaily\b/.test(t)) days = 1;
+  return days && days >= 1 && days <= 365 ? { everyDays: days } : null;
 }
 
 /** Whether the request is about email (a watched inbox) rather than new pages on the site. */
@@ -171,7 +193,8 @@ export async function planRequest(viewer: CompanyViewer, input: { companyId: str
     if (!profile.domain) return { ok: false, status: 400, error: `Add ${profile.name}’s website in the Company window first, so Nucleas knows where to look.` };
     const found = await discoverSiteSource({ domain: profile.domain, brief: request, fetcher: deps.fetcher, pick: deps.pick ?? modelPick(viewer) });
     if (!found.ok) return { ok: false, status: 400, error: found.error };
-    source = { type: 'site', feedUrl: found.feedUrl, feedKind: found.feedKind, pathPrefix: found.pathPrefix, noun: found.noun };
+    const rotation = parseRotation(request);
+    source = { type: 'site', feedUrl: found.feedUrl, feedKind: found.feedKind, pathPrefix: found.pathPrefix, noun: found.noun, ...(rotation ? { rotation } : {}) };
     newest = found.newest ? { title: found.newest.title ?? new URL(found.newest.url).pathname, url: found.newest.url } : null;
   }
 
@@ -207,7 +230,7 @@ export async function planRequest(viewer: CompanyViewer, input: { companyId: str
     ok: true,
     plan: {
       kind: 'social_publish',
-      title: `Post new ${source.noun}s to social`,
+      title: source.type === 'site' && source.rotation ? `Post one ${source.noun} every ${cadenceLabel(source.rotation.everyDays)}` : `Post new ${source.noun}s to social`,
       source,
       sourceLabel: sourceLabel(source, profile.domain ?? null),
       newest,
@@ -326,7 +349,7 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
     request: input.request,
     design: admin
       ? adminPublishDesign({ noun: input.source.noun, sourceLabel: sourceLabel(input.source, profile.domain ?? null), host: new URL(admin.baseUrl).host })
-      : socialPublishDesign({ noun: input.source.noun, sourceLabel: sourceLabel(input.source, profile.domain ?? null), platforms: channels.map((c) => PLATFORM_LABEL[c.platform]) }),
+      : socialPublishDesign({ noun: input.source.noun, sourceLabel: sourceLabel(input.source, profile.domain ?? null), platforms: channels.map((c) => PLATFORM_LABEL[c.platform]), ...(input.source.type === 'site' && input.source.rotation ? { everyDays: input.source.rotation.everyDays } : {}) }),
     publishing: config,
     level,
     designCostMicros: 0,
@@ -349,6 +372,8 @@ const settingsSchema = z.object({
   channels: z.array(channelSchema).min(1, 'Keep at least one platform.').optional(),
   notifyUserIds: z.array(z.string()).max(50).optional(),
   examples: z.record(z.enum(PUBLISH_PLATFORMS), z.string().max(6000)).optional(),
+  /** Evergreen rotation: how often, and which pages in what order (null goes back to every page, oldest first). */
+  rotation: z.object({ everyDays: z.number().int().min(1).max(365).optional(), pool: z.array(z.object({ url: z.string().url().max(2000), title: z.string().max(300).optional() })).max(500).nullable().optional() }).optional(),
 });
 
 /** Change a running job's platforms, auto/manual choices, notify list or examples. Managers only. */
@@ -374,13 +399,37 @@ export async function updatePublishingSettings(viewer: CompanyViewer, job: { _id
     // Switching a channel back to auto means the person fixed the account: drop the old warning.
     for (const c of channels) if (c.mode === 'auto') unset[`publishing.notes.${c.platform}`] = '';
   }
+  if (parsed.data.rotation) {
+    const current = publishingConfigSchema.safeParse(job.publishing);
+    if (!current.success || current.data.source.type !== 'site' || !current.data.source.rotation) return { ok: false, status: 400, error: 'This job is not an evergreen rotation.' };
+    const { everyDays, pool } = parsed.data.rotation;
+    if (everyDays) set['publishing.source.rotation.everyDays'] = everyDays;
+    if (pool === null) unset['publishing.source.rotation.pool'] = '';
+    else if (pool) {
+      const bare = (host: string) => host.toLowerCase().replace(/^www\./, '');
+      const siteHost = bare(new URL(current.data.source.feedUrl).host);
+      const seen = new Set<string>();
+      const clean: { url: string; title: string }[] = [];
+      for (const item of pool) {
+        let url: URL;
+        try { url = new URL(item.url); } catch { return { ok: false, status: 400, error: 'One of the pages is not a valid address.' }; }
+        if (url.protocol !== 'https:' || bare(url.host) !== siteHost) return { ok: false, status: 400, error: `Only pages on ${siteHost} can be in the rotation.` };
+        url.hash = '';
+        url.host = new URL(current.data.source.feedUrl).host; // the site's own spelling (with or without www), so one page is one entry
+        if (seen.has(url.toString())) continue;
+        seen.add(url.toString());
+        clean.push({ url: url.toString(), title: (item.title ?? '').trim().slice(0, 300) });
+      }
+      set['publishing.source.rotation.pool'] = clean;
+    }
+  }
   if (parsed.data.notifyUserIds) set['publishing.notifyUserIds'] = await keepOrgPeople(viewer.organizationId, parsed.data.notifyUserIds);
   if (parsed.data.examples) {
     const examples = await resolveExamples(parsed.data.examples, deps.fetcher);
     if (!examples.ok) return { ok: false, status: 400, error: examples.error };
     set['publishing.examples'] = examples.examples;
   }
-  if (!Object.keys(set).length) return { ok: false, status: 400, error: 'Nothing to change.' };
+  if (!Object.keys(set).length && !Object.keys(unset).length) return { ok: false, status: 400, error: 'Nothing to change.' };
   await Job.updateOne({ _id: job._id, organizationId: job.organizationId }, { $set: set, ...(Object.keys(unset).length ? { $unset: unset } : {}) });
   return { ok: true };
 }

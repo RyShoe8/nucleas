@@ -1,12 +1,12 @@
 import type { JobDesign } from '../schema';
 
 /** A publishing job: every hour, each new item becomes one post per chosen platform, in the company's approved Voice. */
-export function socialPublishDesign(input: { noun: string; sourceLabel: string; platforms: string[] }): JobDesign {
+export function socialPublishDesign(input: { noun: string; sourceLabel: string; platforms: string[]; /** Evergreen rotation: one existing item every N days, oldest first. */ everyDays?: number }): JobDesign {
   return {
     skill: 'social_publish',
-    title: `Post new ${input.noun}s to social`,
+    title: input.everyDays ? `Post one ${input.noun} every ${input.everyDays % 7 === 0 ? (input.everyDays === 7 ? 'week' : `${input.everyDays / 7} weeks`) : `${input.everyDays} days`}` : `Post new ${input.noun}s to social`,
     category: 'marketing',
-    instructions: `${input.sourceLabel}. For each new ${input.noun}, write one post per platform (${input.platforms.join(', ')}) in the company's approved Voice, shaped like the example posts, using only facts from the ${input.noun}'s own page. Platforms set to automatic are posted to directly; the others become ready-to-post cards for the team.`,
+    instructions: `${input.sourceLabel}. For each ${input.everyDays ? `${input.noun} in the rotation` : `new ${input.noun}`}, write one post per platform (${input.platforms.join(', ')}) in the company's approved Voice, shaped like the example posts, using only facts from the ${input.noun}'s own page. Platforms set to automatic are posted to directly; the others become ready-to-post cards for the team.`,
     fields: [
       { key: 'platform', label: 'Platform', type: 'text', required: true, description: '' },
       { key: 'post_title', label: 'Title', type: 'text', required: false, description: 'Reddit only.' },

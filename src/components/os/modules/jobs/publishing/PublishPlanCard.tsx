@@ -49,7 +49,9 @@ export default function PublishPlanCard({ companyId, request, plan, onCreated, o
             <div>
                 <p className="font-medium">{plan.title}</p>
                 <p className="text-xs text-text-secondary">
-                    {plan.sourceLabel} · checks every hour{plan.newest ? ` · newest now: ${plan.newest.title}` : ''}
+                    {plan.source.type === 'site' && plan.source.rotation
+                        ? `${plan.sourceLabel}. The first one posts at the next hourly check after you accept, then the rest follow in order and the list starts over at the end.`
+                        : `${plan.sourceLabel} · checks every hour${plan.newest ? ` · newest now: ${plan.newest.title}` : ''}`}
                 </p>
             </div>
             {plan.blocker ? <p className="rounded border border-amber-400/40 bg-amber-400/5 p-2 text-xs text-amber-300">{plan.blocker}</p> : null}

@@ -34,6 +34,12 @@ export const siteSourceSchema = z.object({
   pathPrefix: z.string().max(300).regex(/^\//),
   /** What one item is called, for labels ("game", "article"). */
   noun: z.string().trim().min(1).max(40),
+  /** Evergreen rotation: instead of posting what is new, post one existing item every N days, oldest first, then start over. */
+  rotation: z.object({
+    everyDays: z.number().int().min(1).max(365),
+    /** Which pages are in the rotation, in posting order. Absent means every page in the section, oldest first. */
+    pool: z.array(z.object({ url: z.string().url().max(2000), title: z.string().max(300).default('') })).max(500).optional(),
+  }).optional(),
 });
 
 export const mailboxSourceSchema = z.object({
@@ -99,6 +105,8 @@ export const publishingConfigSchema = z.object({
   /** Explicit field mappings override generated values, with optional verified-value conditions. */
   adminFieldRules: adminFieldRulesSchema.optional(),
   adminDefaultEndDays: z.number().int().min(1).max(365).optional(),
+  /** Which pass through the list an evergreen rotation is on; each pass posts every item once. */
+  rotationCycle: z.number().int().min(1).max(1000).optional(),
   adminTimezone: z.string().max(100).refine((value) => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }, 'Choose a valid timezone.').optional(),
   adminLinkField: z.string().min(1).max(100).optional(),
   adminValueField: z.string().min(1).max(100).optional(),
@@ -125,5 +133,13 @@ export function platformsFor(config: { admin?: unknown }): readonly PublishPlatf
 export function sourceLabel(source: PublishSource, host?: string | null): string {
   if (source.type === 'mailbox') return `Watching the inbox for new ${source.noun}s`;
   const where = `${host ?? new URL(source.feedUrl).host}${source.pathPrefix === '/' ? '' : source.pathPrefix}`;
+  if (source.rotation) return `Posting one ${source.noun} from ${where} every ${cadenceLabel(source.rotation.everyDays)}, oldest first`;
   return `Watching ${where} for new ${source.noun}s`;
+}
+
+/** "3 weeks", "day", "10 days": the cadence in plain words. */
+export function cadenceLabel(days: number): string {
+  if (days === 1) return 'day';
+  if (days % 7 === 0) return days === 7 ? 'week' : `${days / 7} weeks`;
+  return `${days} days`;
 }
