@@ -1,4 +1,4 @@
-import { retryDatabaseRead } from '@/lib/db/retryRead';
+import { retryDatabaseRead, retryIdempotentWrite } from '@/lib/db/retryRead';
 import type { ModelStep } from '@/lib/jobs/modelPath';
 import 'server-only';
 import { manualArtifact } from './output';
@@ -537,7 +537,8 @@ export async function publishingAction(viewer: CompanyViewer, id: string, action
   if (jobDesignSchema.safeParse(found.job.design).data?.skill !== 'social_publish') return { ok: false, status: 400, error: 'This is not a publishing job.' };
   const deliveryId = typeof body.deliveryId === 'string' ? body.deliveryId : '';
   const result =
-    action === 'publishing_settings' ? await updatePublishingSettings(viewer, found.job, body.settings)
+    // A settings save only sets values, so a dropped connection can safely be retried.
+    action === 'publishing_settings' ? await retryIdempotentWrite('publishing.settings', () => updatePublishingSettings(viewer, found.job, body.settings))
     : action === 'mark_posted' ? await markPosted(found.job, deliveryId, viewer.userId, typeof body.postedUrl === 'string' ? body.postedUrl : undefined)
     : action === 'skip_post' ? await skipDelivery(found.job, deliveryId, viewer.userId)
     : action === 'edit_post' ? await editDelivery(found.job, deliveryId, { title: typeof body.title === 'string' ? body.title : undefined, body: typeof body.body === 'string' ? body.body : undefined })

@@ -57,6 +57,7 @@ function SampleReview({ job, run, onChange }: { job: JobView; run: JobRunView; o
     return (
         <section className="space-y-2">
             <p className="text-xs text-text-secondary">{run.output?.summary}</p>
+            {job.publishing?.source.type === 'site' && job.publishing.source.rotation ? <p className="text-xs text-text-secondary">This sample is only an example of the format, written before any changes to the list above. What posts is the list as it stands now: if you removed or moved an article, the sample may still show the old first one, and it will not be posted.</p> : null}
             {job.publishing?.admin ? <p className="rounded border border-amber-400/40 p-2 text-xs text-amber-300">Preview only — no admin record has been saved. Accepting starts monitoring future emails; use “Prepare admin card” on an existing email to add that item separately.</p> : null}
             {run.output?.gaps.length ? <p className="text-xs text-amber-300">{run.output.gaps.join(' ')}</p> : null}
             <div className={`grid gap-2 ${records.length > 1 ? 'sm:grid-cols-2' : ''}`}>

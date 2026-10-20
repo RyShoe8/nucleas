@@ -50,16 +50,26 @@ export default function RotationEditor({ jobId, canManage }: { jobId: string; ca
         timer.current = window.setTimeout(() => setSaved(false), 2000);
     }, []);
 
-    const save = async (rotation: Record<string, unknown>) => {
-        const problem = await saveRotation(jobId, rotation);
-        if (problem) {
-            setError(problem);
+    // One save at a time, in order: quick drags must not send overlapping requests. A dropped database connection is
+    // retried here once more (the server already retries) before an error is shown.
+    const queue = useRef<Promise<void>>(Promise.resolve());
+    const save = (rotation: Record<string, unknown>) => {
+        queue.current = queue.current.then(async () => {
+            let problem = await saveRotation(jobId, rotation);
+            if (problem && /connection|interrupted|try again/i.test(problem)) {
+                await new Promise((resolve) => window.setTimeout(resolve, 2500));
+                problem = await saveRotation(jobId, rotation);
+            }
+            if (problem) {
+                setError(problem);
+                setReload((n) => n + 1);
+                return;
+            }
+            setError(null);
+            flash();
             setReload((n) => n + 1);
-            return;
-        }
-        setError(null);
-        flash();
-        setReload((n) => n + 1);
+        });
+        return queue.current;
     };
 
     const savePool = (rows: { url: string; title: string }[]) => save({ pool: rows.map((r) => ({ url: r.url, title: r.title })) });
