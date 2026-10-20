@@ -20,6 +20,7 @@ import { Job, JobRun, type JobRunProgressStage } from '@/lib/models/Job';
 import { claimJobRunExecution, heartbeatJobRun, startJobRunHeartbeat } from './runLifecycle';
 import { checkRecords, jobDesignSchema, jobRunOutputSchema, type JobDesign, type JobRunOutput } from './schema';
 import { linkOpportunityMemory, syncLinkOpportunities } from './linkOpportunities';
+import { deadOpportunityPages, deadPageProblem } from './opportunityPages';
 import { approvedSeoBrief, seoBriefContext } from './seoBriefs';
 import { approvedMarketingPlan, marketingPlanContext } from './marketingPlans';
 import Project from '@/lib/models/Project';
@@ -577,6 +578,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       }
     }
     if (activeDesign.skill === 'link_building') {
+      const runLinkChecks = async () => {
       output.records.forEach((record, index) => {
         const score = Number(record.values.relevance_score);
         const strategicReason = String(record.values.strategic_reason ?? '');
@@ -589,6 +591,21 @@ export async function executeJobRun(runId: string): Promise<void> {
         if (/competitor.{0,30}(gap|backlink)/i.test(strategicReason) && !/^.{3,}\bhttps?:\/\//i.test(competitorEvidence)) issues.push({ record: index, field: 'competitor_evidence', problem: 'A competitor-gap strategy requires a named competitor and exact supporting URL.' });
         if (/(traffic|ranking|rankings).{0,30}(declin|drop|fell|decreas)|declin.{0,30}(traffic|ranking)/i.test(strategicReason) && !/\d/.test(strategyEvidence)) issues.push({ record: index, field: 'strategy_evidence', problem: 'A traffic or ranking decline claim requires a concrete metric and date/range.' });
       });
+      // A recommended page that does not exist is useless however convincing the write-up is.
+      for (const page of await deadOpportunityPages(output.records.map((record) => String(record.values.opportunity_url ?? '')))) issues.push({ record: page.index, field: 'opportunity_url', problem: deadPageProblem(page) });
+      };
+      await runLinkChecks();
+      if (issues.some((issue) => issue.field === 'opportunity_url' && / does not exist | is not a public HTTPS page/.test(issue.problem))) {
+        await progress(run._id, owner, 'A recommended page does not exist; asking for a verified replacement', { stage: 'validating', percent: 72 });
+        const dead = issues.filter((issue) => issue.field === 'opportunity_url');
+        const retry = await doWork(activeWorker, `These recommended pages failed a live check:\n${dead.map((issue) => `- ${issue.problem}`).join('\n')}\nResearch again with tools and replace each one with a different opportunity whose page you actually opened and that loads. Do not guess addresses. Return only the required JSON.`, true);
+        const corrected = retry.role === 'assistant' ? jobRunOutputSchema.safeParse(extractJson(retry.text)) : null;
+        if (corrected?.success) {
+          output = corrected.data;
+          issues = checkRecords(activeDesign.fields, output);
+          await runLinkChecks();
+        }
+      }
     }
 
     let verdict: { verdict: 'pass' | 'fail'; notes: string; model: string } | null = null;
