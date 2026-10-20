@@ -14,6 +14,8 @@ vi.mock('@/lib/ai/engine/select', () => ({
   isCostLevel: (v: unknown) => v === 'low' || v === 'medium' || v === 'high',
 }));
 vi.mock('@/lib/building/companyCode', () => ({ resolveCompanyRepository: async () => null }));
+// Page verification opens real pages; it has its own tests (opportunityPages.test.ts).
+vi.mock('./opportunityPages', async (importOriginal) => ({ ...(await importOriginal<typeof import('./opportunityPages')>()), verifyOpportunity: async () => ({ hard: [], soft: [] }) }));
 vi.mock('@/lib/ai/tools/browserClient', () => ({ browserNavigate: (...args: unknown[]) => mocks.browser(...args) }));
 
 import Client from '@/lib/models/Client';

@@ -20,7 +20,8 @@ import { Job, JobRun, type JobRunProgressStage } from '@/lib/models/Job';
 import { claimJobRunExecution, heartbeatJobRun, startJobRunHeartbeat } from './runLifecycle';
 import { checkRecords, jobDesignSchema, jobRunOutputSchema, type JobDesign, type JobRunOutput } from './schema';
 import { linkOpportunityMemory, syncLinkOpportunities } from './linkOpportunities';
-import { deadOpportunityPages, deadPageProblem } from './opportunityPages';
+import { judgePrompt, verifyOpportunity, type Judge } from './opportunityPages';
+import { askEngine } from '@/lib/ai/engine/ask';
 import { approvedSeoBrief, seoBriefContext } from './seoBriefs';
 import { approvedMarketingPlan, marketingPlanContext } from './marketingPlans';
 import Project from '@/lib/models/Project';
@@ -90,7 +91,15 @@ function reviewerPrompt(): string {
 }
 
 /** Existing configured jobs keep their stored schedule/settings while receiving current safety rules. */
+const LINK_QUALITY_RULES = 'QUALITY BAR. Recommend an opportunity only after opening its exact page with a tool in this run and reading it. It must be an independent third-party site (never a casino, brand or shop that only promotes itself) whose page itself shows a free, self-service way to get a link, such as a submission form, add-a-resource instructions or a contribution flow, and whose audience matches the company. Put at least one exact quotation (25+ characters, in double quotes) copied from that page into the relevance evidence. Nucleas opens every recommended page and rejects a page that does not exist, a quotation that is not on it, or a site that is not what you claimed. Prefer one excellent, verified opportunity over a plausible guess.';
+
 function currentDesign(design: JobDesign): JobDesign {
+  const upgraded = upgradedDesign(design);
+  if (upgraded.skill !== 'link_building' || upgraded.instructions.includes('QUALITY BAR.')) return upgraded;
+  return { ...upgraded, instructions: `${upgraded.instructions}\n\n${LINK_QUALITY_RULES}`, safeguards: [...upgraded.safeguards, 'Every recommended page is opened and checked: it must exist, quote itself in the evidence, and be a genuine third-party place to add a link.'] };
+}
+
+function upgradedDesign(design: JobDesign): JobDesign {
   if (manualArtifact(design.skill)) return { ...design, instructions: design.skill === 'brand_voice' && !design.instructions.includes(VOICE_TRAIT_GUIDANCE) ? `${design.instructions}\n\n${VOICE_TRAIT_GUIDANCE}` : design.instructions, schedule: { kind: 'once' }, recommendedCompletion: 'review' };
   if (design.skill === 'seo_brief' && !design.instructions.includes('archived Company Overview pages')) {
     return {
@@ -578,7 +587,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       }
     }
     if (activeDesign.skill === 'link_building') {
-      const runLinkChecks = async () => {
+      const runLinkChecks = async (): Promise<boolean> => {
       output.records.forEach((record, index) => {
         const score = Number(record.values.relevance_score);
         const strategicReason = String(record.values.strategic_reason ?? '');
@@ -591,20 +600,32 @@ export async function executeJobRun(runId: string): Promise<void> {
         if (/competitor.{0,30}(gap|backlink)/i.test(strategicReason) && !/^.{3,}\bhttps?:\/\//i.test(competitorEvidence)) issues.push({ record: index, field: 'competitor_evidence', problem: 'A competitor-gap strategy requires a named competitor and exact supporting URL.' });
         if (/(traffic|ranking|rankings).{0,30}(declin|drop|fell|decreas)|declin.{0,30}(traffic|ranking)/i.test(strategicReason) && !/\d/.test(strategyEvidence)) issues.push({ record: index, field: 'strategy_evidence', problem: 'A traffic or ranking decline claim requires a concrete metric and date/range.' });
       });
-      // A recommended page that does not exist is useless however convincing the write-up is.
-      for (const page of await deadOpportunityPages(output.records.map((record) => String(record.values.opportunity_url ?? '')))) issues.push({ record: page.index, field: 'opportunity_url', problem: deadPageProblem(page) });
+      // The write-up can be convincing and still wrong: Nucleas opens the real page and checks it.
+      const judge: Judge = async (input) => {
+        const prompt = judgePrompt(input);
+        const answer = await askEngine({ organizationId: org, userId: viewer.userId, need: 'utility', level, ...prompt, maxTokens: 400, signal: AbortSignal.timeout(45_000) });
+        const verdict = answer ? (extractJson(answer.text) as { verdict?: unknown; reason?: unknown } | null) : null;
+        return verdict && (verdict.verdict === 'pass' || verdict.verdict === 'fail') ? { verdict: verdict.verdict, reason: String(verdict.reason ?? '').slice(0, 300) } : null;
       };
-      await runLinkChecks();
-      if (issues.some((issue) => issue.field === 'opportunity_url' && / does not exist | is not a public HTTPS page/.test(issue.problem))) {
-        await progress(run._id, owner, 'A recommended page does not exist; asking for a verified replacement', { stage: 'validating', percent: 72 });
-        const dead = issues.filter((issue) => issue.field === 'opportunity_url');
-        const retry = await doWork(activeWorker, `These recommended pages failed a live check:\n${dead.map((issue) => `- ${issue.problem}`).join('\n')}\nResearch again with tools and replace each one with a different opportunity whose page you actually opened and that loads. Do not guess addresses. Return only the required JSON.`, true);
+      const found = await Promise.all(output.records.map((record) => verifyOpportunity({ url: String(record.values.opportunity_url ?? ''), evidence: String(record.values.relevance_evidence ?? ''), claimedType: String(record.values.opportunity_type ?? ''), company: { name: profile.name, description: profile.description } }, { judge })));
+      found.forEach((result, index) => {
+        for (const problem of result.hard) issues.push({ record: index, field: 'opportunity_url', problem });
+        for (const problem of result.soft) issues.push({ record: index, field: 'opportunity_url', problem });
+      });
+      return found.some((result) => result.hard.length);
+      };
+      let rounds = 0;
+      let failedCheck = await runLinkChecks();
+      while (failedCheck && rounds < 2) {
+        rounds += 1;
+        await progress(run._id, owner, `A recommended page failed a live check; asking for a verified replacement (${rounds} of 2)`, { stage: 'validating', percent: 70 + rounds * 2 });
+        const wrong = issues.filter((issue) => issue.field === 'opportunity_url');
+        const retry = await doWork(activeWorker, `These recommended pages failed a live check of the real page:\n${wrong.map((issue) => `- ${issue.problem}`).join('\n')}\nResearch again with tools. Replace each failed recommendation with a different opportunity whose page you opened and read in this run: it must load, be an independent third-party site, show a free self-service way to add a link, and serve this company's audience. Put at least one exact quotation from that page in the relevance evidence. Do not guess addresses. Return only the required JSON.`, true);
         const corrected = retry.role === 'assistant' ? jobRunOutputSchema.safeParse(extractJson(retry.text)) : null;
-        if (corrected?.success) {
-          output = corrected.data;
-          issues = checkRecords(activeDesign.fields, output);
-          await runLinkChecks();
-        }
+        if (!corrected?.success) break;
+        output = corrected.data;
+        issues = checkRecords(activeDesign.fields, output);
+        failedCheck = await runLinkChecks();
       }
     }
 

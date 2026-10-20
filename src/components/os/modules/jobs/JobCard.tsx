@@ -636,12 +636,15 @@ function OpportunityTracker({ job, onChange }: { job: JobView; onChange: (j: Job
         if (res.error || !res.job) return setError(res.error ?? 'Verification failed');
         onChange(res.job);
     };
-    if (!job.opportunities.length) return null;
+    // Only the opportunity from the latest run that found one: earlier recommendations are not shown.
+    const currentRunId = job.runs.map((run) => run.id).find((id) => job.opportunities.some((opportunity) => opportunity.runId === id));
+    const current = currentRunId ? job.opportunities.filter((opportunity) => opportunity.runId === currentRunId) : [];
+    if (!current.length) return null;
     return (
         <details open className="rounded border border-border p-2">
-            <summary className="cursor-pointer text-xs font-medium">Opportunity tracker ({job.opportunities.length})</summary>
+            <summary className="cursor-pointer text-xs font-medium">Current opportunity{current.length > 1 ? `s (${current.length})` : ''}</summary>
             <div className="mt-2 space-y-2">
-                {job.opportunities.map((opportunity) => (
+                {current.map((opportunity) => (
                     <div key={opportunity.id} className="rounded border border-border/70 p-2 text-[11px] space-y-1">
                         <div className="flex items-start gap-2">
                             <a href={opportunity.opportunityUrl} target="_blank" rel="noreferrer" className="underline break-all flex-1">{String(opportunity.values.opportunity_type ?? opportunity.opportunityUrl)}</a>
@@ -816,7 +819,8 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
             {!compact && d?.skill === 'link_building' ? <OpportunityTracker job={job} onChange={update} /> : null}
             {!compact && d?.skill === 'seo_brief' ? <SeoBriefEditor job={job} /> : null}
             {!compact && d?.skill === 'marketing_plan' ? <MarketingPlanEditor companyId={job.companyId} updatedAt={job.updatedAt} /> : null}
-            {!compact && doneRuns.length ? (
+            {/* Link building shows only its current opportunity (above), not every earlier run. */}
+            {!compact && doneRuns.length && d?.skill !== 'link_building' ? (
                 <details open={doneRuns.length === 1}>
                     <summary className="cursor-pointer text-xs text-text-secondary">Results ({doneRuns.length} run{doneRuns.length === 1 ? '' : 's'})</summary>
                     <div className="mt-2 space-y-2">
