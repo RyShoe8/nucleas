@@ -120,6 +120,13 @@ describe('adding a record', () => {
     }
   });
 
+  it('rejects missing required dates before opening or submitting the admin form', async () => {
+    const browser: AdminBrowser = { inspect: vi.fn(), fill: vi.fn(), read: vi.fn() };
+    const dated = { ...target, fields: [...target.fields, { key: 'end_date', label: 'End date', type: 'date' as const, selector: '#end_date', required: true }] };
+    expect(await addRecord({ session, target: dated, values, browser, refill: vi.fn() })).toMatchObject({ ok: false, code: 'rejected', error: expect.stringContaining('End date') });
+    expect(browser.fill).not.toHaveBeenCalled();
+  });
+
   it('saves, then confirms the record is on the list page', async () => {
     const browser: AdminBrowser = { inspect: vi.fn(), fill: vi.fn(async () => ok), read: vi.fn(async () => ({ loggedIn: true, text: 'Deals\nGolden Hearts — $20 → 40 SC' })) };
     expect(await addRecord({ session, target, values, browser, refill: vi.fn() })).toMatchObject({ ok: true, verified: true, url: 'https://fg.club/admin/deals', relearned: null });

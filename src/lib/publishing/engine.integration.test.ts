@@ -326,6 +326,20 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
     expect(draft?.body).not.toContain('https://offer');
   });
 
+  it('applies the configured next-day expiry when retrying an old card without an end date', async () => {
+    const item = await email('a@example.com', 'Missing expiry', 20, 25);
+    const job = await adminJob();
+    await Job.updateOne({ _id: job._id }, { $set: { status: 'ready' } });
+    await queueExistingAdminItem({ userId: String(userId), organizationId: org, employeeId: null, role: 'Administrator' }, String(item._id), adminDeps());
+    const card = await PublishDelivery.findOne({ jobId: job._id, platform: 'admin' });
+    await PublishDelivery.updateOne({ _id: card!._id }, { $set: { 'values.start_date': '2099-12-31' } });
+    const dates = [{ key: 'start_date', label: 'Start date', type: 'date', selector: '#start_date', required: true }, { key: 'end_date', label: 'End date', type: 'date', selector: '#end_date', required: true }];
+    await Job.updateOne({ _id: job._id }, { $set: { 'publishing.admin.fields': [...fields, ...dates], 'publishing.adminDefaultEndDays': 1 } });
+    expect(await postDeliveryNow(job.toObject(), String(card!._id), String(userId), adminDeps())).toEqual({ ok: true });
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ start_date: '2099-12-31', end_date: '2100-01-01' });
+  });
+
   it('filters social value strictly above 30% without filtering admin intake', async () => {
     await email('a@example.com', 'Low', 100, 120);
     await email('a@example.com', 'Exactly thirty', 100, 130);

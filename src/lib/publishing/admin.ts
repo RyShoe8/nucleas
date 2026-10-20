@@ -291,6 +291,8 @@ export async function addRecord(input: {
   let values = input.values;
   let relearned: AdminTarget | null = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const missingRequired = target.fields.filter((field) => field.required && field.type !== 'file' && (values[field.key] === undefined || values[field.key] === ''));
+    if (missingRequired.length) return { ok: false, code: 'rejected', screenshot: null, relearned, values, error: `Required information is missing: ${missingRequired.map((field) => field.label || field.key).join(', ')}. Review the source and complete these fields before saving; no admin submission was made.` };
     const today = new Intl.DateTimeFormat('en-CA', { timeZone: input.timezone ?? 'UTC' }).format(new Date());
     const end = typeof values.end_date === 'string' ? values.end_date : null;
     const start = typeof values.start_date === 'string' ? values.start_date : null;
