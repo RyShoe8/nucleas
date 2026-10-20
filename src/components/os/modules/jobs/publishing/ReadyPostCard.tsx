@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { manualPostText } from '@/lib/publishing/compose';
+import { PLATFORM_RULES, manualPostText } from '@/lib/publishing/compose';
 import { PLATFORM_LABEL, MANUAL_ONLY } from '@/lib/publishing/config';
 import type { DeliveryView } from '@/lib/publishing/engine';
 import type { JobView } from '../JobCard';
@@ -67,6 +67,11 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
     const images = delivery.assets.filter((a) => a.kind === 'image');
     const video = delivery.assets.find((a) => a.kind === 'video');
     const fullText = isReddit ? delivery.body : manualPostText(delivery.platform, delivery.body, delivery.link);
+    const limit = delivery.platform === 'admin' ? 0 : PLATFORM_RULES[delivery.platform].maxChars;
+    const length = Array.from(delivery.platform === 'bluesky' ? manualPostText('bluesky', body, delivery.link) : body).length;
+    const over = limit > 0 && length > limit;
+    const cancelEdit = () => { setEditing(false); setTitle(delivery.title ?? ''); setBody(delivery.body); };
+    const saveEdit = () => run('edit', { action: 'edit_post', body, ...(isReddit ? { title } : {}) });
 
     if (delivery.status === 'publishing') {
         return <div className="ui-card p-3 text-xs text-sky-400">{delivery.platform === 'admin' ? `Adding “${delivery.itemTitle}” to the admin…` : `Posting “${delivery.itemTitle}” to ${PLATFORM_LABEL[delivery.platform]}…`}</div>;
@@ -127,16 +132,22 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
             {delivery.error ? <p className="rounded border border-amber-400/40 bg-amber-400/5 p-2 text-xs text-amber-300">{delivery.error}</p> : null}
 
             {editing ? (
-                <div className="space-y-2">
-                    {isReddit ? <input className="ui-control w-full" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={300} aria-label="Title" /> : null}
-                    <textarea className="ui-control h-32 w-full resize-y" value={body} onChange={(e) => setBody(e.target.value)} aria-label="Post" />
-                    <div className="flex gap-2">
-                        <button type="button" className="ui-button-primary" disabled={busy !== null} onClick={() => void run('edit', { action: 'edit_post', body, ...(isReddit ? { title } : {}) })}>{busy === 'edit' ? 'Saving…' : 'Save'}</button>
-                        <button type="button" className="ui-button" onClick={() => { setEditing(false); setTitle(delivery.title ?? ''); setBody(delivery.body); }}>Cancel</button>
+                <div className="space-y-2" onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit(); if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !busy) void saveEdit(); }}>
+                    {isReddit ? <input autoFocus className="ui-control w-full font-semibold" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={300} aria-label="Title" /> : null}
+                    <textarea autoFocus={!isReddit} className="ui-control h-36 w-full resize-y leading-relaxed" value={body} onChange={(e) => setBody(e.target.value)} aria-label="Post" />
+                    <div className="flex flex-wrap items-center gap-2">
+                        <button type="button" className="ui-button-primary" disabled={busy !== null || !body.trim()} onClick={() => void saveEdit()}>{busy === 'edit' ? 'Saving…' : 'Save'}</button>
+                        <button type="button" className="ui-button" onClick={cancelEdit}>Cancel</button>
+                        <span className="flex-1" />
+                        {limit ? <span className={`text-[11px] tabular-nums ${over ? 'text-red-400' : 'text-text-secondary'}`} aria-live="polite">{length} / {limit}{over ? ' · too long for this platform' : ''}</span> : null}
                     </div>
                 </div>
             ) : (
-                <div className="space-y-1">
+                <div
+                    className={`space-y-1 rounded ${marking ? '' : 'cursor-text hover:bg-background-elevated/50'}`}
+                    title={marking ? undefined : 'Click to edit'}
+                    onClick={(e) => { if (!marking && !(e.target instanceof HTMLAnchorElement)) setEditing(true); }}
+                >
                     {delivery.title ? <p className="font-semibold leading-snug">{delivery.title}</p> : null}
                     <p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words leading-relaxed">{delivery.body}</p>
                     {delivery.link && !isReddit ? <a href={delivery.link} target="_blank" rel="noreferrer" className="block truncate text-xs text-primary underline">{delivery.link}</a> : null}
@@ -170,7 +181,7 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
                     {canPostNow ? <button type="button" className="ui-button" disabled={busy !== null} onClick={() => void run('now', { action: 'post_now' })}>{busy === 'now' ? 'Posting…' : 'Post it for me'}</button> : null}
                     <button type="button" className="ui-button-primary" onClick={() => setMarking(true)}>Mark as posted</button>
                     <span className="flex-1" />
-                    <button type="button" className="text-[11px] text-text-secondary hover:text-text-primary" onClick={() => setEditing(true)}>Edit</button>
+                    <button type="button" className="ui-button" onClick={() => setEditing(true)}>Edit</button>
                     <button type="button" className="text-[11px] text-text-secondary hover:text-text-primary" disabled={busy !== null} onClick={() => window.confirm('Skip this post? Nobody will be asked to post it.') && void run('skip', { action: 'skip_post' })}>Skip</button>
                 </div>
             ) : null}
