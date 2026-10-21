@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { jobDesignSchema } from '../schema';
-import { linkBuildingConfigSchema, linkBuildingDesign } from './linkBuilding';
+import { LINK_DISCOVERY_FOCUS, linkBuildingConfigSchema, linkBuildingDesign, withLinkDiscoveryFocus } from './linkBuilding';
 
 describe('link-building skill', () => {
   it('creates a recommendation-only recurring design with browser fallback', () => {
@@ -18,6 +18,12 @@ describe('link-building skill', () => {
     expect(design.delivery.method).toBe('nucleas');
     expect(design.instructions).toContain('browser_navigate');
     expect(design.instructions).toContain('Do not submit');
+    expect(design.instructions).toContain(LINK_DISCOVERY_FOCUS);
+    const saved = { ...design, instructions: 'Original brief. QUALITY BAR.', };
+    const upgraded = withLinkDiscoveryFocus(saved);
+    expect(upgraded.instructions).toContain(LINK_DISCOVERY_FOCUS);
+    expect(upgraded.schedule).toEqual(saved.schedule);
+    expect(withLinkDiscoveryFocus(upgraded)).toBe(upgraded);
     expect(design.fields.map((field) => field.key)).toEqual(expect.arrayContaining(['strategic_reason', 'strategy_evidence', 'relevance_score', 'relevance_evidence', 'estimated_authority', 'target_keywords', 'target_url', 'submission_copy']));
   });
 });

@@ -1,5 +1,6 @@
 import 'server-only';
 import { VOICE_TRAIT_GUIDANCE } from './templates/brandVoice';
+import { withLinkDiscoveryFocus } from './templates/linkBuilding';
 import { manualArtifact, parseJobOutput } from './output';
 import { brandVoiceContext, generatedVoice } from '@/lib/brandVoice/service';
 import { collectSocialVoiceSamples } from '@/lib/social/voiceSamples';
@@ -94,7 +95,7 @@ function reviewerPrompt(): string {
 const LINK_QUALITY_RULES = 'QUALITY BAR. Recommend an opportunity only after opening its exact page with a tool in this run and reading it. It must be an independent third-party site (never a casino, brand or shop that only promotes itself) whose page itself shows a free, self-service way to get a link, such as a submission form, add-a-resource instructions or a contribution flow, and whose audience matches the company. Put at least one exact quotation (25+ characters, in double quotes) copied from that page into the relevance evidence. Nucleas opens every recommended page and rejects a page that does not exist, a quotation that is not on it, or a site that is not what you claimed. Prefer one excellent, verified opportunity over a plausible guess.';
 
 function currentDesign(design: JobDesign): JobDesign {
-  const upgraded = upgradedDesign(design);
+  const upgraded = withLinkDiscoveryFocus(upgradedDesign(design));
   if (upgraded.skill !== 'link_building' || upgraded.instructions.includes('QUALITY BAR.')) return upgraded;
   return { ...upgraded, instructions: `${upgraded.instructions}\n\n${LINK_QUALITY_RULES}`, safeguards: [...upgraded.safeguards, 'Every recommended page is opened and checked: it must exist, quote itself in the evidence, and be a genuine third-party place to add a link.'] };
 }
