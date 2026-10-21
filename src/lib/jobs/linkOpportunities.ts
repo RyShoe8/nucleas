@@ -64,7 +64,7 @@ function view(row: OpportunityLean): LinkOpportunityView {
   };
 }
 
-function normalizeUrl(raw: unknown): string | null {
+export function normalizeUrl(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   try {
     const url = new URL(raw.trim());
@@ -82,6 +82,38 @@ function fingerprint(opportunityUrl: string, targetUrl: string | null): string {
   return createHash('sha256').update(`${opportunityUrl}\n${targetUrl ?? ''}`).digest('hex');
 }
 
+/** A missing page is excluded across this company's jobs and target pages, not its whole domain. */
+export async function missingLinkOpportunityUrls(organizationId: Types.ObjectId, companyId: Types.ObjectId, urls: string[]): Promise<Set<string>> {
+  const normalized = urls.map(normalizeUrl).filter((url): url is string => Boolean(url));
+  const rows = await LinkOpportunity.find({ organizationId, companyId, status: 'nonexistent', opportunityUrl: { $in: normalized } })
+    .select('opportunityUrl').lean<{ opportunityUrl: string }[]>();
+  return new Set(rows.map((row) => row.opportunityUrl));
+}
+
+export async function rememberMissingLinkOpportunity(input: {
+  organizationId: Types.ObjectId; companyId: Types.ObjectId; projectId?: Types.ObjectId;
+  jobId: Types.ObjectId; runId: Types.ObjectId; record: JobRunOutput['records'][number]; reason: string;
+}): Promise<void> {
+  const opportunityUrl = normalizeUrl(input.record.values.opportunity_url);
+  if (!opportunityUrl) return;
+  const now = new Date();
+  const note = input.reason.slice(0, 500);
+  // Also retire older recommendations for the same page, including a different target URL.
+  const retired = await LinkOpportunity.updateMany({ organizationId: input.organizationId, companyId: input.companyId, opportunityUrl, status: { $ne: 'nonexistent' } }, {
+    $set: { status: 'nonexistent', verificationMessage: note, lastVerifiedAt: now },
+    $unset: { nextVerificationAt: '' },
+    $push: { history: { at: now, status: 'nonexistent', note } },
+  });
+  if (retired.modifiedCount) return;
+  await LinkOpportunity.updateOne({ jobId: input.jobId, fingerprint: fingerprint(opportunityUrl, null) }, {
+    $setOnInsert: { organizationId: input.organizationId, companyId: input.companyId, projectId: input.projectId, jobId: input.jobId,
+      runId: input.runId, fingerprint: fingerprint(opportunityUrl, null), opportunityUrl, values: input.record.values, sources: input.record.sources },
+    $set: { status: 'nonexistent', verificationMessage: note, lastVerifiedAt: now },
+    $unset: { nextVerificationAt: '' },
+    $push: { history: { at: now, status: 'nonexistent', note } },
+  }, { upsert: true });
+}
+
 export async function syncLinkOpportunities(input: {
   organizationId: Types.ObjectId;
   companyId: Types.ObjectId;
@@ -94,6 +126,7 @@ export async function syncLinkOpportunities(input: {
   for (const record of input.output.records) {
     const opportunityUrl = normalizeUrl(record.values.opportunity_url);
     if (!opportunityUrl) continue;
+    if ((await missingLinkOpportunityUrls(input.organizationId, input.companyId, [opportunityUrl])).has(opportunityUrl)) continue;
     const targetUrl = normalizeUrl(record.values.target_url);
     const status: LinkOpportunityStatus = input.approved ? 'approved' : 'recommended';
     await LinkOpportunity.updateOne(
@@ -126,16 +159,20 @@ export async function listLinkOpportunities(jobId: Types.ObjectId): Promise<Link
 
 /** Compact strategy memory for the next recommendation run. */
 export async function linkOpportunityMemory(jobId: Types.ObjectId, limit = 80): Promise<string> {
+  const job = await Job.findById(jobId).select('organizationId companyId').lean<{ organizationId: Types.ObjectId; companyId: Types.ObjectId }>();
+  const missing = job ? await LinkOpportunity.find({ organizationId: job.organizationId, companyId: job.companyId, status: 'nonexistent' })
+    .select('opportunityUrl').lean<{ opportunityUrl: string }[]>() : [];
   const rows = await LinkOpportunity.find({ jobId })
     .sort({ updatedAt: -1 })
     .limit(limit)
     .select('status opportunityUrl targetUrl values note verificationMessage')
     .lean<Array<{ status: LinkOpportunityStatus; opportunityUrl: string; targetUrl?: string; values?: Record<string, unknown>; note?: string; verificationMessage?: string }>>();
-  return rows.map((row) => {
+  const history = rows.map((row) => {
     const type = typeof row.values?.opportunity_type === 'string' ? row.values.opportunity_type : 'opportunity';
     const reason = typeof row.values?.strategic_reason === 'string' ? row.values.strategic_reason.slice(0, 180) : '';
     return `- ${row.status}: ${type} ${row.opportunityUrl}${row.targetUrl ? ` -> ${row.targetUrl}` : ''}${reason ? ` | strategy: ${reason}` : ''}${row.note ? ` | feedback: ${row.note}` : ''}${row.verificationMessage ? ` | verification: ${row.verificationMessage}` : ''}`;
   }).join('\n');
+  return [missing.length ? `PERMANENT EXCLUSIONS: These exact pages do not exist. Never recommend them again, even for a different target page or job.\n${missing.map((row) => `- ${row.opportunityUrl}`).join('\n')}` : '', history].filter(Boolean).join('\n');
 }
 
 const TRANSITIONS: Record<LinkOpportunityStatus, LinkOpportunityStatus[]> = {
@@ -148,6 +185,7 @@ const TRANSITIONS: Record<LinkOpportunityStatus, LinkOpportunityStatus[]> = {
   submission_rejected: ['saved', 'submitted', 'expired'],
   removed: ['live', 'expired'],
   expired: ['saved'],
+  nonexistent: [],
 };
 
 export async function updateLinkOpportunity(

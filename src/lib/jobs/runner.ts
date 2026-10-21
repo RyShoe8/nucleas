@@ -19,7 +19,7 @@ import { resolveCompanyRepository } from '@/lib/building/companyCode';
 import { Job, JobRun, type JobRunProgressStage } from '@/lib/models/Job';
 import { claimJobRunExecution, heartbeatJobRun, startJobRunHeartbeat } from './runLifecycle';
 import { checkRecords, jobDesignSchema, jobRunOutputSchema, type JobDesign, type JobRunOutput } from './schema';
-import { linkOpportunityMemory, syncLinkOpportunities } from './linkOpportunities';
+import { linkOpportunityMemory, syncLinkOpportunities, missingLinkOpportunityUrls, rememberMissingLinkOpportunity, normalizeUrl } from './linkOpportunities';
 import { judgePrompt, verifyOpportunity, type Judge } from './opportunityPages';
 import { askEngine } from '@/lib/ai/engine/ask';
 import { approvedSeoBrief, seoBriefContext } from './seoBriefs';
@@ -607,25 +607,50 @@ export async function executeJobRun(runId: string): Promise<void> {
         const verdict = answer ? (extractJson(answer.text) as { verdict?: unknown; reason?: unknown } | null) : null;
         return verdict && (verdict.verdict === 'pass' || verdict.verdict === 'fail') ? { verdict: verdict.verdict, reason: String(verdict.reason ?? '').slice(0, 300) } : null;
       };
-      const found = await Promise.all(output.records.map((record) => verifyOpportunity({ url: String(record.values.opportunity_url ?? ''), evidence: String(record.values.relevance_evidence ?? ''), claimedType: String(record.values.opportunity_type ?? ''), company: { name: profile.name, description: profile.description } }, { judge })));
+      const excluded = await missingLinkOpportunityUrls(job.organizationId, job.companyId, output.records.map((record) => String(record.values.opportunity_url ?? '')));
+      const found = await Promise.all(output.records.map((record) => excluded.has(normalizeUrl(record.values.opportunity_url) ?? '')
+        ? Promise.resolve({ hard: [`${record.values.opportunity_url} was previously confirmed nonexistent and is permanently excluded. Find a different page.`], soft: [], missing: true })
+        : verifyOpportunity({ url: String(record.values.opportunity_url ?? ''), evidence: String(record.values.relevance_evidence ?? ''), claimedType: String(record.values.opportunity_type ?? ''), company: { name: profile.name, description: profile.description } }, { judge })));
+      for (const [index, result] of found.entries()) {
+        if (result.missing && !excluded.has(normalizeUrl(output.records[index].values.opportunity_url) ?? '')) {
+          await rememberMissingLinkOpportunity({ organizationId: job.organizationId, companyId: job.companyId, projectId: job.projectId,
+            jobId: job._id, runId: run._id, record: output.records[index], reason: result.hard.join(' ') });
+        }
+      }
       found.forEach((result, index) => {
         for (const problem of result.hard) issues.push({ record: index, field: 'opportunity_url', problem });
         for (const problem of result.soft) issues.push({ record: index, field: 'opportunity_url', problem });
       });
-      return found.some((result) => result.hard.length);
+      return issues.length > 0 || output.records.length === 0;
       };
       let rounds = 0;
       let failedCheck = await runLinkChecks();
-      while (failedCheck && rounds < 2) {
+      while (failedCheck && workCalls < MAX_WORK_CALLS) {
         rounds += 1;
-        await progress(run._id, owner, `A recommended page failed a live check; asking for a verified replacement (${rounds} of 2)`, { stage: 'validating', percent: 70 + rounds * 2 });
-        const wrong = issues.filter((issue) => issue.field === 'opportunity_url');
+        await progress(run._id, owner, `A recommendation failed validation; researching a verified replacement (attempt ${rounds})`, { stage: 'validating', percent: Math.min(80, 70 + rounds * 2) });
+        const wrong = issues;
         const retry = await doWork(activeWorker, `These recommended pages failed a live check of the real page:\n${wrong.map((issue) => `- ${issue.problem}`).join('\n')}\nResearch again with tools. Replace each failed recommendation with a different opportunity whose page you opened and read in this run: it must load, be an independent third-party site, show a free self-service way to add a link, and serve this company's audience. Put at least one exact quotation from that page in the relevance evidence. Do not guess addresses. Return only the required JSON.`, true);
         const corrected = retry.role === 'assistant' ? jobRunOutputSchema.safeParse(extractJson(retry.text)) : null;
         if (!corrected?.success) break;
         output = corrected.data;
         issues = checkRecords(activeDesign.fields, output);
         failedCheck = await runLinkChecks();
+      }
+      if (failedCheck) {
+        const error = 'No verified link-building opportunity found. Invalid candidates were excluded; no recommendation was delivered.';
+        await fail(error, { costMicros: cost, models: usedModels });
+        // Retry discovery later today without an unbounded model/budget loop. The ordinary daily schedule remains after two retries.
+        if (!run.dryRun && activeDesign.schedule.kind !== 'once') {
+          const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+          const failures = await JobRun.countDocuments({ jobId: job._id, status: 'failed', error, createdAt: { $gte: since } });
+          if (failures <= 2) {
+            const nextRunAt = new Date(Date.now() + 30 * 60 * 1000);
+            await Job.updateOne({ _id: job._id, status: { $in: ['ready', 'active'] }, $or: [{ nextRunAt: { $gt: nextRunAt } }, { nextRunAt: { $exists: false } }] }, {
+              $set: { nextRunAt }, $push: { events: { at: new Date(), action: 'link_discovery_retry_scheduled', note: 'No verified opportunity; retry discovery in 30 minutes within the existing budget.' } },
+            });
+          }
+        }
+        return;
       }
     }
 

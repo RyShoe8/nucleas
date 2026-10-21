@@ -34,13 +34,24 @@ describe('verifying a recommended opportunity', () => {
   it('rejects an address that does not exist, even when the write-up is convincing', async () => {
     const out = await verifyOpportunity({ url: 'https://casinoverse.com/submit-a-site/', evidence: GOOD_EVIDENCE, claimedType: 'directory', company }, { read: reads({ 'https://casinoverse.com/submit-a-site/': { ok: false, status: 404, reason: 'The page returned HTTP 404.' } }), judge: pass });
     expect(out.hard[0]).toMatch(/does not exist/);
+    expect(out.missing).toBe(true);
     expect(out.soft).toEqual([]);
   });
 
   it('only asks a person to check pages Nucleas could not open, instead of rejecting them', async () => {
     const out = await verifyOpportunity({ url: URL1, evidence: GOOD_EVIDENCE, claimedType: 'directory', company }, { read: reads({ [URL1]: { ok: false, status: 403, reason: 'The page returned HTTP 403.' } }), judge: pass });
     expect(out.hard).toEqual([]);
+    expect(out.missing).not.toBe(true);
     expect(out.soft[0]).toMatch(/could not be opened by Nucleas/);
+  });
+
+  it('permanently excludes gone pages but not transient server errors or invalid file types', async () => {
+    for (const status of [410, 500, null]) {
+      const out = await verifyOpportunity({ url: URL1, evidence: GOOD_EVIDENCE, claimedType: 'directory', company }, {
+        read: reads({ [URL1]: { ok: false, status, reason: status === null ? 'The address is a file, not a web page.' : `The page returned HTTP ${status}.` } }),
+      });
+      expect(Boolean(out.missing)).toBe(status === 410);
+    }
   });
 
   it('rejects a site the judge says is not what was claimed, using the homepage as context', async () => {

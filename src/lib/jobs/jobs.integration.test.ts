@@ -4,7 +4,7 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 
 vi.mock('server-only', () => ({}));
 
-const mocks = vi.hoisted(() => ({ design: vi.fn(), chat: vi.fn(), browser: vi.fn(), models: vi.fn(), select: vi.fn() }));
+const mocks = vi.hoisted(() => ({ design: vi.fn(), chat: vi.fn(), browser: vi.fn(), models: vi.fn(), select: vi.fn(), verify: vi.fn() }));
 vi.mock('./designer', () => ({ designJob: (...args: unknown[]) => mocks.design(...args) }));
 vi.mock('@/lib/ai/companyChat', () => ({ attemptCompanyCredentialChat: (input: unknown) => mocks.chat(input) }));
 vi.mock('@/lib/ai/engine/catalog', () => ({ listAvailableModels: (...args: unknown[]) => mocks.models(...args) }));
@@ -15,7 +15,7 @@ vi.mock('@/lib/ai/engine/select', () => ({
 }));
 vi.mock('@/lib/building/companyCode', () => ({ resolveCompanyRepository: async () => null }));
 // Page verification opens real pages; it has its own tests (opportunityPages.test.ts).
-vi.mock('./opportunityPages', async (importOriginal) => ({ ...(await importOriginal<typeof import('./opportunityPages')>()), verifyOpportunity: async () => ({ hard: [], soft: [] }) }));
+vi.mock('./opportunityPages', async (importOriginal) => ({ ...(await importOriginal<typeof import('./opportunityPages')>()), verifyOpportunity: (...args: unknown[]) => mocks.verify(...args) }));
 vi.mock('@/lib/ai/tools/browserClient', () => ({ browserNavigate: (...args: unknown[]) => mocks.browser(...args) }));
 
 import Client from '@/lib/models/Client';
@@ -33,7 +33,7 @@ import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, listJobs, pauseJob, renameJob, runDesign, runNow, sweepJobs } from './jobs';
 import type { JobDesign } from './schema';
-import { updateLinkOpportunity, verifyLinkOpportunity } from './linkOpportunities';
+import { updateLinkOpportunity, verifyLinkOpportunity, syncLinkOpportunities } from './linkOpportunities';
 import { completePropertyOverviewJob, createPropertyOverviewJob, startPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
 import { processPropertyOverviewQueue } from '@/lib/propertyOverview/crawler';
 import { replaceCompanyOverview } from '@/lib/propertyOverview/storage';
@@ -91,6 +91,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  mocks.verify.mockReset().mockResolvedValue({ hard: [], soft: [] });
   await BrandVoice.deleteMany({});
   await ArtifactRevision.deleteMany({});
   mocks.models.mockResolvedValue([]);
@@ -350,6 +351,51 @@ describe('approving and the dry run', () => {
     expect(await JobRun.findById(approved.dryRunId).lean()).toMatchObject({ status: 'failed', error: expect.stringContaining('AI budget cannot reserve') });
   });
 
+
+  it('remembers 404 candidates before replacing them and never delivers the dead recommendation', async () => {
+    const job = await proposed({ ...DESIGN, skill: 'link_building' });
+    let calls = 0;
+    const result = (url: string) => JSON.stringify({ ...JSON.parse(GOOD), records: [{ values: {
+      ...JSON.parse(GOOD).records[0].values, opportunity_url: url, relevance_score: 90,
+      relevance_evidence: 'A directly relevant gaming resource for players with a visible free submission flow and clear evidence.',
+      strategy_evidence: 'The approved strategy prioritizes the games directory and this resource serves the same player audience.',
+    }, sources: [url] }] });
+    mocks.chat.mockImplementation(async (input: { systemPrompt: string }) => ({ requestId: 'test', role: 'assistant', costMicros: 0,
+      text: input.systemPrompt.startsWith('You check one run') ? '{"verdict":"pass","notes":"Verified."}' : result(++calls === 1 ? 'https://directory.example/missing/' : 'https://directory.example/real') }));
+    mocks.verify.mockResolvedValueOnce({ hard: ['HTTP 404'], soft: [], missing: true }).mockResolvedValue({ hard: [], soft: [] });
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    expect(await LinkOpportunity.findOne({ opportunityUrl: 'https://directory.example/missing' }).lean()).toMatchObject({ status: 'nonexistent' });
+    expect(await LinkOpportunity.countDocuments({ status: 'recommended' })).toBe(1);
+    expect((await JobRun.findById(approved.dryRunId).lean())?.output.records[0].values.opportunity_url).toBe('https://directory.example/real');
+    await syncLinkOpportunities({ organizationId: org, companyId: new Types.ObjectId(companyId), jobId: new Types.ObjectId(), runId: new Types.ObjectId(),
+      output: { records: [{ values: { opportunity_url: 'https://directory.example/missing/#again', target_url: 'https://playbound.club/another-page' }, sources: [] }], summary: '', gaps: [] } });
+    expect(await LinkOpportunity.countDocuments({ status: 'recommended' })).toBe(1);
+  });
+
+  it('stops without delivering repeated dead pages and schedules a bounded recurring retry', async () => {
+    const job = await proposed({ ...DESIGN, skill: 'link_building', schedule: { kind: 'daily', time: '09:00', timezone: 'UTC' } });
+    await Job.updateOne({ _id: job.id }, { $set: { status: 'active', nextRunAt: new Date(Date.now() + 86400000) } });
+    const values = { ...JSON.parse(GOOD).records[0].values, opportunity_url: 'https://directory.example/missing', relevance_score: 90,
+      relevance_evidence: 'A directly relevant gaming directory with a visible free submission flow and exact evidence on the page.',
+      strategy_evidence: 'The approved strategy prioritizes games directories that reach this same audience and match the target page.' };
+    mocks.chat.mockResolvedValue({ requestId: 'dead', role: 'assistant', costMicros: 0, text: JSON.stringify({ records: [{ values, sources: [values.opportunity_url] }], summary: 'Claimed live.', gaps: [] }) });
+    mocks.verify.mockResolvedValue({ hard: ['HTTP 404'], soft: [], missing: true });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await Job.updateOne({ _id: job.id }, { $set: { nextRunAt: new Date(Date.now() + 86400000) } });
+      const started = await runNow(admin, job.id);
+      await executeJobRun(started.runId!);
+      const run = await JobRun.findById(started.runId).lean();
+      expect(run).toMatchObject({ status: 'failed', error: expect.stringContaining('No verified link-building opportunity') });
+      expect(run?.output).toBeUndefined();
+      const parent = await Job.findById(job.id).lean();
+      expect(parent!.nextRunAt!.getTime() - Date.now()).toBeGreaterThan(attempt < 2 ? 1700000 : 86000000);
+      if (attempt < 2) expect(parent!.nextRunAt!.getTime() - Date.now()).toBeLessThan(1900000);
+    }
+    expect(await LinkOpportunity.countDocuments({ status: 'recommended' })).toBe(0);
+    expect(await LinkOpportunity.countDocuments({ status: 'nonexistent' })).toBe(1);
+    expect(mocks.verify).toHaveBeenCalledTimes(1);
+  });
   it('tracks link recommendations through approval and submission with feedback history', async () => {
     const config = { projectId, schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
     const created = await createTemplateJob(admin, { companyId, template: 'link_building', config });

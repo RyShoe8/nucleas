@@ -31,6 +31,8 @@ export interface JudgeInput {
 export type Judge = (input: JudgeInput) => Promise<{ verdict: 'pass' | 'fail'; reason: string } | null>;
 
 export interface OpportunityProblems {
+  /** Only a confirmed HTTP/soft 404 or 410 is a permanent missing-page exclusion. */
+  missing?: boolean;
   /** Problems that make the recommendation wrong; the model is asked to replace it. */
   hard: string[];
   /** Things Nucleas could not check; a person should look. */
@@ -101,7 +103,7 @@ export async function verifyOpportunity(
     if (result.status === 404 || result.status === 410 || result.status === 0 || result.status === null && /not a web page/.test(result.reason)) {
       hard.push(`${url} does not exist (${result.reason}) Recommend only a real page you opened with a tool in this run, never an address you expect to exist.`);
     } else soft.push(`${url} could not be opened by Nucleas to verify it (${result.reason.replace(/\.$/, '')}). Check it before acting.`);
-    return { hard, soft };
+    return { hard, soft, ...(result.status === 404 || result.status === 410 ? { missing: true } : {}) };
   }
 
   hard.push(...evidenceProblems(input.evidence, result.page));

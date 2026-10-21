@@ -10,6 +10,7 @@ export const LINK_OPPORTUNITY_STATUSES = [
   'submission_rejected',
   'removed',
   'expired',
+  'nonexistent',
 ] as const;
 export type LinkOpportunityStatus = (typeof LINK_OPPORTUNITY_STATUSES)[number];
 

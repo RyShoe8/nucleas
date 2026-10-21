@@ -46,7 +46,7 @@ interface JobDesign {
     questions: JobQuestion[];
 }
 
-type LinkOpportunityStatus = 'recommended' | 'saved' | 'approved' | 'rejected' | 'submitted' | 'live' | 'submission_rejected' | 'removed' | 'expired';
+type LinkOpportunityStatus = 'recommended' | 'saved' | 'approved' | 'rejected' | 'submitted' | 'live' | 'submission_rejected' | 'removed' | 'expired' | 'nonexistent';
 interface LinkOpportunityView {
     id: string;
     runId: string;
@@ -605,7 +605,7 @@ function RunBlock({ job, run, onChange, onView }: { job: JobView; run: JobRunVie
 }
 
 const OPPORTUNITY_LABEL: Record<LinkOpportunityStatus, string> = {
-    recommended: 'Recommended', saved: 'Saved for later', approved: 'Approved', rejected: 'Rejected', submitted: 'Submitted', live: 'Live', submission_rejected: 'Submission rejected', removed: 'Link removed', expired: 'Expired',
+    recommended: 'Recommended', saved: 'Saved for later', approved: 'Approved', rejected: 'Rejected', submitted: 'Submitted', live: 'Live', submission_rejected: 'Submission rejected', removed: 'Link removed', expired: 'Expired', nonexistent: 'Doesn’t exist — excluded',
 };
 
 function OpportunityTracker({ job, onChange }: { job: JobView; onChange: (j: JobView) => void }) {
