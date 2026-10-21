@@ -95,6 +95,8 @@ export const publishingConfigSchema = z.object({
   socialLinkTemplate: z.string().max(2000).refine((value) => { try { return value.includes('{slug}') && new URL(value.replace('{slug}', 'example')).protocol === 'https:'; } catch { return false; } }, 'Use an https URL containing {slug}.').optional(),
   /** Mailbox social destinations only: require value strictly greater than this percent. */
   minimumSocialValuePct: z.number().min(0).max(1000).optional(),
+  /** One Reddit casino deal per local day; the last two casinos cannot repeat. */
+  redditDealPolicy: z.object({ timezone: z.string().refine((value) => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }, 'Use a valid timezone.') }).optional(),
   channels: z.array(channelSchema).min(1).max(PUBLISH_PLATFORMS.length),
   /** Example posts per platform: their structure (not their wording) shapes the drafts. */
   examples: z.record(z.enum(PUBLISH_PLATFORMS), z.object({ url: z.string().max(2000).optional(), text: z.string().max(6000).default('') })).default({}),

@@ -22,6 +22,7 @@ import type { AdminBrowser } from './admin';
 import { PublishError } from './publishers';
 import { queueExistingAdminItem, markPosted, postDeliveryNow, publishingView, recoverStuckDeliveries, runPublishing, skipDelivery, takeBaseline, type PublishDeps } from './engine';
 import type { PublishingConfig } from './config';
+import { redditDealBlock } from './redditDeals';
 
 let replica: MongoMemoryReplSet;
 const org = new Types.ObjectId();
@@ -304,6 +305,44 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
     expect(saved.map((v) => [v.status, v.facebook, v.bluesky])).toEqual([
       ['published', false, false], ['published', false, false], ['published', true, true],
     ]);
+  });
+
+  it('limits Reddit deals across jobs and employees, rotates casinos, and queues blocked cards', async () => {
+    const job = await newJob();
+    const secondJob = await newJob();
+    const publishing = { source: adminConfig.source, channels: [{ platform: 'reddit', mode: 'manual' }], minimumSocialValuePct: 30, redditDealPolicy: { timezone: 'America/Chicago' } };
+    await Job.updateMany({ _id: { $in: [job._id, secondJob._id] } }, { $set: { publishing } });
+    const card = async (casino: string, jobId = job._id) => {
+      const mail = await email(`offers@${casino}.com`, casino, 20, 30);
+      const item = await PublishItem.create({ organizationId: org, companyId, jobId, key: String(mail._id), status: 'processed' });
+      return PublishDelivery.create({ organizationId: org, companyId, jobId, itemId: item._id, platform: 'reddit', mode: 'manual', status: 'ready', body: casino });
+    };
+    const a = await card('casino-a');
+    const b = await card('casino-b', secondJob._id);
+    // Simultaneous confirmations cannot both consume today's slot.
+    const results = await Promise.all([markPosted(job, String(a._id), String(userId)), markPosted(secondJob, String(b._id), String(new Types.ObjectId()))]);
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.find((result) => !result.ok)).toMatchObject({ status: 409, error: expect.stringContaining('already been posted') });
+    const posted = (await PublishDelivery.findOne({ status: 'posted' }))!;
+    const otherJob = posted.jobId.equals(job._id) ? secondJob : job;
+    expect((await publishingView((await Job.findById(otherJob._id).lean())!))?.ready).toHaveLength(0);
+    // Daily limits follow Chicago midnight, including when UTC has already changed dates.
+    await PublishDelivery.updateOne({ _id: posted._id }, { $set: { postedAt: new Date('2026-10-21T23:00:00Z') } });
+    const otherCard = posted._id.equals(a._id) ? b : a;
+    expect(await redditDealBlock(otherCard.toObject(), 'America/Chicago', new Date('2026-10-22T00:30:00Z'))).toContain('already been posted');
+    expect(await redditDealBlock(otherCard.toObject(), 'America/Chicago', new Date('2026-10-22T05:01:00Z'))).toBeNull();
+    await PublishDelivery.updateOne({ _id: posted._id }, { $set: { postedAt: new Date(Date.now() - 3 * 86_400_000) } });
+    const firstCasino = posted.body;
+    const repeat = await card(firstCasino);
+    expect(await markPosted(job, String(repeat._id), String(userId))).toMatchObject({ ok: false, error: expect.stringContaining('last two') });
+    const other = posted._id.equals(a._id) ? b : a;
+    expect(await markPosted(otherJob, String(other._id), String(userId))).toEqual({ ok: true });
+    await PublishDelivery.updateOne({ _id: other._id }, { $set: { postedAt: new Date(Date.now() - 2 * 86_400_000) } });
+    expect(await markPosted(job, String(repeat._id), String(userId))).toMatchObject({ ok: false, error: expect.stringContaining('last two') });
+    const c = await card('casino-c');
+    expect(await markPosted(job, String(c._id), String(userId))).toEqual({ ok: true });
+    await PublishDelivery.updateOne({ _id: c._id }, { $set: { postedAt: new Date(Date.now() - 86_400_000) } });
+    expect(await markPosted(job, String(repeat._id), String(userId))).toEqual({ ok: true });
   });
 
   it('waits for admin submission and links mailbox social drafts to the public record', async () => {

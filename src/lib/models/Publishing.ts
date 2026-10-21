@@ -84,6 +84,7 @@ const deliverySchema = new Schema(
 deliverySchema.index({ itemId: 1, platform: 1 }, { unique: true });
 deliverySchema.index({ jobId: 1, createdAt: -1 });
 deliverySchema.index({ organizationId: 1, status: 1, createdAt: -1 });
+deliverySchema.index({ organizationId: 1, companyId: 1, platform: 1, status: 1, postedAt: -1, _id: -1 });
 
 export type PublishDeliveryDoc = InferSchemaType<typeof deliverySchema>;
 export const PublishDelivery: Model<PublishDeliveryDoc> = (mongoose.models.PublishDelivery as Model<PublishDeliveryDoc> | undefined) ?? mongoose.model<PublishDeliveryDoc>('PublishDelivery', deliverySchema);

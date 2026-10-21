@@ -1,5 +1,6 @@
 import { applyAdminFieldRules, withDefaultEndDate } from './adminRules';
 import { retryDatabaseRead } from '@/lib/db/retryRead';
+import { redditDealBlock, redditDealHistory, withRedditDealLock } from './redditDeals';
 import { dealStrengthPct } from '@/lib/watches/dealMetrics';
 import 'server-only';
 import { Types } from 'mongoose';
@@ -91,6 +92,7 @@ export function readConfig(job: { publishing?: unknown }): PublishingConfig | nu
   // Jobs set up before "news" was recognised stored the section's name wrongly singularised ("new"): use the right word.
   const source = parsed.data.source;
   if (source.type === 'site' && source.noun === 'new' && /^\/news\/?$/i.test(source.pathPrefix)) return { ...parsed.data, source: { ...source, noun: 'article' } };
+  if (source.type === 'mailbox' && parsed.data.channels.some((channel) => channel.platform === 'reddit') && parsed.data.minimumSocialValuePct !== undefined && !parsed.data.redditDealPolicy) return { ...parsed.data, redditDealPolicy: { timezone: parsed.data.adminTimezone ?? 'UTC' } };
   return parsed.data;
 }
 
@@ -713,7 +715,18 @@ export async function markPosted(job: { _id: Types.ObjectId; organizationId: Typ
       return { ok: false, status: 400, error: 'That link does not look right. Paste the post’s https address, or leave it empty.' };
     }
   }
-  const done = await PublishDelivery.updateOne({ ...filter, status: 'ready' }, { $set: { status: 'posted', postedAt: new Date(), postedByUserId: new Types.ObjectId(userId), ...(url ? { postedUrl: url } : {}) }, $unset: { error: '' } });
+  const candidate = await PublishDelivery.findOne({ ...filter, status: 'ready' }).lean();
+  const config = readConfig((await Job.findById(job._id).select('publishing').lean()) ?? {});
+  const update = { $set: { status: 'posted', postedAt: new Date(), postedByUserId: new Types.ObjectId(userId), ...(url ? { postedUrl: url } : {}) }, $unset: { error: '' } };
+  if (candidate?.platform === 'reddit' && config?.redditDealPolicy) {
+    return withRedditDealLock(candidate, async (session): Promise<DeliveryResult> => {
+      const blocked = await redditDealBlock(candidate, config.redditDealPolicy!.timezone, new Date(), session);
+      if (blocked) return { ok: false, status: 409, error: blocked };
+      const done = await PublishDelivery.updateOne({ ...filter, status: 'ready' }, update, { session });
+      return done.modifiedCount ? { ok: true } : { ok: false, status: 409, error: 'Someone already handled this post.' };
+    });
+  }
+  const done = await PublishDelivery.updateOne({ ...filter, status: 'ready' }, update);
   return done.modifiedCount ? { ok: true } : { ok: false, status: 409, error: 'Someone already handled this post.' };
 }
 
@@ -816,6 +829,7 @@ export interface DeliveryView {
 type DeliveryLean = { _id: Types.ObjectId; itemId: Types.ObjectId; platform: string; status: DeliveryView['status']; title?: string; body: string; link?: string; assets?: { kind: 'image' | 'video'; url: string }[]; postedUrl?: string; postedAt?: Date; error?: string; createdAt: Date; values?: Record<string, string | boolean>; screenshot?: string };
 
 export interface PublishingView {
+  redditDealNotice?: string;
   adminFieldRules?: PublishingConfig['adminFieldRules'];
   channels: PublishChannel[];
   minimumSocialValuePct?: number;
@@ -859,7 +873,21 @@ export async function publishingView(job: { _id: Types.ObjectId; publishing?: un
     screenshot: d.screenshot ?? null,
   });
   const raw = (job.publishing ?? {}) as { notes?: Record<string, string> };
+  let redditSelected = false;
+  let heldReddit = 0;
+  let redditHistory: Awaited<ReturnType<typeof redditDealHistory>> | undefined;
+  const visibleReady: DeliveryLean[] = [];
+  for (const delivery of ready) {
+    if (delivery.platform === 'reddit' && config.redditDealPolicy && delivery.status === 'ready') {
+      const full = await PublishDelivery.findById(delivery._id).lean();
+      if (full && !redditHistory) redditHistory = await redditDealHistory(full);
+      if (redditSelected || !full || await redditDealBlock(full, config.redditDealPolicy.timezone, new Date(), undefined, redditHistory)) { heldReddit += 1; continue; }
+      redditSelected = true;
+    }
+    visibleReady.push(delivery);
+  }
   return {
+    ...(config.redditDealPolicy ? { redditDealNotice: `Reddit casino deals: one per day (${config.redditDealPolicy.timezone}); a casino cannot repeat within three deal posts.${heldReddit ? ` ${heldReddit} queued for a later eligible slot.` : ''}` } : {}),
     channels: config.channels,
     adminFieldRules: config.adminFieldRules,
     minimumSocialValuePct: config.minimumSocialValuePct,
@@ -868,7 +896,7 @@ export async function publishingView(job: { _id: Types.ObjectId; publishing?: un
     source: config.source,
     notes: raw.notes ?? {},
     admin: config.admin ? { formUrl: config.admin.formUrl, listUrl: config.admin.listUrl, fields: config.admin.fields.map((f) => ({ label: f.label || f.key, required: f.required })) } : null,
-    ready: ready.map(view),
+    ready: visibleReady.map(view),
     recent: recent.map(view),
     postedThisWeek,
   };

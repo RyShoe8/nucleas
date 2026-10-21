@@ -208,6 +208,7 @@ export default function PublishingJobBody({ job, onChange, readyShownAbove = fal
             {sample ? <SampleReview job={job} run={sample} onChange={onChange} /> : null}
 
 
+            {view.redditDealNotice ? <p className="text-xs text-text-secondary">{view.redditDealNotice}</p> : null}
             {view.ready.length && readyShownAbove ? <p className="text-xs text-amber-300">{view.ready.length} {view.ready.length === 1 ? 'is' : 'are'} waiting for you at the top of this window.</p> : null}
             {view.ready.length && !readyShownAbove ? (
                 <section className="space-y-2">
