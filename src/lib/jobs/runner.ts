@@ -627,6 +627,10 @@ export async function executeJobRun(runId: string): Promise<void> {
       let failedCheck = await runLinkChecks();
       while (failedCheck && workCalls < MAX_WORK_CALLS) {
         rounds += 1;
+        // Repeated unsupported answers need a different researcher when the configured fallback is available.
+        if (rounds === 2 && work.fallback && work.fallback.profileId !== activeWorker.profileId && !exhaustedProfiles.has(work.fallback.profileId)) {
+          activeWorker = work.fallback;
+        }
         await progress(run._id, owner, `A recommendation failed validation; researching a verified replacement (attempt ${rounds})`, { stage: 'validating', percent: Math.min(80, 70 + rounds * 2) });
         const wrong = issues;
         const retry = await doWork(activeWorker, `These recommended pages failed a live check of the real page:\n${wrong.map((issue) => `- ${issue.problem}`).join('\n')}\nResearch again with tools. Replace each failed recommendation with a different opportunity whose page you opened and read in this run: it must load, be an independent third-party site, show a free self-service way to add a link, and serve this company's audience. Put at least one exact quotation from that page in the relevance evidence. Do not guess addresses. Return only the required JSON.`, true);
@@ -638,9 +642,10 @@ export async function executeJobRun(runId: string): Promise<void> {
       }
       if (failedCheck) {
         const error = 'No verified link-building opportunity found. Invalid candidates were excluded; no recommendation was delivered.';
+        await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { issues } });
         await fail(error, { costMicros: cost, models: usedModels });
         // Retry discovery later today without an unbounded model/budget loop. The ordinary daily schedule remains after two retries.
-        if (!run.dryRun && activeDesign.schedule.kind !== 'once') {
+        if (!run.dryRun && activeDesign.schedule.kind !== 'once' && await JobRun.exists({ _id: run._id, status: 'failed', leaseOwner: owner, error })) {
           const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
           const failures = await JobRun.countDocuments({ jobId: job._id, status: 'failed', error, createdAt: { $gte: since } });
           if (failures <= 2) {

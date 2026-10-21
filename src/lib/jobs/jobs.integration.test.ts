@@ -354,6 +354,10 @@ describe('approving and the dry run', () => {
 
   it('remembers 404 candidates before replacing them and never delivers the dead recommendation', async () => {
     const job = await proposed({ ...DESIGN, skill: 'link_building' });
+    mocks.select.mockImplementation(async (_org: string, need: string) => ({
+      primary: { profileId: (need === 'review' ? 'r' : 'w').repeat(24), model: need === 'review' ? 'review-model' : 'first-researcher', free: true, label: 'Test' },
+      fallback: need === 'review' ? null : { profileId: 'f'.repeat(24), model: 'fallback-researcher', free: true, label: 'Test fallback' },
+    }));
     let calls = 0;
     const result = (url: string) => JSON.stringify({ ...JSON.parse(GOOD), records: [{ values: {
       ...JSON.parse(GOOD).records[0].values, opportunity_url: url, relevance_score: 90,
@@ -361,11 +365,12 @@ describe('approving and the dry run', () => {
       strategy_evidence: 'The approved strategy prioritizes the games directory and this resource serves the same player audience.',
     }, sources: [url] }] });
     mocks.chat.mockImplementation(async (input: { systemPrompt: string }) => ({ requestId: 'test', role: 'assistant', costMicros: 0,
-      text: input.systemPrompt.startsWith('You check one run') ? '{"verdict":"pass","notes":"Verified."}' : result(++calls === 1 ? 'https://directory.example/missing/' : 'https://directory.example/real') }));
+      text: input.systemPrompt.startsWith('You check one run') ? '{"verdict":"pass","notes":"Verified."}' : result(++calls <= 2 ? 'https://directory.example/missing/' : 'https://directory.example/real') }));
     mocks.verify.mockResolvedValueOnce({ hard: ['HTTP 404'], soft: [], missing: true }).mockResolvedValue({ hard: [], soft: [] });
     const approved = await approveJob(admin, job.id, { completion: 'review' });
     await executeJobRun(approved.dryRunId!);
     expect(await LinkOpportunity.findOne({ opportunityUrl: 'https://directory.example/missing' }).lean()).toMatchObject({ status: 'nonexistent' });
+    expect(mocks.chat.mock.calls.slice(0, 3).map(([input]) => input.model)).toEqual(['first-researcher', 'first-researcher', 'fallback-researcher']);
     expect(await LinkOpportunity.countDocuments({ status: 'recommended' })).toBe(1);
     expect((await JobRun.findById(approved.dryRunId).lean())?.output.records[0].values.opportunity_url).toBe('https://directory.example/real');
     await syncLinkOpportunities({ organizationId: org, companyId: new Types.ObjectId(companyId), jobId: new Types.ObjectId(), runId: new Types.ObjectId(),
