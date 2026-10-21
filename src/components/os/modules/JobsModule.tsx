@@ -156,7 +156,7 @@ function MarketingOverview({ companyId, busy, error, onGenerate }: { companyId: 
  * Jobs: non-code work Nucleas designs and runs for each company. The Marketing and Content windows
  * are this view filtered to their categories.
  */
-export default function JobsModule({ categories, title = 'Jobs', initialCompanyId, initialKind, initialView }: { categories?: string[]; title?: string; initialCompanyId?: string; initialKind?: string; initialView?: string }) {
+export default function JobsModule({ categories, title = 'Jobs', initialCompanyId, initialKind, initialView, initialWatchId }: { categories?: string[]; title?: string; initialCompanyId?: string; initialKind?: string; initialView?: string; initialWatchId?: string }) {
     const { companies: osCompanies } = useOsCompanies();
     const [jobs, setJobs] = useState<JobView[] | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -288,7 +288,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
 
             {showInboxes && title === 'Marketing' ? (
                 <div className="flex-1 overflow-y-auto">
-                    <WatchesPanel />
+                    <WatchesPanel initialWatchId={initialWatchId} />
                 </div>
             ) : null}
 

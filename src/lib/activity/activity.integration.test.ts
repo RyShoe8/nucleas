@@ -54,6 +54,7 @@ describe('activity', () => {
     const items = await listActivity(viewer as never);
     const by = (id: string) => items.find((i) => i.title === id);
     expect(by('Deals')).toMatchObject({ kind: 'watch', group: 'working', status: 'Scanning', category: 'marketing', companyName: 'PlayBound' });
+    expect(by('Deals')?.open).toMatchObject({ window: 'marketing', payload: { view: 'inboxes', watchId: by('Deals')!.id.replace('watch:', ''), companyId: company.id } });
     expect(by('News')).toMatchObject({ group: 'set', detail: expect.stringContaining('4 new, 2 flagged') });
     expect(by('Paused')).toBeUndefined();
     expect(by('Weekly digest')).toMatchObject({ kind: 'article', group: 'working', category: 'content', detail: 'Digest · Outlining' });

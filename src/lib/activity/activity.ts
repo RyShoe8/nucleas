@@ -50,7 +50,7 @@ function nextIn(last: string | null, intervalMinutes: number, now = Date.now()):
 async function watchItems(viewer: CompanyViewer): Promise<ActivityItem[]> {
   const watches = (await listWatches(viewer)) ?? [];
   return watches.filter((w) => w.active).map((w): ActivityItem => {
-    const base = { id: `watch:${w.id}`, kind: 'watch' as const, category: 'marketing' as const, title: w.name, companyId: w.companyId, companyName: w.companyName, open: { window: 'marketing', payload: { view: 'inboxes' } } };
+    const base = { id: `watch:${w.id}`, kind: 'watch' as const, category: 'marketing' as const, title: w.name, companyId: w.companyId, companyName: w.companyName, open: { window: 'marketing', payload: { view: 'inboxes', watchId: w.id, ...(w.companyId ? { companyId: w.companyId } : {}) } } };
     if (w.scanning) return { ...base, group: 'working', status: 'Scanning', detail: `Inbox watch · ${w.scanProgress ?? `scanning ${w.mailboxEmail}`}` };
     if (w.lastScanOk === false) return { ...base, group: 'failed', status: 'Scan failed', detail: `Inbox watch · last scan failed ${ago(w.lastScanAt)}: ${w.lastScanError ?? 'unknown error'}` };
     const found = w.lastScanStats ? ` · ${w.lastScanStats.fresh} new, ${w.lastScanStats.flagged} flagged` : '';

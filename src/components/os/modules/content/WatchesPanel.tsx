@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MailboxView, WatchView } from '@/lib/watches/types-client';
 import WatchForm from './WatchForm';
 import WatchFeed from './WatchFeed';
@@ -12,12 +12,13 @@ const ago = (iso: string | null) => {
 };
 
 /** Watches: pick a mailbox, say what to flag, and see the emails that qualify. */
-export default function WatchesPanel() {
+export default function WatchesPanel({ initialWatchId }: { initialWatchId?: string } = {}) {
     const [watches, setWatches] = useState<WatchView[] | null>(null);
     const [mailboxes, setMailboxes] = useState<MailboxView[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [editing, setEditing] = useState<WatchView | 'new' | null>(null);
-    const [selected, setSelected] = useState<string | null>(null);
+    const [selected, setSelected] = useState<string | null>(initialWatchId ?? null);
+    const openedInitial = useRef(false);
     const [reload, setReload] = useState(0);
     const refresh = useCallback(() => setReload((n) => n + 1), []);
 
@@ -31,11 +32,19 @@ export default function WatchesPanel() {
             setError(null);
             setWatches(body.watches ?? []);
             setMailboxes(body.mailboxes ?? []);
+            if (initialWatchId && !openedInitial.current) {
+                const watch = body.watches?.find((entry) => entry.id === initialWatchId);
+                if (watch) {
+                    setSelected(watch.id);
+                    setEditing(watch);
+                }
+                openedInitial.current = true;
+            }
         })();
         return () => {
             cancelled = true;
         };
-    }, [reload]);
+    }, [reload, initialWatchId]);
 
     const act = async (url: string, init: RequestInit) => {
         const res = await fetch(url, { ...init, headers: { 'content-type': 'application/json' } });
@@ -90,6 +99,7 @@ export default function WatchesPanel() {
                             setEditing(null);
                             setSelected(w.id);
                             refresh();
+                            window.dispatchEvent(new Event('nucleas:jobs-changed'));
                         }}
                     />
                 ) : null}
