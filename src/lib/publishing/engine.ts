@@ -1,5 +1,6 @@
 import { applyAdminFieldRules, withDefaultEndDate } from './adminRules';
 import { retryDatabaseRead } from '@/lib/db/retryRead';
+import { recipientOnlyItem } from '@/lib/watches/offerEligibility';
 import { redditDealBlock, redditDealHistory, withRedditDealLock } from './redditDeals';
 import { dealStrengthPct } from '@/lib/watches/dealMetrics';
 import 'server-only';
@@ -106,11 +107,12 @@ async function listEntries(job: JobLike, config: PublishingConfig, deps: Publish
   const rows = await WatchItem.find({ organizationId: job.organizationId, watchId: new Types.ObjectId(config.source.watchId), flagged: true })
     .sort({ sentAt: -1 })
     .limit(100)
-    .select('_id subject sentAt link fromEmail bestDeal')
-    .lean<{ _id: Types.ObjectId; subject?: string; sentAt?: Date; link?: string; fromEmail?: string; bestDeal?: DealMetrics }[]>();
+    .select('_id subject sentAt link fromEmail bestDeal text summary keyPoints')
+    .lean<{ _id: Types.ObjectId; subject?: string; sentAt?: Date; link?: string; fromEmail?: string; bestDeal?: DealMetrics; text?: string; summary?: string; keyPoints?: { text?: string }[] }[]>();
   let eligible = config.minimumSocialValuePct !== undefined && config.channels.some((c) => c.platform !== 'admin')
     ? rows.filter((r) => r.bestDeal && dealStrengthPct(r.bestDeal) > config.minimumSocialValuePct! / 100 + Number.EPSILON)
     : rows;
+  eligible = eligible.filter((row) => !row.bestDeal || !recipientOnlyItem(row));
   if (config.socialLinkTemplate && !config.channels.some((channel) => channel.platform === 'admin')) {
     const deliveries = await PublishDelivery.find({ organizationId: job.organizationId, companyId: job.companyId, platform: 'admin', status: 'posted', 'values.slug': { $type: 'string', $ne: '' } }).select('itemId').lean();
     const items = await PublishItem.find({ _id: { $in: deliveries.map((delivery) => delivery.itemId) }, organizationId: job.organizationId, companyId: job.companyId, key: { $in: eligible.map((row) => String(row._id)) } }).select('key').lean();
@@ -133,11 +135,12 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
   }
   const [item, watch] = await Promise.all([
     WatchItem.findOne({ _id: new Types.ObjectId(entry.key), organizationId: job.organizationId })
-      .select('subject summary keyPoints bestDeal values link fromName sentAt')
-      .lean<{ subject?: string; summary?: string; keyPoints?: { text?: string }[]; bestDeal?: DealMetrics; values?: Record<string, string>; link?: string; fromName?: string; sentAt?: Date }>(),
+      .select('subject text summary keyPoints bestDeal values link fromName sentAt')
+      .lean<{ subject?: string; text?: string; summary?: string; keyPoints?: { text?: string }[]; bestDeal?: DealMetrics; values?: Record<string, string>; link?: string; fromName?: string; sentAt?: Date }>(),
     ContentWatch.findOne({ _id: new Types.ObjectId(config.source.watchId), organizationId: job.organizationId }).select('fields rank mode threshold minDiscountPct').lean(),
   ]);
   const fields = watch ? watchSettings(watch).fields : [];
+  if (item?.bestDeal && recipientOnlyItem(item)) throw new Error('Recipient-only offer: this deal is restricted to the email recipient or their account and cannot be published.');
   let link = item?.link ?? entry.url;
   if (config.socialLinkTemplate && !config.channels.some((channel) => channel.platform === 'admin')) {
     const siblings = await PublishItem.find({ organizationId: job.organizationId, companyId: job.companyId, key: entry.key }).select('_id').lean();
@@ -716,6 +719,7 @@ export async function markPosted(job: { _id: Types.ObjectId; organizationId: Typ
     }
   }
   const candidate = await PublishDelivery.findOne({ ...filter, status: 'ready' }).lean();
+  if (candidate && await recipientOnlyDelivery(candidate)) return { ok: false, status: 409, error: 'This offer is restricted to its email recipient or account and cannot be shared publicly.' };
   const config = readConfig((await Job.findById(job._id).select('publishing').lean()) ?? {});
   const update = { $set: { status: 'posted', postedAt: new Date(), postedByUserId: new Types.ObjectId(userId), ...(url ? { postedUrl: url } : {}) }, $unset: { error: '' } };
   if (candidate?.platform === 'reddit' && config?.redditDealPolicy) {
@@ -752,6 +756,13 @@ export async function editDelivery(job: { _id: Types.ObjectId; organizationId: T
 }
 
 /** Post a ready card through the platform's API now (after an account is fixed, or instead of copying by hand). */
+async function recipientOnlyDelivery(delivery: { itemId: Types.ObjectId; organizationId: Types.ObjectId }): Promise<boolean> {
+  const item = await PublishItem.findOne({ _id: delivery.itemId, organizationId: delivery.organizationId }).select('key').lean();
+  if (!item || !Types.ObjectId.isValid(item.key)) return false;
+  const email = await WatchItem.findOne({ _id: item.key, organizationId: delivery.organizationId }).select('subject text summary keyPoints bestDeal').lean();
+  return Boolean(email?.bestDeal && recipientOnlyItem(email));
+}
+
 export async function postDeliveryNow(job: JobLike, deliveryId: string, userId: string, deps: PublishDeps = {}): Promise<DeliveryResult> {
   const filter = deliveryFilter(job, deliveryId);
   if (!filter) return { ok: false, status: 404, error: 'Post not found.' };
@@ -764,6 +775,7 @@ export async function postDeliveryNow(job: JobLike, deliveryId: string, userId: 
     if (!email?.bestDeal || !(dealStrengthPct(email.bestDeal as DealMetrics) > socialConfig.minimumSocialValuePct / 100 + Number.EPSILON)) return { ok: false, status: 409, error: `This deal does not have confirmed value over ${socialConfig.minimumSocialValuePct}%; it cannot be posted to social.` };
   }
   if (!candidate) return { ok: false, status: 409, error: 'This post was already handled.' };
+  if (await recipientOnlyDelivery(candidate)) return { ok: false, status: 409, error: 'This offer is restricted to its email recipient or account and cannot be shared publicly.' };
   // Finish read-only preparation before claiming or making an external change.
   const item = await retryDatabaseRead('publishing.item', () => PublishItem.findById(candidate.itemId).select('facts title key').lean<{ key?: string; title?: string; facts?: { title?: string; description?: string } }>().exec());
   const adminFacts = candidate.platform === 'admin' && socialConfig?.source.type === 'mailbox' && item?.key

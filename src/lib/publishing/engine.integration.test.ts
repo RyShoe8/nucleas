@@ -307,6 +307,18 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
     ]);
   });
 
+  it('blocks a previously queued recipient-only offer before any admin or social delivery', async () => {
+    const mail = await email('offers@example.com', 'Personal offer', 5.99, 10);
+    await WatchItem.updateOne({ _id: mail._id }, { $set: { text: 'Exclusive offer for: player@example.com' } });
+    const job = await adminJob();
+    const item = await PublishItem.create({ organizationId: org, companyId, jobId: job._id, key: String(mail._id), status: 'processed' });
+    const card = await PublishDelivery.create({ organizationId: org, companyId, jobId: job._id, itemId: item._id, platform: 'admin', mode: 'manual', status: 'ready', body: 'Old queued deal' });
+    expect(await postDeliveryNow(job.toObject(), String(card._id), String(userId), adminDeps())).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('restricted') });
+    expect(await markPosted(job, String(card._id), String(userId))).toMatchObject({ ok: false, status: 409 });
+    expect(saved).toHaveLength(0);
+    expect(await takeBaseline(job.toObject(), adminDeps())).toBe(0);
+  });
+
   it('limits Reddit deals across jobs and employees, rotates casinos, and queues blocked cards', async () => {
     const job = await newJob();
     const secondJob = await newJob();

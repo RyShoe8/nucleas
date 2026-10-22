@@ -1,4 +1,5 @@
 import 'server-only';
+import { recipientOnlyItem } from './offerEligibility';
 import { Types } from 'mongoose';
 import { ContentWatch, WatchItem, WatchMailbox, type ContentWatchDoc } from '@/lib/models/Watch';
 import { openSecret } from '@/lib/security/secretBox';
@@ -214,7 +215,9 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
   }
 
   const score = settings.rank === 'discount' ? discountPct ?? 0 : fit ?? 0;
-  const flagged = isWatchFlagged({ fit, discountPct }, settings);
+  const recipientOnly = settings.rank === 'discount' && recipientOnlyItem({ subject: m.subject, text, summary: analysis?.summary, keyPoints: analysis?.keyPoints });
+  const flagged = !recipientOnly && isWatchFlagged({ fit, discountPct }, settings);
+  if (recipientOnly) reason = 'Recipient-only offer: restricted to the email recipient or their account; excluded from public deals.';
   await WatchItem.updateOne(
     { watchId: watch._id, gmailId: m.gmailId },
     {
@@ -228,6 +231,7 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
         scoreBasis,
         reason: reason.slice(0, 300),
         flagged,
+        ...(recipientOnly ? { skipReason: 'recipient_only_offer' } : {}),
         ...(analysisError ? { analysisError: analysisError.slice(0, 500) } : {}),
         summary: analysis?.summary || undefined,
         keyPoints: analysis?.keyPoints.length ? analysis.keyPoints : extractKeyPointsFallback(text, m.subject),
@@ -237,7 +241,7 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
         link: pickDealLink(extractAnchorHrefs(m.bodyHtml), { html: m.bodyHtml, subject: m.subject, from: m.from.email }) ?? undefined,
         htmlPreview: m.bodyHtml.slice(0, 80_000) || undefined,
       },
-      $unset: { skipReason: '', ...(analysisError ? {} : { analysisError: '' }) },
+      $unset: { ...(recipientOnly ? {} : { skipReason: '' }), ...(analysisError ? {} : { analysisError: '' }) },
     },
     { upsert: true }
   );

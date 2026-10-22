@@ -70,6 +70,7 @@ ${wanted
     '- key_points: 4 to 16 atomic facts, one per object, never several joined with semicolons. category is one of deadline, eligibility, offer, requirement, terms, other. text under 120 characters in the email\'s own wording. Empty array if there are none. No marketing fluff.'
   );
   if (input.mode === 'deal') {
+    rules.push('- Eligibility: if the offer is only redeemable by this email recipient or account, explicitly record that restriction as an eligibility key point using the email wording (including a named email when given). Never describe a recipient-only deal as public. A greeting, delivery address, or the word exclusive alone is not an eligibility restriction.');
     fields.push('"deal": {"you_pay": number|null, "baseline_value": number|null, "pay_unit": string|null, "credit_unit": string|null, "mode": "retail_list_vs_sale"|"pay_vs_credited_value"|"unknown", "confidence": number}|null');
     const units = input.dealUnitTokens.length
       ? `Amount units to prefer when reading numbers (including $ if listed): ${input.dealUnitTokens.join(', ')}.`
