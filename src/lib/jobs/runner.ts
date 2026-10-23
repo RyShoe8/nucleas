@@ -2,6 +2,7 @@ import 'server-only';
 import { discoveryMemory, saveCandidates } from '@/lib/casinoDiscovery/service';
 import { casinoResearchSchema } from '@/lib/casinoDiscovery/schema';
 import { linkProspectContext, priorPlacementProblems, rememberProspectOutcome } from './linkProspects';
+import { affordableLinkReview, LINK_REVIEW_TOKENS, LINK_WORK_CALLS } from './linkRunPolicy';
 import { VOICE_TRAIT_GUIDANCE } from './templates/brandVoice';
 import { withLinkDiscoveryFocus } from './templates/linkBuilding';
 import { manualArtifact, parseJobOutput } from './output';
@@ -25,7 +26,6 @@ import { claimJobRunExecution, heartbeatJobRun, startJobRunHeartbeat } from './r
 import { checkRecords, jobDesignSchema, jobRunOutputSchema, type JobDesign, type JobRunOutput } from './schema';
 import { linkOpportunityMemory, syncLinkOpportunities, missingLinkOpportunityUrls, rememberMissingLinkOpportunity, normalizeUrl } from './linkOpportunities';
 import { judgePrompt, verifyOpportunity, type Judge } from './opportunityPages';
-import { askEngine } from '@/lib/ai/engine/ask';
 import { approvedSeoBrief, seoBriefContext } from './seoBriefs';
 import { approvedMarketingPlan, marketingPlanContext } from './marketingPlans';
 import Project from '@/lib/models/Project';
@@ -368,9 +368,10 @@ export async function executeJobRun(runId: string): Promise<void> {
     const retryableDiscovery = /No verified link-building|response could not be read|work calls|remote model|HTTP (?:401|402|403|429|5\d\d)|timed? out|unreachable|did not respond/i.test(error)
       && !/budget|admission|processing enabled|Enable Remote/i.test(error);
     if (!run.dryRun && retryDesign.success && retryDesign.data.skill === 'link_building' && retryDesign.data.schedule.kind !== 'once' && retryableDiscovery) {
-      const nextRunAt = new Date(now.getTime() + 30 * 60 * 1000);
-      await Job.updateOne({ _id: run.jobId, status: { $in: ['ready', 'active'] }, $or: [{ nextRunAt: { $gt: nextRunAt } }, { nextRunAt: { $exists: false } }] }, {
-        $set: { nextRunAt }, $push: { events: { at: now, action: 'link_discovery_retry_scheduled', note: 'No verified opportunity; retry discovery in 30 minutes within the existing budget.' } },
+      const nextRunAt = nextScheduledAt(retryDesign.data.schedule, now);
+      if (!nextRunAt) return;
+      await Job.updateOne({ _id: run.jobId, status: { $in: ['ready', 'active'] } }, {
+        $set: { nextRunAt }, $push: { events: { at: now, action: 'link_discovery_deferred', note: 'Bounded discovery finished without a verified opportunity. Continue at the next scheduled check; no automatic paid research retry.' } },
       });
     }
   };
@@ -403,10 +404,12 @@ export async function executeJobRun(runId: string): Promise<void> {
   const org = String(job.organizationId);
   const settings = await readEngineSettings(org);
   const level = job.level ?? settings.defaultCostLevel;
+  const freeResearch = activeDesign.skill === 'link_building';
+  const maxWorkCalls = freeResearch ? LINK_WORK_CALLS : MAX_WORK_CALLS;
   const models = await listAvailableModels();
   // Writing a persona is writing, not code research: it should pick (and be pinned as) a chat model.
   const workNeed = activeDesign.skill === 'brand_voice' ? 'write' : 'research';
-  const [work, review] = await Promise.all([selectModel(org, workNeed, level, { models, settings }), selectModel(org, 'review', level, { models, settings })]);
+  const [work, review] = await Promise.all([selectModel(org, workNeed, freeResearch ? 'free' : level, { models: freeResearch ? models.filter(model => model.free) : models, settings }), selectModel(org, 'review', freeResearch && level !== 'free' ? 'low' : level, { models, settings })]);
   const worker = work.primary;
   if (!worker) return fail('No model is available for this job.');
 
@@ -506,7 +509,8 @@ export async function executeJobRun(runId: string): Promise<void> {
 
   let workCalls = 0;
   const doWork = async (choice: typeof worker, correction?: string, researchRetry = false, compact = false) => {
-    if (workCalls >= MAX_WORK_CALLS) return { requestId: 'attempt-limit', role: 'status' as const, text: `Stopped after ${MAX_WORK_CALLS} work calls. ${modelPath.filter((step) => step.error).slice(-2).map((step) => `${step.model}: ${step.error}`).join(' ') || 'No more work calls are allowed for this run.'}` };
+    if (freeResearch && !choice.free) return { requestId: 'free-research-only', role: 'status' as const, text: 'Link discovery uses free research models only; paid research escalation is disabled.' };
+    if (workCalls >= maxWorkCalls) return { requestId: 'attempt-limit', role: 'status' as const, text: `Stopped after ${maxWorkCalls} work calls. ${modelPath.filter((step) => step.error).slice(-2).map((step) => `${step.model}: ${step.error}`).join(' ') || 'No more work calls are allowed for this run.'}` };
     workCalls += 1;
     onProgress(compact ? `Retrying within ${shortModel(choice.model)}'s context limit` : correction ? `${researchRetry ? 'Re-researching' : 'Fixing the result format'} with ${shortModel(choice.model)}` : `Researching with ${shortModel(choice.model)}`);
     usedModels.push(choice.model);
@@ -548,7 +552,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     // retrying one unhealthy Rogly deployment. Refresh LiteLLM's live model list, remove the
     // failed binding for this run, and let the normal quality router choose another free model.
     const attemptedBindings = new Set<string>();
-    while (retryableProviderFailure(turn) && workCalls < MAX_WORK_CALLS) {
+    while (retryableProviderFailure(turn) && workCalls < maxWorkCalls) {
       attemptedBindings.add(`${activeWorker.profileId}:${activeWorker.model}`);
       const refreshCatalog = /httpStatus=5\d\d\b|HTTP 5\d\d\b/i.test(`${turn.debugHint ?? ''} ${turn.text}`);
       const fresh = await listAvailableModels({ force: refreshCatalog }).catch(() => models);
@@ -556,11 +560,11 @@ export async function executeJobRun(runId: string): Promise<void> {
       if (creditFailure) exhaustedProfiles.add(activeWorker.profileId);
       // Credit errors affect the entire credential, not just its selected model.
       const candidates = fresh.filter((model) => !exhaustedProfiles.has(model.profileId)
-        && !attemptedBindings.has(`${model.profileId}:${model.model}`));
-      const directOpenAI = creditFailure ? candidates.filter((model) => model.provider === 'openai') : [];
+        && (!freeResearch || model.free) && !attemptedBindings.has(`${model.profileId}:${model.model}`));
+      const directOpenAI = creditFailure && !freeResearch ? candidates.filter((model) => model.provider === 'openai') : [];
       const alternate = (directOpenAI.length
         ? (await selectModel(org, workNeed, level, { models: directOpenAI, settings })).primary
-        : null) ?? (await selectModel(org, workNeed, level, { models: candidates, settings })).primary;
+        : null) ?? (await selectModel(org, workNeed, freeResearch ? 'free' : level, { models: freeResearch ? candidates.filter(model => model.free) : candidates, settings })).primary;
       if (!alternate || exhaustedProfiles.has(alternate.profileId) || attemptedBindings.has(`${alternate.profileId}:${alternate.model}`)) break;
       if (alternate) {
         onProgress(`${shortModel(activeWorker.model)} ${creditFailure ? 'has insufficient provider credits' : 'did not complete'}; switching to ${shortModel(alternate.model)}`);
@@ -574,7 +578,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     // A local admission failure affects every provider; changing models cannot resolve it.
     const admissionBlocked = turn.role !== 'assistant' && /AI budget cannot reserve|AI budget scope is unavailable|AI admission failed|Paid chat needs processing|Enable Remote connection and Processing/.test(turn.text);
     // A free worker that fails may retry on the level's paid model, as elsewhere in the engine.
-    if (turn.role !== 'assistant' && !admissionBlocked && work.fallback && !exhaustedProfiles.has(work.fallback.profileId) && work.fallback.profileId !== activeWorker.profileId) { activeWorker = work.fallback; turn = await doWork(activeWorker); }
+    if (!freeResearch && turn.role !== 'assistant' && !admissionBlocked && work.fallback && !exhaustedProfiles.has(work.fallback.profileId) && work.fallback.profileId !== activeWorker.profileId) { activeWorker = work.fallback; turn = await doWork(activeWorker); }
     if (turn.role !== 'assistant') return void (await fail([turn.text, ...modelPath.filter((step) => step.error && step.error !== turn.text).slice(-1).map((step) => `${step.model}: ${step.error}`)].join(' '), { costMicros: cost, models: usedModels }));
     let parsed = parseJobOutput(turn.text, activeDesign.skill);
     if (!parsed.success) {
@@ -583,18 +587,9 @@ export async function executeJobRun(runId: string): Promise<void> {
       if (again.role !== 'assistant') return void (await fail(again.text, { costMicros: cost, models: usedModels }));
       parsed = parseJobOutput(again.text, activeDesign.skill);
     }
-    if (!parsed.success && activeDesign.skill === 'link_building' && workCalls < MAX_WORK_CALLS) {
-      const direct = level === 'free' ? [] : models.filter(model => model.provider === 'openai' && !exhaustedProfiles.has(model.profileId));
-      const alternate = (direct.length ? (await selectModel(org, workNeed, level, { models: direct, settings })).primary : null) ?? work.fallback;
-      if (alternate) {
-        activeWorker = alternate;
-        const retry = await doWork(activeWorker, 'The first researcher did not return usable JSON. Start from the supplied directory queue. Verify one eligible, free listing with a public external website link. A legitimate general directory with a suitable category is allowed. Use actual page text, current rules and exact submission steps. Return the complete records/summary/gaps JSON.', true);
-        if (retry.role === 'assistant') parsed = parseJobOutput(retry.text, activeDesign.skill);
-      }
-    }
     if (!parsed.success) return void (await fail(`The model's response could not be read after a formatting retry: ${parsed.error.issues.map((issue) => `${issue.path.join('.') || 'response'}: ${issue.message}`).join('; ')}. No result was saved; retry the run.`, { costMicros: cost, models: usedModels }));
     let output = parsed.data;
-    if (activeDesign.skill === 'casino_discovery' && workCalls < MAX_WORK_CALLS && (!output.records.length || output.records.some(record => !casinoResearchSchema.safeParse(record.values).success))) {
+    if (activeDesign.skill === 'casino_discovery' && workCalls < maxWorkCalls && (!output.records.length || output.records.some(record => !casinoResearchSchema.safeParse(record.values).success))) {
       const direct = level === 'free' ? [] : models.filter(model => model.provider === 'openai' && !exhaustedProfiles.has(model.profileId));
       const alternate = (direct.length ? (await selectModel(org, workNeed, level, { models: direct, settings })).primary : null) ?? work.fallback ?? activeWorker;
       activeWorker = alternate;
@@ -642,14 +637,20 @@ export async function executeJobRun(runId: string): Promise<void> {
       // The write-up can be convincing and still wrong: Nucleas opens the real page and checks it.
       const judge: Judge = async (input) => {
         const prompt = judgePrompt(input);
-        const answer = await askEngine({ organizationId: org, userId: viewer.userId, need: 'utility', level, ...prompt, maxTokens: 400, signal: AbortSignal.timeout(45_000) });
-        const verdict = answer ? (extractJson(answer.text) as { verdict?: unknown; reason?: unknown } | null) : null;
-        return verdict && (verdict.verdict === 'pass' || verdict.verdict === 'fail') ? { verdict: verdict.verdict, reason: String(verdict.reason ?? '').slice(0, 300) } : null;
+        const pick = await selectModel(org, 'review', 'free', { models: models.filter(model => model.free && !exhaustedProfiles.has(model.profileId)), settings });
+        if (!pick.primary?.free) return null;
+        const choice = pick.primary;
+        const answer = await attemptCompanyCredentialChat({ organizationId: org, projectId: repo?.projectId ?? assistantLedgerProjectId(org), userId: viewer.userId, systemPrompt: prompt.system, userText: prompt.user, priorTurns: [], modelProfileId: choice.profileId, model: choice.model, includeRepoTools: false, includeImageTool: false, toolProfile: 'none', forcePlain: true, stopOnUpstreamFailure: true, maxOutputTokensOverride: 500, signal: AbortSignal.timeout(45000) });
+        cost += answer.costMicros ?? 0;
+        usedModels.push(choice.model);
+        recordStep('review', 'Placement eligibility check', choice, 'auto', false, answer.costMicros ?? null, answer.role === 'assistant' ? undefined : answer.text);
+        const verdict = answer.role === 'assistant' ? (extractJson(answer.text) as { verdict?: unknown; reason?: unknown } | null) : null;
+        return verdict && (verdict.verdict === 'pass' || verdict.verdict === 'fail' || verdict.verdict === 'unverified') ? { verdict: verdict.verdict, reason: String(verdict.reason ?? '').slice(0, 300) } : null;
       };
       const excluded = await missingLinkOpportunityUrls(job.organizationId, job.companyId, output.records.map((record) => String(record.values.opportunity_url ?? '')));
       const found = await Promise.all(output.records.map((record) => excluded.has(normalizeUrl(record.values.opportunity_url) ?? '')
         ? Promise.resolve({ hard: [`${record.values.opportunity_url} was previously confirmed nonexistent and is permanently excluded. Find a different page.`], soft: [], missing: true })
-        : verifyOpportunity({ url: String(record.values.opportunity_url ?? ''), evidence: String(record.values.relevance_evidence ?? ''), claimedType: String(record.values.opportunity_type ?? ''), requirements: String(record.values.requirements ?? ''), company: { name: profile.name, description: profile.description } }, { judge })));
+        : verifyOpportunity({ url: String(record.values.opportunity_url ?? ''), evidence: String(record.values.relevance_evidence ?? ''), claimedType: String(record.values.opportunity_type ?? ''), requirements: String(record.values.requirements ?? ''), supportingUrls: record.sources, company: { name: profile.name, description: profile.description } }, { judge })));
       for (const [index, result] of found.entries()) {
         const rejected = result.hard.filter(problem => /Independent page check failed/.test(problem));
         if (rejected.length && /directory|profile/i.test(String(output.records[index].values.opportunity_type ?? ''))) await rememberProspectOutcome(job, String(output.records[index].values.opportunity_url ?? ''), rejected.join(' '), 'ineligible');
@@ -666,26 +667,18 @@ export async function executeJobRun(runId: string): Promise<void> {
       };
       let rounds = 0;
       let failedCheck = await runLinkChecks();
-      while (failedCheck && workCalls < MAX_WORK_CALLS) {
+      while (failedCheck && workCalls < maxWorkCalls) {
         rounds += 1;
         prospectContext = await linkProspectContext(job).catch(() => prospectContext);
-        if (rounds === 1 && level !== 'free') {
-          const direct = models.filter(model => model.provider === 'openai' && !exhaustedProfiles.has(model.profileId));
-          if (direct.length) activeWorker = (await selectModel(org, workNeed, level, { models: direct, settings })).primary ?? activeWorker;
-        }
-        // Repeated unsupported answers need a different researcher when the configured fallback is available.
-        if (rounds === 2 && !models.some(model => model.profileId === activeWorker.profileId && model.provider === 'openai') && work.fallback && work.fallback.profileId !== activeWorker.profileId && !exhaustedProfiles.has(work.fallback.profileId)) {
-          activeWorker = work.fallback;
-        }
         await progress(run._id, owner, `A recommendation failed validation; researching a verified replacement (attempt ${rounds})`, { stage: 'validating', percent: Math.min(80, 70 + rounds * 2) });
         const wrong = issues;
         const retry = await doWork(activeWorker, `These recommended pages failed a live check of the real page:\n${wrong.map((issue) => `- ${issue.problem}`).join('\n')}\nResearch again with tools. Replace each failed recommendation with a different opportunity whose page you opened and read in this run: it must load, be an independent third-party site, show a free self-service way to add a link, and serve this company's audience. Put at least one exact quotation from that page in the relevance evidence. Do not guess addresses. Return only the required JSON.`, true);
         if (retryableProviderFailure(retry)) {
           exhaustedProfiles.add(activeWorker.profileId);
           const candidates = models.filter((model) => !exhaustedProfiles.has(model.profileId));
-          const direct = candidates.filter((model) => model.provider === 'openai');
+          const direct = freeResearch ? [] : candidates.filter((model) => model.provider === 'openai');
           const replacement = (direct.length ? (await selectModel(org, workNeed, level, { models: direct, settings })).primary : null)
-            ?? (await selectModel(org, workNeed, level, { models: candidates, settings })).primary;
+            ?? (await selectModel(org, workNeed, freeResearch ? 'free' : level, { models: freeResearch ? candidates.filter(model => model.free) : candidates, settings })).primary;
           if (replacement) activeWorker = replacement;
           continue;
         }
@@ -718,7 +711,19 @@ export async function executeJobRun(runId: string): Promise<void> {
     }
     const attemptedReviews = new Set<string>();
     let reviewCalls = 0;
-    while (review.primary && reviewCalls < MAX_REVIEW_CALLS) {
+    const reviewUserText = freeResearch
+      ? [`Company: ${profile.name}. ${profile.description ?? ''}`, 'Check this sourced directory/forum recommendation for truthful eligibility, a free public link-placement path and useful submission copy. General directories with suitable categories are allowed. Do not invent prohibitions. Authority and metrics may be unknown.', `Result: ${JSON.stringify(output).slice(0, 7000)}`, `Checks: ${JSON.stringify(issues).slice(0, 1000)}`].join('\n')
+      : [`# Instructions\n${activeDesign.instructions}`, voiceContext, marketingPlan ? `# Approved Marketing Plan\n${marketingPlanContext(marketingPlan)}` : seoBrief ? `# Approved legacy SEO brief\n${seoBriefContext(seoBrief)}` : '', `# Source policy\n${activeDesign.sourcePolicy}`, `# Result\n${JSON.stringify(output).slice(0, 30000)}`, issues.length ? `# Problems found by code\n${issues.map((i) => `- ${i.problem}`).join('\n')}` : ''].join('\n\n');
+    while (review.primary && (!freeResearch || issues.length === 0) && reviewCalls < (freeResearch ? 2 : MAX_REVIEW_CALLS)) {
+      if (freeResearch) {
+        const prompt = reviewerPrompt() + reviewUserText;
+        const allowed = models.filter(model => !exhaustedProfiles.has(model.profileId) && !attemptedReviews.has(`${model.profileId}:${model.model}`) && (level !== 'free' || model.free) && affordableLinkReview(model, prompt, 20000 - cost));
+        const selected = await selectModel(org, 'review', level === 'free' ? 'free' : 'low', { models: allowed, settings });
+        if (!selected.primary) break;
+        const priced = allowed.find(model => model.profileId === selected.primary!.profileId && model.model === selected.primary!.model);
+        if (!selected.primary.free && (!priced || !affordableLinkReview(priced, prompt, 20000 - cost))) break;
+        Object.assign(review, selected);
+      }
       reviewCalls += 1;
       attemptedReviews.add(`${review.primary.profileId}:${review.primary.model}`);
       await progress(run._id, owner, `Independent review with ${shortModel(review.primary.model)}`, { stage: 'reviewing', percent: 84 });
@@ -727,7 +732,7 @@ export async function executeJobRun(runId: string): Promise<void> {
         organizationId: org,
         projectId: repo?.projectId ?? assistantLedgerProjectId(org),
         userId: viewer.userId,
-        userText: [`# Instructions\n${activeDesign.instructions}`, voiceContext, marketingPlan ? `# Approved Marketing Plan\n${marketingPlanContext(marketingPlan)}` : seoBrief ? `# Approved legacy SEO brief\n${seoBriefContext(seoBrief)}` : '', `# Source policy\n${activeDesign.sourcePolicy}`, `# Result\n${JSON.stringify(output).slice(0, 30000)}`, issues.length ? `# Problems found by code\n${issues.map((i) => `- ${i.problem}`).join('\n')}` : ''].join('\n\n'),
+        userText: reviewUserText,
         priorTurns: [],
         modelProfileId: review.primary.profileId,
         model: review.primary.model,
@@ -737,7 +742,7 @@ export async function executeJobRun(runId: string): Promise<void> {
         toolProfile: 'none',
         forcePlain: true,
         stopOnUpstreamFailure: true,
-        maxOutputTokensOverride: 2000,
+        maxOutputTokensOverride: freeResearch ? LINK_REVIEW_TOKENS : 2000,
       });
       cost += reviewTurn.costMicros ?? 0;
       recordStep('review', 'Independent review', review.primary, review.source === 'pinned' ? 'pinned' : 'auto', reviewCalls > 1, reviewTurn.costMicros ?? null, reviewTurn.role === 'assistant' ? undefined : reviewTurn.text);
@@ -746,7 +751,7 @@ export async function executeJobRun(runId: string): Promise<void> {
         const creditFailure = /httpStatus=(401|402|403|429)\b|HTTP (401|402|403|429)\b/i.test(`${reviewTurn.debugHint ?? ''} ${reviewTurn.text}`);
         if (creditFailure) exhaustedProfiles.add(review.primary.profileId);
         const candidates = models.filter((model) => !exhaustedProfiles.has(model.profileId) && !attemptedReviews.has(`${model.profileId}:${model.model}`));
-        const directOpenAI = creditFailure ? candidates.filter((model) => model.provider === 'openai') : [];
+        const directOpenAI = creditFailure && !freeResearch ? candidates.filter((model) => model.provider === 'openai') : [];
         const replacement = (directOpenAI.length ? (await selectModel(org, 'review', level, { models: directOpenAI, settings })).primary : null)
           ?? (await selectModel(org, 'review', level, { models: candidates, settings })).primary;
         if (replacement && !exhaustedProfiles.has(replacement.profileId) && !attemptedReviews.has(`${replacement.profileId}:${replacement.model}`)) {
@@ -809,6 +814,11 @@ export async function executeJobRun(runId: string): Promise<void> {
         output,
         approved: status === 'completed',
       });
+      // A successful manual retry satisfies the failed scheduled run; retire its earlier retry timer.
+      if (!run.dryRun && clean && verdict?.verdict === 'pass' && activeDesign.schedule.kind !== 'once') {
+        const nextRunAt = nextScheduledAt(activeDesign.schedule, new Date());
+        if (nextRunAt) await Job.updateOne({ _id: job._id, status: { $in: ['active', 'ready'] }, nextRunAt: { $lt: nextRunAt } }, { $set: { nextRunAt } });
+      }
       // A clean, independently reviewed sample proves the recurring skill can run. Keep its
       // recommendation pending for a person, but do not make that decision a scheduling lock.
       if (run.dryRun && clean && verdict?.verdict === 'pass' && activeDesign.schedule.kind !== 'once') {

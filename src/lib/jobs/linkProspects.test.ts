@@ -24,9 +24,10 @@ it('imports source provenance and advances past checked leads instead of startin
   expect((await LinkProspect.findOne({ ...scope, domain: 'webwiki.com' }).lean())?.sources).toHaveLength(2);
 });
 it('remembers company-specific ineligibility without excluding another company', async () => {
-  await rememberProspectOutcome(scope, 'https://itch.io/', 'This company cannot use the creator-upload placement.', 'ineligible');
+  const job = { ...scope, _id: new Types.ObjectId(), lastRunAt: new Date(), status: 'active' };
+  await rememberProspectOutcome(job, 'https://itch.io/', 'This company cannot use the creator-upload placement.', 'ineligible');
   const records = [{ values: { opportunity_url: 'https://itch.io/games', opportunity_type: 'Directory' } }];
-  expect(await priorPlacementProblems(scope, records)).toHaveLength(1);
+  expect(await priorPlacementProblems(job, records)).toHaveLength(1);
   expect(await priorPlacementProblems({ ...scope, companyId: new Types.ObjectId() }, records)).toEqual([]);
 });
 it('deduplicates directory placements across jobs while allowing different forum threads', async () => {

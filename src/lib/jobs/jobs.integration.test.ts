@@ -366,12 +366,12 @@ describe('approving and the dry run', () => {
       strategy_evidence: 'The approved strategy prioritizes the games directory and this resource serves the same player audience.',
     }, sources: [url] }] });
     mocks.chat.mockImplementation(async (input: { systemPrompt: string }) => ({ requestId: 'test', role: 'assistant', costMicros: 0,
-      text: input.systemPrompt.startsWith('You check one run') ? '{"verdict":"pass","notes":"Verified."}' : ++calls === 2 ? 'Malformed replacement, no JSON.' : result(calls === 1 ? 'https://directory.example/missing/' : 'https://directory.example/real') }));
+      text: input.systemPrompt.startsWith('You check one run') ? '{"verdict":"pass","notes":"Verified."}' : result(++calls === 1 ? 'https://directory.example/missing/' : 'https://directory.example/real') }));
     mocks.verify.mockResolvedValueOnce({ hard: ['HTTP 404'], soft: [], missing: true }).mockResolvedValue({ hard: [], soft: [] });
     const approved = await approveJob(admin, job.id, { completion: 'review' });
     await executeJobRun(approved.dryRunId!);
     expect(await LinkOpportunity.findOne({ opportunityUrl: 'https://directory.example/missing' }).lean()).toMatchObject({ status: 'nonexistent' });
-    expect(mocks.chat.mock.calls.slice(0, 3).map(([input]) => input.model)).toEqual(['first-researcher', 'first-researcher', 'fallback-researcher']);
+    expect(mocks.chat.mock.calls.slice(0, 2).map(([input]) => input.model)).toEqual(['first-researcher', 'first-researcher']);
     expect(mocks.chat.mock.calls.find(([input]) => String(input.systemPrompt).startsWith('You carry out one run'))?.[0].userText.slice(0, 1000)).toContain('UNVERIFIED_DIRECTORY_QUEUE_MARKER');
     expect(await LinkOpportunity.countDocuments({ status: 'recommended' })).toBe(1);
     expect((await JobRun.findById(approved.dryRunId).lean())?.output.records[0].values.opportunity_url).toBe('https://directory.example/real');
@@ -380,7 +380,17 @@ describe('approving and the dry run', () => {
     expect(await LinkOpportunity.countDocuments({ status: 'recommended' })).toBe(1);
   });
 
-  it('keeps retrying discovery after repeated failures without delivering dead pages', async () => {
+  it('never escalates malformed link research to a paid model and stops after two free attempts', async () => {
+    const job = await proposed({ ...DESIGN, skill: 'link_building' });
+    mocks.select.mockImplementation(async (_org: string, need: string) => ({ primary: { profileId: (need === 'review' ? 'p' : 'w').repeat(24), model: need === 'review' ? 'paid-reviewer' : 'free-researcher', free: need !== 'review', label: 'Test' }, fallback: { profileId: 'f'.repeat(24), model: 'paid-researcher', free: false, label: 'Paid fallback' } }));
+    mocks.chat.mockResolvedValue({ requestId: 'bad', role: 'assistant', text: 'No valid result JSON.', costMicros: 0 });
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    expect(mocks.chat.mock.calls.map(([input]) => input.model)).toEqual(['free-researcher', 'free-researcher']);
+    expect(await JobRun.findById(approved.dryRunId).lean()).toMatchObject({ status: 'failed', costMicros: 0 });
+  });
+
+  it('bounds failed discovery and waits for the next scheduled check without delivering dead pages', async () => {
     const job = await proposed({ ...DESIGN, skill: 'link_building', schedule: { kind: 'daily', time: '09:00', timezone: 'UTC' } });
     await Job.updateOne({ _id: job.id }, { $set: { status: 'active', nextRunAt: new Date(Date.now() + 86400000) } });
     const values = { ...JSON.parse(GOOD).records[0].values, opportunity_url: 'https://directory.example/missing', relevance_score: 90,
@@ -396,14 +406,16 @@ describe('approving and the dry run', () => {
       expect(run).toMatchObject({ status: 'failed', error: expect.stringContaining('No verified link-building opportunity') });
       expect(run?.output).toBeUndefined();
       const parent = await Job.findById(job.id).lean();
-      expect(parent!.nextRunAt!.getTime() - Date.now()).toBeGreaterThan(1700000);
-      expect(parent!.nextRunAt!.getTime() - Date.now()).toBeLessThan(1900000);
+      expect(parent!.nextRunAt!.getTime() - Date.now()).toBeGreaterThan(0);
+      expect(parent!.nextRunAt!.getTime() - Date.now()).toBeLessThanOrEqual(86400000);
+      expect(parent!.nextRunAt!.toISOString()).toMatch(/T09:00:00\.000Z$/);
     }
     expect(await LinkOpportunity.countDocuments({ status: 'recommended' })).toBe(0);
     expect(await LinkOpportunity.countDocuments({ status: 'nonexistent' })).toBe(1);
     expect(mocks.verify).toHaveBeenCalledTimes(1);
   });
   it('tracks link recommendations through approval and submission with feedback history', async () => {
+    mocks.models.mockResolvedValue([{ profileId: 'r'.repeat(24), model: 'gpt-6-sol', free: false, blendedPricePer1M: 0.01 }]);
     const config = { projectId, schedule: { kind: 'daily', time: '09:00', timezone: 'America/Chicago' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
     const created = await createTemplateJob(admin, { companyId, template: 'link_building', config });
     if (!created.ok) throw new Error(created.error);
@@ -455,6 +467,7 @@ describe('approving and the dry run', () => {
   });
 
   it('keeps recurring link building scheduled while earlier recommendations await review', async () => {
+    mocks.models.mockResolvedValue([{ profileId: 'r'.repeat(24), model: 'gpt-6-sol', free: false, blendedPricePer1M: 0.01 }]);
     const config = { projectId, schedule: { kind: 'daily' as const, time: '09:00', timezone: 'UTC' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
     const created = await createTemplateJob(admin, { companyId, template: 'link_building', config });
     if (!created.ok) throw new Error(created.error);

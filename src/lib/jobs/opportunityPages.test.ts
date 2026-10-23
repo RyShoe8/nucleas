@@ -83,4 +83,17 @@ describe('verifying a recommended opportunity', () => {
     expect(prompt.user).toContain(PAGE.text);
     expect(prompt.user).toContain('Frugal Gambler');
   });
+  it('keeps uncertain eligibility out of permanent exclusions and reads official supporting policy pages', async () => {
+    const policy = 'https://directory.example/policy';
+    const opened: string[] = [];
+    const read: ReadPage = async url => { opened.push(url); return { ok: true, page: { ...PAGE, finalUrl: url, text: url === policy ? 'Free website submissions in our Games category are accepted.' : PAGE.text } }; };
+    let supporting: PageReading[] = [];
+    const result = await verifyOpportunity({ url: URL1, evidence: GOOD_EVIDENCE, claimedType: 'directory', company, supportingUrls: [policy, 'https://unrelated.example/claims'] }, { read, judge: async input => { supporting = input.supporting ?? []; return { verdict: 'unverified', reason: 'The listing rules need another check.' }; } });
+    expect(result.hard).toEqual([]);
+    expect(result.soft[0]).toContain('unverified');
+    expect(result.missing).not.toBe(true);
+    expect(opened).toContain(policy);
+    expect(opened).not.toContain('https://unrelated.example/claims');
+    expect(supporting[0].text).toContain('Games category');
+  });
 });
