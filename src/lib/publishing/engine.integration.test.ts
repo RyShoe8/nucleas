@@ -20,7 +20,7 @@ import User from '@/lib/models/User';
 import { WatchItem } from '@/lib/models/Watch';
 import type { AdminBrowser } from './admin';
 import { PublishError } from './publishers';
-import { queueExistingAdminItem, markPosted, postDeliveryNow, publishingView, recoverStuckDeliveries, runPublishing, skipDelivery, takeBaseline, type PublishDeps } from './engine';
+import { queueExistingAdminItem, editDelivery, markPosted, postDeliveryNow, publishingView, recoverStuckDeliveries, runPublishing, skipDelivery, takeBaseline, type PublishDeps } from './engine';
 import type { PublishingConfig } from './config';
 import { redditDealBlock } from './redditDeals';
 
@@ -305,6 +305,33 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
     expect(saved.map((v) => [v.status, v.facebook, v.bluesky])).toEqual([
       ['published', false, false], ['published', false, false], ['published', true, true],
     ]);
+  });
+
+  it('saves reviewed admin values and posts those edits without regenerating them', async () => {
+    const job = await adminJob();
+    await Job.updateOne({ _id: job._id }, { $set: { 'publishing.admin.fields': [...fields, { key: 'title', label: 'Title', type: 'text', selector: '#title', required: true }], 'publishing.adminFieldRules': [{ field: 'offer', value: 'Generated offer' }] } });
+    const mail = await email('offers@example.com', 'Editable deal', 20, 25);
+    const item = await PublishItem.create({ organizationId: org, companyId, jobId: job._id, key: String(mail._id), status: 'processed' });
+    const card = await PublishDelivery.create({ organizationId: org, companyId, jobId: job._id, itemId: item._id, platform: 'admin', mode: 'manual', status: 'ready', body: 'Deal', values: { casino: 'Original casino', offer: 'Original offer' }, screenshot: 'old-preview' });
+    expect(await editDelivery(job, String(card._id), { values: { title: 'Corrected title', offer: 'Corrected terms' } })).toEqual({ ok: true });
+    expect(await PublishDelivery.findById(card._id).select('+screenshot').lean()).toMatchObject({ valuesReviewed: true, values: { casino: 'Original casino', offer: 'Corrected terms' } });
+    expect((await PublishDelivery.findById(card._id).select('+screenshot').lean())?.screenshot).toBeUndefined();
+    const view = await publishingView((await Job.findById(job._id).lean())!);
+    expect(view?.ready[0].editableFields?.map(field => field.key)).toEqual(['offer', 'title']);
+    expect(await postDeliveryNow(job.toObject(), String(card._id), String(userId), adminDeps())).toEqual({ ok: true });
+    expect(saved).toEqual([{ title: 'Corrected title', casino: 'Original casino', offer: 'Corrected terms' }]);
+    expect(await editDelivery(job, String(card._id), { values: { casino: 'Late edit', offer: 'Too late' } })).toMatchObject({ ok: false, status: 409 });
+  });
+
+  it('rejects unknown admin fields, missing required values and another job’s card', async () => {
+    const job = await adminJob();
+    const item = await PublishItem.create({ organizationId: org, companyId, jobId: job._id, key: 'validated-review', status: 'processed' });
+    const card = await PublishDelivery.create({ organizationId: org, companyId, jobId: job._id, itemId: item._id, platform: 'admin', mode: 'manual', status: 'ready', body: 'Deal', values: { casino: 'Original', offer: 'Original' } });
+    expect(await editDelivery(job, String(card._id), { values: { casino: 'Casino', offer: 'Offer', secret: 'not a form field' } })).toMatchObject({ ok: false, status: 400 });
+    expect(await editDelivery(job, String(card._id), { values: { casino: 'Different casino', offer: 'Offer' } })).toMatchObject({ ok: false, status: 400, error: expect.stringContaining('Casino cannot') });
+    expect(await editDelivery(job, String(card._id), { values: { casino: 'Casino' } })).toMatchObject({ ok: false, status: 400 });
+    expect(await editDelivery({ _id: new Types.ObjectId(), organizationId: org }, String(card._id), { values: { casino: 'Casino', offer: 'Offer' } })).toMatchObject({ ok: false, status: 409 });
+    expect((await PublishDelivery.findById(card._id).lean())?.values).toEqual({ casino: 'Original', offer: 'Original' });
   });
 
   it('blocks a previously queued recipient-only offer before any admin or social delivery', async () => {

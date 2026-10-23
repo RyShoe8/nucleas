@@ -39,11 +39,12 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
     const [body, setBody] = useState(delivery.body);
     const [marking, setMarking] = useState(false);
     const [postedUrl, setPostedUrl] = useState('');
+    const [fieldValues, setFieldValues] = useState<Record<string, string | boolean>>({});
 
     const run = async (label: string, payload: Record<string, unknown>) => {
         setBusy(label);
         setError(null);
-        const res = await act(jobId, { deliveryId: delivery.id, ...payload });
+        const res = await act(jobId, { deliveryId: delivery.id, ...payload }).catch(() => ({ error: 'Could not save this change. Check your connection and try again.', job: undefined }));
         setBusy(null);
         if (res.error || !res.job) return setError(res.error ?? 'Failed');
         setEditing(false);
@@ -86,7 +87,18 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
                     <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">{companyName ? `${companyName} · ` : ''}{delivery.itemTitle}</span>
                 </header>
                 {delivery.error ? <p className="rounded border border-amber-400/40 bg-amber-400/5 p-2 text-xs text-amber-300">{delivery.error}</p> : null}
-                <dl className="divide-y divide-border rounded border border-border">
+                {editing ? <form className="space-y-3" onSubmit={event => { event.preventDefault(); void run('edit', { action: 'edit_post', values: fieldValues }); }}>
+                    <p className="text-xs text-text-secondary">Save your changes before opening the form or adding the deal. Saved values are shared with the team and used when Nucleas adds it.</p>
+                    {delivery.fields?.filter(field => /\bcasino\b/i.test(field.label)).map(field => <p key={field.label} className="text-xs text-text-secondary">{field.label}: {field.value}</p>)}
+                    {(delivery.editableFields ?? []).map(field => <label key={field.key} className="block space-y-1">
+                        <span className="text-xs text-text-secondary">{field.label}{field.required ? ' *' : ''}</span>
+                        {field.type === 'checkbox' ? <input type="checkbox" checked={fieldValues[field.key] === true} onChange={event => setFieldValues({ ...fieldValues, [field.key]: event.target.checked })} />
+                            : field.options?.length ? <select className="ui-control w-full" required={field.required} value={String(fieldValues[field.key] ?? '')} onChange={event => setFieldValues({ ...fieldValues, [field.key]: event.target.value })}><option value="">Select…</option>{!field.options.some(option => option.value === String(fieldValues[field.key] ?? '')) && fieldValues[field.key] ? <option value={String(fieldValues[field.key])}>{String(fieldValues[field.key])}</option> : null}{field.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+                                : ['textarea', 'richtext'].includes(field.type) ? <textarea className="ui-control min-h-28 w-full" required={field.required} value={String(fieldValues[field.key] ?? '')} onChange={event => setFieldValues({ ...fieldValues, [field.key]: event.target.value })} />
+                                    : <input className="ui-control w-full" type={['number', 'date', 'datetime-local', 'time', 'url', 'email', 'tel'].includes(field.type) ? field.type : 'text'} step={field.type === 'number' ? 'any' : undefined} required={field.required} value={String(fieldValues[field.key] ?? '')} onChange={event => setFieldValues({ ...fieldValues, [field.key]: event.target.value })} />}
+                    </label>)}
+                    <div className="flex gap-2"><button type="submit" className="ui-button-primary" disabled={busy !== null}>{busy === 'edit' ? 'Saving…' : 'Save changes'}</button><button type="button" className="ui-button" disabled={busy !== null} onClick={() => setEditing(false)}>Cancel</button></div>
+                </form> : <dl className="divide-y divide-border rounded border border-border">
                     {(delivery.fields ?? []).map((f) => (
                         <div key={f.label} className="flex items-start gap-3 px-2 py-1.5">
                             <dt className="w-32 shrink-0 text-xs text-text-secondary">{f.label}</dt>
@@ -94,15 +106,15 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
                             <button type="button" className="shrink-0 text-[11px] text-text-secondary hover:text-text-primary" onClick={() => void copy(f.label, f.value)}>{copied === f.label ? 'Copied' : 'Copy'}</button>
                         </div>
                     ))}
-                </dl>
-                {delivery.screenshot ? (
+                </dl>}
+                {delivery.screenshot && !editing ? (
                     <details className="text-xs">
                         <summary className="cursor-pointer text-text-secondary">How Nucleas filled the form</summary>
                         {/* eslint-disable-next-line @next/next/no-img-element -- a screenshot taken by the browser worker */}
                         <img src={`data:image/jpeg;base64,${delivery.screenshot}`} alt="The admin form as Nucleas filled it" className="mt-2 max-h-[480px] w-full rounded border border-border object-contain object-top" />
                     </details>
                 ) : null}
-                {marking ? (
+                {!editing && (marking ? (
                     <div className="flex flex-wrap items-center gap-2">
                         <input className="ui-control min-w-0 flex-1" value={postedUrl} onChange={(e) => setPostedUrl(e.target.value)} placeholder="Link to the record (optional)" aria-label="Link to the record" />
                         <button type="button" className="ui-button-primary" disabled={busy !== null} onClick={() => void run('posted', { action: 'mark_posted', postedUrl })}>{busy === 'posted' ? 'Saving…' : 'Done'}</button>
@@ -113,10 +125,11 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
                         {formUrl ? <a href={formUrl} target="_blank" rel="noreferrer" className="ui-button">Open the form ↗</a> : null}
                         <button type="button" className="ui-button" disabled={busy !== null} onClick={() => void run('now', { action: 'post_now' })}>{busy === 'now' ? 'Adding…' : 'Add it for me'}</button>
                         <button type="button" className="ui-button-primary" onClick={() => setMarking(true)}>Mark as added</button>
+                        {delivery.editableFields?.length ? <button type="button" className="ui-button" disabled={busy !== null} onClick={() => { setFieldValues(Object.fromEntries(delivery.editableFields!.map(field => [field.key, field.value]))); setEditing(true); }}>Edit deal</button> : null}
                         <span className="flex-1" />
                         <button type="button" className="text-[11px] text-text-secondary hover:text-text-primary" disabled={busy !== null} onClick={() => window.confirm('Skip this one? Nobody will be asked to add it.') && void run('skip', { action: 'skip_post' })}>Skip</button>
                     </div>
-                )}
+                ))}
                 {copied === 'failed' ? <p className="text-[11px] text-red-400">Could not copy. Select the text and copy it by hand.</p> : null}
                 {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
             </article>

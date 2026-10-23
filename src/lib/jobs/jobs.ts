@@ -552,7 +552,7 @@ export async function publishingAction(viewer: CompanyViewer, id: string, action
     action === 'publishing_settings' ? await retryIdempotentWrite('publishing.settings', () => updatePublishingSettings(viewer, found.job, body.settings))
     : action === 'mark_posted' ? await markPosted(found.job, deliveryId, viewer.userId, typeof body.postedUrl === 'string' ? body.postedUrl : undefined)
     : action === 'skip_post' ? await skipDelivery(found.job, deliveryId, viewer.userId)
-    : action === 'edit_post' ? await editDelivery(found.job, deliveryId, { title: typeof body.title === 'string' ? body.title : undefined, body: typeof body.body === 'string' ? body.body : undefined })
+      : action === 'edit_post' ? await editDelivery(found.job, deliveryId, { title: typeof body.title === 'string' ? body.title : undefined, body: typeof body.body === 'string' ? body.body : undefined, values: body.values })
     : await postDeliveryNow(found.job, deliveryId, viewer.userId);
   if (!result.ok) return result;
   return retryDatabaseRead('publishing.refresh', () => done(viewer, id));

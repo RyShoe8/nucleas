@@ -281,8 +281,8 @@ function postInput(delivery: { body: string; link?: string | null; assets?: { ki
 type AdminPostOutcome = PostOutcome & { screenshot: string | null; warning?: string };
 
 /** Adds one record through the admin form; a changed form is learned again (and saved to the job) once. */
-async function postToAdmin(job: JobLike, config: PublishingConfig, values: Record<string, string | boolean>, facts: ItemFacts, context: DraftContext, write: Writer, deps: PublishDeps): Promise<AdminPostOutcome> {
-  values = applyAdminFieldRules(config, values, facts.dealValuePct, facts.link);
+async function postToAdmin(job: JobLike, config: PublishingConfig, values: Record<string, string | boolean>, facts: ItemFacts, context: DraftContext, write: Writer, deps: PublishDeps, reviewed = false): Promise<AdminPostOutcome> {
+  if (!reviewed) values = applyAdminFieldRules(config, values, facts.dealValuePct, facts.link);
   // Cards written before the end-date rule existed get it now, when "Add it for me" is used.
   if (config.admin && config.adminDefaultEndDays) values = withDefaultEndDate(config.admin.fields, values, config.adminDefaultEndDays);
   if (!config.admin) return { ok: false, error: new PublishError('rejected', 'This job has no admin form set up.'), screenshot: null };
@@ -299,6 +299,7 @@ async function postToAdmin(job: JobLike, config: PublishingConfig, values: Recor
     values,
     browser: deps.admin ?? workerAdminBrowser,
     refill: async (target) => {
+      if (reviewed) return Object.keys(values).every(key => target.fields.some(field => field.key === key)) ? values : null;
       const prepared = await prepareAdmin(target, config, facts, context, write);
       return prepared.written ? prepared.values ?? null : null;
     },
@@ -742,9 +743,35 @@ export async function skipDelivery(job: { _id: Types.ObjectId; organizationId: T
 }
 
 /** Edit a card's text before it is posted. */
-export async function editDelivery(job: { _id: Types.ObjectId; organizationId: Types.ObjectId }, deliveryId: string, change: { title?: string; body?: string }): Promise<DeliveryResult> {
+export async function editDelivery(job: { _id: Types.ObjectId; organizationId: Types.ObjectId }, deliveryId: string, change: { title?: string; body?: string; values?: unknown }): Promise<DeliveryResult> {
   const filter = deliveryFilter(job, deliveryId);
   if (!filter) return { ok: false, status: 404, error: 'Post not found.' };
+  if (change.values !== undefined) {
+    const [delivery, currentJob] = await Promise.all([PublishDelivery.findOne({ ...filter, status: 'ready' }).lean(), Job.findOne({ _id: job._id, organizationId: job.organizationId }).select('publishing').lean()]);
+    if (!delivery || delivery.platform !== 'admin') return { ok: false, status: 409, error: 'This admin card was already handled or is unavailable.' };
+    const config = currentJob ? readConfig(currentJob) : null;
+    if (!config?.admin || !change.values || typeof change.values !== 'object' || Array.isArray(change.values)) return { ok: false, status: 400, error: 'Valid admin fields are required.' };
+    const entries = Object.entries(change.values);
+    if (JSON.stringify(change.values).length > 100000) return { ok: false, status: 400, error: 'The edited fields are too large.' };
+    for (const [key, value] of entries) {
+      const field = config.admin.fields.find(field => field.key === key && field.type !== 'file');
+      if (!field || (typeof value !== 'string' && typeof value !== 'boolean')) return { ok: false, status: 400, error: 'An edited field is not supported by this form.' };
+      const text = String(value).trim();
+      if (text.length > 40000 || (field.type === 'checkbox' && typeof value !== 'boolean') || (field.type !== 'checkbox' && typeof value !== 'string')) return { ok: false, status: 400, error: `${field.label}: invalid value.` };
+      if (text && field.type === 'number' && !Number.isFinite(Number(text))) return { ok: false, status: 400, error: `${field.label}: enter a number.` };
+      if (text && field.type === 'url') { try { if (!['http:', 'https:'].includes(new URL(text).protocol)) throw new Error(); } catch { return { ok: false, status: 400, error: `${field.label}: enter a valid web URL.` }; } }
+      if (text && ['date','datetime-local'].includes(field.type) && (!/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?$/.test(text) || !Number.isFinite(Date.parse(text)))) return { ok: false, status: 400, error: `${field.label}: enter a valid date.` };
+      if (text && field.options?.length && !field.options.some(option => option.value === value)) return { ok: false, status: 400, error: `${field.label}: select one of the available choices.` };
+    }
+    const values = Object.fromEntries(entries);
+    for (const field of config.admin.fields.filter(field => /\bcasino\b/i.test(`${field.key.replaceAll('_', ' ')} ${field.label}`))) {
+      if (field.key in values && values[field.key] !== delivery.values?.[field.key]) return { ok: false, status: 400, error: 'Casino cannot be changed from the review panel.' };
+      if (delivery.values?.[field.key] !== undefined) values[field.key] = delivery.values[field.key];
+    }
+    for (const field of config.admin.fields) if (field.required && field.type !== 'checkbox' && field.type !== 'file' && !String(values[field.key] ?? '').trim()) return { ok: false, status: 400, error: `${field.label}: this field is required.` };
+    const saved = await PublishDelivery.updateOne({ ...filter, status: 'ready', updatedAt: delivery.updatedAt }, { $set: { values, valuesReviewed: true }, $unset: { screenshot: '', error: '' } });
+    return saved.modifiedCount ? { ok: true } : { ok: false, status: 409, error: 'This card changed. Refresh before editing it again.' };
+  }
   const body = change.body?.trim();
   if (body !== undefined && !body) return { ok: false, status: 400, error: 'The post cannot be empty.' };
   const set: Record<string, string> = {};
@@ -785,14 +812,14 @@ export async function postDeliveryNow(job: JobLike, deliveryId: string, userId: 
   const preparedDeps = candidate.platform === 'admin' && deps.adminSession === undefined
     ? { ...deps, adminSession: await retryDatabaseRead('publishing.admin-session', () => adminSessionFor(job.organizationId, String(job.companyId))) }
     : deps;
-  const delivery = await PublishDelivery.findOneAndUpdate({ ...filter, status: 'ready', platform: { $nin: MANUAL_ONLY } }, { $set: { status: 'publishing' } }, { new: true }).lean<{ _id: Types.ObjectId; platform: PublishPlatform; body: string; link?: string; assets?: { kind: string; url: string }[]; itemId: Types.ObjectId; values?: Record<string, string | boolean> }>();
+  const delivery = await PublishDelivery.findOneAndUpdate({ ...filter, status: 'ready', platform: { $nin: MANUAL_ONLY } }, { $set: { status: 'publishing' } }, { new: true }).lean<{ _id: Types.ObjectId; platform: PublishPlatform; body: string; link?: string; assets?: { kind: string; url: string }[]; itemId: Types.ObjectId; values?: Record<string, string | boolean>; valuesReviewed?: boolean }>();
   if (!delivery) return { ok: false, status: 409, error: 'This post cannot be posted automatically, or it was already handled.' };
   let outcome: PostOutcome & { screenshot?: string | null; warning?: string };
   if (delivery.platform === 'admin') {
     const config = socialConfig;
     const facts: ItemFacts = adminFacts ?? { title: item?.facts?.title ?? item?.title ?? '', description: item?.facts?.description ?? '', text: '', image: null, images: [], video: null, extra: [], link: delivery.link ?? null };
     outcome = config
-      ? await postToAdmin(job, config, delivery.values ?? {}, facts, { companyName: '', persona, subreddit: null }, deps.write ?? engineWriter(job), preparedDeps)
+      ? await postToAdmin(job, config, delivery.values ?? {}, facts, { companyName: '', persona, subreddit: null }, deps.write ?? engineWriter(job), preparedDeps, delivery.valuesReviewed)
       : { ok: false, error: new PublishError('rejected', 'This job’s settings are missing.') };
   } else {
     outcome = await postTo(job, delivery.platform, postInput(delivery, item?.facts ?? {}), deps);
@@ -835,6 +862,7 @@ export interface DeliveryView {
   createdAt: string;
   /** Admin records: each field as the form shows it, and the filled form (or the page after saving) as a JPEG. */
   fields: { label: string; value: string }[] | null;
+  editableFields?: { key: string; label: string; type: string; required: boolean; options?: { value: string; label: string }[]; value: string | boolean }[];
   screenshot: string | null;
 }
 
@@ -882,6 +910,7 @@ export async function publishingView(job: { _id: Types.ObjectId; publishing?: un
     error: d.error ?? null,
     createdAt: d.createdAt.toISOString(),
     fields: d.platform === 'admin' && config.admin ? valueLines(config.admin.fields, d.values ?? {}) : null,
+    ...(d.platform === 'admin' && config.admin ? { editableFields: config.admin.fields.filter(field => field.type !== 'file' && !/\bcasino\b/i.test(`${field.key.replaceAll('_', ' ')} ${field.label}`)).map(field => ({ key: field.key, label: /^(notes|description)$/i.test(field.label.trim()) ? `Body / ${field.label.toLowerCase()}` : field.label || field.key, type: field.type, required: field.required, options: field.options, value: d.values?.[field.key] ?? (field.type === 'checkbox' ? false : '') })) } : {}),
     screenshot: d.screenshot ?? null,
   });
   const raw = (job.publishing ?? {}) as { notes?: Record<string, string> };
