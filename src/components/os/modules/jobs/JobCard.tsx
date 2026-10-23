@@ -890,9 +890,10 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                 ) : null}
                 {!compact && job.canManage && canArchive ? (
                     <button type="button" className={BUTTON} disabled={busy !== null} onClick={() => void act('archive')}>
-                        {failedAttempt ? 'Clear failed job' : 'Archive'}
+                        Archive job
                     </button>
                 ) : null}
+                {!compact && job.canManage && canArchive ? <p className="w-full text-[11px] text-text-secondary">Archiving removes the entire job from this list and stops its scheduled runs.</p> : null}
                 {compact && onOpenJobs ? (
                     <button type="button" className={BUTTON} onClick={onOpenJobs}>
                         Open in Jobs
