@@ -206,7 +206,7 @@ export async function updateLinkOpportunity(
   if (input.liveLinkUrl && (!liveLinkUrl || !isSafePublicHttpsUrl(liveLinkUrl))) {
     return { ok: false, status: 400, error: 'The submitted page must be a safe public HTTPS URL.' };
   }
-  if ((status === 'submitted' || status === 'live') && !liveLinkUrl && !row.liveLinkUrl) {
+  if (status === 'live' && !liveLinkUrl && !row.liveLinkUrl) {
     return { ok: false, status: 400, error: 'Add the submitted or live page URL so Nucleas can verify it.' };
   }
   const now = new Date();
@@ -214,7 +214,7 @@ export async function updateLinkOpportunity(
   if (note) row.note = note;
   if (liveLinkUrl) row.liveLinkUrl = liveLinkUrl;
   if (status === 'submitted') row.submittedAt = now;
-  if (status === 'submitted' || status === 'live') row.nextVerificationAt = now;
+  if ((status === 'submitted' || status === 'live') && row.liveLinkUrl) row.nextVerificationAt = now;
   else row.nextVerificationAt = undefined;
   row.history.push({ at: now, status, userId: new Types.ObjectId(viewer.userId), ...(note ? { note } : {}) });
   await row.save();

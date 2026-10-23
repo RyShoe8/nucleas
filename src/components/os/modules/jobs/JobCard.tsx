@@ -615,9 +615,9 @@ function OpportunityTracker({ job, onChange }: { job: JobView; onChange: (j: Job
     const update = async (opportunity: LinkOpportunityView, status: LinkOpportunityStatus) => {
         let liveLinkUrl: string | undefined;
         if ((status === 'submitted' || status === 'live') && !opportunity.liveLinkUrl) {
-            const entered = window.prompt('Paste the submitted or live page URL so Nucleas can verify the link:');
-            if (!entered) return;
-            liveLinkUrl = entered;
+            const entered = window.prompt(status === 'submitted' ? 'Page URL (optional). Leave blank to mark submitted without link verification:' : 'Paste the live page URL so Nucleas can verify the link:');
+            if (entered === null || (status === 'live' && !entered.trim())) return;
+            liveLinkUrl = entered.trim() || undefined;
         }
         const note = status === 'rejected' || status === 'saved' || status === 'submission_rejected'
             ? window.prompt('Optional note — Nucleas will use this feedback in future recommendations:') ?? undefined
