@@ -12,4 +12,3 @@ Payload fields: name, slug, website_url, login_url, about (plain factual descrip
   safeguards: ['Human approval is required before adding or sharing any site.','Never recommend an existing, pending, added or rejected domain again.','Unknown required information blocks adding.','Prioritize verified affiliate/referral programs; never invent account-specific links.'], recommendedCompletion: 'review', findings: [], questions: [],
  };
 }
-
