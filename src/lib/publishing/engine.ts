@@ -3,7 +3,7 @@ import { slugifyTitle } from '@/lib/blog/slugify';
 import { retryDatabaseRead } from '@/lib/db/retryRead';
 import { recipientOnlyItem } from '@/lib/watches/offerEligibility';
 import { redditDealBlock, redditDealHistory, withRedditDealLock } from './redditDeals';
-import { dealStrengthPct } from '@/lib/watches/dealMetrics';
+import { dealStrengthPct, gameplayRewardNotPurchase } from '@/lib/watches/dealMetrics';
 import 'server-only';
 import { Types } from 'mongoose';
 import { Job, JobRun, type JobRunProgressStage } from '@/lib/models/Job';
@@ -86,6 +86,13 @@ interface ItemFacts {
   link: string | null;
 }
 
+function publicDealProblem(item: { bestDeal?: DealMetrics | null; subject?: string | null; text?: string | null; summary?: string | null; keyPoints?: { text?: string | null }[] | null }): string | null {
+  if (!item.bestDeal) return null;
+  if (recipientOnlyItem(item)) return 'This offer is restricted to its email recipient or account and cannot be shared publicly.';
+  if (gameplayRewardNotPurchase(item.bestDeal, [item.subject, item.text, item.summary, ...(item.keyPoints ?? []).map(point => point.text)].filter(Boolean).join('\n'))) return 'This is a gameplay reward, challenge or prize draw, not a guaranteed purchase deal. It cannot be published with purchase/bonus amounts.';
+  return null;
+}
+
 type JobLike = { _id: Types.ObjectId; organizationId: Types.ObjectId; companyId: Types.ObjectId; createdByUserId: Types.ObjectId; level?: CostLevel | null; publishing?: unknown };
 
 export function readConfig(job: { publishing?: unknown }): PublishingConfig | null {
@@ -113,7 +120,7 @@ async function listEntries(job: JobLike, config: PublishingConfig, deps: Publish
   let eligible = config.minimumSocialValuePct !== undefined && config.channels.some((c) => c.platform !== 'admin')
     ? rows.filter((r) => r.bestDeal && dealStrengthPct(r.bestDeal) > config.minimumSocialValuePct! / 100 + Number.EPSILON)
     : rows;
-  eligible = eligible.filter((row) => !row.bestDeal || !recipientOnlyItem(row));
+  eligible = eligible.filter((row) => !publicDealProblem(row));
   if (config.socialLinkTemplate && !config.channels.some((channel) => channel.platform === 'admin')) {
     const deliveries = await PublishDelivery.find({ organizationId: job.organizationId, companyId: job.companyId, platform: 'admin', status: 'posted', 'values.slug': { $type: 'string', $ne: '' } }).select('itemId').lean();
     const items = await PublishItem.find({ _id: { $in: deliveries.map((delivery) => delivery.itemId) }, organizationId: job.organizationId, companyId: job.companyId, key: { $in: eligible.map((row) => String(row._id)) } }).select('key').lean();
@@ -141,7 +148,8 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
     ContentWatch.findOne({ _id: new Types.ObjectId(config.source.watchId), organizationId: job.organizationId }).select('fields rank mode threshold minDiscountPct').lean(),
   ]);
   const fields = watch ? watchSettings(watch).fields : [];
-  if (item?.bestDeal && recipientOnlyItem(item)) throw new Error('Recipient-only offer: this deal is restricted to the email recipient or their account and cannot be published.');
+  const dealProblem = item ? publicDealProblem(item) : null;
+  if (dealProblem) throw new Error(dealProblem);
   let link = item?.link ?? entry.url;
   if (config.socialLinkTemplate && !config.channels.some((channel) => channel.platform === 'admin')) {
     const siblings = await PublishItem.find({ organizationId: job.organizationId, companyId: job.companyId, key: entry.key }).select('_id').lean();
@@ -721,7 +729,8 @@ export async function markPosted(job: { _id: Types.ObjectId; organizationId: Typ
     }
   }
   const candidate = await PublishDelivery.findOne({ ...filter, status: 'ready' }).lean();
-  if (candidate && await recipientOnlyDelivery(candidate)) return { ok: false, status: 409, error: 'This offer is restricted to its email recipient or account and cannot be shared publicly.' };
+  const dealProblem = candidate ? await deliveryDealProblem(candidate) : null;
+  if (dealProblem) return { ok: false, status: 409, error: dealProblem };
   const config = readConfig((await Job.findById(job._id).select('publishing').lean()) ?? {});
   const update = { $set: { status: 'posted', postedAt: new Date(), postedByUserId: new Types.ObjectId(userId), ...(url ? { postedUrl: url } : {}) }, $unset: { error: '' } };
   if (candidate?.platform === 'reddit' && config?.redditDealPolicy) {
@@ -792,11 +801,11 @@ export async function editDelivery(job: { _id: Types.ObjectId; organizationId: T
 }
 
 /** Post a ready card through the platform's API now (after an account is fixed, or instead of copying by hand). */
-async function recipientOnlyDelivery(delivery: { itemId: Types.ObjectId; organizationId: Types.ObjectId }): Promise<boolean> {
+async function deliveryDealProblem(delivery: { itemId: Types.ObjectId; organizationId: Types.ObjectId }): Promise<string | null> {
   const item = await PublishItem.findOne({ _id: delivery.itemId, organizationId: delivery.organizationId }).select('key').lean();
-  if (!item || !Types.ObjectId.isValid(item.key)) return false;
+  if (!item || !Types.ObjectId.isValid(item.key)) return null;
   const email = await WatchItem.findOne({ _id: item.key, organizationId: delivery.organizationId }).select('subject text summary keyPoints bestDeal').lean();
-  return Boolean(email?.bestDeal && recipientOnlyItem(email));
+  return email ? publicDealProblem(email) : null;
 }
 
 export async function postDeliveryNow(job: JobLike, deliveryId: string, userId: string, deps: PublishDeps = {}): Promise<DeliveryResult> {
@@ -811,7 +820,8 @@ export async function postDeliveryNow(job: JobLike, deliveryId: string, userId: 
     if (!email?.bestDeal || !(dealStrengthPct(email.bestDeal as DealMetrics) > socialConfig.minimumSocialValuePct / 100 + Number.EPSILON)) return { ok: false, status: 409, error: `This deal does not have confirmed value over ${socialConfig.minimumSocialValuePct}%; it cannot be posted to social.` };
   }
   if (!candidate) return { ok: false, status: 409, error: 'This post was already handled.' };
-  if (await recipientOnlyDelivery(candidate)) return { ok: false, status: 409, error: 'This offer is restricted to its email recipient or account and cannot be shared publicly.' };
+  const dealProblem = await deliveryDealProblem(candidate);
+  if (dealProblem) return { ok: false, status: 409, error: dealProblem };
   // Finish read-only preparation before claiming or making an external change.
   const item = await retryDatabaseRead('publishing.item', () => PublishItem.findById(candidate.itemId).select('facts title key').lean<{ key?: string; title?: string; facts?: { title?: string; description?: string } }>().exec());
   const adminFacts = candidate.platform === 'admin' && socialConfig?.source.type === 'mailbox' && item?.key

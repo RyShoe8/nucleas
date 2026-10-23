@@ -79,6 +79,7 @@ ${wanted
       `- deal: the promotional economics, or null when the email has no offer. ${units}
   - you_pay: what the customer pays today. null if unclear.
   - Login days, consecutive logins, spins and free plays are counts, never a purchase price. Login-only rewards with no stated monetary purchase have no paid-deal economics; return deal null.
+  - Gameplay rewards are NOT purchase offers: XP tiers, wagering/turnover targets, daily spin challenges, prize drops/pools, leaderboards and raffles return deal null unless a separate explicit purchase package guarantees the stated credit. A 0.20 SC minimum stake is not a purchase price; a 1 SC challenge reward or possible share of 5,000 SC is not purchased credit. Never calculate bonus value from these numbers or from uncertain prizes.
   - pay_unit: the unit of you_pay (USD when dollars).
   - baseline_value: for retail_list_vs_sale, the regular price before the discount. For pay_vs_credited_value, the credited or pack amount in the SAME unit the email states (26 when it says "26 SC").
   - credit_unit: the unit of baseline_value. null if unclear.

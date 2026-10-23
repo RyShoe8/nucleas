@@ -6,9 +6,23 @@ import {
   extractDealMetricsRegex,
   extractDealsFoundRegex,
   mergeDealExtractions,
+  gameplayRewardNotPurchase,
 } from "./dealMetrics";
 
 describe("buildDealMetricsFromAmounts", () => {
+  it('rejects stake-to-challenge and XP prize-pool economics from both model and regex', () => {
+    const text = 'Your Share of 5,000 SC in Prize Drops Awaits! Every 1 SC played earns 10 XP. Tier 3: 50,000 XP rewards 5 SC. Tier 5: 500,000 XP rewards 150 SC + RAFFLE ENTRY. Daily challenge: 20 spins at 0.20 SC+ earns 1 SC.';
+    const wrong = buildDealMetricsFromAmounts(0.2, 1, 'pay_vs_credited_value', 0.9, 'llm', 'SC', 'SC')!;
+    expect(gameplayRewardNotPurchase(wrong, text)).toBe(true);
+    expect(mergeDealExtractions({ you_pay: 0.2, baseline_value: 1, pay_unit: 'SC', credit_unit: 'SC', mode: 'pay_vs_credited_value', confidence: 0.9 }, wrong, text)).toBeUndefined();
+    expect(extractDealsFoundRegex('', text, ['SC'])).toEqual([]);
+    expect(gameplayRewardNotPurchase(wrong, `${text} Purchase coins in our store.`)).toBe(true);
+  });
+  it('keeps a separately priced guaranteed package when a raffle is an extra', () => {
+    const deal = buildDealMetricsFromAmounts(20, 26, 'pay_vs_credited_value', 0.9, 'regex', 'USD', 'SC')!;
+    expect(gameplayRewardNotPurchase(deal, 'Buy the $20 package to receive 26 FREE SC plus a raffle entry.')).toBe(false);
+    expect(gameplayRewardNotPurchase(deal, 'Buy the $20 package for a chance to win up to 26 SC in our raffle.')).toBe(true);
+  });
   it('does not turn six login days into a six dollar purchase', () => {
     expect(mergeDealExtractions({ you_pay: 6, baseline_value: 15, pay_unit: 'USD', credit_unit: 'USD', mode: 'pay_vs_credited_value', confidence: 0.9 }, null, 'Log in for 6 consecutive days and claim 15 Free Plays on day 7.')).toBeUndefined();
     expect(extractDealMetricsRegex('Log In for One Week — Claim Top Reward', 'Come back for 6 days — grab Sweeps Coins for FREE. Reel in the top reward on day 7 — get 15 Free Plays.', ['SC'])).toBeNull();

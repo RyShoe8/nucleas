@@ -170,6 +170,24 @@ function hasRetailListCue(text: string): boolean {
 
 type PlausibilityOpts = { fromDollarEquals?: boolean };
 
+/** Stakes, turnover and possible prizes are not the price/credit of a purchase. */
+export function gameplayRewardNotPurchase(dm: DealMetrics, text: string): boolean {
+  if (!/\b(?:prize\s+(?:drops?|pools?)|raffles?|leaderboards?|\d[\d,]*\s*XP|earn\s+XP|wager(?:ing)?|playthrough|turnover|daily\s+challenge|\d+\s+spins?\s+(?:at|of))\b/i.test(text)) return false;
+  if (dm.you_pay == null || dm.baseline_value == null) return true;
+  const pay = reEsc(String(dm.you_pay)) + (Number.isInteger(dm.you_pay) ? '(?:\\.00)?' : /^\d+\.\d$/.test(String(dm.you_pay)) ? '0?' : '');
+  const credit = reEsc(String(dm.baseline_value));
+  // A real package can include a raffle as an extra. Require its own explicit
+  // purchase price and guaranteed credit; an unrelated footer's "buy" is insufficient.
+  const price = `(?:\\$\\s*${pay}(?![\\d.])|\\b${pay}\\s*(?:USD|dollars?)\\b)`;
+  const credited = `\\b${credit}(?:\\.0+)?\\s*(?:free\\s*)?${reEsc(dm.credit_unit ?? 'USD')}\\b`;
+  return !text.split(/[\n.!?](?!\d)/).some(clause =>
+    /\b(?:buy|purchase|package|bundle|deposit)\b/i.test(clause)
+    && new RegExp(price, 'i').test(clause)
+    && new RegExp(credited, 'i').test(clause)
+    && !/\b(?:must\s+(?:play|wager)|wager(?:ing)?\s+requirement|chance\s+to\s+win|up\s+to|\d+\s+spins?\s+(?:at|of))\b/i.test(clause)
+  );
+}
+
 /** Reject cross-tier or absurd pay/credit pairings. */
 export function isPlausibleDealMetrics(
   dm: DealMetrics,
@@ -179,6 +197,7 @@ export function isPlausibleDealMetrics(
   const pay = dm.you_pay;
   const baseline = dm.baseline_value;
   if (pay == null || baseline == null || !(pay > 0) || !(baseline > 0)) return false;
+  if (gameplayRewardNotPurchase(dm, text)) return false;
   // Counts of logins/days/spins are not a monetary purchase price.
   const amount = String(pay).replace('.', '\\.');
   if (new RegExp(`\\b${amount}\\s+(?:consecutive\\s+)?(?:days?|logins?|free\\s+plays?|spins?)\\b`, 'i').test(text)

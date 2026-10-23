@@ -334,6 +334,19 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
     expect((await PublishDelivery.findById(card._id).lean())?.values).toEqual({ casino: 'Original', offer: 'Original' });
   });
 
+  it('blocks already queued gameplay rewards before admin submission or social confirmation', async () => {
+    const mail = await email('offers@example.com', 'Your Share of 5,000 SC in Prize Drops Awaits!', 0.2, 1);
+    await WatchItem.updateOne({ _id: mail._id }, { $set: { text: 'Daily challenge: 20 spins at 0.20 SC+ earns 1 SC. Every 1 SC played earns 10 XP. Reach Tier 5 for a RAFFLE ENTRY.' } });
+    const job = await adminJob();
+    const item = await PublishItem.create({ organizationId: org, companyId, jobId: job._id, key: String(mail._id), status: 'processed' });
+    const card = await PublishDelivery.create({ organizationId: org, companyId, jobId: job._id, itemId: item._id, platform: 'admin', mode: 'manual', status: 'ready', body: 'Incorrect 400% deal' });
+    expect(await postDeliveryNow(job.toObject(), String(card._id), String(userId), adminDeps())).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('gameplay reward') });
+    await PublishDelivery.updateOne({ _id: card._id }, { $set: { platform: 'reddit' } });
+    expect(await markPosted(job, String(card._id), String(userId))).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('gameplay reward') });
+    expect(saved).toHaveLength(0);
+    expect(await takeBaseline(job.toObject(), adminDeps())).toBe(0);
+  });
+
   it('blocks a previously queued recipient-only offer before any admin or social delivery', async () => {
     const mail = await email('offers@example.com', 'Personal offer', 5.99, 10);
     await WatchItem.updateOne({ _id: mail._id }, { $set: { text: 'Exclusive offer for: player@example.com' } });
