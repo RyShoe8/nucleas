@@ -13,12 +13,14 @@ beforeEach(async () => { await Promise.all([LinkProspect.deleteMany({}), LinkOpp
 it('imports source provenance and advances past checked leads instead of starting over', async () => {
   const visited: string[] = [];
   const read = async (url: string) => { visited.push(url); return { ok: false as const, status: 403, reason: 'Blocked' }; };
-  await linkProspectContext(scope, read);
+  const job = { ...scope, _id: new Types.ObjectId(), status: 'active', design: { skill: 'link_building' } };
+  await linkProspectContext(job, read);
   const first = [...visited];
-  await linkProspectContext(scope, read);
+  await linkProspectContext(job, read);
   expect(visited).toHaveLength(12);
   expect(visited.slice(6).some(url => first.includes(url))).toBe(false);
   expect(await LinkProspect.countDocuments()).toBe(seeds.length);
+  expect(await LinkProspect.exists({ _id: job._id })).toBeNull();
   expect((await LinkProspect.findOne({ ...scope, domain: 'webwiki.com' }).lean())?.sources).toHaveLength(2);
 });
 it('remembers company-specific ineligibility without excluding another company', async () => {
