@@ -1,0 +1,2478 @@
+[
+  {
+    "name": "Web Wiki",
+    "url": "https://www.webwiki.com/info/add-website.html",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "IndieHackers",
+    "url": "https://www.indiehackers.com/contribute",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Alternative.me",
+    "url": "https://alternative.me/account/submit-item/",
+    "sources": [
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Saas Hub",
+    "url": "https://www.saashub.com/submit",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "F6S",
+    "url": "https://www.f6s.com/startups",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Startup Tracker",
+    "url": "https://startuptracker.io/crowdsourcing/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Startup Base",
+    "url": "https://startupbase.io/submit",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Startup Ranking",
+    "url": "https://www.startupranking.com/login",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "All Startups Info",
+    "url": "https://allstartups.info/Startups/Submit",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Launching Next",
+    "url": "https://www.launchingnext.com/submit/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "BetaList",
+    "url": "https://betalist.com/submit",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Product Hunt",
+    "url": "https://www.producthunt.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "YourStory",
+    "url": "https://yourstory.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Killer Startups",
+    "url": "https://www.killerstartups.com/submit-startup",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Startup Buffer",
+    "url": "https://startupbuffer.com/site/submit",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "10 Words",
+    "url": "https://10words.io/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "9 Sites",
+    "url": "https://www.9sites.net/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Active Search Results",
+    "url": "https://www.activesearchresults.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Addictive Tips",
+    "url": "https://www.addictivetips.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Agni",
+    "url": "https://office.angi.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "All Top",
+    "url": "https://alltop.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "All Top Startups",
+    "url": "https://alltopstartups.com/submit-startup/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Alpha Digits",
+    "url": "https://alphadigits.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Alternative To",
+    "url": "https://alternativeto.net/account/signup",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "American Inno",
+    "url": "https://www.americaninno.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "American Startups",
+    "url": "https://americanstartups.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Amfibi",
+    "url": "https://www.amfibi.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Android Apps Review",
+    "url": "https://www.androidappsreview.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Android Authority",
+    "url": "https://www.androidauthority.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Angel List",
+    "url": "https://angel.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "App Listo",
+    "url": "https://appslisto.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "App Rater",
+    "url": "https://apprater.net/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "App Review Central",
+    "url": "https://www.appreviewcentral.net/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "App Spy",
+    "url": "https://www.appspy.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "App Sumo",
+    "url": "https://appsumo.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "AppAgg",
+    "url": "https://appagg.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Apple Insider",
+    "url": "https://appleinsider.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Appoid",
+    "url": "https://appiod.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Appolicious",
+    "url": "https://www.appolicious.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Apps 400",
+    "url": "https://apps400.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Apps Mamma",
+    "url": "https://appsmamma.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Apps Mirror",
+    "url": "https://appsmirror.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Apps Thunder",
+    "url": "https://appsthunder.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Apps Zoom",
+    "url": "https://appszoom.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Appvita",
+    "url": "https://www.appvita.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Appy Smarts",
+    "url": "https://www.appysmarts.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "ARS Technica",
+    "url": "https://arstechnica.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Artic Startups",
+    "url": "https://arcticstartup.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Ask Your Android",
+    "url": "https://askyourandroid.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Astro Growth",
+    "url": "https://www.astrogrowth.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Awesome India",
+    "url": "https://awesomeindie.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Behance",
+    "url": "https://behance.net/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Being Guru",
+    "url": "https://www.beingguru.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Best App for Kids",
+    "url": "https://www.bestappsforkids.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Beta Bound",
+    "url": "https://www.betabound.com/announce/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Betakit",
+    "url": "https://betakit.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "BetaPage",
+    "url": "https://betapage.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Better Business Bureau",
+    "url": "https://www.bbb.org/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Big Startups",
+    "url": "https://biqstartups.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Bing",
+    "url": "https://www.bingplaces.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Bloombuzz",
+    "url": "https://bloombuzz.in/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Boing Boing",
+    "url": "https://boingboing.net/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Bootstrappers",
+    "url": "https://bootstrappers.io/submit-a-link/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Built In",
+    "url": "https://builtin.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Business Insider",
+    "url": "https://www.businessinsider.in/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Business Software",
+    "url": "https://www.business-software.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Business to Community",
+    "url": "https://www.business2community.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Buy Me A Coffee",
+    "url": "https://www.buymeacoffee.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Buzzfeed News",
+    "url": "https://www.buzzfeednews.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Cabinet",
+    "url": "https://www.cabinetm.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Capterra",
+    "url": "https://www.capterra.com/vendors",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Change Log",
+    "url": "https://changelog.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Cipinet",
+    "url": "https://www.cipinet.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Clutch",
+    "url": "https://clutch.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "CNET",
+    "url": "https://www.cnet.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "CoFounders Lab",
+    "url": "https://cofounderslab.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Coin Scribble",
+    "url": "https://coinscribble.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Coindoo",
+    "url": "https://coindoo.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Collaborizm",
+    "url": "https://www.collaborizm.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Compare Software",
+    "url": "https://www.comparasoftware.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Coop Commerce",
+    "url": "https://www.coopcommerce.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Crazy About Startups",
+    "url": "https://www.crazyaboutstartups.com/share-your-startup-2",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Crowd Reviews",
+    "url": "https://www.crowdreviews.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Croz Desk",
+    "url": "https://crozdesk.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Crunchbase",
+    "url": "https://www.crunchbase.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Cuspera e27",
+    "url": "https://www.cuspera.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Designer News",
+    "url": "https://www.designernews.co/submit",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "DEV Community",
+    "url": "https://dev.to/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Dev Post",
+    "url": "https://devpost.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Digg",
+    "url": "https://digg.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Digital Trends",
+    "url": "https://www.digitaltrends.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Discover Cloud",
+    "url": "https://www.discovercloud.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Discover Our Town",
+    "url": "https://www.discoverourtown.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Dribble",
+    "url": "https://dribbble.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "EBool",
+    "url": "https://www.ebool.com/submit",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Elpha",
+    "url": "https://elpha.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Emoji Launch",
+    "url": "https://emojilaunch.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "EnGadget",
+    "url": "https://www.engadget.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "EU-Startups",
+    "url": "https://www.eu-startups.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Exact Seek",
+    "url": "https://www.exactseek.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Fark",
+    "url": "https://www.fark.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Fast Company",
+    "url": "https://www.fastcompany.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Featured Customers",
+    "url": "https://www.featuredcustomers.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Feed My Startup",
+    "url": "https://feedmystartup.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Feedough",
+    "url": "https://www.feedough.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Finances Online",
+    "url": "https://financesonline.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Finding Startups",
+    "url": "https://findingstartups.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Fintech News iLounge",
+    "url": "https://fintechnews.sq/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "FourSquare",
+    "url": "https://foursquare.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Freeble",
+    "url": "https://freeble.site/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Fuel Up",
+    "url": "https://fuelup.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Future of Saas",
+    "url": "https://www.futureofsaas.io/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "G2",
+    "url": "https://www.g2.com/authorize",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Geek Wire",
+    "url": "https://www.geekwire.com/submit-startup/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Geekopedia",
+    "url": "https://geekopedia.me/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Get App",
+    "url": "https://www.gartner.com/en/digital-markets",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Get Worm",
+    "url": "https://getworm.com/submit-startup",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Google My Business",
+    "url": "https://www.google.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Growing Page",
+    "url": "https://growingpage.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Growth Hack List",
+    "url": "https://growthhacklist.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Growth Hackers",
+    "url": "https://growthhackers.com/guidelines#new-post",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Growth Junkie",
+    "url": "https://growthiunkie.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Growth Kit",
+    "url": "https://www.growthkit.so/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Gust",
+    "url": "https://gust.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "HackerNews",
+    "url": "https://news.ycombinator.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Hackernoon",
+    "url": "https://hackernoon.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Hackerspad",
+    "url": "https://hackerspad.net/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "How Brands Are Built",
+    "url": "https://howbrandsarebuilt.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "How to buy SaaS",
+    "url": "https://www.howtobuysaas.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Inbox World",
+    "url": "https://inboxworld.io/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Inc42",
+    "url": "https://inc42.com/startup-submission/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Index",
+    "url": "https://index.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "India Mart",
+    "url": "https://seller.indiamart.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Indian Yellow Pages",
+    "url": "https://www.indianyellowpages.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Indie Gamer Reviewer",
+    "url": "https://indiegamereviewer.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "IndieStack",
+    "url": "https://www.indiestack.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Info World",
+    "url": "https://www.infoworld.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "InnMind",
+    "url": "https://innmind.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Inside",
+    "url": "https://community.inside.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Insur-Tech iPhone Life",
+    "url": "https://insur-tech.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Ir/Coupons",
+    "url": "https://reddit.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Joinly",
+    "url": "https://www.joinly.xyz/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Just Dial",
+    "url": "https://www.justdial.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Karo Startup",
+    "url": "https://karostartup.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "KitDB",
+    "url": "https://kitdb.app/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Kotaku",
+    "url": "https://kotaku.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Land-Book",
+    "url": "https://land-book.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Landing Folio",
+    "url": "https://www.landingfolio.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Launched!",
+    "url": "https://launched.io/newsubmission",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Lets Venture",
+    "url": "https://letsventure.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Letter List",
+    "url": "https://letterlist.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Life Hack",
+    "url": "https://www.lifehack.org/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Listly",
+    "url": "https://list.ly/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Lobsters",
+    "url": "https://lobste.rs/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Local",
+    "url": "https://partners.local.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "MacTrast",
+    "url": "https://www.mactrast.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Magnitt",
+    "url": "https://magnitt.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Make Use Of",
+    "url": "https://www.makeuseof.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Maker Lead",
+    "url": "https://makerlead.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Makerpad",
+    "url": "https://makerpad.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Mashable",
+    "url": "https://in.mashable.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Medium",
+    "url": "https://medium.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Merchant Circle",
+    "url": "https://www.merchantcircle.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "MicroStartups",
+    "url": "https://www.microstartups.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "ModDB",
+    "url": "https://www.moddb.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "My Startup Tool",
+    "url": "https://mystartuptool.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Netted",
+    "url": "https://www.netted.net/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "New Startups",
+    "url": "https://www.new-startups.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Next Big Product",
+    "url": "https://nextbigproduct.net/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Next Big What",
+    "url": "https://nextbigwhat.com/submit-your-startup/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "NoCode Tech",
+    "url": "https://www.nocode.tech/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Online Genuises",
+    "url": "https://onlinegeniuses.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Open Startup List",
+    "url": "https://openstartuplist.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Owwly",
+    "url": "https://owwly.com/account/login",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Oye Startups",
+    "url": "https://oyestartups.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Paggu",
+    "url": "https://www.paggu.com/submit-your-startup/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Pando",
+    "url": "https://pando.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "PC Mag",
+    "url": "https://in.pcmag.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Pinterest",
+    "url": "https://pinterest.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "PitchBook",
+    "url": "https://www.pitchbook.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Pocket gamer",
+    "url": "https://www.pocketgamer.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Pocket Lint",
+    "url": "https://www.pocket-lint.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Post Make",
+    "url": "https://postmake.io/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Prefundia",
+    "url": "https://prefundia.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Profit Hunt",
+    "url": "https://profithunt.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Programmable Web",
+    "url": "https://www.programmableweb.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Project Hatch",
+    "url": "https://www.projecthatch.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Promote Project",
+    "url": "https://www.promoteproiect.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Quora",
+    "url": "https://quora.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "ReadWrite",
+    "url": "https://readwrite.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Ready SaaS Go",
+    "url": "https://readysaasgo.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Red Ferret",
+    "url": "https://www.redferret.net/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Remote Tools",
+    "url": "https://www.remote.tools/post-product",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Robingood",
+    "url": "https://tools.robingood.com/content/new/387",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Romanian Startups",
+    "url": "https://www.romanianstartups.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "SaaS Directory",
+    "url": "https://saasdirectory.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "SaaS Genius",
+    "url": "https://www.saasgenius.com/free-listing",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "SaaS Place",
+    "url": "https://saasplace.io/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Saas Worthy",
+    "url": "https://saasworthy.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "SaaSified",
+    "url": "https://saasified.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Serchen",
+    "url": "https://www.serchen.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Side Bar",
+    "url": "https://sidebar.io/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Side Projectors",
+    "url": "https://www.sideprojectors.com/project/submit",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Side Projects",
+    "url": "https://sideprojects.net/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Silicon Angle",
+    "url": "https://siliconangle.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Similar Site Search",
+    "url": "https://similarsitesearch.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Site Jabber",
+    "url": "https://www.siteiabber.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Slant",
+    "url": "https://slant.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Slash Dot",
+    "url": "https://slashdot.org/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Slate",
+    "url": "https://slate.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Smart Money Match",
+    "url": "https://www.smartmoneymatch.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Snapmunk",
+    "url": "https://startups.snapmunk.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Software Advice",
+    "url": "https://www.softwareadvice.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Software Suggest",
+    "url": "https://softwaresuggest.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Software World",
+    "url": "https://www.softwareworld.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "SourceForge",
+    "url": "https://sourceforge.net/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Space Bandits",
+    "url": "https://www.spacebandits.io/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Spectacle",
+    "url": "https://spectacle.is/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Spoke",
+    "url": "https://www.spoke.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "SpringWise",
+    "url": "https://www.springwise.com/spotted/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Stack Share",
+    "url": "https://stackshare.io/create-stack/new-company",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Start Us",
+    "url": "https://www.startus.cc/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Starter Story",
+    "url": "https://www.starterstory.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Starticorn",
+    "url": "https://starticorn.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Beat",
+    "url": "https://startupbeat.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup benchmarks",
+    "url": "https://www.startupbenchmarks.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Button",
+    "url": "https://www.startupbutton.com/submit",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Startup Collections",
+    "url": "https://startupcollections.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Costs",
+    "url": "https://www.startupcosts.co/add",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Startup Deals",
+    "url": "https://www.startupdeals.tech/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Dope",
+    "url": "https://startupdope.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Europe",
+    "url": "https://startupeurope.net/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Explore",
+    "url": "https://startupxplore.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Founders",
+    "url": "https://startupfounders.com.au/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Galaxy",
+    "url": "https://world.startupsgalaxy.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Guys",
+    "url": "https://startupguys.net/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Inspire",
+    "url": "https://www.startupinspire.com/submit",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Startup John",
+    "url": "https://www.startupiohn.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Lift",
+    "url": "https://startuplift.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Lister",
+    "url": "https://startuplister.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Pitch",
+    "url": "https://thestartuppitch.com/post-a-pitch/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Startup Resources",
+    "url": "https://startupresources.io/add-resource/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Startup Roulette",
+    "url": "https://startuproulette.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Savant",
+    "url": "https://startupsavant.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Sea",
+    "url": "https://www.startupsea.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Stash",
+    "url": "https://startupstash.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Tabs",
+    "url": "https://www.startuptabs.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Wizz",
+    "url": "https://startupwizz.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup Wonders",
+    "url": "https://startupwonders.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup World",
+    "url": "https://www.startupworld.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup-List",
+    "url": "https://www.startups-list.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startup88",
+    "url": "https://startup88.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startups of London",
+    "url": "https://startupsoflondon.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startups UK",
+    "url": "https://startups.co.uk/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Startups Watch",
+    "url": "https://startups.watch/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "StartupValley News",
+    "url": "https://www.startupvalley.news/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "State of Tech",
+    "url": "https://stateoftech.net/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Storyfied",
+    "url": "https://storyfied.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Stripe",
+    "url": "https://stripe.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Submissions Web Directory",
+    "url": "https://www.submissionwebdirectory.cor/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Sulekha",
+    "url": "https://www.sulekha.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Superbcrew",
+    "url": "https://www.superbcrew.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Surges",
+    "url": "https://www.surges.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "swpely.com",
+    "url": "https://airtable.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Taalk",
+    "url": "https://taalk.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "TapScape",
+    "url": "https://www.tapscape.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "TeachOnline",
+    "url": "https://teachonline.ca/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Tech",
+    "url": "https://tech.eu/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Tech Co.",
+    "url": "https://tech.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Tech Directory",
+    "url": "https://techdirectory.io/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Tech Dirt",
+    "url": "https://techdirt.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Tech Faster",
+    "url": "https://techfaster.com/submit-your-company/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Tech Hive",
+    "url": "https://www.techhive.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Tech In Asia",
+    "url": "https://www.techinasia.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Tech Pluto",
+    "url": "https://www.techpluto.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "TechBoard",
+    "url": "https://techboard.com.au/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "TechCrunch",
+    "url": "https://techcrunch.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Techendo",
+    "url": "https://techendo.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Techli",
+    "url": "https://techli.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "That App Show",
+    "url": "https://thatappshow.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "The Apple Google",
+    "url": "https://theapplegoogle.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "The Fascination",
+    "url": "https://thefascination.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "The Hive Index",
+    "url": "https://thehiveindex.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "The Indianpreneur",
+    "url": "https://theindianpreneur.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "The iPhone App Review",
+    "url": "https://theiphoneappreview.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "The Next Web",
+    "url": "https://deals.thenextweb.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "The Popular Apps",
+    "url": "https://thepopularapps.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "The Startup Inc",
+    "url": "https://www.thestartupinc.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "The Startup Journal",
+    "url": "https://thestartupjournal.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "The Startup Videos",
+    "url": "https://thestartupvideos.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "The Tech Blog",
+    "url": "https://www.thetechblock.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "The Tech Map",
+    "url": "https://thetechmap.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "The Verge",
+    "url": "https://www.theverge.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Thing Testing",
+    "url": "https://thingtesting.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Tool Salad",
+    "url": "https://toolsalad.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Topion Networls",
+    "url": "https://www.topionetworks.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Toshilist",
+    "url": "https://www.toshilist.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "ToucheArcade",
+    "url": "https://toucharcade.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "TradeIndia",
+    "url": "https://www.tradeindia.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Tran",
+    "url": "https://tracxn.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Trendy Startups",
+    "url": "https://trendystartups.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Trust Pilot",
+    "url": "https://trustpilot.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Trust Radius",
+    "url": "https://trustradius.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Tumblr",
+    "url": "https://tumblr.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Unboxing Startups",
+    "url": "https://unboxingstartups.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Unita",
+    "url": "https://www.unita.co/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Unsplash",
+    "url": "https://unsplash.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Up Labs",
+    "url": "https://www.uplabs.com/submit",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Valuer",
+    "url": "https://www.valuer.ai/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Vator News",
+    "url": "https://vator.tv/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Venture Beat",
+    "url": "https://venturebeat.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "VentureRadar",
+    "url": "https://ventureradar.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Viral Indian Diary",
+    "url": "https://www.viralindiandiary.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Virtual Mojito",
+    "url": "https://virtualmojito.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "W3 Catalog",
+    "url": "https://w3catalog.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Web App Rater",
+    "url": "https://webapprater.com/submit-your-web-application-for-review-html",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0",
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Web Designer News",
+    "url": "https://webdesignernews.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Web Tools Weekly",
+    "url": "https://webtoolsweekly.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Web3 Canvas",
+    "url": "https://web3canvas.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Webdesign Inspiration",
+    "url": "https://webdesign-inspiration.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Webrazzi",
+    "url": "https://webrazzi.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Webwide",
+    "url": "https://webwide.io/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "What's new on the net",
+    "url": "https://www.whatsnewonthenet.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "WhitePages",
+    "url": "https://www.whitepages.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Women Entrepreneurs Portal",
+    "url": "https://wep.gov.in/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "YC Startup School",
+    "url": "https://www.startupschool.org/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Yellow Pages",
+    "url": "https://www.yellowpages.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Yelp",
+    "url": "https://business.velp.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Young Upstarts",
+    "url": "https://youngupstarts.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Younoodle",
+    "url": "https://younoodle.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Your Stack",
+    "url": "https://yourstack.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "YouTube",
+    "url": "https://youtube.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "ZDNet",
+    "url": "https://www.zdnet.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Zumvu",
+    "url": "https://zumvu.com/",
+    "sources": [
+      "https://docs.google.com/spreadsheets/d/1Spc8DM_NV5VA7l2EUH9NxY0LPkUvrD9_RGxGc9JOuO4/edit#gid=0"
+    ]
+  },
+  {
+    "name": "Product Hunt",
+    "url": "https://help.producthunt.com/en/articles/479557-how-to-post-a-product",
+    "sources": [
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Crozdesk Ltd",
+    "url": "https://vendor.crozdesk.com/",
+    "sources": [
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Startup Stash",
+    "url": "https://startupstash.typeform.com/to/CJ8kSU",
+    "sources": [
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "StartupBlink",
+    "url": "https://www.startupblink.com/startups",
+    "sources": [
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Pitchwall",
+    "url": "https://pitchwall.co/login",
+    "sources": [
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "SnapMunk",
+    "url": "https://www.snapmunk.com/submit-your-startup/",
+    "sources": [
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "FeedMyApp",
+    "url": "https://feedmyapp.com/submit/",
+    "sources": [
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Dang.ai",
+    "url": "https://dang.ai/",
+    "sources": [
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "10 Words",
+    "url": "https://app.10words.io/",
+    "sources": [
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Startup88",
+    "url": "https://startup88.typeform.com/to/CRjWqM",
+    "sources": [
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "EZlauncher.com",
+    "url": "https://www.ezlauncher.com/",
+    "sources": [
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "Publisher Growth",
+    "url": "https://publishergrowth.com/registration",
+    "sources": [
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  },
+  {
+    "name": "KarmaLinks",
+    "url": "https://karmalinks.io/",
+    "sources": [
+      "https://www.siteguru.co/link-building/startup-directory-list"
+    ]
+  }
+]

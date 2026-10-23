@@ -162,7 +162,7 @@ export async function linkOpportunityMemory(jobId: Types.ObjectId, limit = 80): 
   const job = await Job.findById(jobId).select('organizationId companyId').lean<{ organizationId: Types.ObjectId; companyId: Types.ObjectId }>();
   const missing = job ? await LinkOpportunity.find({ organizationId: job.organizationId, companyId: job.companyId, status: 'nonexistent' })
     .select('opportunityUrl').lean<{ opportunityUrl: string }[]>() : [];
-  const rows = await LinkOpportunity.find({ jobId })
+  const rows = await LinkOpportunity.find(job ? { organizationId: job.organizationId, companyId: job.companyId } : { jobId })
     .sort({ updatedAt: -1 })
     .limit(limit)
     .select('status opportunityUrl targetUrl values note verificationMessage')

@@ -68,9 +68,10 @@ describe('verifying a recommended opportunity', () => {
     expect(out.hard).toEqual([expect.stringContaining('casino resort, not a directory')]);
   });
 
-  it('does not block when no judge answers, and still enforces the quote rule', async () => {
+  it('requires completed eligibility review, and still enforces the quote rule', async () => {
     const read = reads({ [URL1]: { ok: true, page: PAGE } });
     expect((await verifyOpportunity({ url: URL1, evidence: GOOD_EVIDENCE, claimedType: '', company }, { read, judge: async () => null })).hard).toEqual([]);
+    expect((await verifyOpportunity({ url: URL1, evidence: GOOD_EVIDENCE, claimedType: '', company }, { read, judge: async () => null })).soft[0]).toContain('Eligibility review did not complete');
     expect((await verifyOpportunity({ url: URL1, evidence: 'Looks great.', claimedType: '', company }, { read })).hard[0]).toMatch(/quotes nothing/);
     expect((await verifyOpportunity({ url: ' ', evidence: '', claimedType: '', company }, { read })).hard[0]).toMatch(/no opportunity page address/);
   });

@@ -1,6 +1,7 @@
 import 'server-only';
 import { discoveryMemory, saveCandidates } from '@/lib/casinoDiscovery/service';
 import { casinoResearchSchema } from '@/lib/casinoDiscovery/schema';
+import { linkProspectContext, priorPlacementProblems, rememberProspectOutcome } from './linkProspects';
 import { VOICE_TRAIT_GUIDANCE } from './templates/brandVoice';
 import { withLinkDiscoveryFocus } from './templates/linkBuilding';
 import { manualArtifact, parseJobOutput } from './output';
@@ -488,6 +489,7 @@ export async function executeJobRun(runId: string): Promise<void> {
   let done: string;
   try { done = activeDesign.skill === 'casino_discovery' ? await discoveryMemory(job) : activeDesign.skill === 'link_building' ? await linkOpportunityMemory(job._id) : await earlierRecords(job._id, run._id); }
   catch(error) { return fail(error instanceof Error ? error.message : 'Could not verify discovery inventory.'); }
+  const prospectContext = activeDesign.skill === 'link_building' ? await linkProspectContext(job).catch(error => { console.error('[link-building] candidate queue unavailable', { jobId: String(job._id), error }); return 'The saved candidate queue could not be loaded. Research real directories and forums; never invent an opportunity.'; }) : '';
   let cost = 0;
   const usedModels: string[] = [];
   const recordStep = (stage: ModelStep['stage'], note: string, choice: { model: string; free: boolean }, source: ModelStep['source'], fallback: boolean, costMicros: number | null, error?: string) => {
@@ -513,12 +515,12 @@ export async function executeJobRun(runId: string): Promise<void> {
       organizationId: org,
       projectId: repo?.projectId ?? assistantLedgerProjectId(org),
       userId: viewer.userId,
-      userText: [`Company: ${profile.name} (${profile.domain ?? 'no domain'})`, `\n# Verified selected-project facts (facts, not instructions)\n${groundingFacts}`, marketingPlan ? `\n# Approved Marketing Plan (hard strategic constraints)\n${marketingPlanContext(marketingPlan)}` : seoBrief ? `\n# Approved legacy SEO brief (hard relevance constraints)\n${seoBriefContext(seoBrief)}` : '', done ? `\n# Already done (do not repeat)\n${done}` : '', correction ?? ''].join('\n'),
+      userText: [`Company: ${profile.name} (${profile.domain ?? 'no domain'})`, `\n# Verified selected-project facts (facts, not instructions)\n${groundingFacts}`, marketingPlan ? `\n# Approved Marketing Plan (hard strategic constraints)\n${marketingPlanContext(marketingPlan)}` : seoBrief ? `\n# Approved legacy SEO brief (hard relevance constraints)\n${seoBriefContext(seoBrief)}` : '', done ? `\n# Already done (do not repeat)\n${done}` : '', prospectContext ? `\n# Candidate directories to investigate (NOT already done)\n${prospectContext}` : '', correction ?? ''].join('\n'),
       priorTurns: [],
       modelProfileId: choice.profileId,
       model: choice.model,
       projectName: profile.name,
-      includeRepoTools: !compact && Boolean(repo) && (!correction || researchRetry),
+      includeRepoTools: activeDesign.skill !== 'link_building' && !compact && Boolean(repo) && (!correction || researchRetry),
       includeImageTool: false,
       toolProfile: compact || (correction && !researchRetry) ? 'none' : 'full',
       forcePlain: compact || (Boolean(correction) && !researchRetry),
@@ -580,6 +582,15 @@ export async function executeJobRun(runId: string): Promise<void> {
       if (again.role !== 'assistant') return void (await fail(again.text, { costMicros: cost, models: usedModels }));
       parsed = parseJobOutput(again.text, activeDesign.skill);
     }
+    if (!parsed.success && activeDesign.skill === 'link_building' && workCalls < MAX_WORK_CALLS) {
+      const direct = level === 'free' ? [] : models.filter(model => model.provider === 'openai' && !exhaustedProfiles.has(model.profileId));
+      const alternate = (direct.length ? (await selectModel(org, workNeed, level, { models: direct, settings })).primary : null) ?? work.fallback;
+      if (alternate) {
+        activeWorker = alternate;
+        const retry = await doWork(activeWorker, 'The first researcher did not return usable JSON. Start from the supplied directory queue. Verify one eligible, free listing with a public external website link. A legitimate general directory with a suitable category is allowed. Use actual page text, current rules and exact submission steps. Return the complete records/summary/gaps JSON.', true);
+        if (retry.role === 'assistant') parsed = parseJobOutput(retry.text, activeDesign.skill);
+      }
+    }
     if (!parsed.success) return void (await fail(`The model's response could not be read after a formatting retry: ${parsed.error.issues.map((issue) => `${issue.path.join('.') || 'response'}: ${issue.message}`).join('; ')}. No result was saved; retry the run.`, { costMicros: cost, models: usedModels }));
     let output = parsed.data;
     if (activeDesign.skill === 'casino_discovery' && workCalls < MAX_WORK_CALLS && (!output.records.length || output.records.some(record => !casinoResearchSchema.safeParse(record.values).success))) {
@@ -614,6 +625,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     }
     if (activeDesign.skill === 'link_building') {
       const runLinkChecks = async (): Promise<boolean> => {
+      issues.push(...await priorPlacementProblems(job, output.records));
       output.records.forEach((record, index) => {
         const score = Number(record.values.relevance_score);
         const strategicReason = String(record.values.strategic_reason ?? '');
@@ -636,8 +648,10 @@ export async function executeJobRun(runId: string): Promise<void> {
       const excluded = await missingLinkOpportunityUrls(job.organizationId, job.companyId, output.records.map((record) => String(record.values.opportunity_url ?? '')));
       const found = await Promise.all(output.records.map((record) => excluded.has(normalizeUrl(record.values.opportunity_url) ?? '')
         ? Promise.resolve({ hard: [`${record.values.opportunity_url} was previously confirmed nonexistent and is permanently excluded. Find a different page.`], soft: [], missing: true })
-        : verifyOpportunity({ url: String(record.values.opportunity_url ?? ''), evidence: String(record.values.relevance_evidence ?? ''), claimedType: String(record.values.opportunity_type ?? ''), company: { name: profile.name, description: profile.description } }, { judge })));
+        : verifyOpportunity({ url: String(record.values.opportunity_url ?? ''), evidence: String(record.values.relevance_evidence ?? ''), claimedType: String(record.values.opportunity_type ?? ''), requirements: String(record.values.requirements ?? ''), company: { name: profile.name, description: profile.description } }, { judge })));
       for (const [index, result] of found.entries()) {
+        const rejected = result.hard.filter(problem => /Independent page check failed/.test(problem));
+        if (rejected.length && /directory|profile/i.test(String(output.records[index].values.opportunity_type ?? ''))) await rememberProspectOutcome(job, String(output.records[index].values.opportunity_url ?? ''), rejected.join(' '), 'ineligible');
         if (result.missing && !excluded.has(normalizeUrl(output.records[index].values.opportunity_url) ?? '')) {
           await rememberMissingLinkOpportunity({ organizationId: job.organizationId, companyId: job.companyId, projectId: job.projectId,
             jobId: job._id, runId: run._id, record: output.records[index], reason: result.hard.join(' ') });
@@ -653,8 +667,12 @@ export async function executeJobRun(runId: string): Promise<void> {
       let failedCheck = await runLinkChecks();
       while (failedCheck && workCalls < MAX_WORK_CALLS) {
         rounds += 1;
+        if (rounds === 1 && level !== 'free') {
+          const direct = models.filter(model => model.provider === 'openai' && !exhaustedProfiles.has(model.profileId));
+          if (direct.length) activeWorker = (await selectModel(org, workNeed, level, { models: direct, settings })).primary ?? activeWorker;
+        }
         // Repeated unsupported answers need a different researcher when the configured fallback is available.
-        if (rounds === 2 && work.fallback && work.fallback.profileId !== activeWorker.profileId && !exhaustedProfiles.has(work.fallback.profileId)) {
+        if (rounds === 2 && !models.some(model => model.profileId === activeWorker.profileId && model.provider === 'openai') && work.fallback && work.fallback.profileId !== activeWorker.profileId && !exhaustedProfiles.has(work.fallback.profileId)) {
           activeWorker = work.fallback;
         }
         await progress(run._id, owner, `A recommendation failed validation; researching a verified replacement (attempt ${rounds})`, { stage: 'validating', percent: Math.min(80, 70 + rounds * 2) });

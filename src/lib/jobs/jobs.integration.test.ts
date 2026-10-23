@@ -3,6 +3,7 @@ import mongoose, { Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 
 vi.mock('server-only', () => ({}));
+vi.mock('./linkProspects', () => ({ linkProspectContext: async () => '', priorPlacementProblems: async () => [], rememberProspectOutcome: async () => undefined }));
 
 const mocks = vi.hoisted(() => ({ design: vi.fn(), chat: vi.fn(), browser: vi.fn(), models: vi.fn(), select: vi.fn(), verify: vi.fn() }));
 vi.mock('./designer', () => ({ designJob: (...args: unknown[]) => mocks.design(...args) }));
