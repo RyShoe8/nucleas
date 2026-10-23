@@ -15,7 +15,7 @@ const INSTALLED_DISPLAY_MODES = [
 
 export function isOsHost(): boolean {
     if (typeof window === 'undefined') return false;
-    return window.location.host.startsWith('os.');
+    return window.location.hostname === 'nucleas.app' || window.location.hostname === 'www.nucleas.app' || window.location.host.startsWith('os.') || window.location.hostname === 'localhost';
 }
 
 function isInstalledDisplayMode(): boolean {

@@ -308,7 +308,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL('/setup-organization', request.url));
     }
 
-    return NextResponse.redirect(new URL('/planning-map', request.url));
+    return NextResponse.redirect(new URL('/', request.url));
   } catch (error) {
     // Google OAuth callback error
     return NextResponse.redirect(new URL('/login?error=oauth_error', request.url));

@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react';
 import Image from 'next/image';
-import { useRouter } from 'next/navigation';
+import { useWindowManager } from '@/hooks/os/useWindowManager';
 import Dropdown from '@/components/ui/Dropdown';
 import Modal from '@/components/ui/Modal';
 import ProfileModal from '@/components/ProfileModal';
@@ -11,7 +11,7 @@ import { useOsAuth } from '@/hooks/os/useOsAuth';
 
 export default function OsAccountMenu() {
     const { refetch, ...auth } = useOsAuth();
-    const router = useRouter();
+    const wm = useWindowManager();
     const [showProfileModal, setShowProfileModal] = useState(false);
     const [showOrganizationModal, setShowOrganizationModal] = useState(false);
 
@@ -32,14 +32,8 @@ export default function OsAccountMenu() {
     }, []);
 
     const handleAdmin = useCallback(() => {
-        const { protocol, host } = window.location;
-        const classicHost = host.startsWith('os.') ? host.replace(/^os\./, '') : host;
-        if (host.startsWith('os.')) {
-            window.location.assign(`${protocol}//${classicHost}/admin`);
-            return;
-        }
-        router.push('/admin');
-    }, [router]);
+        wm.open('ai-budgets');
+    }, [wm]);
 
     const initials = auth.name
         ? auth.name
@@ -82,7 +76,7 @@ export default function OsAccountMenu() {
         ...(auth.isAdmin
             ? [
                   {
-                      label: 'Admin',
+                      label: 'AI settings',
                       onClick: handleAdmin,
                       icon: (
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>

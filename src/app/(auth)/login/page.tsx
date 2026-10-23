@@ -78,7 +78,7 @@ function LoginForm() {
       if (data.user && !data.user.organizationSetupComplete) {
         router.push('/setup-organization');
       } else {
-        router.push('/planning-map');
+        router.push('/');
       }
       router.refresh();
     } catch (err) {

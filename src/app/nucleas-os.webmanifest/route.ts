@@ -25,7 +25,7 @@ function resolveOrigin(request: NextRequest): string {
         }
     }
 
-    return 'https://os.nucleas.app';
+    return 'https://nucleas.app';
 }
 
 export function GET(request: NextRequest) {

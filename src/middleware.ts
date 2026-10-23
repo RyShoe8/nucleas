@@ -13,6 +13,22 @@ export function middleware(request: NextRequest) {
   const { pathname } = url;
   const host = request.headers.get('host') || '';
   const isOsHost = host.startsWith('os.');
+  // The main domain is now the OS entry point. Keep API/auth callbacks on their
+  // original origin, but send old OS bookmarks to the canonical application.
+  if (isOsHost && (pathname === '/' || pathname === '/os' || pathname === '/os/')) {
+    url.host = host.replace(/^os\./, '');
+    url.pathname = '/';
+    return NextResponse.redirect(url);
+  }
+  if (!isOsHost && pathname === '/') {
+    if (!request.cookies.get('session')) return NextResponse.redirect(new URL('/login', request.url));
+    url.pathname = '/os';
+    return osRewriteResponse(url, request);
+  }
+  if (!isOsHost && (pathname === '/os' || pathname === '/os/')) {
+    url.pathname = '/';
+    return NextResponse.redirect(url);
+  }
   const isPropertyWorkerCallback = pathname.startsWith('/api/internal/property-overviews/');
 
   // Global API Rate Limiting (Edge Memory)
@@ -45,6 +61,12 @@ export function middleware(request: NextRequest) {
   if (pathname === '/sitemap.xml' || pathname === '/robots.txt') {
     return NextResponse.next();
   }
+  if (pathname === '/nucleas-os.webmanifest' || pathname === '/os-sw.js' || pathname.startsWith('/icons/') || pathname.startsWith('/fonts/')) return NextResponse.next();
+  if (['/login', '/register', '/verify-email', '/pending-approval', '/setup-organization'].includes(pathname)) {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set('x-nucleas-shell', 'minimal');
+    return NextResponse.next({ request: { headers: requestHeaders } });
+  }
 
   const sharedPrefixes = ['/api', '/_next', '/login', '/register', '/images', '/uploads', '/icons'];
   const isOsSharedRoute =
@@ -63,7 +85,6 @@ export function middleware(request: NextRequest) {
 
   // Allow access to auth pages, setup page, admin page, public pages, and API routes
   if (
-    (pathname === '/' && !isOsHost) ||
     pathname.startsWith('/api/auth') ||
     pathname.startsWith('/api/invitations/') ||
     pathname.startsWith('/api/portal/') ||
@@ -121,6 +142,12 @@ export function middleware(request: NextRequest) {
   }
 
   // IDE: keep Navigation, drop marketing Footer (single viewport, no double scroll).
+  if (!pathname.startsWith('/api/') && !pathname.startsWith('/os/') && !pathname.startsWith('/icons/') && !pathname.startsWith('/fonts/') && !pathname.startsWith('/images/') && !pathname.startsWith('/uploads/') && !/\.[a-z0-9]+$/i.test(pathname) && !pathname.startsWith('/recording/') && !pathname.startsWith('/recordings/') && !(pathname.startsWith('/scheduling/meeting/') && url.searchParams.get('popout') === '1')) {
+    url.pathname = '/';
+    if (pathname.startsWith('/admin/ai')) url.searchParams.set('open', 'ai-budgets');
+    return NextResponse.redirect(url);
+  }
+  if (pathname.startsWith('/os/')) return osRewriteResponse(url, request);
   if (pathname === '/ide' || pathname.startsWith('/ide/')) {
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set('x-nucleas-shell', 'ide');

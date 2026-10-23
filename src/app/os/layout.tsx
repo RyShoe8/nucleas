@@ -4,10 +4,10 @@ import { headers } from 'next/headers';
 function resolveOsOrigin(headerList: Headers): string {
     const host = headerList.get('host');
     const proto = headerList.get('x-forwarded-proto')?.split(',')[0]?.trim() || 'https';
-    if (host?.startsWith('os.')) {
+    if (host) {
         return `${proto}://${host}`;
     }
-    return 'https://os.nucleas.app';
+    return 'https://nucleas.app';
 }
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -18,6 +18,7 @@ export async function generateMetadata(): Promise<Metadata> {
     return {
         metadataBase: new URL(origin),
         title: 'Nucleas OS',
+        robots: { index: false, follow: false },
         manifest: manifestUrl,
         appleWebApp: {
             capable: true,

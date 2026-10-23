@@ -1,5 +1,6 @@
 import { CapabilityError, type CapabilityRunContext } from '../types';
 import { providerJson } from './http';
+import { socialPlatform } from '@/lib/metrics/social';
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -39,6 +40,7 @@ export interface TrafficOutput {
   totals: Omit<TrafficDay, 'date'>;
   days: TrafficDay[];
   topChannels: { channel: string; sessions: number }[];
+  socialDays?: { date: string; platform: string; sessions: number }[];
 }
 
 type RunReport = { rows?: { dimensionValues: { value: string }[]; metricValues: { value: string }[] }[] };
@@ -92,6 +94,19 @@ export async function ga4Traffic(ctx: CapabilityRunContext, range: { startDate: 
     },
     'Google Analytics'
   );
+  const social = await providerJson<RunReport>(ctx, url, {
+    method: 'POST', headers,
+    body: JSON.stringify({ dateRanges: [range], dimensions: [{ name: 'date' }, { name: 'sessionSource' }], metrics: [{ name: 'sessions' }],
+      dimensionFilter: { orGroup: { expressions: [
+        { filter: { fieldName: 'sessionDefaultChannelGroup', inListFilter: { values: ['Organic Social', 'Paid Social'] } } },
+        { filter: { fieldName: 'sessionSource', stringFilter: { matchType: 'FULL_REGEXP', value: '(.*\\.)?(facebook\\.com|fb\\.com|instagram\\.com|reddit\\.com|bsky\\.app|bsky\\.social|twitter\\.com|x\\.com|t\\.co|linkedin\\.com|lnkd\\.in|tiktok\\.com|youtube\\.com|youtu\\.be|threads\\.(net|com)|pinterest\\.[a-z.]+)|facebook|instagram|reddit|bluesky|twitter|linkedin|tiktok|youtube|threads|pinterest', caseSensitive: false } } },
+      ] } }, limit: 10000 }),
+  }, 'Google Analytics');
+  const socialDays = (social.rows ?? []).flatMap((row) => {
+    const date = row.dimensionValues[0]?.value ?? '';
+    if (!/^\d{8}$/.test(date)) return [];
+    return [{ date: `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`, platform: socialPlatform(row.dimensionValues[1]?.value ?? ''), sessions: Number(row.metricValues[0]?.value) || 0 }];
+  });
   const aiReferrals = await providerJson<RunReport>(
     ctx,
     url,
@@ -138,6 +153,7 @@ export async function ga4Traffic(ctx: CapabilityRunContext, range: { startDate: 
     // Daily users summed over a range over-counts returning visitors; labelled as such in the UI.
     totals,
     days,
+    socialDays,
     topChannels: (channels.rows ?? []).map((r) => ({ channel: r.dimensionValues[0].value, sessions: Number(r.metricValues[0].value) || 0 })),
   };
 }

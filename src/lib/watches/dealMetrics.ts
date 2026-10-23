@@ -179,6 +179,10 @@ export function isPlausibleDealMetrics(
   const pay = dm.you_pay;
   const baseline = dm.baseline_value;
   if (pay == null || baseline == null || !(pay > 0) || !(baseline > 0)) return false;
+  // Counts of logins/days/spins are not a monetary purchase price.
+  const amount = String(pay).replace('.', '\\.');
+  if (new RegExp(`\\b${amount}\\s+(?:consecutive\\s+)?(?:days?|logins?|free\\s+plays?|spins?)\\b`, 'i').test(text)
+    && !new RegExp(`(?:\\$\\s*${amount}\\b|\\b${amount}\\s*(?:USD|dollars?)\\b)`, 'i').test(text)) return false;
 
   const multiOffer = countDistinctOffers(text) >= 2;
 

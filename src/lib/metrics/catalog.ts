@@ -1,4 +1,5 @@
 import type { TrafficOutput, SearchOutput } from '@/lib/capabilities/adapters/google';
+import { SOCIAL_PLATFORMS } from './social';
 import type { AdRevenueOutput } from '@/lib/capabilities/adapters/adsense';
 import type { CashOutput, EmailAudienceOutput, RevenueOutput } from '@/lib/capabilities/adapters/commerce';
 
@@ -47,6 +48,14 @@ const cash = (o: unknown) => o as CashOutput;
 const ads = (o: unknown) => o as AdRevenueOutput;
 
 export const METRICS: MetricDefinition[] = [
+  ...[...SOCIAL_PLATFORMS, { id: 'other', label: 'Other social' }].map(({ id, label }): MetricDefinition => ({
+    key: `social_sessions_${id}`, label: `${label} sessions`, unit: 'count', kind: 'daily', capabilityId: 'analytics.traffic.read', provider: 'ga4', higherIsBetter: true,
+    extract: (output) => {
+      const data = traffic(output);
+      if (!data.socialDays) return [];
+      return data.days.map(({ date }) => ({ date, value: data.socialDays!.filter((row) => row.date === date && row.platform === id).reduce((sum, row) => sum + row.sessions, 0) }));
+    },
+  })),
   { key: 'sessions', label: 'Sessions', unit: 'count', kind: 'daily', stage: 'visitor', capabilityId: 'analytics.traffic.read', provider: 'ga4', higherIsBetter: true, extract: (o) => traffic(o).days.map((d) => ({ date: d.date, value: d.sessions })) },
   { key: 'new_visitors', label: 'New visitors', unit: 'count', kind: 'daily', stage: 'visitor', capabilityId: 'analytics.traffic.read', provider: 'ga4', higherIsBetter: true, extract: (o) => traffic(o).days.map((d) => ({ date: d.date, value: d.newUsers })) },
   { key: 'total_visitors', label: 'Total visitors', unit: 'count', kind: 'daily', stage: 'visitor', capabilityId: 'analytics.traffic.read', provider: 'ga4', higherIsBetter: true, extract: (o) => traffic(o).days.map((d) => ({ date: d.date, value: d.users })) },

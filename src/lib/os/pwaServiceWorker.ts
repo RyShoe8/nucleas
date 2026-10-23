@@ -51,7 +51,7 @@ function attachControllerListener() {
 /** Register the OS service worker; no-op outside os.* host. */
 export async function registerOsServiceWorker(): Promise<void> {
     if (typeof window === 'undefined') return;
-    if (!window.location.host.startsWith('os.')) {
+    if (!['nucleas.app', 'www.nucleas.app', 'localhost'].includes(window.location.hostname) && !window.location.host.startsWith('os.')) {
         state = { status: 'idle', errorMessage: null, controlled: false };
         notify();
         return;

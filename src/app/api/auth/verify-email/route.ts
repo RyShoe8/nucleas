@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
 
     await createSession(user._id.toString(), user.email);
 
-    const destination = user.organizationSetupComplete ? '/planning-map' : '/setup-organization';
+    const destination = user.organizationSetupComplete ? '/' : '/setup-organization';
     return NextResponse.redirect(`${base}${destination}?verified=1`);
   } catch (error) {
     console.error('verify-email error:', error);

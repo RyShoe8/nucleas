@@ -32,7 +32,6 @@ export default function OsRoot({ children }: OsRootProps) {
     const auth = useOsAuth();
 
     useEffect(() => {
-        if (!window.location.host.startsWith('os.')) return;
         void registerOsServiceWorker();
         warmPopoutScreenCache().catch(() => {});
     }, []);

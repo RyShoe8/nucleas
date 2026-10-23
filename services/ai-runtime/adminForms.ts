@@ -350,7 +350,10 @@ export async function fillAdminForm(
           let label: string | undefined;
           for (let attempt = 0; attempt < 12; attempt++) {
             if (attempt === 6 && await search.count()) {
-              await search.fill(String(value).replace(/\s+/g, ''), { timeout: 5000 });
+              // Remote searches may distinguish "SweepShark" from "Sweep Shark".
+              // Search a shared leading word, but still require an exact normalized choice.
+              const words = String(value).replace(/([a-z])([A-Z])/g, '$1 $2').trim().split(/\s+/);
+              await search.fill(words.length > 1 ? words[0] : String(value).replace(/\s+/g, ''), { timeout: 5000 });
             }
             const labels = await control.locator('[role="option"]').allTextContents();
             const matches = labels.map((text) => text.trim()).filter((text) => normalized(text) === normalized(String(value)));

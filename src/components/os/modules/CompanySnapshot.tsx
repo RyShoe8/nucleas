@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { useOsAuth } from '@/hooks/os/useOsAuth';
+import { SOCIAL_PLATFORMS } from '@/lib/metrics/social';
 import type { OsConnection } from './companyTypes';
 
 /** Mirrors the server InvocationView fields the UI needs. */
@@ -143,12 +144,12 @@ function MetricCard({ m, slot }: { m?: OsMetric; slot: MetricSlot }) {
 
 function MetricGroup({ title, slots, metrics }: { title: string; slots: MetricSlot[]; metrics: Map<string, OsMetric> }) {
     return (
-        <section className="space-y-2" aria-labelledby={`metric-group-${title.toLowerCase()}`}>
-            <h3 id={`metric-group-${title.toLowerCase()}`} className="text-[11px] uppercase tracking-wider text-text-secondary">{title}</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        <details className="space-y-2" open>
+            <summary className="cursor-pointer text-[11px] uppercase tracking-wider text-text-secondary">{title}</summary>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2">
                 {slots.map((slot) => <MetricCard key={slot.key} m={metrics.get(slot.key)} slot={slot} />)}
             </div>
-        </section>
+        </details>
     );
 }
 
@@ -284,6 +285,7 @@ export default function CompanySnapshot({
             ) : null}
 
             {METRIC_GROUPS.map((group) => <MetricGroup key={group.title} title={group.title} slots={group.metrics} metrics={metrics} />)}
+            <MetricGroup title="Social" slots={[...SOCIAL_PLATFORMS, { id: 'other', label: 'Other social' }].map(({ id, label }) => ({ key: `social_sessions_${id}`, label: `${label} visits`, unit: 'count', kind: 'daily' }))} metrics={metrics} />
             {hasPerformanceConnection && data === null ? <p className="text-xs text-text-secondary">Loading connected performance data…</p> : data && data.metrics.length === 0 && hasPerformanceConnection ? <p className="text-xs text-text-secondary">No connected performance history yet. The first sync backfills 90 days{auth.isManagerOrAdmin ? '; use Sync now to start it.' : '.'}</p> : null}
 
             {has('ahrefs') || (has('mercury') && auth.isManagerOrAdmin) ? (

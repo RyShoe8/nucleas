@@ -5,9 +5,14 @@ import {
   dealStrengthPct,
   extractDealMetricsRegex,
   extractDealsFoundRegex,
+  mergeDealExtractions,
 } from "./dealMetrics";
 
 describe("buildDealMetricsFromAmounts", () => {
+  it('does not turn six login days into a six dollar purchase', () => {
+    expect(mergeDealExtractions({ you_pay: 6, baseline_value: 15, pay_unit: 'USD', credit_unit: 'USD', mode: 'pay_vs_credited_value', confidence: 0.9 }, null, 'Log in for 6 consecutive days and claim 15 Free Plays on day 7.')).toBeUndefined();
+    expect(extractDealMetricsRegex('Log In for One Week — Claim Top Reward', 'Come back for 6 days — grab Sweeps Coins for FREE. Reel in the top reward on day 7 — get 15 Free Plays.', ['SC'])).toBeNull();
+  });
   it("computes bonus and savings for same-unit USD ($20 pay, $26 credited)", () => {
     const dm = buildDealMetricsFromAmounts(20, 26, "pay_vs_credited_value", 0.5, "regex", "USD", "USD")!;
     expect(dm).toBeTruthy();
