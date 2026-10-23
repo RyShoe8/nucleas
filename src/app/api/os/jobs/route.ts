@@ -1,6 +1,8 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { isCostLevel } from '@/lib/ai/engine/select';
+import { createCasinoDiscovery } from '@/lib/casinoDiscovery/create';
+import { getJob } from '@/lib/jobs/jobs';
 import { createJob, createPublishing, createTemplateJob, executeJobRun, listJobs, runDesign } from '@/lib/jobs/jobs';
 
 export const dynamic = 'force-dynamic';
@@ -25,6 +27,10 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => ({}))) as { companyId?: unknown; request?: unknown; level?: unknown; template?: unknown; config?: unknown };
   if (typeof body.companyId !== 'string') {
     return NextResponse.json({ error: 'companyId is required.' }, { status: 400 });
+  }
+  if (body.template === 'casino_discovery') {
+    try { const id = await createCasinoDiscovery(viewer, body.companyId); return NextResponse.json({ job: await getJob(viewer, id) }); }
+    catch(error) { return NextResponse.json({ error: error instanceof Error ? error.message : 'Could not configure discovery.' }, { status: 400 }); }
   }
   if (body.template === 'social_publish') {
     // The confirmed plan from /api/os/jobs/plan; the dry run starts straight away.

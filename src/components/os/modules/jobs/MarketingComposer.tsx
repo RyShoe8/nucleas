@@ -78,6 +78,7 @@ export default function MarketingComposer({ companyId, companyName, onCreated, r
             />
             {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
             <div className="flex items-center gap-2">
+                <button type="button" className="ui-button" disabled={busy} onClick={() => { setBusy(true); setError(null); void fetch('/api/os/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ companyId, template: 'casino_discovery' }) }).then(async response => { const body = await response.json(); if (!response.ok) throw new Error(body.error ?? 'Could not configure discovery.'); onCreated(body.job); reset(); }).catch(problem => setError(problem.message)).finally(() => setBusy(false)); }}>Casino / sports betting discovery</button>
                 <button type="button" className="ui-button-primary" disabled={busy || request.trim().length < 10} onClick={() => void submit()}>
                     {busy ? 'Reading…' : 'Continue'}
                 </button>

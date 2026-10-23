@@ -9,6 +9,7 @@ import { redditPostFromRecord, subredditSubmitUrl } from '@/lib/jobs/redditPost'
 import { costSummary, type ModelStep } from '@/lib/jobs/modelPath';
 import type { PublishingView } from '@/lib/publishing/engine';
 import PublishingJobBody from './publishing/PublishingJobBody';
+import CasinoDiscoveryPanel from './CasinoDiscoveryPanel';
 
 // ---------- Types (mirror the server's JobView) ----------
 
@@ -31,14 +32,14 @@ interface JobQuestion {
 }
 
 interface JobDesign {
-    skill?: 'link_building' | 'seo_brief' | 'marketing_plan' | 'brand_voice' | 'social_media' | 'ai_citations' | 'property_overview' | 'social_publish';
+    skill?: 'casino_discovery' | 'link_building' | 'seo_brief' | 'marketing_plan' | 'brand_voice' | 'social_media' | 'ai_citations' | 'property_overview' | 'social_publish';
     title: string;
     category: string;
     instructions: string;
     fields: JobField[];
     sourcePolicy: string;
     delivery: { method: string; detail: string; setupSteps: string[] };
-    schedule: { kind: 'once' | 'hourly' | 'daily' | 'weekly' | 'monthly'; time?: string; timezone?: string; weekday?: number; dayOfMonth?: number };
+    schedule: { kind: 'once' | 'hourly' | 'daily' | 'weekly' | 'monthly'; time?: string; timezone?: string; weekday?: number; dayOfMonth?: number; everyDays?: number; anchorDate?: string };
     recordsPerRun: number;
     safeguards: string[];
     recommendedCompletion: 'review' | 'automatic';
@@ -183,7 +184,7 @@ export function scheduleLabel(s: JobDesign['schedule'] | undefined): string {
     if (!s || s.kind === 'once') return 'Once';
     if (s.kind === 'hourly') return 'Every hour';
     const at = s.time ? ` at ${s.time}` : '';
-    if (s.kind === 'daily') return `Every day${at}`;
+    if (s.kind === 'daily') return `${s.everyDays && s.everyDays > 1 ? `Every ${s.everyDays} days` : 'Every day'}${at}`;
     if (s.kind === 'weekly') return `Every ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][s.weekday ?? 1]}${at}`;
     return `Monthly on day ${s.dayOfMonth ?? 1}${at}`;
 }
@@ -846,6 +847,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
 
             {reviewRun ? <RunBlock job={job} run={reviewRun} onChange={update} onView={setResultRun} /> : null}
             {!compact && d?.skill === 'link_building' ? <OpportunityTracker job={job} onChange={update} /> : null}
+            {!compact && d?.skill === 'casino_discovery' ? <CasinoDiscoveryPanel job={job} onChange={() => { void fetch(`/api/os/jobs/${job.id}`, { cache: 'no-store' }).then(response => response.json()).then(body => { if (body.job) update(body.job); }); }} /> : null}
             {!compact && d?.skill === 'seo_brief' ? <SeoBriefEditor job={job} /> : null}
             {!compact && d?.skill === 'marketing_plan' ? <MarketingPlanEditor companyId={job.companyId} updatedAt={job.updatedAt} /> : null}
             {/* Link building shows only its current opportunity (above), not every earlier run. */}

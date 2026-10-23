@@ -66,13 +66,15 @@ export const jobScheduleSchema = z.object({
   timezone: z.string().min(1).max(100).optional(),
   weekday: z.number().int().min(0).max(6).optional(),
   dayOfMonth: z.number().int().min(1).max(28).optional(),
+  everyDays: z.number().int().min(1).max(365).optional(),
+  anchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 export type JobSchedule = z.infer<typeof jobScheduleSchema>;
 
 /** What the designer must return. */
 export const jobDesignSchema = z.object({
   /** First-party skill/template that owns this design, when applicable. */
-  skill: z.enum(['link_building', 'seo_brief', 'marketing_plan', 'brand_voice', 'social_media', 'ai_citations', 'property_overview', 'social_publish']).optional(),
+  skill: z.enum(['casino_discovery', 'link_building', 'seo_brief', 'marketing_plan', 'brand_voice', 'social_media', 'ai_citations', 'property_overview', 'social_publish']).optional(),
   title: z.string().min(3).max(120),
   category: z.enum(JOB_CATEGORIES).catch('research'),
   /** Exact, self-contained instructions for each run. */

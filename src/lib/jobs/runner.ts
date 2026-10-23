@@ -1,4 +1,6 @@
 import 'server-only';
+import { discoveryMemory, saveCandidates } from '@/lib/casinoDiscovery/service';
+import { casinoResearchSchema } from '@/lib/casinoDiscovery/schema';
 import { VOICE_TRAIT_GUIDANCE } from './templates/brandVoice';
 import { withLinkDiscoveryFocus } from './templates/linkBuilding';
 import { manualArtifact, parseJobOutput } from './output';
@@ -483,7 +485,9 @@ export async function executeJobRun(runId: string): Promise<void> {
   const groundingFacts = [...priorityFacts, ...facts].join('\n\n');
   const tools = await buildAssistantTools(viewer, [profile]);
   const today = new Date().toISOString().slice(0, 10);
-  const done = activeDesign.skill === 'link_building' ? await linkOpportunityMemory(job._id) : await earlierRecords(job._id, run._id);
+  let done: string;
+  try { done = activeDesign.skill === 'casino_discovery' ? await discoveryMemory(job) : activeDesign.skill === 'link_building' ? await linkOpportunityMemory(job._id) : await earlierRecords(job._id, run._id); }
+  catch(error) { return fail(error instanceof Error ? error.message : 'Could not verify discovery inventory.'); }
   let cost = 0;
   const usedModels: string[] = [];
   const recordStep = (stage: ModelStep['stage'], note: string, choice: { model: string; free: boolean }, source: ModelStep['source'], fallback: boolean, costMicros: number | null, error?: string) => {
@@ -521,7 +525,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       forceToolLoop: !compact && (!correction || researchRetry),
       extraTools: compact || (correction && !researchRetry) ? undefined : tools.toolSet,
       stopOnUpstreamFailure: true,
-      maxOutputTokensOverride: compact ? COMPACT_RUN_MAX_TOKENS : manualArtifact(activeDesign.skill) ? 6000 : RUN_MAX_TOKENS,
+      maxOutputTokensOverride: compact ? COMPACT_RUN_MAX_TOKENS : manualArtifact(activeDesign.skill) || activeDesign.skill === 'casino_discovery' ? 6000 : RUN_MAX_TOKENS,
       onProgress,
     });
     cost += turn.costMicros ?? 0;
@@ -581,6 +585,10 @@ export async function executeJobRun(runId: string): Promise<void> {
 
     await progress(run._id, owner, 'Validating evidence and required fields', { stage: 'validating', percent: 68 });
     let issues = checkRecords(activeDesign.fields, output);
+    if (activeDesign.skill === 'casino_discovery') output.records.forEach((record, index) => {
+      const parsed = casinoResearchSchema.safeParse(record.values);
+      if (!parsed.success) issues.push({ record: index, field: 'research', problem: `Incomplete discovery data: ${parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')}` });
+    });
     if (activeDesign.skill === 'brand_voice') {
       try { generatedVoice(output, profile.name); }
       catch { issues.push({ record: 0, field: 'brand_profile', problem: 'Invalid brand profile: provide JSON with evidenced positioning, audience relationship, and rhetorical patterns.' }); }
@@ -750,6 +758,14 @@ export async function executeJobRun(runId: string): Promise<void> {
     );
     // A replaced or timed-out executor must not apply stale side effects after losing its lease.
     if (!saved.modifiedCount) return;
+    if (activeDesign.skill === 'casino_discovery' && !run.dryRun) {
+      try { await saveCandidates(job, run._id, output, clean && verdict?.verdict === 'pass'); }
+      catch (error) {
+        const problem = error instanceof Error ? error.message : 'Could not save discovery candidates.';
+        console.error('[casino-discovery] saving candidates failed', { runId: String(run._id), error });
+        await JobRun.updateOne({ _id: run._id, leaseOwner: owner }, { $set: { status: 'needs_review', error: `Research saved, but the candidate queue needs recovery: ${problem}` }, $push: { issues: { record: -1, field: 'delivery', problem } } });
+      }
+    }
     if (activeDesign.skill === 'link_building') {
       await syncLinkOpportunities({
         organizationId: job.organizationId,
