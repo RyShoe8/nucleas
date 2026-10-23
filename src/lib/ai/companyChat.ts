@@ -219,6 +219,8 @@ export async function attemptCompanyCredentialChat(input: {
    * cannot clip long-form plan output to empty finishReason=length replies.
    */
   maxOutputTokensOverride?: number;
+  /** Bounded research jobs can finish with fewer tool rounds than interactive repository work. */
+  maxToolRoundsOverride?: number;
   stopOnUpstreamFailure?: boolean;
   signal?: AbortSignal;
   /** Live progress: each tool call, described for a person. */
@@ -695,7 +697,7 @@ export async function attemptCompanyCredentialChat(input: {
         includeImageTool: input.includeImageTool !== false,
         includeRepoTools: input.includeRepoTools !== false,
         toolProfile: input.toolProfile ?? 'full',
-        maxRounds: deepRepo ? 32 : input.extraTools ? 10 : undefined,
+        maxRounds: input.maxToolRoundsOverride !== undefined ? Math.max(1, Math.min(32, Math.floor(input.maxToolRoundsOverride))) : deepRepo ? 32 : input.extraTools ? 10 : undefined,
         organizationId: input.organizationId,
         projectId: input.projectId,
         userId: input.userId,

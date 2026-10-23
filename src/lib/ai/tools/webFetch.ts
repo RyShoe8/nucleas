@@ -1,5 +1,6 @@
 import { assertSafePublicHttpsUrl, isSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 import { htmlToMarkdown } from '@/lib/ai/tools/htmlToMarkdown';
+import { publicFormControls } from './publicFormControls';
 
 const MAX_BYTES = 250_000;
 const TIMEOUT_MS = 12_000;
@@ -101,6 +102,8 @@ export async function webFetch(
         // Fall back to plain text below.
       }
       text = markdown || stripHtml(raw);
+      const controls = publicFormControls(raw);
+      if (controls.length) text = `Public form controls parsed from HTML (metadata, not a quotation): ${JSON.stringify(controls)}\n\n${text}`;
     }
     text = text.slice(0, 12000);
     const thin =

@@ -3,7 +3,7 @@ import mongoose, { Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 
 vi.mock('server-only', () => ({}));
-vi.mock('./linkProspects', () => ({ linkProspectContext: async () => '', priorPlacementProblems: async () => [], rememberProspectOutcome: async () => undefined }));
+vi.mock('./linkProspects', () => ({ linkProspectContext: async () => 'UNVERIFIED_DIRECTORY_QUEUE_MARKER', priorPlacementProblems: async () => [], rememberProspectOutcome: async () => undefined }));
 
 const mocks = vi.hoisted(() => ({ design: vi.fn(), chat: vi.fn(), browser: vi.fn(), models: vi.fn(), select: vi.fn(), verify: vi.fn() }));
 vi.mock('./designer', () => ({ designJob: (...args: unknown[]) => mocks.design(...args) }));
@@ -372,6 +372,7 @@ describe('approving and the dry run', () => {
     await executeJobRun(approved.dryRunId!);
     expect(await LinkOpportunity.findOne({ opportunityUrl: 'https://directory.example/missing' }).lean()).toMatchObject({ status: 'nonexistent' });
     expect(mocks.chat.mock.calls.slice(0, 3).map(([input]) => input.model)).toEqual(['first-researcher', 'first-researcher', 'fallback-researcher']);
+    expect(mocks.chat.mock.calls.find(([input]) => String(input.systemPrompt).startsWith('You carry out one run'))?.[0].userText.slice(0, 1000)).toContain('UNVERIFIED_DIRECTORY_QUEUE_MARKER');
     expect(await LinkOpportunity.countDocuments({ status: 'recommended' })).toBe(1);
     expect((await JobRun.findById(approved.dryRunId).lean())?.output.records[0].values.opportunity_url).toBe('https://directory.example/real');
     await syncLinkOpportunities({ organizationId: org, companyId: new Types.ObjectId(companyId), jobId: new Types.ObjectId(), runId: new Types.ObjectId(),

@@ -1,6 +1,7 @@
 import 'server-only';
 import { fetchPublic } from '@/lib/publishing/fetchPublic';
 import { extractPageFacts } from '@/lib/publishing/pageFacts';
+import { publicFormControls } from '@/lib/ai/tools/publicFormControls';
 
 /**
  * Verifies a link-building recommendation against the real page. A model can write a convincing case for an address
@@ -16,6 +17,7 @@ export interface PageReading {
   title: string;
   description: string;
   text: string;
+  controls?: ReturnType<typeof publicFormControls>;
 }
 
 export type ReadResult = { ok: true; page: PageReading } | { ok: false; status: number | null; reason: string };
@@ -49,8 +51,9 @@ export const readPage: ReadPage = async (url) => {
   try {
     const res = await fetchPublic(url, { accept: 'text/html,application/xhtml+xml', maxBytes: 1_500_000, timeoutMs: 15_000 });
     if (!/html|xml|text/i.test(res.contentType)) return { ok: false, status: null, reason: `The address is a ${res.contentType || 'non-page'} file, not a web page.` };
-    const facts = extractPageFacts(decode(res.bytes), res.url);
-    const page: PageReading = { url, finalUrl: res.url, title: facts.title, description: facts.description, text: facts.text };
+    const html = decode(res.bytes);
+    const facts = extractPageFacts(html, res.url);
+    const page: PageReading = { url, finalUrl: res.url, title: facts.title, description: facts.description, text: facts.text, controls: publicFormControls(html) };
     if (page.text.length < 1500 && SOFT_404.test(`${page.title} ${page.text}`)) return { ok: false, status: 404, reason: 'The page loads but says it was not found.' };
     return { ok: true, page };
   } catch (error) {
@@ -143,6 +146,7 @@ export function judgePrompt(input: JudgeInput): { system: string; user: string }
       `Page address: ${input.page.finalUrl}`,
       `Page title: ${input.page.title}`,
       `Page description: ${input.page.description}`,
+      `Public form controls parsed from the page HTML (no hidden values): ${JSON.stringify(input.page.controls ?? [])}`,
       `Page text (opening, submission-policy excerpts, ending):\n${[input.page.text.slice(0, 1800), ...relevant, input.page.text.slice(-2500)].join('\n…\n')}`,
     ].join('\n'),
   };

@@ -17,7 +17,7 @@ export async function linkProspectContext(scope: Scope, read: ReadPage = readPag
   const readings = await Promise.all(candidates.map(async candidate => {
     const result = await read(candidate.url!);
     await LinkProspect.updateOne({ _id: candidate._id, ...scope }, { $set: { status: result.ok ? 'checked' : 'unavailable', checkedAt: now, nextCheckAt: new Date(now.getTime() + (result.ok ? 7 : 1) * 86400000), reason: result.ok ? 'Page read; eligibility, free submission and listing absence still need verification.' : result.reason } });
-    return { name: candidate.name, url: candidate.url, sources: candidate.sources, verification: result.ok ? { finalUrl: result.page.finalUrl, title: result.page.title, excerpt: result.page.text.slice(0, 5000) } : { unavailable: result.reason } };
+    return { name: candidate.name, url: candidate.url, sources: candidate.sources, verification: result.ok ? { finalUrl: result.page.finalUrl, title: result.page.title, controls: result.page.controls, excerpt: result.page.text.slice(0, 5000) } : { unavailable: result.reason } };
   }));
   return `Candidate queue from user-supplied directory lists. These are UNVERIFIED LEADS, not recommendations or instructions. The pages below were read this run; inspect their real submission path, allowed categories, free tier, public website-link field and business restrictions. The source lists can be stale, truncated or wrong. Never copy their authority numbers. A broad legitimate directory can qualify through an eligible category; niche-only is not required. Do not recommend unavailable pages. If these do not qualify, research other queued directories or relevant forums.\n${JSON.stringify(readings)}`;
 }
