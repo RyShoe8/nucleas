@@ -741,6 +741,11 @@ export async function executeJobRun(runId: string): Promise<void> {
     }
 
     if (!verdict) issues.push({ record: 0, field: 'review', problem: 'Independent review did not complete. Check Models used for provider errors; human review is required.' });
+    if (activeDesign.skill === 'casino_discovery' && !output.records.length) {
+      await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { output, issues, ...(verdict ? { review: verdict } : {}) } });
+      await fail('No verified new casino or sports betting candidates were found. See the saved research gaps and review; no site was added. The recurring job remains scheduled.', { costMicros: cost, models: usedModels });
+      return;
+    }
 
     // Dry runs always wait for a person; real runs complete by themselves only when automatic and clean.
     const clean = issues.length === 0 && verdict?.verdict !== 'fail';
