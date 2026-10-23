@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { slugifyTitle } from '@/lib/blog/slugify';
 import { PLATFORM_RULES, manualPostText } from '@/lib/publishing/compose';
 import { PLATFORM_LABEL, MANUAL_ONLY } from '@/lib/publishing/config';
 import type { DeliveryView } from '@/lib/publishing/engine';
@@ -90,6 +91,7 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
                 {editing ? <form className="space-y-3" onSubmit={event => { event.preventDefault(); void run('edit', { action: 'edit_post', values: fieldValues }); }}>
                     <p className="text-xs text-text-secondary">Save your changes before opening the form or adding the deal. Saved values are shared with the team and used when Nucleas adds it.</p>
                     {delivery.fields?.filter(field => /\bcasino\b/i.test(field.label)).map(field => <p key={field.label} className="text-xs text-text-secondary">{field.label}: {field.value}</p>)}
+                    {delivery.fields?.some(field => /^slug$/i.test(field.label.trim())) ? <p className="text-xs text-text-secondary">Slug (automatic): {slugifyTitle(String(fieldValues[(delivery.editableFields ?? []).find(field => /^(title|name)$/i.test(field.label.trim()) || /^(title|name)$/i.test(field.key))?.key ?? 'title'] ?? '').normalize('NFKD').replace(/[\u0300-\u036f]/g, ''))}</p> : null}
                     {(delivery.editableFields ?? []).map(field => <label key={field.key} className="block space-y-1">
                         <span className="text-xs text-text-secondary">{field.label}{field.required ? ' *' : ''}</span>
                         {field.type === 'checkbox' ? <input type="checkbox" checked={fieldValues[field.key] === true} onChange={event => setFieldValues({ ...fieldValues, [field.key]: event.target.checked })} />

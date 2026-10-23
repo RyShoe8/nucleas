@@ -1,4 +1,5 @@
 import { applyAdminFieldRules, withDefaultEndDate } from './adminRules';
+import { slugifyTitle } from '@/lib/blog/slugify';
 import { retryDatabaseRead } from '@/lib/db/retryRead';
 import { recipientOnlyItem } from '@/lib/watches/offerEligibility';
 import { redditDealBlock, redditDealHistory, withRedditDealLock } from './redditDeals';
@@ -764,6 +765,14 @@ export async function editDelivery(job: { _id: Types.ObjectId; organizationId: T
       if (text && field.options?.length && !field.options.some(option => option.value === value)) return { ok: false, status: 400, error: `${field.label}: select one of the available choices.` };
     }
     const values = Object.fromEntries(entries);
+    const titleField = config.admin.fields.find(field => /^(title|name)$/i.test(field.label.trim()) || /^(title|name)$/i.test(field.key));
+    for (const field of config.admin.fields.filter(field => /^slug$/i.test(field.label.trim()) || /^slug$/i.test(field.key))) {
+      if (titleField) {
+        const slug = slugifyTitle(String(values[titleField.key] ?? '').normalize('NFKD').replace(/[\u0300-\u036f]/g, ''));
+        if (!slug) return { ok: false, status: 400, error: 'Enter a title that can be used as the deal URL.' };
+        values[field.key] = slug;
+      } else if (delivery.values?.[field.key] !== undefined) values[field.key] = delivery.values[field.key];
+    }
     for (const field of config.admin.fields.filter(field => /\bcasino\b/i.test(`${field.key.replaceAll('_', ' ')} ${field.label}`))) {
       if (field.key in values && values[field.key] !== delivery.values?.[field.key]) return { ok: false, status: 400, error: 'Casino cannot be changed from the review panel.' };
       if (delivery.values?.[field.key] !== undefined) values[field.key] = delivery.values[field.key];
@@ -910,7 +919,7 @@ export async function publishingView(job: { _id: Types.ObjectId; publishing?: un
     error: d.error ?? null,
     createdAt: d.createdAt.toISOString(),
     fields: d.platform === 'admin' && config.admin ? valueLines(config.admin.fields, d.values ?? {}) : null,
-    ...(d.platform === 'admin' && config.admin ? { editableFields: config.admin.fields.filter(field => field.type !== 'file' && !/\bcasino\b/i.test(`${field.key.replaceAll('_', ' ')} ${field.label}`)).map(field => ({ key: field.key, label: /^(notes|description)$/i.test(field.label.trim()) ? `Body / ${field.label.toLowerCase()}` : field.label || field.key, type: field.type, required: field.required, options: field.options, value: d.values?.[field.key] ?? (field.type === 'checkbox' ? false : '') })) } : {}),
+    ...(d.platform === 'admin' && config.admin ? { editableFields: config.admin.fields.filter(field => field.type !== 'file' && !/\bcasino\b/i.test(`${field.key.replaceAll('_', ' ')} ${field.label}`) && !/^slug$/i.test(field.key) && !/^slug$/i.test(field.label.trim())).map(field => ({ key: field.key, label: /^(notes|description)$/i.test(field.label.trim()) ? `Body / ${field.label.toLowerCase()}` : field.label || field.key, type: field.type, required: field.required, options: field.options, value: d.values?.[field.key] ?? (field.type === 'checkbox' ? false : '') })) } : {}),
     screenshot: d.screenshot ?? null,
   });
   const raw = (job.publishing ?? {}) as { notes?: Record<string, string> };

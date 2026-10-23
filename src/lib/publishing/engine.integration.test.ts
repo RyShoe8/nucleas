@@ -309,17 +309,17 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
 
   it('saves reviewed admin values and posts those edits without regenerating them', async () => {
     const job = await adminJob();
-    await Job.updateOne({ _id: job._id }, { $set: { 'publishing.admin.fields': [...fields, { key: 'title', label: 'Title', type: 'text', selector: '#title', required: true }], 'publishing.adminFieldRules': [{ field: 'offer', value: 'Generated offer' }] } });
+    await Job.updateOne({ _id: job._id }, { $set: { 'publishing.admin.fields': [...fields, { key: 'title', label: 'Title', type: 'text', selector: '#title', required: true }, { key: 'slug', label: 'Slug', type: 'text', selector: '#slug', required: true }], 'publishing.adminFieldRules': [{ field: 'offer', value: 'Generated offer' }] } });
     const mail = await email('offers@example.com', 'Editable deal', 20, 25);
     const item = await PublishItem.create({ organizationId: org, companyId, jobId: job._id, key: String(mail._id), status: 'processed' });
     const card = await PublishDelivery.create({ organizationId: org, companyId, jobId: job._id, itemId: item._id, platform: 'admin', mode: 'manual', status: 'ready', body: 'Deal', values: { casino: 'Original casino', offer: 'Original offer' }, screenshot: 'old-preview' });
-    expect(await editDelivery(job, String(card._id), { values: { title: 'Corrected title', offer: 'Corrected terms' } })).toEqual({ ok: true });
+    expect(await editDelivery(job, String(card._id), { values: { title: 'Corrected title', slug: 'ignored-manual-slug', offer: 'Corrected terms' } })).toEqual({ ok: true });
     expect(await PublishDelivery.findById(card._id).select('+screenshot').lean()).toMatchObject({ valuesReviewed: true, values: { casino: 'Original casino', offer: 'Corrected terms' } });
     expect((await PublishDelivery.findById(card._id).select('+screenshot').lean())?.screenshot).toBeUndefined();
     const view = await publishingView((await Job.findById(job._id).lean())!);
     expect(view?.ready[0].editableFields?.map(field => field.key)).toEqual(['offer', 'title']);
     expect(await postDeliveryNow(job.toObject(), String(card._id), String(userId), adminDeps())).toEqual({ ok: true });
-    expect(saved).toEqual([{ title: 'Corrected title', casino: 'Original casino', offer: 'Corrected terms' }]);
+    expect(saved).toEqual([{ title: 'Corrected title', slug: 'corrected-title', casino: 'Original casino', offer: 'Corrected terms' }]);
     expect(await editDelivery(job, String(card._id), { values: { casino: 'Late edit', offer: 'Too late' } })).toMatchObject({ ok: false, status: 409 });
   });
 
