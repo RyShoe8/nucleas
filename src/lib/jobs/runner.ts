@@ -361,6 +361,15 @@ export async function executeJobRun(runId: string): Promise<void> {
     // A failed sample must not strand its parent in "testing" with no available action.
     // Return it to the approved-design screen so the person can inspect the error and retry.
     if (run.dryRun) await Job.updateOne({ _id: run.jobId, status: 'testing' }, { $set: { status: 'proposed' } });
+    const retryDesign = jobDesignSchema.safeParse(job?.design);
+    const retryableDiscovery = /No verified link-building|response could not be read|work calls|remote model|HTTP (?:401|402|403|429|5\d\d)|timed? out|unreachable|did not respond/i.test(error)
+      && !/budget|admission|processing enabled|Enable Remote/i.test(error);
+    if (!run.dryRun && retryDesign.success && retryDesign.data.skill === 'link_building' && retryDesign.data.schedule.kind !== 'once' && retryableDiscovery) {
+      const nextRunAt = new Date(now.getTime() + 30 * 60 * 1000);
+      await Job.updateOne({ _id: run.jobId, status: { $in: ['ready', 'active'] }, $or: [{ nextRunAt: { $gt: nextRunAt } }, { nextRunAt: { $exists: false } }] }, {
+        $set: { nextRunAt }, $push: { events: { at: now, action: 'link_discovery_retry_scheduled', note: 'No verified opportunity; retry discovery in 30 minutes within the existing budget.' } },
+      });
+    }
   };
   if (!job) return fail('The job no longer exists.');
   const design = jobDesignSchema.safeParse(job.design);
@@ -635,27 +644,31 @@ export async function executeJobRun(runId: string): Promise<void> {
         await progress(run._id, owner, `A recommendation failed validation; researching a verified replacement (attempt ${rounds})`, { stage: 'validating', percent: Math.min(80, 70 + rounds * 2) });
         const wrong = issues;
         const retry = await doWork(activeWorker, `These recommended pages failed a live check of the real page:\n${wrong.map((issue) => `- ${issue.problem}`).join('\n')}\nResearch again with tools. Replace each failed recommendation with a different opportunity whose page you opened and read in this run: it must load, be an independent third-party site, show a free self-service way to add a link, and serve this company's audience. Put at least one exact quotation from that page in the relevance evidence. Do not guess addresses. Return only the required JSON.`, true);
+        if (retryableProviderFailure(retry)) {
+          exhaustedProfiles.add(activeWorker.profileId);
+          const candidates = models.filter((model) => !exhaustedProfiles.has(model.profileId));
+          const direct = candidates.filter((model) => model.provider === 'openai');
+          const replacement = (direct.length ? (await selectModel(org, workNeed, level, { models: direct, settings })).primary : null)
+            ?? (await selectModel(org, workNeed, level, { models: candidates, settings })).primary;
+          if (replacement) activeWorker = replacement;
+          continue;
+        }
         const corrected = retry.role === 'assistant' ? jobRunOutputSchema.safeParse(extractJson(retry.text)) : null;
-        if (!corrected?.success) break;
+        if (!corrected?.success) {
+          issues = [...wrong, { record: 0, field: 'format', problem: 'The replacement was not valid result JSON. Return the complete records, sources, summary and gaps object.' }];
+          continue;
+        }
         output = corrected.data;
         issues = checkRecords(activeDesign.fields, output);
         failedCheck = await runLinkChecks();
       }
       if (failedCheck) {
         const error = 'No verified link-building opportunity found. Invalid candidates were excluded; no recommendation was delivered.';
+        if (!output.records.length) {
+          for (const gap of output.gaps) issues.push({ record: -1, field: 'research', problem: gap.slice(0, 1000) });
+        }
         await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { issues } });
         await fail(error, { costMicros: cost, models: usedModels });
-        // Retry discovery later today without an unbounded model/budget loop. The ordinary daily schedule remains after two retries.
-        if (!run.dryRun && activeDesign.schedule.kind !== 'once' && await JobRun.exists({ _id: run._id, status: 'failed', leaseOwner: owner, error })) {
-          const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-          const failures = await JobRun.countDocuments({ jobId: job._id, status: 'failed', error, createdAt: { $gte: since } });
-          if (failures <= 2) {
-            const nextRunAt = new Date(Date.now() + 30 * 60 * 1000);
-            await Job.updateOne({ _id: job._id, status: { $in: ['ready', 'active'] }, $or: [{ nextRunAt: { $gt: nextRunAt } }, { nextRunAt: { $exists: false } }] }, {
-              $set: { nextRunAt }, $push: { events: { at: new Date(), action: 'link_discovery_retry_scheduled', note: 'No verified opportunity; retry discovery in 30 minutes within the existing budget.' } },
-            });
-          }
-        }
         return;
       }
     }

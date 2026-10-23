@@ -365,7 +365,7 @@ describe('approving and the dry run', () => {
       strategy_evidence: 'The approved strategy prioritizes the games directory and this resource serves the same player audience.',
     }, sources: [url] }] });
     mocks.chat.mockImplementation(async (input: { systemPrompt: string }) => ({ requestId: 'test', role: 'assistant', costMicros: 0,
-      text: input.systemPrompt.startsWith('You check one run') ? '{"verdict":"pass","notes":"Verified."}' : result(++calls <= 2 ? 'https://directory.example/missing/' : 'https://directory.example/real') }));
+      text: input.systemPrompt.startsWith('You check one run') ? '{"verdict":"pass","notes":"Verified."}' : ++calls === 2 ? 'Malformed replacement, no JSON.' : result(calls === 1 ? 'https://directory.example/missing/' : 'https://directory.example/real') }));
     mocks.verify.mockResolvedValueOnce({ hard: ['HTTP 404'], soft: [], missing: true }).mockResolvedValue({ hard: [], soft: [] });
     const approved = await approveJob(admin, job.id, { completion: 'review' });
     await executeJobRun(approved.dryRunId!);
@@ -378,7 +378,7 @@ describe('approving and the dry run', () => {
     expect(await LinkOpportunity.countDocuments({ status: 'recommended' })).toBe(1);
   });
 
-  it('stops without delivering repeated dead pages and schedules a bounded recurring retry', async () => {
+  it('keeps retrying discovery after repeated failures without delivering dead pages', async () => {
     const job = await proposed({ ...DESIGN, skill: 'link_building', schedule: { kind: 'daily', time: '09:00', timezone: 'UTC' } });
     await Job.updateOne({ _id: job.id }, { $set: { status: 'active', nextRunAt: new Date(Date.now() + 86400000) } });
     const values = { ...JSON.parse(GOOD).records[0].values, opportunity_url: 'https://directory.example/missing', relevance_score: 90,
@@ -394,8 +394,8 @@ describe('approving and the dry run', () => {
       expect(run).toMatchObject({ status: 'failed', error: expect.stringContaining('No verified link-building opportunity') });
       expect(run?.output).toBeUndefined();
       const parent = await Job.findById(job.id).lean();
-      expect(parent!.nextRunAt!.getTime() - Date.now()).toBeGreaterThan(attempt < 2 ? 1700000 : 86000000);
-      if (attempt < 2) expect(parent!.nextRunAt!.getTime() - Date.now()).toBeLessThan(1900000);
+      expect(parent!.nextRunAt!.getTime() - Date.now()).toBeGreaterThan(1700000);
+      expect(parent!.nextRunAt!.getTime() - Date.now()).toBeLessThan(1900000);
     }
     expect(await LinkOpportunity.countDocuments({ status: 'recommended' })).toBe(0);
     expect(await LinkOpportunity.countDocuments({ status: 'nonexistent' })).toBe(1);
