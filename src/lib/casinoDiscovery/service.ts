@@ -26,9 +26,10 @@ export async function saveCandidates(job: { _id:Types.ObjectId;organizationId:Ty
   const research=parsed.data, domain=canonicalCasinoDomain(research.website_url);
   if(existingDomains.has(domain)||existingNames.has(research.name.toLowerCase().replace(/\W/g,'')))continue;
   const blockers=readiness(research);if(!reviewPassed)blockers.push('Independent research review has not passed.');
-  for(const url of [...new Set([research.website_url,research.terms_url,research.eligibility_url,...(research.program_url?[research.program_url]:[])])]){
-    try{await webFetch(url);}catch{blockers.push(`Could not verify official page: ${url}`);}
-  }
+  const urls=[...new Set([research.website_url,research.terms_url,research.eligibility_url,...(research.program_url?[research.program_url]:[]),...Object.values(research.field_sources).flat()])];
+  if(urls.length>30)blockers.push('Research contains too many sources to verify automatically; review the sources manually.');
+  const pages=await Promise.allSettled(urls.slice(0,30).map(url=>webFetch(url)));
+  pages.forEach((page,index)=>{if(page.status==='rejected'||page.value.thin)blockers.push(`Could not verify official page: ${urls[index]}`);});
   try{await CasinoCandidate.updateOne({organizationId:job.organizationId,companyId:job.companyId,domain},{$setOnInsert:{jobId:job._id,runId,name:research.name,research,sources:record.sources,status:'review',blockers}},{upsert:true});}catch(error){if(!(error instanceof Error && 'code' in error && error.code===11000))throw error;}
  }
 }

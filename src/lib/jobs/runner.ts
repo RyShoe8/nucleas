@@ -582,6 +582,14 @@ export async function executeJobRun(runId: string): Promise<void> {
     }
     if (!parsed.success) return void (await fail(`The model's response could not be read after a formatting retry: ${parsed.error.issues.map((issue) => `${issue.path.join('.') || 'response'}: ${issue.message}`).join('; ')}. No result was saved; retry the run.`, { costMicros: cost, models: usedModels }));
     let output = parsed.data;
+    if (activeDesign.skill === 'casino_discovery' && workCalls < MAX_WORK_CALLS && (!output.records.length || output.records.some(record => !casinoResearchSchema.safeParse(record.values).success))) {
+      const direct = level === 'free' ? [] : models.filter(model => model.provider === 'openai' && !exhaustedProfiles.has(model.profileId));
+      const alternate = (direct.length ? (await selectModel(org, workNeed, level, { models: direct, settings })).primary : null) ?? work.fallback ?? activeWorker;
+      activeWorker = alternate;
+      const retry = await doWork(activeWorker, 'The previous attempt returned no usable candidates. New means absent from our catalog, not necessarily newly launched. Research established casinos AND sports betting sites with official affiliate or referral programs too. Open real official pages and return up to three complete research objects with all payload fields. Unverified facts belong in missing_information and must block adding. Never fabricate records to fill a quota.', true);
+      const replacement = retry.role === 'assistant' ? parseJobOutput(retry.text, activeDesign.skill) : null;
+      if (replacement?.success) output = replacement.data;
+    }
 
     await progress(run._id, owner, 'Validating evidence and required fields', { stage: 'validating', percent: 68 });
     let issues = checkRecords(activeDesign.fields, output);
