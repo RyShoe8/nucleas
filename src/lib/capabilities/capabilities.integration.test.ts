@@ -186,6 +186,7 @@ describe('Ahrefs project setup (write)', () => {
 describe('approvals', () => {
   it('claims a keyed write once across concurrent requests using a shared organization connection', async () => {
     await connect('brevo', 'shared-test-key', { org: true });
+    await IntegrationConnection.deleteMany({ organizationId: orgId, companyId, provider: 'brevo' });
     const runOnce = vi.fn(async () => ({ output: { saved: true }, summary: 'Saved once' }));
     const definition: CapabilityDefinition = { id: 'test.keyed.write', version: 1, title: 'Keyed write', domain: 'test', kind: 'write', risk: 'communication', provider: 'brevo', approval: 'auto', idempotent: true, input: z.object({ title: z.string() }).strict(), run: runOnce };
     const options = { registry: [definition], idempotencyKey: 'one-publication' };
@@ -193,6 +194,8 @@ describe('approvals', () => {
     expect(results.every(result => result.ok)).toBe(true);
     expect(runOnce).toHaveBeenCalledOnce();
     expect(await CapabilityInvocation.countDocuments({ capabilityId: definition.id })).toBe(1);
+    const receipt = await CapabilityInvocation.findOne({ capabilityId: definition.id }).lean();
+    expect((await IntegrationConnection.findById(receipt!.connectionId).lean())?.scope).toBe('org');
     expect(await invokeCapability(admin, companyId, definition.id, { title: 'Changed post' }, options)).toMatchObject({ ok: false, status: 409 });
   });
   const run = vi.fn(async () => ({ output: { done: true }, summary: 'Did the thing' }));
