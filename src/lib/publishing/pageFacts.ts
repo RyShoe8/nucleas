@@ -7,6 +7,8 @@ export interface PageFacts {
   title: string;
   description: string;
   text: string;
+  /** Full editorial paragraphs, separate from shortened social metadata and navigation. */
+  editorialText?: string;
   image: string | null;
   images: string[];
   video: string | null;
@@ -94,6 +96,16 @@ export function extractPageFacts(html: string, pageUrl: string): PageFacts {
   const description = meta(html, 'og:description') ?? meta(html, 'description') ?? meta(html, 'twitter:description') ?? '';
   const image = structuredCoverImage(html, pageUrl) ?? absolute(meta(html, 'og:image') ?? meta(html, 'og:image:url') ?? meta(html, 'twitter:image'), pageUrl);
   const body = /<main\b[\s\S]*?<\/main>/i.exec(html)?.[0] ?? /<article\b[\s\S]*?<\/article>/i.exec(html)?.[0] ?? html;
+  const editorial: string[] = [];
+  for (const section of body.matchAll(/<section\b[^>]*>([\s\S]*?)<\/section>/gi)) {
+    const heading = decodeEntities(/<h[1-3]\b[^>]*>([\s\S]*?)<\/h[1-3]>/i.exec(section[1])?.[1] ?? '').trim();
+    if (!/^(about\b|overview\b|gameplay\b|how to play\b|why we picked|who it.?s for)/i.test(heading)) continue;
+    for (const paragraph of section[1].matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)) {
+      const value = decodeEntities(paragraph[1]).replace(/\s+/g, ' ').trim();
+      if (value.length >= 40 && value.length <= 2000 && !editorial.includes(value)) editorial.push(value);
+    }
+  }
+  const editorialText = editorial.slice(0, 3).join('\n\n');
   const images: string[] = [];
   for (const match of body.matchAll(/<img\b[^>]*>/gi)) {
     const el = match[0];
@@ -116,7 +128,7 @@ export function extractPageFacts(html: string, pageUrl: string): PageFacts {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 6000);
-  return { title: title.slice(0, 500), description: description.slice(0, 2000), text, image, images, video };
+  return { title: title.slice(0, 500), description: description.slice(0, 2000), text: editorialText ? `${editorialText}\n\n${text}`.slice(0, 6000) : text, editorialText, image, images, video };
 }
 
 export async function readPageFacts(url: string, fetcher?: FetchLike): Promise<PageFacts> {

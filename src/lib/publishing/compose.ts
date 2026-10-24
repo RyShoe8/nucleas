@@ -21,7 +21,7 @@ export const PLATFORM_RULES: Record<SocialPlatform, { maxChars: number; title: b
   reddit: {
     maxChars: 10000,
     title: true,
-    rules: 'A Reddit text post in the company\'s own subreddit: a clear title (under 300 characters) and a body that is useful first. Markdown is allowed in the body (Reddit renders it). Include the link in the body where the example puts it, or at the end if the example has none.',
+    rules: 'A Reddit text post in the company\'s own subreddit: a clear title (under 300 characters) and a body that is useful first. Markdown is allowed in the body (Reddit renders it). Include the link in the body where the example puts it, or at the end if the example has none. For games with sufficient source facts, write 150–250 words in 2–4 short paragraphs: explain what players do, the objective, distinctive mechanics, supported play modes and who might enjoy it. Use concrete verified details, not a one-line teaser or copied social preview. Never pad sparse sources or invent details to reach a word count.',
   },
 };
 
@@ -116,6 +116,12 @@ export function manualPostText(platform: string, body: string, link: string | nu
 export interface Draft {
   title: string | null;
   body: string;
+}
+
+export function fallbackSocialDraft(platform: SocialPlatform, facts: { title: string; description: string; editorialText?: string; link: string | null }, noun: string): Draft {
+  const prose = platform === 'reddit' && facts.editorialText?.trim() ? facts.editorialText.trim() : facts.description || `A new ${noun} is here.`;
+  const body = [prose, platform === 'reddit' ? facts.link : null].filter(Boolean).join('\n\n');
+  return { title: platform === 'reddit' ? newItemTitle(facts.title, noun) : null, body: platform === 'bluesky' ? fitToLimit(body, 290) : body };
 }
 
 const titleCase = (noun: string) => noun.replace(/\b[a-z]/g, (c) => c.toUpperCase());

@@ -1,9 +1,19 @@
-import { manualPostText } from './compose';
+import { manualPostText, fallbackSocialDraft } from './compose';
 import { describe, expect, it, vi } from 'vitest';
 import { charCount, composePost, composeSystemPrompt, composeUserPrompt, fitToLimit, newItemTitle, parseDraft, relabelNewItemTitle } from './compose';
 import { extractPageFacts } from './pageFacts';
 
 const base = { companyName: 'PlayBound', persona: 'Warm, nerdy, plain-spoken. Short sentences.', brief: 'Post every new game', noun: 'game', facts: { title: 'Deus Ex', description: 'Online co-op is back.' }, link: 'https://playbound.club/games/deus-ex' };
+
+it('uses complete gameplay paragraphs for Reddit fallback without applying the Bluesky limit', () => {
+  const editorialText = 'Play short physics-based sports matches with animal characters. '.repeat(8).trim();
+  const facts = { title: 'Sport Animals', description: 'Cute animals and physics…', editorialText, link: 'https://playbound.club/games/sport-animals' };
+  const reddit = fallbackSocialDraft('reddit', facts, 'game');
+  expect(reddit.body).toBe(`${editorialText}\n\n${facts.link}`);
+  expect(reddit.body.length).toBeGreaterThan(300);
+  expect(fallbackSocialDraft('bluesky', facts, 'game').body).toBe(facts.description);
+  expect(composeSystemPrompt({ ...base, platform: 'reddit', example: '' })).toContain('150–250 words');
+});
 
 describe('prompts', () => {
   it('puts the Voice, the example as structure only, and the platform rules in the system prompt', () => {
