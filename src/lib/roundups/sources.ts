@@ -50,6 +50,70 @@ export function playerNotes(text: string): string {
     return value.length >= 12 && !/^(what'?snew|changelog|release notes|full changelog|https?:\/\/|contributors|v?\d+\.\d+)/i.test(line.replace(/^[#*\s-]+/, ''));
   }).join('\n').trim();
 }
+
+/** Production deployments, rather than arbitrary default-branch work, bound untagged platform updates. */
+export async function deployedSources(binding: { owner: string; repo: string; installationId?: string | null }, start: Date, end: Date, client = createInstallationOctokit(binding.installationId ?? '')): Promise<Source[]> {
+  if (!binding.installationId) throw new Error(`GitHub installation missing for ${binding.owner}/${binding.repo}.`);
+  const args = { owner: binding.owner, repo: binding.repo };
+  let latest: string | undefined;
+  let statusReads = 0;
+  for (let page = 1; page <= 10 && !latest; page++) {
+    const { data } = await client.repos.listDeployments({ ...args, per_page: 100, page, request: { timeout: 15000 } });
+    for (const deployment of data) {
+      if (!/^production$/i.test(deployment.environment)) continue;
+      const date = new Date(deployment.created_at);
+      if (date >= end) continue;
+      if (++statusReads > 20) throw new Error('Too many unconfirmed production deployments; coverage unchanged.');
+      const statuses = await client.repos.listDeploymentStatuses({ ...args, deployment_id: deployment.id, per_page: 100, request: { timeout: 15000 } });
+      // Inactive is a previously successful deployment superseded by a newer production deployment.
+      const success = statuses.data.find(s => s.state === 'success');
+      if (!success || !['success', 'inactive'].includes(statuses.data[0]?.state) || new Date(success.created_at) >= end) continue;
+      if (date < start && new Date(success.created_at) < start) return [];
+      latest = deployment.sha;
+      break;
+    }
+    if (!data.length || data.length < 100) break;
+    if (page === 10 && !latest) throw new Error('Production deployment history exceeds source limit; coverage unchanged.');
+  }
+  if (!latest) return [];
+  const groups: Record<string, string[]> = { Added: [], Improved: [], Fixed: [] };
+  const seen = new Set<string>();
+  for (let page = 1; page <= 10; page++) {
+    // Walk only ancestors of the confirmed deployment SHA. Date bounds also tolerate rewritten histories.
+    const { data } = await client.repos.listCommits({ ...args, sha: latest, since: start.toISOString(), until: end.toISOString(), per_page: 100, page, request: { timeout: 15000 } });
+    for (const commit of data) {
+      const date = commit.commit.committer?.date;
+      if (!date || new Date(date) < start || new Date(date) >= end) continue;
+      const title = commit.commit.message.split('\n')[0].trim();
+      if (!publicWork(title) || /\b(admin|catalog wave|catalog-scope|signed catalog|roundup|telemetry|analytics|smoke|fixtures?|cache key|bump|unsigned|runtime|seccomp|tmpfs|isolat(?:ion|ed)|acceptance|gate matrix|probe|diagnostic|record|pins?|adapter|resolver|registry|schema|sitemap|VPS|host agent|log each|port first|stored as|document)\b/i.test(title) || /^(merge\b|launcher\s+v?\d)/i.test(title)) continue;
+      if (!/\b(add|added|enable|improve|improved|fix|fixed|repair|correct|restore|support|show|give|open|keep|speed|stop|start|offer)\b/i.test(title)) continue;
+      const cleaned = title.replace(/\s*\[[^\]]*\]/g, '').replace(/^(feat|fix|perf)(\([^)]*\))?:\s*/i, '').trim();
+      if (seen.has(cleaned.toLowerCase())) continue;
+      seen.add(cleaned.toLowerCase());
+      const category = /\b(fix|fixed|repair|correct|restore|stop|no longer)\b/i.test(title) ? 'Fixed' : /\b(add|added|enable|support)\b/i.test(title) ? 'Added' : 'Improved';
+      groups[category].push(cleaned);
+    }
+    if (data.length < 100) break;
+    if (page === 10) throw new Error('Production change range exceeds source limit; coverage unchanged.');
+  }
+  const url = `https://github.com/${binding.owner}/${binding.repo}/commits/${latest}/?since=${encodeURIComponent(start.toISOString())}&until=${encodeURIComponent(end.toISOString())}`;
+  return Object.entries(groups).filter(([, notes]) => notes.length).map(([category, notes]) => ({
+    id: `github:${binding.owner}/${binding.repo}:production:${latest}:${category.toLowerCase()}`,
+    title: `Platform updates — ${category.toLowerCase()}`,
+    url,
+    description: `${category}:\n${notes.slice(0, 5).map(note => `- ${completeExcerpt(note, 350)}`).join('\n')}\nEvidence: up to five recent highlights per section from commits dated in this window and included in a successful production deployment. Commit dates are not individual feature deployment dates. Repository changes are not proof of launcher distribution. Do not claim a launcher version was released.`,
+  }));
+}
+
+/** Prefer complete sentences; otherwise finish at a word boundary with an explicit ellipsis. */
+export function completeExcerpt(text: string, limit = 300): string {
+  const plain = text.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  if (plain.length <= limit) return plain;
+  const prefix = plain.slice(0, limit - 1);
+  const sentence = [...prefix.matchAll(/[.!?](?=\s|$)/g)].at(-1);
+  if (sentence && sentence.index >= Math.min(60, limit / 3)) return prefix.slice(0, sentence.index + 1);
+  return prefix.slice(0, prefix.lastIndexOf(' ')).trimEnd() + '…';
+}
 export async function releaseSources(binding: { owner: string; repo: string; installationId?: string | null }, start: Date, end: Date): Promise<Source[]> {
   if (!binding.installationId) throw new Error(`GitHub installation missing for ${binding.owner}/${binding.repo}.`);
   const client = createInstallationOctokit(binding.installationId);

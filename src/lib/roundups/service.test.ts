@@ -15,7 +15,7 @@ vi.mock('@/lib/brandVoice/service', () => ({ brandVoiceContext: vi.fn(async () =
 vi.mock('@/lib/ai/engine/ask', () => ({ askEngine: vi.fn() }));
 vi.mock('@/lib/connectors/connections', () => ({ getWebsiteConnection: vi.fn(), getPinnedWebsiteConnection: vi.fn() }));
 vi.mock('@/lib/capabilities/runtime', () => ({ invokeCapability: vi.fn() }));
-vi.mock('./sources', async importOriginal => ({ ...await importOriginal<typeof import('./sources')>(), siteRequest: vi.fn(), releaseSources: vi.fn(async () => []) }));
+vi.mock('./sources', async importOriginal => ({ ...await importOriginal<typeof import('./sources')>(), siteRequest: vi.fn(), releaseSources: vi.fn(async () => []), deployedSources: vi.fn(async () => []) }));
 
 const companyId = new Types.ObjectId().toString();
 const viewer: CompanyViewer = { userId: new Types.ObjectId().toString(), organizationId: new Types.ObjectId(), employeeId: null, role: 'Manager' };
