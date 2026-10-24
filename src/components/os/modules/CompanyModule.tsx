@@ -66,6 +66,8 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                         {RELATIONSHIP_LABEL[company.relationship]}
                         {company.devUrl ? ` · dev ${company.devUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}` : ''}
                     </p>
+                    <details className="mt-2 text-xs">
+                    <summary className="cursor-pointer text-text-secondary">Company details</summary>
                     <SubredditEditor
                         companyId={company.id}
                         subreddit={company.subreddit}
@@ -84,16 +86,23 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                             setActivityKey((key) => key + 1);
                         }}
                     />
+                    </details>
                     {company.description ? (
                         <p className="mt-1 text-sm text-text-secondary line-clamp-2">{company.description}</p>
                     ) : null}
                     <SocialLinks links={company.socialLinks ?? []} />
                 </div>
-                <div className="flex flex-col sm:flex-row gap-2">
+                <div className="flex flex-col gap-2">
+                    <CompanyContentButton companyId={company.id} companyName={company.name} />
+                    <details className="text-xs">
+                    <summary className="cursor-pointer text-text-secondary">Brand and planning</summary>
+                    <div className="mt-2 flex flex-wrap gap-2">
                     <VoiceButton companyId={company.id} companyName={company.name} status={detail.voiceStatus ?? 'none'} />
                     <PropertyOverviewButton companyId={company.id} companyName={company.name} canManage={detail.canManage} />
                     <MarketingPlanButton companyId={company.id} companyName={company.name} />
                     <AskButton companyId={company.id} companyName={company.name} />
+                    </div>
+                    </details>
                 </div>
             </header>
 
@@ -104,12 +113,19 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                 aiCitationSeries={detail.stats?.aiCitationSeries ?? []}
                 onActivity={() => setActivityKey((k) => k + 1)}
             />
+            <details className="ui-card p-3">
+            <summary className="cursor-pointer text-sm font-medium">Connections and setup</summary>
+            <div className="mt-3 space-y-4">
             <ProjectsSection projects={projects} />
             <CodeRepositories companyId={company.id} compact />
             <AdminAccount companyId={company.id} defaultDomain={company.domain} />
-            <CompanyChanges companyId={company.id} />
-            <CompanyActivity companyId={company.id} refreshKey={activityKey} />
             <IntegrationsSummary companyId={company.id} companyName={company.name} connections={connections} />
+            </div>
+            </details>
+            <details className="ui-card p-3">
+                <summary className="cursor-pointer text-sm font-medium">Recent activity</summary>
+                <div className="mt-3 space-y-4"><CompanyChanges companyId={company.id} /><CompanyActivity companyId={company.id} refreshKey={activityKey} /></div>
+            </details>
         </div>
     );
 }
@@ -281,7 +297,7 @@ function VoiceButton({ companyId, companyName, status }: { companyId: string; co
     return (
         <button type="button" title={indicator.label} onClick={(e) => { e.stopPropagation(); wm.open('brand-voice', { payload: { companyId, companyName } }); }} className="ui-button flex-shrink-0 inline-flex items-center gap-1.5">
             <span aria-hidden className={`h-2 w-2 rounded-full ${indicator.dot}`} />
-            Voice
+            Brand voice
             <span className="sr-only">{indicator.label}</span>
         </button>
     );
@@ -322,7 +338,12 @@ function SocialLinks({ links }: { links: { network: string; url: string }[] }) {
 
 function MarketingPlanButton({ companyId, companyName }: { companyId: string; companyName: string }) {
     const wm = useWindowManager();
-    return <button type="button" onClick={(e) => { e.stopPropagation(); wm.open('marketing', { payload: { companyId, companyName, kind: 'marketing_plan' } }); }} className="ui-button flex-shrink-0">Marketing</button>;
+    return <button type="button" onClick={(e) => { e.stopPropagation(); wm.open('marketing', { payload: { companyId, companyName, kind: 'marketing_plan' } }); }} className="ui-button flex-shrink-0">Marketing plan</button>;
+}
+
+function CompanyContentButton({ companyId, companyName }: { companyId: string; companyName: string }) {
+    const wm = useWindowManager();
+    return <button type="button" className="ui-button-primary" onClick={() => wm.open('content', { payload: { companyId, companyName, tab: 'updates' } })}>Create content</button>;
 }
 
 /** One line: connection counts, problems highlighted, and a link to the Integrations window. */

@@ -19,6 +19,7 @@ vi.mock('@/lib/building/builds', () => ({
 
 import { ContentWatch, WatchItem, WatchMailbox } from '@/lib/models/Watch';
 import { ArticleDraft } from '@/lib/models/ArticleDraft';
+import { ReleaseRoundup } from '@/lib/models/ReleaseRoundup';
 import { PropertyOverview } from '@/lib/models/PropertyOverview';
 import { listActivity } from './activity';
 
@@ -37,10 +38,18 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await Promise.all([ContentWatch.deleteMany({}), WatchItem.deleteMany({}), WatchMailbox.deleteMany({}), ArticleDraft.deleteMany({}), PropertyOverview.deleteMany({})]);
+  await Promise.all([ContentWatch.deleteMany({}), WatchItem.deleteMany({}), WatchMailbox.deleteMany({}), ArticleDraft.deleteMany({}), PropertyOverview.deleteMany({}), ReleaseRoundup.deleteMany({})]);
 });
 
 describe('activity', () => {
+  it('shows roundup work and reviews in All jobs with company context and hides published history', async () => {
+    await ReleaseRoundup.create({ organizationId: org, companyId: company.id, createdByUserId: viewer.userId, status: 'draft', title: 'Update ready', idempotencyKey: 'review' });
+    await ReleaseRoundup.create({ organizationId: new Types.ObjectId(), companyId: company.id, createdByUserId: viewer.userId, status: 'draft', title: 'Other organization', idempotencyKey: 'private' });
+    await ReleaseRoundup.create({ organizationId: org, companyId: company.id, createdByUserId: viewer.userId, active: false, status: 'published', title: 'Published', idempotencyKey: 'done' });
+    const rows = (await listActivity(viewer as never)).filter(item => item.kind === 'roundup');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ title: 'Update ready', group: 'you', category: 'content', open: { window: 'content', payload: { tab: 'updates', companyId: company.id } } });
+  });
   it('lists watches, articles, builds and overview crawls in the right groups', async () => {
     const mailbox = await WatchMailbox.create({ organizationId: org, emailAddress: 'me@example.org', refreshTokenSealed: 'x', status: 'connected' });
     const companyId = new Types.ObjectId(company.id);

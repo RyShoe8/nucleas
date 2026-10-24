@@ -60,7 +60,7 @@ export default function OsAccountMenu() {
             ),
         },
         {
-            label: 'Organization',
+            label: 'Workspace settings',
             onClick: () => setShowOrganizationModal(true),
             icon: (
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
@@ -76,7 +76,7 @@ export default function OsAccountMenu() {
         ...(auth.isAdmin
             ? [
                   {
-                      label: 'AI settings',
+                      label: 'AI budgets',
                       onClick: handleAdmin,
                       icon: (
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
@@ -164,7 +164,7 @@ export default function OsAccountMenu() {
                 <Modal
                     isOpen
                     onClose={() => setShowOrganizationModal(false)}
-                    title="Organization"
+                    title="Workspace settings"
                     maxWidth="md"
                     stackAboveOverlays
                 >

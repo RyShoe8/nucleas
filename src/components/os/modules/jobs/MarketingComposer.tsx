@@ -77,13 +77,13 @@ export default function MarketingComposer({ companyId, companyName, onCreated, r
                 aria-label="Describe a marketing job"
             />
             {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
-            <div className="flex items-center gap-2">
-                <button type="button" className="ui-button" disabled={busy} onClick={() => { setBusy(true); setError(null); void fetch('/api/os/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ companyId, template: 'casino_discovery' }) }).then(async response => { const body = await response.json(); if (!response.ok) throw new Error(body.error ?? 'Could not configure discovery.'); onCreated(body.job); reset(); }).catch(problem => setError(problem.message)).finally(() => setBusy(false)); }}>Casino / sports betting discovery</button>
+            <div className="flex flex-wrap items-center gap-2">
                 <button type="button" className="ui-button-primary" disabled={busy || request.trim().length < 10} onClick={() => void submit()}>
                     {busy ? 'Reading…' : 'Continue'}
                 </button>
                 <span className="text-[11px] text-text-secondary">Nucleas works out the details and shows you a plan before anything runs.</span>
             </div>
+            <details className="text-xs text-text-secondary"><summary className="cursor-pointer">Specialized jobs</summary><button type="button" className="ui-button mt-2" disabled={busy} onClick={() => { setBusy(true); setError(null); void fetch('/api/os/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ companyId, template: 'casino_discovery' }) }).then(async response => { const body = await response.json(); if (!response.ok) throw new Error(body.error ?? 'Could not configure discovery.'); onCreated(body.job); reset(); }).catch(problem => setError(problem.message)).finally(() => setBusy(false)); }}>Casino / sports betting discovery</button></details>
         </div>
     );
 }

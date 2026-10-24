@@ -12,7 +12,7 @@ const ago = (iso: string | null) => {
 };
 
 /** Watches: pick a mailbox, say what to flag, and see the emails that qualify. */
-export default function WatchesPanel({ initialWatchId }: { initialWatchId?: string } = {}) {
+export default function WatchesPanel({ initialWatchId, companyId }: { initialWatchId?: string; companyId?: string } = {}) {
     const [watches, setWatches] = useState<WatchView[] | null>(null);
     const [mailboxes, setMailboxes] = useState<MailboxView[]>([]);
     const [error, setError] = useState<string | null>(null);
@@ -57,7 +57,8 @@ export default function WatchesPanel({ initialWatchId }: { initialWatchId?: stri
     if (error && !watches) return <p className="p-4 text-sm text-red-400">{error}</p>;
     if (!watches) return <p className="p-4 text-sm text-text-secondary">Loading…</p>;
 
-    const current = watches.find((w) => w.id === selected) ?? null;
+    const visibleWatches = watches.filter(watch => !companyId || watch.companyId === companyId);
+    const current = visibleWatches.find((w) => w.id === selected) ?? null;
     return (
         <div className="space-y-4 p-3">
             <section className="space-y-2">
@@ -86,13 +87,14 @@ export default function WatchesPanel({ initialWatchId }: { initialWatchId?: stri
 
             <section className="space-y-2">
                 <div className="flex items-center gap-2">
-                    <h3 className="ui-kicker flex-1">Watches</h3>
-                    {editing === null ? <button type="button" className="ui-button-primary" disabled={mailboxes.length === 0} title={mailboxes.length === 0 ? 'Connect a mailbox first' : undefined} onClick={() => setEditing('new')}>New watch</button> : null}
+                    <h3 className="ui-kicker flex-1">Email rules</h3>
+                    {editing === null ? <button type="button" className="ui-button-primary" disabled={mailboxes.length === 0} title={mailboxes.length === 0 ? 'Connect a mailbox first' : undefined} onClick={() => setEditing('new')}>New email rule</button> : null}
                 </div>
                 {editing ? (
                     <WatchForm
                         key={editing === 'new' ? 'new' : editing.id}
                         watch={editing === 'new' ? undefined : editing}
+                        initialCompanyId={companyId}
                         mailboxes={mailboxes}
                         onCancel={() => setEditing(null)}
                         onSaved={(w) => {
@@ -103,9 +105,9 @@ export default function WatchesPanel({ initialWatchId }: { initialWatchId?: stri
                         }}
                     />
                 ) : null}
-                {watches.length === 0 && !editing ? <p className="text-sm text-text-secondary">No watches yet. A watch looks through a mailbox for the emails you care about and flags the ones that qualify.</p> : null}
+                {visibleWatches.length === 0 && !editing ? <p className="text-sm text-text-secondary">No email rules yet. A rule checks your mailbox for matching emails and saves the ones that qualify.</p> : null}
                 <ul className="space-y-2">
-                    {watches.map((w) => (
+                    {visibleWatches.map((w) => (
                         <li key={w.id} className={`ui-card p-3 ${selected === w.id ? 'border-primary' : ''}`}>
                             <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:gap-2">
                                 <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setSelected(selected === w.id ? null : w.id)}>

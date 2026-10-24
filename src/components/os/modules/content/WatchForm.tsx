@@ -18,7 +18,7 @@ type FieldRow = { label: string; kind: FieldKind };
  * collect and how to rank them (steered by the company's overview and marketing plan), and the person edits
  * that before saving. Mailbox filters and timing are under "More options".
  */
-export default function WatchForm({ watch, mailboxes, onSaved, onCancel }: { watch?: WatchView; mailboxes: MailboxView[]; onSaved: (w: WatchView) => void; onCancel: () => void }) {
+export default function WatchForm({ watch, mailboxes, onSaved, onCancel, initialCompanyId }: { watch?: WatchView; mailboxes: MailboxView[]; onSaved: (w: WatchView) => void; onCancel: () => void; initialCompanyId?: string }) {
     const { companies } = useOsCompanies();
     const [brief, setBrief] = useState(watch?.brief ?? '');
     const [designing, setDesigning] = useState(false);
@@ -36,7 +36,7 @@ export default function WatchForm({ watch, mailboxes, onSaved, onCancel }: { wat
     const [senders, setSenders] = useState(join([...(watch?.senderAddresses ?? []), ...(watch?.senderDomains ?? [])]));
     const [labels, setLabels] = useState(join(watch?.labels ?? []));
     const [units, setUnits] = useState(join(watch?.dealUnitTokens ?? []));
-    const [companyId, setCompanyId] = useState(watch?.companyId ?? '');
+    const [companyId, setCompanyId] = useState(watch?.companyId ?? initialCompanyId ?? '');
     const [autoPosts, setAutoPosts] = useState(watch?.autoPosts ?? false);
     const [digestOn, setDigestOn] = useState(watch?.digest.enabled ?? false);
     const [cadence, setCadence] = useState<'daily' | 'weekly'>(watch?.digest.cadence ?? 'weekly');

@@ -143,7 +143,7 @@ export function registerOsModules(): void {
         },
         {
             id: 'jobs',
-            title: 'Jobs',
+            title: 'All jobs',
             icon: '🗂️',
             defaultSize: { width: 800, height: 660 },
             minSize: { width: 460, height: 320 },
@@ -169,7 +169,7 @@ export function registerOsModules(): void {
             minSize: { width: 460, height: 320 },
             canPopout: true,
             permissions: 'member',
-            render: (ctx) => createElement(ContentModule, { initialTab: ctx.payload?.tab }),
+            render: (ctx) => createElement(ContentModule, { initialTab: ctx.payload?.tab, initialCompanyId: ctx.payload?.companyId }),
         },
         {
             id: 'tools',
@@ -301,6 +301,7 @@ export function registerOsModules(): void {
             minSize: baseMin,
             canPopout: true,
             permissions: 'member',
+            launcherHidden: true,
             render: () =>
                 createElement(PlaceholderModule, {
                     title: 'Activity',

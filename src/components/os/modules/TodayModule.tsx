@@ -20,7 +20,7 @@ const COLUMNS: { key: string; label: string; unit: OsMetric['unit'] }[] = [
     { key: 'customers_new', label: 'Customers', unit: 'count' },
     { key: 'revenue_total', label: 'Revenue', unit: 'money' },
     { key: 'subscribers_active', label: 'Subscribers', unit: 'count' },
-    { key: 'mrr', label: 'MRR', unit: 'money' },
+    { key: 'mrr', label: 'Monthly recurring revenue', unit: 'money' },
 ];
 
 /** Cross-company headline view: last 7 days per business with change vs the 7 before. */
@@ -46,13 +46,22 @@ export default function TodayModule() {
     if (error) return <div className="p-4 text-sm text-red-400">{error}</div>;
     if (!data) return <div className="p-4 text-sm text-text-secondary">Loading…</div>;
     if (data.rows.length === 0) {
-        return <div className="p-4 text-sm text-text-secondary">No metrics yet. Connect a company&apos;s sources and run its first sync.</div>;
+        return (
+            <div className="p-4 space-y-3 text-sm text-text-secondary">
+                <h2 className="font-medium text-text-primary">Get started with your companies</h2>
+                <p>Open Companies to add a company, connect its sources, and sync your first metrics.</p>
+                <button type="button" onClick={() => wm.open('companies')} className="rounded-md border border-border px-3 py-2 text-text-primary hover:bg-background-card">
+                    Open Companies
+                </button>
+            </div>
+        );
     }
 
     const visible = COLUMNS.filter((c) => data.rows.some((r) => r.metrics[c.key]));
 
     return (
         <div className="h-full overflow-auto p-4 space-y-4 text-text-primary">
+            <p className="text-sm text-text-secondary">Last 7 days · Open a company to explore its metrics.</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                 {visible.map((c) => (
                     <div key={c.key} className="rounded-md border border-border p-2.5">
@@ -110,7 +119,7 @@ export default function TodayModule() {
                     ))}
                 </tbody>
             </table>
-            <p className="text-[11px] text-text-secondary">Last 7 complete days vs the 7 before. Subscribers and MRR are current values vs a week ago.</p>
+            <p className="text-[11px] text-text-secondary">Last 7 complete days vs the 7 before. Subscribers and monthly recurring revenue are current values vs a week ago.</p>
         </div>
     );
 }

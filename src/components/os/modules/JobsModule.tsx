@@ -10,6 +10,7 @@ import WatchesPanel from './content/WatchesPanel';
 import MarketingComposer from './jobs/MarketingComposer';
 import ReadyPostCard from './jobs/publishing/ReadyPostCard';
 import { ActivityRows, activityFor, useActivity } from './jobs/ActivityList';
+import ActionMenu from '@/components/ui/ActionMenu';
 
 type Group = { key: string; label: string; test: (j: JobView) => boolean };
 
@@ -17,11 +18,11 @@ type Group = { key: string; label: string; test: (j: JobView) => boolean };
 const GROUPS: Group[] = [
     {
         key: 'you',
-        label: 'Needs you',
+        label: 'Needs your attention',
         test: (j) => j.status === 'needs_answers' || j.status === 'proposed' || j.runs.some((r) => r.status === 'needs_review') || Boolean(j.publishing?.ready.length),
     },
     { key: 'working', label: 'Working', test: (j) => jobIsBusy(j) || j.status === 'testing' },
-    { key: 'set', label: 'Ready and active', test: (j) => ['ready', 'active', 'paused'].includes(j.status) },
+    { key: 'set', label: 'Configured jobs', test: (j) => ['ready', 'active', 'paused'].includes(j.status) },
     { key: 'done', label: 'Done', test: (j) => j.status === 'done' },
     { key: 'failed', label: 'Failed', test: (j) => j.status === 'failed' },
 ];
@@ -168,7 +169,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
     const [showInboxes, setShowInboxes] = useState(initialView === 'inboxes');
     const [open, setOpen] = useState<string | null>(null);
     const marketing = title === 'Marketing';
-    const [creating, setCreating] = useState(!marketing && Boolean(initialCompanyId && initialKind));
+    const [creating, setCreating] = useState(Boolean(initialCompanyId && initialKind && initialKind !== 'marketing_plan'));
     const [linkBuilding, setLinkBuilding] = useState(marketing && initialKind === 'link_building');
     const [planBusy, setPlanBusy] = useState(false);
     const [planError, setPlanError] = useState<string | null>(null);
@@ -234,6 +235,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
     const created = useCallback((j: JobView) => {
         setJobs((list) => [j, ...(list ?? []).filter((x) => x.id !== j.id)]);
         setOpen(j.id);
+        setCreating(false);
     }, []);
     const companyName = companies.find(([id]) => id === company)?.[1] ?? 'this company';
     const generatePlan = async () => {
@@ -272,13 +274,17 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                 </select>
                 <span className="flex-1" />
                 {busy ? <span className="text-[11px] text-sky-400">Working…</span> : null}
-                {title === 'Marketing' ? <button type="button" onClick={() => { setShowOverview((v) => !v); setShowInboxes(false); setShowAssets(false); }} disabled={company === 'all'} title={company === 'all' ? 'Choose a company first' : 'The company’s Marketing plan'} className={showOverview && company !== 'all' ? 'ui-button-primary' : 'ui-button'} aria-pressed={showOverview && company !== 'all'}>Overview</button> : null}
-                {title === 'Marketing' ? <button type="button" onClick={() => { setShowInboxes((v) => !v); setShowAssets(false); setShowOverview(false); }} className={showInboxes ? 'ui-button-primary' : 'ui-button'} aria-pressed={showInboxes} title="Mailboxes Nucleas watches for deals and other emails">Inboxes</button> : null}
-                {title === 'Marketing' ? <button type="button" onClick={() => { setShowAssets((v) => !v); setShowInboxes(false); setShowOverview(false); }} disabled={company === 'all'} title={company === 'all' ? 'Choose a company first' : undefined} className={showAssets && company !== 'all' ? 'ui-button-primary' : 'ui-button'} aria-pressed={showAssets && company !== 'all'}>Assets</button> : null}
-                {title !== 'Marketing' ? <button type="button" onClick={() => setCreating((v) => !v)} className="ui-button-primary">
-                    {creating ? 'Close' : 'New job'}
-                </button> : null}
+                {marketing && (showOverview || showInboxes || showAssets) ? <button type="button" className="ui-button" onClick={() => { setShowOverview(false); setShowInboxes(false); setShowAssets(false); }}>Back to marketing jobs</button> : null}
+                {marketing ? <ActionMenu align="right" trigger={({ toggle, isOpen }) => <button type="button" className="ui-button" aria-haspopup="menu" aria-expanded={isOpen} onClick={toggle}>Setup</button>} items={[
+                    { label: 'Marketing plan', disabled: company === 'all', onClick: () => { setShowOverview(true); setShowInboxes(false); setShowAssets(false); } },
+                    { label: 'Email monitoring', onClick: () => { setShowInboxes(true); setShowOverview(false); setShowAssets(false); } },
+                    { label: 'Brand assets', disabled: company === 'all', onClick: () => { setShowAssets(true); setShowOverview(false); setShowInboxes(false); } },
+                ]} /> : null}
+                <button type="button" disabled={marketing && company === 'all'} onClick={() => { setCreating((v) => !v); setShowOverview(false); setShowInboxes(false); setShowAssets(false); }} className="ui-button-primary">
+                    {creating ? 'Cancel new job' : 'New job'}
+                </button>
             </div>
+            <p className="border-b border-border px-3 py-2 text-xs text-text-secondary">{marketing ? 'Review and manage marketing work here. These are the same jobs shown in All jobs.' : title === 'Content' ? 'Content jobs also appear in All jobs. Create articles and update posts from the other Content tabs.' : 'All work in one place. Open an item to review results or manage its settings.'}</p>
 
             {showOverview && title === 'Marketing' && company !== 'all' ? (
                 <div className="flex-1 overflow-y-auto p-3">
@@ -288,7 +294,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
 
             {showInboxes && title === 'Marketing' ? (
                 <div className="flex-1 overflow-y-auto">
-                    <WatchesPanel initialWatchId={initialWatchId} />
+                    <WatchesPanel initialWatchId={initialWatchId} companyId={company === 'all' ? undefined : company} />
                 </div>
             ) : null}
 
@@ -301,13 +307,13 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
             <div className={`flex-1 overflow-y-auto p-3 space-y-4 ${(showAssets && title === 'Marketing' && company !== 'all') || (showOverview && title === 'Marketing' && company !== 'all') || (showInboxes && title === 'Marketing') ? 'hidden' : ''}`}>
                 {readyPosts.length ? (
                     <section className="space-y-2">
-                        <h3 className="ui-kicker">Waiting for you · {readyPosts.length}</h3>
+                        <h3 className="ui-kicker">Needs your review · {readyPosts.length}</h3>
                         {readyPosts.map(({ job: j, delivery }) => (
                             <ReadyPostCard key={delivery.id} jobId={j.id} companyName={company === 'all' ? j.companyName : undefined} delivery={delivery} subreddit={j.companySubreddit ?? null} formUrl={j.publishing?.admin?.formUrl ?? null} onChange={replace} />
                         ))}
                     </section>
                 ) : null}
-                {marketing && company !== 'all' ? (
+                {marketing && company !== 'all' && creating ? (
                     <div className="space-y-3" key={company}>
                         {linkBuilding ? (
                             <NewJob placeholder={placeholder} initialCompanyId={company} initialKind="link_building" companyLocked onCancel={() => setLinkBuilding(false)} onCreated={(j) => { setLinkBuilding(false); created(j); }} />
@@ -379,11 +385,11 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                                                 <span className="mt-2 block">
                                                     <span className="mb-1 flex items-center justify-between gap-3 text-[10px] text-text-secondary">
                                                         <span className="truncate">{progress.label}</span>
-                                                        <span className="tabular-nums">{progress.percent}%</span>
+                                                        {jobIsBusy(j) ? <span className="tabular-nums">{progress.percent}%</span> : null}
                                                     </span>
-                                                    <span className="block h-1.5 overflow-hidden rounded-full bg-background-elevated" role="progressbar" aria-label={`${j.design?.title ?? j.request} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent}>
+                                                    {jobIsBusy(j) ? <span className="block h-1.5 overflow-hidden rounded-full bg-background-elevated" role="progressbar" aria-label={`${j.design?.title ?? j.request} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent}>
                                                         <span className={`block h-full rounded-full transition-[width] duration-700 ease-out ${progressTone}`} style={{ width: `${progress.percent}%` }} />
-                                                    </span>
+                                                    </span> : null}
                                                 </span>
                                             </button>
                                         </li>

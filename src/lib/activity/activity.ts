@@ -2,6 +2,7 @@ import 'server-only';
 import { Types } from 'mongoose';
 import { ArticleDraft } from '@/lib/models/ArticleDraft';
 import { PropertyOverview } from '@/lib/models/PropertyOverview';
+import { ReleaseRoundup } from '@/lib/models/ReleaseRoundup';
 import { listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { listWatches } from '@/lib/watches/watches';
 import { listBuilds } from '@/lib/building/builds';
@@ -14,7 +15,7 @@ import { listBuilds } from '@/lib/building/builds';
  */
 
 export type ActivityGroup = 'you' | 'working' | 'set' | 'failed';
-export type ActivityKind = 'watch' | 'article' | 'build' | 'overview';
+export type ActivityKind = 'watch' | 'article' | 'build' | 'overview' | 'roundup';
 
 export interface ActivityItem {
   id: string;
@@ -125,6 +126,18 @@ async function overviewItems(viewer: CompanyViewer, companies: Map<string, strin
     });
 }
 
+async function roundupItems(viewer: CompanyViewer, companies: Map<string, string>): Promise<ActivityItem[]> {
+  const rows = await ReleaseRoundup.find({ organizationId: viewer.organizationId, companyId: { $in: [...companies.keys()] }, active: true }).sort({ updatedAt: -1 }).limit(30).lean();
+  return rows.map(row => {
+    const working = ['queued', 'generating', 'publishing'].includes(row.status);
+    const failed = row.status === 'failed';
+    return { id: `roundup:${row._id}`, kind: 'roundup', category: 'content', group: working ? 'working' : failed ? 'failed' : 'you',
+      title: row.title || 'Create update post', detail: row.error || row.progress || 'Review the update post', status: working ? 'Working' : failed ? 'Failed' : 'Needs review',
+      companyId: String(row.companyId), companyName: companies.get(String(row.companyId)) ?? null,
+      open: { window: 'content', payload: { tab: 'updates', companyId: String(row.companyId) } } };
+  });
+}
+
 /** All non-job activity the viewer can see. A source that fails is left out rather than failing the list. */
 export async function listActivity(viewer: CompanyViewer): Promise<ActivityItem[]> {
   const companies = new Map((await listCompanyProfiles(viewer)).map((c) => [c.id, c.name]));
@@ -133,6 +146,7 @@ export async function listActivity(viewer: CompanyViewer): Promise<ActivityItem[
     articleItems(viewer, companies).catch(() => []),
     buildItems(viewer).catch(() => []),
     overviewItems(viewer, companies).catch(() => []),
+    roundupItems(viewer, companies).catch(() => []),
   ]);
   return parts.flat();
 }

@@ -1,16 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 
 interface OrganizationModalProps {
   onUpdate: () => void;
   onClose: () => void;
+  isSetup?: boolean;
 }
 
-export default function OrganizationModal({ onUpdate, onClose }: OrganizationModalProps) {
+export default function OrganizationModal({ onUpdate, onClose, isSetup = false }: OrganizationModalProps) {
   const [name, setName] = useState('');
   const [domain, setDomain] = useState('');
   const [loading, setLoading] = useState(false);
@@ -27,7 +27,7 @@ export default function OrganizationModal({ onUpdate, onClose }: OrganizationMod
           setDomain(data.domain || '');
           setIsAdmin(data.isAdmin || false);
         }
-      } catch (error) {
+      } catch {
         // Error fetching organization
       }
     };
@@ -40,7 +40,7 @@ export default function OrganizationModal({ onUpdate, onClose }: OrganizationMod
     setError('');
 
     if (!name.trim()) {
-      setError('Organization name is required');
+      setError('Workspace name is required');
       setLoading(false);
       return;
     }
@@ -59,8 +59,7 @@ export default function OrganizationModal({ onUpdate, onClose }: OrganizationMod
       }
 
       onUpdate();
-      // Only close if not on setup page
-      if (!window.location.pathname.includes('setup-organization')) {
+      if (!isSetup) {
         onClose();
         // Refresh the page to ensure all components have updated data
         window.location.reload();
@@ -83,36 +82,36 @@ export default function OrganizationModal({ onUpdate, onClose }: OrganizationMod
       {!isAdmin && (
         <div className="bg-primary-light border border-primary/30 text-primary-dark px-4 py-3 rounded-lg">
           <p className="text-sm font-medium">View Only</p>
-          <p className="text-xs mt-1">Only organization administrators can edit organization settings.</p>
+          <p className="text-xs mt-1">Only workspace administrators can edit these settings.</p>
         </div>
       )}
 
       {isAdmin ? (
         <>
           <Input
-            label="Organization Name"
+            label="Workspace name"
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
-            placeholder="Enter your organization name"
+            placeholder="Enter your workspace name"
           />
           <Input
-            label="Domain (Optional)"
+            label="Workspace domain (optional)"
             type="text"
             value={domain}
             onChange={(e) => setDomain(e.target.value)}
             placeholder="example.com"
           />
           <p className="text-sm text-text-secondary">
-            Your organization domain (e.g., example.com). This is optional and can be used for email invitations.
+            Your workspace&apos;s domain, for example example.com. You can leave this blank.
           </p>
         </>
       ) : (
         <>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-2">
-              Organization Name
+              Workspace name
             </label>
             <div className="px-3 py-2 border border-border rounded-lg bg-background-card text-text-primary">
               {name || 'Not set'}
@@ -120,7 +119,7 @@ export default function OrganizationModal({ onUpdate, onClose }: OrganizationMod
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-2">
-              Domain <span className="text-text-secondary font-normal">(Optional)</span>
+              Workspace domain <span className="text-text-secondary font-normal">(optional)</span>
             </label>
             <div className="px-3 py-2 border border-border rounded-lg bg-background-card text-text-primary">
               {domain || 'Not set'}
@@ -129,15 +128,13 @@ export default function OrganizationModal({ onUpdate, onClose }: OrganizationMod
         </>
       )}
 
-      <Link href="/workspace/ai-settings" onClick={onClose} className="block text-sm text-primary underline">AI budget settings (managers and administrators)</Link>
-      <Link href="/workspace/ai-attention" onClick={onClose} className="block text-sm text-primary underline">AI needs attention</Link>
       <div className="flex gap-2 justify-end pt-4 border-t border-border">
         <Button type="button" variant="secondary" onClick={onClose} disabled={loading}>
           {isAdmin ? 'Cancel' : 'Close'}
         </Button>
         {isAdmin && (
           <Button type="submit" disabled={loading}>
-            {loading ? 'Saving...' : 'Save Changes'}
+            {loading ? 'Saving...' : isSetup ? 'Create workspace' : 'Save changes'}
           </Button>
         )}
       </div>

@@ -879,6 +879,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                         Resume
                     </button>
                 ) : null}
+                {!compact && (doneRuns.length > 0 || (job.canManage && canArchive)) ? <details className="w-full text-xs"><summary className="cursor-pointer text-text-secondary">More actions</summary><div className="mt-2 flex flex-wrap gap-2">
                 {!compact && doneRuns.length && d ? (
                     <a
                         className={BUTTON}
@@ -894,6 +895,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                     </button>
                 ) : null}
                 {!compact && job.canManage && canArchive ? <p className="w-full text-[11px] text-text-secondary">Archiving removes the entire job from this list and stops its scheduled runs.</p> : null}
+                </div></details> : null}
                 {compact && onOpenJobs ? (
                     <button type="button" className={BUTTON} onClick={onOpenJobs}>
                         Open in Jobs

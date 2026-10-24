@@ -16,9 +16,9 @@ export default function ModuleLauncher() {
 
     const items =
         visible.length === 0
-            ? [{ label: 'No modules registered.', disabled: true }]
+            ? [{ label: 'No apps available.', disabled: true }]
             : visible.map((m) => ({
-                  label: m.title,
+                  label: m.id === 'jobs' ? 'All jobs' : m.title,
                   icon: (
                       <span className="text-base" aria-hidden>
                           {m.icon}
@@ -34,7 +34,7 @@ export default function ModuleLauncher() {
             menuClassName="shadow-2xl"
             header={
                 <div className="px-3 py-2 text-xs text-text-secondary uppercase tracking-wider border-b border-border">
-                    Open module
+                    Open app
                 </div>
             }
             items={items}
@@ -44,12 +44,13 @@ export default function ModuleLauncher() {
                     onClick={toggle}
                     className="px-3 h-10 sm:h-8 rounded-md bg-background-elevated hover:bg-background-card border border-border text-sm flex items-center gap-2 text-text-primary"
                     aria-haspopup="menu"
+                    aria-label="Apps"
                     aria-expanded={isOpen}
                 >
                     <span aria-hidden className="text-primary">
                         ＋
                     </span>
-                    <span className="hidden min-[420px]:inline">Modules</span>
+                    <span className="hidden min-[420px]:inline">Apps</span>
                 </button>
             )}
         />

@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import OrganizationModal from '@/components/OrganizationModal';
-import Modal from '@/components/ui/Modal';
 import { peekSelectedPlanId } from '@/lib/billing/selectedPlanStorage';
 
 export default function SetupOrganizationPage() {
@@ -19,7 +18,7 @@ export default function SetupOrganizationPage() {
           const data = await response.json();
           if (data && data.organizationSetupComplete) {
             setIsSetup(true);
-            router.push('/planning-map');
+            router.push('/');
           } else if (data) {
             setLoading(false);
           } else {
@@ -29,7 +28,7 @@ export default function SetupOrganizationPage() {
         } else {
           router.push('/login');
         }
-      } catch (error) {
+      } catch {
         // Error checking setup
         router.push('/login');
       }
@@ -44,7 +43,7 @@ export default function SetupOrganizationPage() {
       router.push(`/billing?plan=${encodeURIComponent(planId)}`);
       return;
     }
-    router.push('/planning-map');
+    router.push('/');
   };
 
   if (loading || isSetup) {
@@ -59,14 +58,14 @@ export default function SetupOrganizationPage() {
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="max-w-md w-full">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-text-primary mb-2">Welcome to Nucleas!</h1>
+          <h1 className="text-3xl font-bold text-text-primary mb-2">Set up your workspace</h1>
           <p className="text-text-secondary">
-            Before you can start using Nucleas, please set up your organization.
+            Give your workspace a name to get started. You can update these settings later.
           </p>
         </div>
         <div className="bg-background-card rounded-lg shadow-lg border border-border p-6">
-          <h2 className="text-2xl font-bold text-text-primary mb-4">Setup Your Organization</h2>
-          <OrganizationModal onUpdate={handleComplete} onClose={handleComplete} />
+          <h2 className="text-2xl font-bold text-text-primary mb-4">Workspace settings</h2>
+          <OrganizationModal onUpdate={handleComplete} onClose={() => router.push('/login')} isSetup />
         </div>
       </div>
     </div>
