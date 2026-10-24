@@ -60,7 +60,7 @@ function toView(c: ConnectionLean): ConnectionView {
     planLimited: Boolean(c.planLimited),
     lastVerifiedAt: c.lastVerifiedAt?.toISOString(),
     lastError: c.lastError,
-    connectable: def?.authKind === 'api_key',
+    connectable: def?.authKind === 'api_key' && c.provider !== 'website',
     signIn: ['ga4', 'gsc', 'adsense'].includes(c.provider) ? 'google' : c.provider === 'facebook' && facebookSignInConfigured() ? 'facebook' : null,
     webhook: def?.authKind === 'webhook',
     keyGuidance: def?.credentialHint,
@@ -185,10 +185,10 @@ export async function listAddableProviders(viewer: CompanyViewer, companyId: str
   if (!existing) return null;
   const present = new Set(existing.map((c) => c.provider));
   const { INTEGRATION_PROVIDERS } = await import('@/lib/integrations/providers');
-  return INTEGRATION_PROVIDERS.filter((p) => !present.has(p.id)).map((p) => ({ id: p.id, name: p.name, domain: p.domain }));
+  return INTEGRATION_PROVIDERS.filter((p) => p.id !== 'website' && !present.has(p.id)).map((p) => ({ id: p.id, name: p.name, domain: p.domain }));
 }
 
-export type ManageResult = { ok: true } | { ok: false; status: 400 | 403 | 404; error: string };
+export type ManageResult = { ok: true } | { ok: false; status: 400 | 403 | 404 | 409; error: string };
 
 /** Adds a provider to a company as `declared`. Org-scoped providers are added once for the whole org. */
 export async function addConnection(viewer: CompanyViewer, companyId: string, providerId: string): Promise<ManageResult> {
@@ -225,6 +225,13 @@ export async function removeConnection(viewer: CompanyViewer, connectionId: stri
   if (!connection) return { ok: false, status: 404, error: 'Integration not found.' };
   if (connection.companyId && !(await getCompanyProfile(viewer, String(connection.companyId)))) {
     return { ok: false, status: 404, error: 'Integration not found.' };
+  }
+
+  if (connection.provider === 'website') {
+    const { ReleaseRoundup } = await import('@/lib/models/ReleaseRoundup');
+    if (await ReleaseRoundup.exists({ organizationId: viewer.organizationId, companyId: connection.companyId, active: true, 'transport.kind': 'connector', 'transport.connectionId': String(connection._id) })) {
+      return { ok: false, status: 409, error: 'Finish or reject the current website draft before removing its connection. An uncertain publication must be reconciled first.' };
+    }
   }
 
   await IntegrationConnection.updateOne(

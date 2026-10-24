@@ -7,10 +7,14 @@ import { mutateRoundup, publishRoundup, generateRoundup, copySchema } from './se
 import { askEngine } from '@/lib/ai/engine/ask';
 import { siteRequest, endpointFor, signature, playerNotes, secretFor } from './sources';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
+import { getWebsiteConnection, getPinnedWebsiteConnection } from '@/lib/connectors/connections';
+import { invokeCapability } from '@/lib/capabilities/runtime';
 
 vi.mock('@/lib/companies/companyProfile', () => ({ getCompanyProfile: vi.fn(async () => ({ name: 'PlayBound', domain: 'playbound.club' })), isCompanyManager: (v: CompanyViewer) => v.role === 'Manager' }));
 vi.mock('@/lib/brandVoice/service', () => ({ brandVoiceContext: vi.fn(async () => 'Approved voice') }));
 vi.mock('@/lib/ai/engine/ask', () => ({ askEngine: vi.fn() }));
+vi.mock('@/lib/connectors/connections', () => ({ getWebsiteConnection: vi.fn(), getPinnedWebsiteConnection: vi.fn() }));
+vi.mock('@/lib/capabilities/runtime', () => ({ invokeCapability: vi.fn() }));
 vi.mock('./sources', async importOriginal => ({ ...await importOriginal<typeof import('./sources')>(), siteRequest: vi.fn(), releaseSources: vi.fn(async () => []) }));
 
 const companyId = new Types.ObjectId().toString();
@@ -21,6 +25,10 @@ function draft(status = 'draft') {
 }
 beforeEach(() => {
   vi.restoreAllMocks();
+  vi.stubEnv('NUCLEAS_CONNECTOR_ROUNDUPS_ENABLED', 'false');
+  vi.mocked(getWebsiteConnection).mockReset();
+  vi.mocked(getPinnedWebsiteConnection).mockReset();
+  vi.mocked(invokeCapability).mockReset();
   vi.mocked(siteRequest).mockReset();
   process.env[`NUCLEAS_ROUNDUP_SECRET_${companyId.toUpperCase()}`] = 'test-secret';
   vi.spyOn(Project, 'find').mockReturnValue({ select: () => ({ lean: async () => [] }) } as never);
@@ -29,6 +37,78 @@ beforeEach(() => {
 });
 
 describe('manual roundup safety with mocked persistence and sources', () => {
+  it('old records remain legacy with rollout enabled and never query connector configuration', async () => {
+    vi.stubEnv('NUCLEAS_CONNECTOR_ROUNDUPS_ENABLED', 'true');
+    const row = draft();
+    expect(row.transport).toBeUndefined();
+    vi.spyOn(ReleaseRoundup, 'findOne').mockResolvedValue(row);
+    vi.spyOn(ReleaseRoundup, 'findOneAndUpdate').mockImplementation((async (_filter: unknown, changes: { $set?: object }) => { Object.assign(row, changes.$set); return row; }) as never);
+    vi.mocked(siteRequest).mockRejectedValue(new Error('Uncertain legacy write'));
+    expect((await publishRoundup(viewer, companyId, String(row._id))).status).toBe('publish_uncertain');
+    expect(siteRequest).toHaveBeenCalledTimes(1);
+    expect(getWebsiteConnection).not.toHaveBeenCalled(); expect(getPinnedWebsiteConnection).not.toHaveBeenCalled(); expect(invokeCapability).not.toHaveBeenCalled();
+    expect(row.transport).toBeUndefined();
+  });
+  it('disabled connector draft cannot publish through legacy or acquire a publication lease', async () => {
+    const row = draft(); row.transport = { kind: 'connector', connectionId: 'pinned', revision: 1, origin: 'https://playbound.club' };
+    vi.spyOn(ReleaseRoundup, 'findOne').mockResolvedValue(row);
+    const update = vi.spyOn(ReleaseRoundup, 'findOneAndUpdate');
+    await expect(publishRoundup(viewer, companyId, String(row._id))).rejects.toThrow('disabled');
+    expect(update).not.toHaveBeenCalled(); expect(siteRequest).not.toHaveBeenCalled(); expect(invokeCapability).not.toHaveBeenCalled();
+    expect(row.transport.connectionId).toBe('pinned');
+  });
+  it('changed configuration blocks an uncertain connector draft without fallback', async () => {
+    vi.stubEnv('NUCLEAS_CONNECTOR_ROUNDUPS_ENABLED', 'true');
+    const row = draft('publish_uncertain'); row.transport = { kind: 'connector', connectionId: 'pinned', revision: 1, origin: 'https://playbound.club' };
+    vi.spyOn(ReleaseRoundup, 'findOne').mockResolvedValue(row);
+    vi.mocked(getPinnedWebsiteConnection).mockRejectedValue(new Error('Pinned revision changed'));
+    await expect(publishRoundup(viewer, companyId, String(row._id))).rejects.toThrow('revision changed');
+    expect(row.status).toBe('publish_uncertain'); expect(siteRequest).not.toHaveBeenCalled(); expect(invokeCapability).not.toHaveBeenCalled(); expect(getWebsiteConnection).not.toHaveBeenCalled();
+  });
+  it('connector publication preserves the frozen payload across uncertainty and confirms history only on receipt', async () => {
+    vi.stubEnv('NUCLEAS_CONNECTOR_ROUNDUPS_ENABLED', 'true');
+    const row = draft(); row.transport = { kind: 'connector', connectionId: new Types.ObjectId().toString(), revision: 1, origin: 'https://playbound.club' };
+    row.coveredIds = ['website:github%3Aproduct%2Fitem%3A42', 'github:org/repo:42'];
+    vi.mocked(getPinnedWebsiteConnection).mockResolvedValue({ connectionId: row.transport.connectionId!, revision: 1, credential: 'mock', config: { version: 1, adapter: 'website-v1', origin: row.transport.origin!, endpointPath: '/api/nucleas/v1', enabled: true, collection: 'news', permissions: ['content.posts.publish'] } });
+    vi.spyOn(ReleaseRoundup, 'findOne').mockResolvedValue(row);
+    vi.spyOn(ReleaseRoundup, 'findOneAndUpdate').mockImplementation((async (_filter: unknown, changes: { $set?: object }) => { Object.assign(row, changes.$set); return row; }) as never);
+    vi.mocked(invokeCapability).mockResolvedValueOnce({ ok: true, invocation: { status: 'failed', error: 'Uncertain remote write' } } as never);
+    expect((await publishRoundup(viewer, companyId, String(row._id))).status).toBe('publish_uncertain');
+    expect(row.active).toBe(true);
+    vi.mocked(invokeCapability).mockResolvedValueOnce({ ok: true, invocation: { status: 'verified', verified: true, output: { version: 1, idempotencyKey: row.idempotencyKey, externalId: 'post', url: 'https://playbound.club/news/post', status: 'published' } } } as never);
+    expect((await publishRoundup(viewer, companyId, String(row._id))).status).toBe('published');
+    expect(row.active).toBe(false);
+    const calls = vi.mocked(invokeCapability).mock.calls;
+    expect(calls[0][3]).toEqual(calls[1][3]);
+    expect(calls[0][3]).toMatchObject({ coveredIds: ['github:product/item:42'], idempotencyKey: row.idempotencyKey });
+    expect(siteRequest).not.toHaveBeenCalled(); expect(row.transport.revision).toBe(1);
+  });
+  it('generates generic arbitrary-ID connector sources with normalized baseline and no legacy calls', async () => {
+    vi.stubEnv('NUCLEAS_CONNECTOR_ROUNDUPS_ENABLED', 'true');
+    const row = draft('queued'); row.transport = { kind: 'connector', connectionId: new Types.ObjectId().toString(), revision: 1, origin: 'https://playbound.club' };
+    vi.mocked(getPinnedWebsiteConnection).mockResolvedValue({ connectionId: row.transport.connectionId!, revision: 1, credential: 'mock', config: { version: 1, adapter: 'website-v1', origin: row.transport.origin!, endpointPath: '/api/nucleas/v1', enabled: true, collection: 'articles', permissions: ['content.items.list'] } });
+    vi.spyOn(AiProjectRepository, 'find').mockResolvedValue([{ _id: new Types.ObjectId(), owner: 'org', repo: 'news', installationId: '1' }] as never);
+    vi.spyOn(ReleaseRoundup, 'findOneAndUpdate').mockResolvedValue(row);
+    vi.spyOn(ReleaseRoundup, 'findOne').mockReturnValue({ sort: async () => null } as never);
+    vi.spyOn(ReleaseRoundup, 'find').mockReturnValue({ select: () => ({ lean: async () => [] }) } as never);
+    const updates = vi.spyOn(ReleaseRoundup, 'updateOne').mockResolvedValue({} as never);
+    vi.mocked(invokeCapability).mockResolvedValue({ ok: true, invocation: { status: 'succeeded', output: { version: 1, baseline: { publishedAt: '2026-10-02T00:00:00Z', coverageEnd: null, coveredIds: ['covered/article'] }, warnings: ['Latest publication date'], items: ['article/a', 'covered/article'].map(id => ({ id, kind: 'article', title: 'Article', url: `https://playbound.club/${id}`, publishedAt: '2026-10-03T00:00:00Z', publicationBasis: 'latest_published', description: 'Product news', fields: {} })) } } } as never);
+    const envelope = vi.mocked(invokeCapability).getMockImplementation();
+    // Unknown/observed timestamps never establish a newly published update.
+    const valid = await envelope!(viewer, companyId, 'content.items.list', {});
+    const output = (valid as unknown as { invocation: { output: { items: unknown[] } } }).invocation.output;
+    output.items.push(...['observed', 'unknown'].map(basis => ({ id: basis, kind: 'article', title: basis, url: `https://playbound.club/${basis}`, publishedAt: '2026-10-03T00:00:00Z', publicationBasis: basis, fields: {} })));
+    vi.mocked(invokeCapability).mockResolvedValue(valid);
+    vi.mocked(askEngine).mockResolvedValue(null);
+    await generateRoundup(viewer, companyId, String(row._id));
+    const sets = (updates.mock.calls as unknown as unknown[][]).map(call => (call[1] as { $set?: Record<string, unknown> }).$set);
+    expect(sets.find(set => set?.status === 'draft')).toMatchObject({ coveredIds: ['website:article%2Fa'], coverageStart: new Date('2026-10-02T00:00:00Z') });
+    expect(sets.find(set => set?.status === 'draft')?.bodyMarkdown).toContain('## New updates');
+    expect(sets.find(set => set?.status === 'draft')?.bodyMarkdown).toContain('Product news');
+    expect(sets.some(set => (set?.warnings as string[] | undefined)?.some(warning => warning.includes('Omitted 2 items')))).toBe(true);
+    expect(siteRequest).not.toHaveBeenCalled(); expect(invokeCapability).toHaveBeenCalledTimes(2);
+    expect(row.transport.revision).toBe(1);
+  });
   it('duplicate generate and reopen return the same active draft without creation', async () => {
     const row = draft();
     vi.spyOn(ReleaseRoundup, 'init').mockResolvedValue(ReleaseRoundup as never);

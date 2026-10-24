@@ -13,6 +13,8 @@ const schema = new Schema({
   coverageStart: Date, coverageEnd: Date, coveredIds: { type: [String], default: [] },
   publishedUrl: { type: String, default: null }, idempotencyKey: { type: String, required: true },
   leaseUntil: Date, leaseToken: String,
+  /** Absent on existing drafts: they retain the legacy transport for their full lifetime. */
+  transport: { type: new Schema({ kind: { type: String, enum: ['legacy', 'connector'], required: true }, connectionId: String, revision: Number, origin: String }, { _id: false }), default: undefined },
   sources: { type: [{ _id: false, id: String, title: String, url: String, description: String }], default: [] },
   logs: { type: [{ _id: false, stage: String, message: String, at: Date }], default: [] },
   warnings: { type: [String], default: [] },

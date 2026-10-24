@@ -8,6 +8,7 @@ import CompanySnapshot from './CompanySnapshot';
 import { setAssistantFocus } from '@/lib/os/assistantFocus';
 import CompanyActivity from './CompanyActivity';
 import CodeRepositories from './CodeRepositories';
+import WebsiteConnectionPanel from './WebsiteConnectionPanel';
 import AdminAccount from './AdminAccount';
 import CompanyChanges from './CompanyChanges';
 import PropertyOverviewButton from './PropertyOverviewReport';
@@ -119,6 +120,7 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
             <ProjectsSection projects={projects} />
             <CodeRepositories companyId={company.id} compact />
             <AdminAccount companyId={company.id} defaultDomain={company.domain} />
+            <WebsiteConnectionPanel companyId={company.id} domain={company.domain} />
             <IntegrationsSummary companyId={company.id} companyName={company.name} connections={connections} />
             </div>
             </details>

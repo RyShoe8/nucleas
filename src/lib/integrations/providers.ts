@@ -21,6 +21,7 @@ export interface IntegrationProviderDefinition {
 }
 
 export const INTEGRATION_PROVIDERS: IntegrationProviderDefinition[] = [
+  { id: 'website', name: 'Website publishing', domain: 'product', authKind: 'api_key', defaultScope: 'company', stackToolIds: [], credentialHint: 'Configure and test this company’s website adapter in Connections and setup.' },
   { id: 'ga4', name: 'Google Analytics', domain: 'analytics', authKind: 'oauth', defaultScope: 'company', stackToolIds: ['googleanalytics'] },
   { id: 'gsc', name: 'Google Search Console', domain: 'search', authKind: 'oauth', defaultScope: 'company', stackToolIds: [] },
   { id: 'adsense', name: 'Google AdSense', domain: 'ads', authKind: 'oauth', defaultScope: 'company', stackToolIds: [] },

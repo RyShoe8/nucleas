@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { Types } from 'mongoose';
 import { CapabilityApproval, CapabilityInvocation } from '@/lib/models/Capability';
 import { ExternalResource, IntegrationConnection } from '@/lib/models/Integration';
@@ -18,6 +18,9 @@ type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export interface InvokeOptions {
   aiRunId?: string;
+  connectionId?: string;
+  /** Writes only. Stable within organization/company/capability/connection. */
+  idempotencyKey?: string;
   /** Set for scheduled system work, e.g. 'metrics-sync'. */
   system?: string;
   fetchImpl?: FetchLike;
@@ -52,6 +55,7 @@ export type InvokeResult =
   | { ok: false; status: 400 | 403 | 404 | 409; error: string };
 
 const MAX_OUTPUT_BYTES = 200_000;
+const LEASE_MS = 5 * 60 * 1000;
 const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
 
 function stableStringify(value: unknown): string {
@@ -71,6 +75,12 @@ export function inputDigest(capabilityId: string, version: number, input: unknow
 
 type InvocationLean = {
   _id: Types.ObjectId;
+  connectionId?: Types.ObjectId;
+  connectionRevision?: number;
+  idempotencyKey?: string;
+  payloadDigest?: string;
+  leaseToken?: string;
+  leaseExpiresAt?: Date;
   capabilityId: string;
   kind: 'read' | 'write';
   risk: string;
@@ -121,18 +131,24 @@ async function finish(id: Types.ObjectId, status: InvocationStatus, fields: Reco
 async function resolveAccess(
   viewer: CompanyViewer,
   profile: CompanyProfile,
-  def: CapabilityDefinition
-): Promise<{ access: ProviderAccess } | { status: 'needs_setup' | 'needs_reauth' | 'plan_limited'; error: string }> {
+  def: CapabilityDefinition,
+  explicitConnectionId?: string
+): Promise<{ access: ProviderAccess; revision: number } | { status: 'needs_setup' | 'needs_reauth' | 'plan_limited'; error: string }> {
   const providerName = getIntegrationProvider(def.provider)?.name ?? def.provider;
   const companyId = new Types.ObjectId(profile.id);
-  const connection =
+  type Connection = { _id: Types.ObjectId; status: string; planLimited?: boolean; revision?: number; connectorConfig?: unknown };
+  const connection = explicitConnectionId
+    ? await IntegrationConnection.findOne({ _id: explicitConnectionId, organizationId: viewer.organizationId, provider: def.provider, $or: [{ companyId }, { companyId: null, scope: 'org' }] })
+      .select('status planLimited revision connectorConfig').lean<Connection>()
+    : (
     (await IntegrationConnection.findOne({ organizationId: viewer.organizationId, companyId, provider: def.provider, status: { $ne: 'disabled' } })
       .select('status planLimited')
-      .lean<{ _id: Types.ObjectId; status: string; planLimited?: boolean }>()) ??
+      .lean<Connection>()) ??
     (await IntegrationConnection.findOne({ organizationId: viewer.organizationId, companyId: null, provider: def.provider, status: { $ne: 'disabled' } })
       .select('status planLimited')
-      .lean<{ _id: Types.ObjectId; status: string; planLimited?: boolean }>());
+      .lean<Connection>()));
 
+  if (explicitConnectionId && connection && (connection.status === 'disabled' || (connection.connectorConfig as { enabled?: boolean; disabled?: boolean } | undefined)?.enabled === false || (connection.connectorConfig as { disabled?: boolean } | undefined)?.disabled === true)) return { status: 'needs_setup', error: 'This connector configuration is disabled.' };
   if (!connection || connection.status === 'declared') return { status: 'needs_setup', error: `Connect ${providerName} for ${profile.name} first.` };
   if (connection.status === 'needs_reauth' || connection.status === 'error') return { status: 'needs_reauth', error: `Reconnect ${providerName}.` };
   if (connection.planLimited) return { status: 'plan_limited', error: `The current ${providerName} plan does not include this.` };
@@ -154,7 +170,7 @@ async function resolveAccess(
 
   const credential = await readConnectionCredential(viewer.organizationId, connection._id);
   if (!credential) return { status: 'needs_reauth', error: `Reconnect ${providerName}.` };
-  return { access: { provider: def.provider, connectionId: connection._id, credential, resource } };
+  return { access: { provider: def.provider, connectionId: connection._id, credential, resource, ...(explicitConnectionId ? { configuration: connection.connectorConfig } : {}) }, revision: connection.revision ?? 0 };
 }
 
 async function execute(
@@ -164,12 +180,23 @@ async function execute(
   invocationId: Types.ObjectId,
   input: unknown,
   fetchImpl: FetchLike,
-  now: Date
+  now: Date,
+  binding?: { connectionId: Types.ObjectId; connectionRevision?: number; idempotencyKey?: string; leaseToken?: string }
 ): Promise<InvocationLean> {
-  const resolved = await resolveAccess(viewer, profile, def);
-  if (!('access' in resolved)) return (await finish(invocationId, resolved.status, { error: resolved.error }))!;
+  const complete = async (id: Types.ObjectId, status: InvocationStatus, fields: Record<string, unknown> = {}) => {
+    if (!binding?.leaseToken) return finish(id, status, fields);
+    const updated = await CapabilityInvocation.findOneAndUpdate(
+      { _id: id, leaseToken: binding.leaseToken, status: 'running' },
+      { $set: { status, finishedAt: new Date(), ...fields }, $unset: { leaseToken: 1, leaseExpiresAt: 1 } }, { new: true }
+    ).lean<InvocationLean>();
+    return updated ?? CapabilityInvocation.findById(id).lean<InvocationLean>();
+  };
+  const resolved = await resolveAccess(viewer, profile, def, binding ? String(binding.connectionId) : undefined);
+  if ('access' in resolved && binding && resolved.revision !== binding.connectionRevision) return (await complete(invocationId, 'cancelled', { error: 'Connector configuration changed. Request the action again.' }))!;
+  if (!('access' in resolved)) return (await complete(invocationId, resolved.status, { error: resolved.error }))!;
 
-  await CapabilityInvocation.updateOne({ _id: invocationId }, { $set: { status: 'running', startedAt: new Date() } });
+  const started = await CapabilityInvocation.updateOne({ _id: invocationId, ...(binding?.leaseToken ? { leaseToken: binding.leaseToken, status: 'running' } : {}) }, { $set: { status: 'running', startedAt: new Date() } });
+  if (binding?.leaseToken && !started.matchedCount) return (await CapabilityInvocation.findById(invocationId).lean<InvocationLean>())!;
   let units = 0;
   const ctx = {
     organizationId: viewer.organizationId,
@@ -177,6 +204,7 @@ async function execute(
     companyDomain: profile.domain,
     access: resolved.access,
     now,
+    ...(binding ? { invocationId: String(invocationId), idempotencyKey: binding.idempotencyKey } : {}),
     fetch: fetchImpl,
     reportUnits: (n: number) => {
       units += n;
@@ -206,9 +234,20 @@ async function execute(
     }
 
     const serialized = JSON.stringify(result.output ?? null);
+    const configuredLimit = def.maxOutputBytes;
+    const outputLimit = configuredLimit === undefined ? MAX_OUTPUT_BYTES
+      : Number.isFinite(configuredLimit) ? Math.max(0, Math.min(Math.floor(configuredLimit), 2_000_000)) : MAX_OUTPUT_BYTES;
+    const outputSize = configuredLimit === undefined ? serialized.length : Buffer.byteLength(serialized, 'utf8');
+    if (configuredLimit !== undefined && outputSize > outputLimit) {
+      return (await complete(invocationId, 'failed', {
+        output: null,
+        error: `Provider output exceeds the configured limit of ${outputLimit} bytes.`,
+        providerUnits: units,
+      }))!;
+    }
     const status: InvocationStatus = def.kind === 'write' ? (verified === false ? 'failed' : verified ? 'verified' : 'succeeded') : 'succeeded';
-    return (await finish(invocationId, status, {
-      output: serialized.length <= MAX_OUTPUT_BYTES ? result.output : null,
+    return (await complete(invocationId, status, {
+      output: outputSize <= outputLimit ? result.output : null,
       summary: result.summary,
       resource: result.resource,
       verified,
@@ -223,10 +262,10 @@ async function execute(
       if (err.code === 'plan_limited') {
         await IntegrationConnection.updateOne({ _id: resolved.access.connectionId }, { $set: { planLimited: true } });
       }
-      return (await finish(invocationId, err.code, { error: err.message, providerUnits: units }))!;
+      return (await complete(invocationId, err.code, { error: err.message, providerUnits: units }))!;
     }
     console.error('[capabilities] unexpected failure', def.id, err instanceof Error ? err.message : 'unknown');
-    return (await finish(invocationId, 'failed', { error: 'Unexpected error while running this action.', providerUnits: units }))!;
+    return (await complete(invocationId, binding && def.kind === 'write' ? 'uncertain' : 'failed', { error: 'Unexpected error while running this action.', providerUnits: units }))!;
   }
 }
 
@@ -247,7 +286,16 @@ export async function invokeCapability(
   const parsed = def.input.safeParse(rawInput ?? {});
   if (!parsed.success) return { ok: false, status: 400, error: `Invalid input: ${parsed.error.issues.map((i) => i.message).join('; ')}` };
   const input = parsed.data;
-  const digest = inputDigest(def.id, def.version, input);
+  if (options.connectionId !== undefined && !Types.ObjectId.isValid(options.connectionId)) return { ok: false, status: 400, error: 'Invalid connection ID.' };
+  if (options.idempotencyKey !== undefined && (def.kind !== 'write' || typeof options.idempotencyKey !== 'string' || !options.idempotencyKey.trim() || options.idempotencyKey.length > 200)) return { ok: false, status: 400, error: 'A nonempty idempotency key (at most 200 characters) is supported only for writes.' };
+  const optIn = options.connectionId !== undefined || options.idempotencyKey !== undefined;
+  // Keyed calls without an explicit destination pin the legacy selection once.
+  let selected = optIn ? await resolveAccess(viewer, profile, def, options.connectionId) : undefined;
+  if (selected && 'access' in selected && !options.connectionId) selected = await resolveAccess(viewer, profile, def, String(selected.access.connectionId));
+  if (selected && !('access' in selected)) return { ok: false, status: 409, error: selected.error };
+  const binding = selected && 'access' in selected ? { connectionId: selected.access.connectionId, connectionRevision: selected.revision } : undefined;
+  const payloadDigest = inputDigest(def.id, def.version, input);
+  const digest = binding ? inputDigest(def.id, def.version, { input, provider: def.provider, ...binding, connectionId: String(binding.connectionId) }) : payloadDigest;
   const now = options.now ?? new Date();
 
   if (def.kind === 'read' && def.cacheSeconds) {
@@ -264,7 +312,35 @@ export async function invokeCapability(
     if (recent) return { ok: true, invocation: toInvocationView(recent, registry, true) };
   }
 
-  const invocation = await CapabilityInvocation.create({
+  const keyFilter = options.idempotencyKey !== undefined ? { organizationId: viewer.organizationId, companyId: new Types.ObjectId(profile.id), capabilityId: def.id, connectionId: binding!.connectionId, idempotencyKey: options.idempotencyKey } : undefined;
+  const reuse = async (existing: InvocationLean): Promise<InvokeResult> => {
+    if (existing.payloadDigest !== payloadDigest || (existing as InvocationLean & { inputDigest?: string }).inputDigest !== digest) return { ok: false, status: 409, error: 'This idempotency key is bound to different input or configuration.' };
+    if (existing.status === 'running' && (!existing.leaseExpiresAt || existing.leaseExpiresAt <= now)) {
+      const stale = await CapabilityInvocation.findOneAndUpdate({ _id: existing._id, status: 'running', leaseExpiresAt: existing.leaseExpiresAt ?? { $exists: false } }, { $set: { status: 'uncertain', error: 'Execution lease expired; the provider outcome is unknown.' }, $unset: { leaseToken: 1, leaseExpiresAt: 1 } }, { new: true }).lean<InvocationLean>();
+      if (stale) existing = stale;
+    }
+    if (existing.status === 'uncertain' && def.idempotent) {
+      if (def.approval === 'required') {
+        const approved = existing.approvalId && await CapabilityApproval.findOne({ _id: existing.approvalId, invocationId: existing._id, organizationId: viewer.organizationId, companyId: new Types.ObjectId(profile.id), status: 'approved', inputDigest: digest }).lean();
+        if (!approved) return { ok: false, status: 409, error: 'This retry requires the original exact manager approval.' };
+      }
+      const token = randomUUID();
+      const claimed = await CapabilityInvocation.findOneAndUpdate({ _id: existing._id, status: 'uncertain' }, { $set: { status: 'running', leaseToken: token, leaseExpiresAt: new Date(now.getTime() + LEASE_MS) }, $unset: { error: 1, finishedAt: 1 } }, { new: true }).lean<InvocationLean>();
+      if (claimed) {
+        const done = await execute(viewer, profile, def, existing._id, input, options.fetchImpl ?? fetch, now, { ...binding!, idempotencyKey: options.idempotencyKey, leaseToken: token });
+        return { ok: true, invocation: toInvocationView(done, registry) };
+      }
+    }
+    return { ok: true, invocation: toInvocationView(existing, registry) };
+  };
+  if (keyFilter) {
+    // init waits for additive index creation; never execute keyed writes without uniqueness.
+    await CapabilityInvocation.init();
+    const existing = await CapabilityInvocation.findOne(keyFilter).lean<InvocationLean>();
+    if (existing) return reuse(existing);
+  }
+  const leaseToken = keyFilter && def.approval !== 'required' ? randomUUID() : undefined;
+  const invocationData = {
     organizationId: viewer.organizationId,
     companyId: new Types.ObjectId(profile.id),
     capabilityId: def.id,
@@ -278,7 +354,17 @@ export async function invokeCapability(
     requestedBySystem: options.system,
     input,
     inputDigest: digest,
-  });
+    ...(binding ?? {}),
+    ...(keyFilter ? { idempotencyKey: options.idempotencyKey, payloadDigest, ...(leaseToken ? { leaseToken, leaseExpiresAt: new Date(now.getTime() + LEASE_MS) } : {}) } : {}),
+  };
+  let invocation;
+  try { invocation = await CapabilityInvocation.create(invocationData); }
+  catch (error) {
+    if (!keyFilter || (error as { code?: number }).code !== 11000) throw error;
+    const existing = await CapabilityInvocation.findOne(keyFilter).lean<InvocationLean>();
+    if (!existing) throw error;
+    return reuse(existing);
+  }
 
   if (def.approval === 'required') {
     const approval = await CapabilityApproval.create({
@@ -294,7 +380,7 @@ export async function invokeCapability(
     return { ok: true, invocation: toInvocationView(pending!, registry) };
   }
 
-  const done = await execute(viewer, profile, def, invocation._id, input, options.fetchImpl ?? fetch, now);
+  const done = await execute(viewer, profile, def, invocation._id, input, options.fetchImpl ?? fetch, now, binding ? { ...binding, idempotencyKey: options.idempotencyKey, leaseToken } : undefined);
   return { ok: true, invocation: toInvocationView(done, registry) };
 }
 
@@ -342,12 +428,16 @@ export async function decideApproval(
   }
 
   const def = getCapability(invocation.capabilityId, registry);
-  if (!def || def.version !== invocation.capabilityVersion || inputDigest(def.id, def.version, invocation.input) !== approval.inputDigest) {
+  const access = def && invocation.connectionId ? await resolveAccess(viewer, profile, def, String(invocation.connectionId)) : undefined;
+  const approvalDigest = def ? inputDigest(def.id, def.version, invocation.connectionId ? { input: invocation.input, provider: def.provider, connectionId: String(invocation.connectionId), connectionRevision: access && 'access' in access ? access.revision : -1 } : invocation.input) : undefined;
+  if (!def || def.version !== invocation.capabilityVersion || (invocation.connectionId && def.provider !== invocation.provider) || approvalDigest !== approval.inputDigest) {
     const stale = await finish(invocation._id, 'cancelled', { error: 'The action changed after it was requested. Request it again.' });
     return { ok: true, invocation: toInvocationView(stale!, registry) };
   }
 
-  const done = await execute(viewer, profile, def, invocation._id, invocation.input, options.fetchImpl ?? fetch, new Date());
+  const token = invocation.idempotencyKey ? randomUUID() : undefined;
+  if (token) await CapabilityInvocation.updateOne({ _id: invocation._id, status: 'pending_approval' }, { $set: { status: 'running', leaseToken: token, leaseExpiresAt: new Date(now.getTime() + LEASE_MS) } });
+  const done = await execute(viewer, profile, def, invocation._id, invocation.input, options.fetchImpl ?? fetch, new Date(), invocation.connectionId ? { connectionId: invocation.connectionId, connectionRevision: invocation.connectionRevision, idempotencyKey: invocation.idempotencyKey, leaseToken: token } : undefined);
   return { ok: true, invocation: toInvocationView(done, registry) };
 }
 

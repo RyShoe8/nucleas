@@ -32,6 +32,9 @@ const connectionSchema = new Schema(
     lastVerifiedAt: { type: Date },
     lastError: { type: String, trim: true, maxlength: 500 },
     revision: { type: Number, default: 0 },
+    /** Versioned website adapter configuration. Existing provider records leave this absent. */
+    connectorConfig: { type: Schema.Types.Mixed },
+    connectorTest: { type: new Schema({ revision: Number, at: Date, ok: Boolean, error: { type: String, maxlength: 500 } }, { _id: false }), default: undefined },
   },
   { timestamps: true }
 );

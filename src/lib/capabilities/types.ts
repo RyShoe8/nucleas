@@ -23,6 +23,7 @@ export type InvocationStatus =
   | 'running'
   | 'succeeded'
   | 'verified'
+  | 'uncertain'
   | 'failed'
   | 'needs_setup'
   | 'plan_limited'
@@ -33,7 +34,7 @@ export type InvocationStatus =
 /** Terminal outcomes an adapter may signal instead of a result. */
 export class CapabilityError extends Error {
   constructor(
-    readonly code: 'needs_setup' | 'plan_limited' | 'needs_reauth' | 'failed',
+    readonly code: 'uncertain' | 'needs_setup' | 'plan_limited' | 'needs_reauth' | 'failed',
     message: string
   ) {
     super(message);
@@ -46,6 +47,7 @@ export interface ProviderAccess {
   connectionId: Types.ObjectId;
   /** Decrypted credential. Adapter-only; never logged, returned or put in model context. */
   credential: string;
+  configuration?: unknown;
   /** The company's pinned resource (GA4 property, GSC site, ...), when the capability needs one. */
   resource?: { externalId: string; label?: string };
 }
@@ -57,6 +59,8 @@ export interface CapabilityRunContext {
   access: ProviderAccess;
   /** Clock for date windows, shared with callers (e.g. the metric sync) so both agree on 'yesterday'. */
   now: Date;
+  idempotencyKey?: string;
+  invocationId?: string;
   fetch: (url: string, init?: RequestInit) => Promise<Response>;
   /** Units consumed at the provider (e.g. Ahrefs API units), reported by the adapter. */
   reportUnits: (units: number) => void;
@@ -86,6 +90,10 @@ export interface CapabilityDefinition<I = unknown, O = unknown> {
   input: z.ZodType<I, z.ZodTypeDef, unknown>;
   /** Reads: seconds a successful identical result may be reused instead of calling the provider again. */
   cacheSeconds?: number;
+  /** Explicit UTF-8 output limit, capped at 2,000,000 bytes; overflow fails the receipt. */
+  maxOutputBytes?: number;
+  /** Adapter guarantees retries with the same key cannot repeat the external write. */
+  idempotent?: boolean;
   run: (ctx: CapabilityRunContext, input: I) => Promise<CapabilityResult<O>>;
   /** Writes: read the provider back and confirm the desired state exists. */
   verify?: (ctx: CapabilityRunContext, input: I, result: CapabilityResult<O>) => Promise<boolean>;

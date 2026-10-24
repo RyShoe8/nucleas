@@ -6,6 +6,12 @@ const invocationSchema = new Schema(
     organizationId: { type: Schema.Types.ObjectId, required: true },
     companyId: { type: Schema.Types.ObjectId, ref: 'Client', required: true },
     capabilityId: { type: String, required: true },
+    connectionId: { type: Schema.Types.ObjectId, ref: 'IntegrationConnection' },
+    connectionRevision: { type: Number },
+    idempotencyKey: { type: String },
+    payloadDigest: { type: String },
+    leaseToken: { type: String },
+    leaseExpiresAt: { type: Date },
     capabilityVersion: { type: Number, required: true },
     kind: { type: String, enum: ['read', 'write'], required: true },
     risk: { type: String, required: true },
@@ -13,7 +19,7 @@ const invocationSchema = new Schema(
     method: { type: String, enum: ['api', 'mcp', 'browser', 'human'], default: 'api' },
     status: {
       type: String,
-      enum: ['pending_approval', 'running', 'succeeded', 'verified', 'failed', 'needs_setup', 'plan_limited', 'needs_reauth', 'denied', 'cancelled'],
+      enum: ['pending_approval', 'running', 'succeeded', 'verified', 'uncertain', 'failed', 'needs_setup', 'plan_limited', 'needs_reauth', 'denied', 'cancelled'],
       required: true,
     },
     requestedByUserId: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -39,10 +45,15 @@ const invocationSchema = new Schema(
     startedAt: { type: Date },
     finishedAt: { type: Date },
   },
-  { timestamps: true }
+  { timestamps: true, autoIndex: true }
 );
 invocationSchema.index({ organizationId: 1, companyId: 1, createdAt: -1 });
 invocationSchema.index({ companyId: 1, capabilityId: 1, inputDigest: 1, status: 1, finishedAt: -1 });
+
+invocationSchema.index(
+  { organizationId: 1, companyId: 1, capabilityId: 1, connectionId: 1, idempotencyKey: 1 },
+  { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } }
+);
 
 /** Human approval bound to one exact invocation (capability + input digest). Consumed once. */
 const approvalSchema = new Schema(

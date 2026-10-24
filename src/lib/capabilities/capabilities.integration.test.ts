@@ -184,6 +184,17 @@ describe('Ahrefs project setup (write)', () => {
 });
 
 describe('approvals', () => {
+  it('claims a keyed write once across concurrent requests using a shared organization connection', async () => {
+    await connect('brevo', 'shared-test-key', { org: true });
+    const runOnce = vi.fn(async () => ({ output: { saved: true }, summary: 'Saved once' }));
+    const definition: CapabilityDefinition = { id: 'test.keyed.write', version: 1, title: 'Keyed write', domain: 'test', kind: 'write', risk: 'communication', provider: 'brevo', approval: 'auto', idempotent: true, input: z.object({ title: z.string() }).strict(), run: runOnce };
+    const options = { registry: [definition], idempotencyKey: 'one-publication' };
+    const results = await Promise.all(Array.from({ length: 4 }, () => invokeCapability(admin, companyId, definition.id, { title: 'Same post' }, options)));
+    expect(results.every(result => result.ok)).toBe(true);
+    expect(runOnce).toHaveBeenCalledOnce();
+    expect(await CapabilityInvocation.countDocuments({ capabilityId: definition.id })).toBe(1);
+    expect(await invokeCapability(admin, companyId, definition.id, { title: 'Changed post' }, options)).toMatchObject({ ok: false, status: 409 });
+  });
   const run = vi.fn(async () => ({ output: { done: true }, summary: 'Did the thing' }));
   const guarded: CapabilityDefinition<{ amount: number }, { done: boolean }> = {
     id: 'test.guarded.write',
