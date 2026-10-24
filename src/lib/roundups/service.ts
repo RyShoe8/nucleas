@@ -253,8 +253,10 @@ export async function publishRoundup(viewer: CompanyViewer, companyId: string, i
     if (!saved) throw new Error('Publication receipt could not be persisted. Retry with the same key.');
     return serialize(saved);
   } catch (error) {
-    const connectorError = row.transport?.kind === 'connector' && error instanceof Error ? error.message.slice(0, 400) : null;
-    const saved = await ReleaseRoundup.findOneAndUpdate(owned, { $set: { status: 'publish_uncertain', progress: 'Publication unconfirmed; retry Publish to reconcile', error: connectorError || 'The site did not provide a confirmed receipt. Coverage unchanged; retry uses the same idempotency key.' }, $unset: { leaseToken: 1, leaseUntil: 1 }, $push: { logs: { stage: 'publish_uncertain', message: 'Publication unconfirmed; same key retained for retry', at: new Date() } } }, { new: true });
+    const reason = error instanceof z.ZodError
+      ? `Receipt fields did not match: ${[...new Set(error.issues.map(issue => issue.path.join('.')))].join(', ').slice(0, 250)}`
+      : error instanceof Error ? error.message.slice(0, 400) : 'Unknown confirmation error';
+    const saved = await ReleaseRoundup.findOneAndUpdate(owned, { $set: { status: 'publish_uncertain', progress: 'Publication unconfirmed; check the existing publication', error: `${reason}. Coverage unchanged; check publication safely using the same key.` }, $unset: { leaseToken: 1, leaseUntil: 1 }, $push: { logs: { stage: 'publish_uncertain', message: `Publication unconfirmed: ${reason}. Same key retained for retry.`, at: new Date() } } }, { new: true });
     if (!saved) throw new RoundupError('Publication state changed; reload.', 409);
     return serialize(saved);
   }
