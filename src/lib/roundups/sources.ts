@@ -105,14 +105,18 @@ export async function deployedSources(binding: { owner: string; repo: string; in
   }));
 }
 
-/** Prefer complete sentences; otherwise finish at a word boundary with an explicit ellipsis. */
+/** The length is a soft target: a complete sentence matters more than a character cap. */
 export function completeExcerpt(text: string, limit = 300): string {
   const plain = text.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
   if (plain.length <= limit) return plain;
-  const prefix = plain.slice(0, limit - 1);
-  const sentence = [...prefix.matchAll(/[.!?](?=\s|$)/g)].at(-1);
-  if (sentence && sentence.index >= Math.min(60, limit / 3)) return prefix.slice(0, sentence.index + 1);
-  return prefix.slice(0, prefix.lastIndexOf(' ')).trimEnd() + '…';
+  const ends = [...plain.matchAll(/[.!?](?:["'”’)])?(?=\s|$)/g)].filter(match => {
+    const prefix = plain.slice(0, match.index + 1);
+    return !/\b(?:Lt|Mr|Mrs|Ms|Dr|Prof|Capt|Sgt|Col|Gen|St|vs|etc|e\.g|i\.e)\.$/i.test(prefix)
+      && !/\b[A-Z]\.$/.test(prefix);
+  }).map(match => match.index + match[0].length);
+  const boundary = ends.filter(end => end <= limit).at(-1) ?? ends[0];
+  // A long first sentence or unpunctuated source is retained intact, never sliced into a fragment.
+  return boundary ? plain.slice(0, boundary) : plain;
 }
 export async function releaseSources(binding: { owner: string; repo: string; installationId?: string | null }, start: Date, end: Date): Promise<Source[]> {
   if (!binding.installationId) throw new Error(`GitHub installation missing for ${binding.owner}/${binding.repo}.`);

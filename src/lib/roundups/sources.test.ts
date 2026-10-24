@@ -52,7 +52,14 @@ describe('confirmed production changelog sources', () => {
     expect(await deployedSources(binding, start, end)).toEqual([]);
   });
   it('keeps complete sentences and never cuts a word without an ellipsis', () => {
-    expect(completeExcerpt('A complete first sentence. ' + 'Another sentence '.repeat(30), 100)).toBe('A complete first sentence. Another sentence Another sentence Another sentence Another sentence…');
+    expect(completeExcerpt('A complete first sentence. ' + 'Another sentence '.repeat(30), 100)).toBe('A complete first sentence.');
     expect(completeExcerpt('A reasonably detailed first sentence about the game and how it plays. ' + 'More '.repeat(70), 100)).toBe('A reasonably detailed first sentence about the game and how it plays.');
+  });
+  it('retains a long first sentence and does not stop at military ranks', () => {
+    const long = 'A standalone campaign with ' + 'cinematic set pieces and '.repeat(20) + 'no original game required.';
+    expect(completeExcerpt(long)).toBe(long);
+    const first = 'A remake of the original game.';
+    expect(completeExcerpt(first + ' Play as OSS agent Lt. Jimmy Patterson through the campaign. ' + 'More details '.repeat(40), 90)).toBe(first + ' Play as OSS agent Lt. Jimmy Patterson through the campaign.');
+    expect(completeExcerpt('Unpunctuated source '.repeat(30))).not.toContain('…');
   });
 });
