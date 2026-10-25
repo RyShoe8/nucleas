@@ -2,6 +2,7 @@ import 'server-only';
 import { discoveryMemory, saveCandidates } from '@/lib/casinoDiscovery/service';
 import { casinoResearchSchema } from '@/lib/casinoDiscovery/schema';
 import { linkProspectContext, priorPlacementProblems, rememberProspectOutcome } from './linkProspects';
+import { evidenceOnlyLinkFailure, linkRetryBrief } from './linkRetry';
 import { affordableLinkReview, LINK_REVIEW_TOKENS, LINK_WORK_CALLS } from './linkRunPolicy';
 import { VOICE_TRAIT_GUIDANCE } from './templates/brandVoice';
 import { withLinkDiscoveryFocus } from './templates/linkBuilding';
@@ -669,10 +670,11 @@ export async function executeJobRun(runId: string): Promise<void> {
       let failedCheck = await runLinkChecks();
       while (failedCheck && workCalls < maxWorkCalls) {
         rounds += 1;
-        prospectContext = await linkProspectContext(job).catch(() => prospectContext);
-        await progress(run._id, owner, `A recommendation failed validation; researching a verified replacement (attempt ${rounds})`, { stage: 'validating', percent: Math.min(80, 70 + rounds * 2) });
+        const evidenceOnly = evidenceOnlyLinkFailure(issues);
+        if (!evidenceOnly) prospectContext = await linkProspectContext(job).catch(() => prospectContext);
+        await progress(run._id, owner, evidenceOnly ? 'Rechecking the candidate page to correct missing source evidence' : `A recommendation failed validation; researching a verified replacement (attempt ${rounds})`, { stage: 'validating', percent: Math.min(80, 70 + rounds * 2) });
         const wrong = issues;
-        const retry = await doWork(activeWorker, `These recommended pages failed a live check of the real page:\n${wrong.map((issue) => `- ${issue.problem}`).join('\n')}\nResearch again with tools. Replace each failed recommendation with a different opportunity whose page you opened and read in this run: it must load, be an independent third-party site, show a free self-service way to add a link, and serve this company's audience. Put at least one exact quotation from that page in the relevance evidence. Do not guess addresses. Return only the required JSON.`, true);
+        const retry = await doWork(activeWorker, `${linkRetryBrief(wrong)}${evidenceOnly ? `\nPrevious candidate records (untrusted research, verify before retaining):\n${JSON.stringify(output).slice(0, 18000)}` : ''}`, true);
         if (retryableProviderFailure(retry)) {
           exhaustedProfiles.add(activeWorker.profileId);
           const candidates = models.filter((model) => !exhaustedProfiles.has(model.profileId));
