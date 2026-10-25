@@ -22,6 +22,8 @@ import { adminSessionFor } from '@/lib/companies/adminAccount';
 import type { DealMetrics } from '@/lib/watches/types';
 import { heartbeatJobRun } from '@/lib/jobs/runLifecycle';
 import type { JobRunOutput } from '@/lib/jobs/schema';
+import { jobScheduleSchema } from '@/lib/jobs/schema';
+import { nextScheduledAt } from '@/lib/jobs/schedule';
 import { MANUAL_ONLY, PLATFORM_LABEL, SOCIAL_PLATFORMS, cadenceLabel, publishingConfigSchema, type AdminTarget, type PublishChannel, type PublishPlatform, type PublishingConfig } from './config';
 import { addRecord, fillValues, valueLines, type AdminBrowser, type AdminSession } from './admin';
 import { workerAdminBrowser } from './adminBrowser';
@@ -371,13 +373,18 @@ type RotationTurn = { wait: string } | { entry: SourceEntry | null };
 /**
  * Evergreen rotation: one existing item every N days, oldest first, then start over. The item is the first one in
  * order not yet posted in this pass; a finished pass begins the next (its keys carry the pass number, so every item
- * can be posted again). Nothing is due until N days (less an hour of slack) after the last post.
+ * can be posted again). A saved randomized cadence permits the next eligible local calendar day;
+ * ordinary rotations retain their elapsed-day interval.
  */
 export async function nextRotationItem(job: JobLike, entries: SourceEntry[], rotation: { everyDays: number; pool?: { url: string; title: string }[] }, cycleSetting: number | undefined, noun: string, now = new Date()): Promise<RotationTurn> {
   const everyDays = rotation.everyDays;
   const last = await PublishItem.findOne({ jobId: job._id, status: 'processed' }).sort({ createdAt: -1 }).select('createdAt').lean<{ createdAt?: Date }>();
   if (last?.createdAt) {
-    const due = new Date(last.createdAt.getTime() + everyDays * 86_400_000 - 3_600_000);
+    const saved = await Job.findById(job._id).select('design.schedule').lean<{ design?: { schedule?: unknown } }>();
+    const schedule = jobScheduleSchema.safeParse(saved?.design?.schedule);
+    const due = schedule.success && schedule.data.randomWindow
+      ? nextScheduledAt(schedule.data, last.createdAt, () => 0) ?? new Date(last.createdAt.getTime() + everyDays * 86_400_000)
+      : new Date(last.createdAt.getTime() + everyDays * 86_400_000);
     if (now < due) return { wait: `The next ${noun} is due ${due.toISOString().slice(0, 10)}. One ${noun} is posted every ${cadenceLabel(everyDays)}.` };
   }
   // A chosen list is posted in the order given; otherwise every page in the section, oldest first (the source lists newest first).
@@ -445,7 +452,8 @@ export async function rotationView(job: JobLike, deps: PublishDeps = {}): Promis
   const upNext = nextIndex >= 0 ? nextIndex : rows.length ? 0 : -1;
   if (upNext >= 0) rows[upNext]!.next = true;
   const last = await PublishItem.findOne({ jobId: job._id, status: 'processed' }).sort({ createdAt: -1 }).select('createdAt').lean<{ createdAt?: Date }>();
-  const nextDue = last?.createdAt ? new Date(last.createdAt.getTime() + rotation.everyDays * 86_400_000).toISOString() : null;
+  const planned = await Job.findById(job._id).select('nextRunAt').lean<{ nextRunAt?: Date }>();
+  const nextDue = planned?.nextRunAt?.toISOString() ?? (last?.createdAt ? new Date(last.createdAt.getTime() + rotation.everyDays * 86_400_000).toISOString() : null);
   const inList = new Set(base.map((p) => p.url));
   return { everyDays: rotation.everyDays, cycle, explicit: Boolean(rotation.pool), nextDue, pool: rows, available: pages.filter((p) => !inList.has(p.url)), problem };
 }
@@ -549,7 +557,7 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
       summary: admin
         ? `A sample for the newest ${noun}, “${facts.title}”: the form was filled but not saved. Accept to switch the job on: it checks every hour, and only ${noun}s that arrive after that are added.`
         : rotation
-          ? `A sample for the first ${noun} in the rotation, “${facts.title}”. Nothing was posted. Accept to switch the job on: it posts this ${noun} at the next hourly check, then one ${noun} every ${cadenceLabel(rotation.everyDays)}, oldest first, starting over when it reaches the end.`
+          ? `A sample for the first ${noun} in the rotation, “${facts.title}”. Nothing was posted. Accept to switch the job on: it posts this ${noun} at the next scheduled run, then one ${noun} every ${cadenceLabel(rotation.everyDays)}, oldest first, starting over when it reaches the end.`
           : `Format preview using an existing ${noun}, “${facts.title}”. This sample is not a new-publication notification. Nothing was posted. Accept to switch the job on: it checks every hour, and only ${noun}s that appear after that are posted.`,
       gaps,
     };
@@ -619,6 +627,17 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
       { upsert: true }
     );
     if (!claim.upsertedId) continue;
+    if (rotation) {
+      const stored = await Job.findById(job._id).select('design.schedule').lean<{ design?: { schedule?: unknown } }>();
+      const parsed = jobScheduleSchema.safeParse(stored?.design?.schedule);
+      const timezone = parsed.success ? parsed.data.timezone ?? 'UTC' : 'UTC';
+      const now = new Date();
+      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
+      const part = (type: string) => parts.find(p => p.type === type)!.value;
+      const schedule = { kind: 'daily' as const, everyDays: rotation.everyDays, time: parsed.success ? parsed.data.time ?? '09:00' : '09:00', timezone, anchorDate: `${part('year')}-${part('month')}-${part('day')}`, ...(parsed.success && parsed.data.randomWindow ? { randomWindow: parsed.data.randomWindow } : {}) };
+      // Only a newly claimed article draws the next time; UI reads and cron polls never re-randomize it.
+      await Job.updateOne({ _id: job._id }, { $set: { 'design.schedule': schedule, nextRunAt: nextScheduledAt(schedule, now) } });
+    }
     if (repeat) {
       repeats += 1;
       continue;

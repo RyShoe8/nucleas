@@ -18,7 +18,7 @@ import { PublishItem, PublishDelivery } from '@/lib/models/Publishing';
 import { BrandVoice } from '@/lib/models/BrandVoice';
 import { IntegrationConnection } from '@/lib/models/Integration';
 import User from '@/lib/models/User';
-import { rotationView, runPublishing, takeBaseline, titleFromUrl, type PublishDeps } from './engine';
+import { nextRotationItem, rotationView, runPublishing, takeBaseline, titleFromUrl, type PublishDeps } from './engine';
 import { parseRotation, updatePublishingSettings } from './setup';
 import { cadenceLabel, type PublishingConfig } from './config';
 
@@ -87,6 +87,14 @@ beforeEach(async () => {
 });
 
 describe('evergreen rotation', () => {
+  it('allows the randomized calendar-day window even when it is earlier than the previous clock time', async () => {
+    const job = await jobWith(base);
+    await Job.updateOne({ _id: job._id }, { $set: { 'design.schedule': { kind: 'daily', everyDays: 21, anchorDate: '2026-10-20', timezone: 'America/Chicago', randomWindow: { startHour: 9, endHour: 19 } } } });
+    await PublishItem.create({ organizationId: org, companyId, jobId: job._id, key: 'old', title: 'Old article', status: 'processed', createdAt: new Date('2026-10-20T16:30:00Z') });
+    const entries = [{ key: 'next', url: 'https://frugalgambler.club/news/next', title: 'Next', date: null }];
+    expect(await nextRotationItem(job.toObject(), entries, { everyDays: 21 }, 1, 'article', new Date('2026-11-10T14:59:00Z'))).toHaveProperty('wait');
+    expect(await nextRotationItem(job.toObject(), entries, { everyDays: 21 }, 1, 'article', new Date('2026-11-10T15:00:00Z'))).toHaveProperty('entry');
+  });
   it('reads "one article every 3 weeks, in order" and leaves "post new games" alone', () => {
     expect(parseRotation('Post one article every 3 weeks, in order, to our socials and Reddit')).toEqual({ everyDays: 21 });
     expect(parseRotation('post an evergreen guide every other week')).toEqual({ everyDays: 14 });

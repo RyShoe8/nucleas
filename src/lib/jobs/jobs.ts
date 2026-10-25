@@ -1,6 +1,7 @@
 import { retryDatabaseRead, retryIdempotentWrite } from '@/lib/db/retryRead';
 import type { ModelStep } from '@/lib/jobs/modelPath';
 import 'server-only';
+import { publishingConfigSchema } from '@/lib/publishing/config';
 import { manualArtifact } from './output';
 import { brandVoiceDesign } from './templates/brandVoice';
 import { generatedVoice, saveGeneratedVoice } from '@/lib/brandVoice/service';
@@ -462,7 +463,9 @@ export async function decideRun(viewer: CompanyViewer, jobId: string, runId: str
     const once = design.success && design.data.schedule.kind === 'once';
     const deliverable = design.success && deliveryRunnable(design.data);
     const next: JobStatus = decision === 'reject' ? 'proposed' : once && deliverable ? 'done' : 'ready';
-    const nextRunAt = decision === 'accept' && design.success && deliverable ? nextScheduledAt(design.data.schedule, new Date()) : null;
+    const rotation = publishingConfigSchema.safeParse(found.job.publishing);
+    const firstRotation = rotation.success && rotation.data.source.type === 'site' && Boolean(rotation.data.source.rotation);
+    const nextRunAt = decision === 'accept' && design.success && deliverable ? (firstRotation ? new Date() : nextScheduledAt(design.data.schedule, new Date())) : null;
     await Job.updateOne(
       { _id: found.job._id, status: 'testing' },
       {

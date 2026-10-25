@@ -49,7 +49,7 @@ function zonedToUtc(year: number, month: number, day: number, hour: number, minu
 }
 
 /** Next occurrence strictly after `after`. Repeating job schedules are evaluated in their saved timezone. */
-export function nextScheduledAt(schedule: JobSchedule, after: Date): Date | null {
+export function nextScheduledAt(schedule: JobSchedule, after: Date, random: () => number = Math.random): Date | null {
   if (schedule.kind === 'once') return null;
   if (schedule.kind === 'hourly') return new Date(after.getTime() + 3_600_000);
   const timezone = validTimezone(schedule.timezone);
@@ -58,6 +58,8 @@ export function nextScheduledAt(schedule: JobSchedule, after: Date): Date | null
   const localNoon = new Date(Date.UTC(local.year, local.month - 1, local.day, 12));
 
   for (let offset = 0; offset <= 370; offset += 1) {
+    // A randomized cycle is sampled once and persisted as nextRunAt. Never draw again on the same date.
+    if (schedule.randomWindow && offset === 0) continue;
     const date = new Date(localNoon.getTime() + offset * 86_400_000);
     const year = date.getUTCFullYear();
     const month = date.getUTCMonth() + 1;
@@ -69,7 +71,10 @@ export function nextScheduledAt(schedule: JobSchedule, after: Date): Date | null
     }
     if (schedule.kind === 'weekly' && weekday !== (schedule.weekday ?? 1)) continue;
     if (schedule.kind === 'monthly' && day !== (schedule.dayOfMonth ?? 1)) continue;
-    const candidate = zonedToUtc(year, month, day, hour, minute, timezone);
+    const window = schedule.randomWindow;
+    // Match the ten-minute scheduler slots, including the end of the allowed window.
+    const chosenMinute = window ? window.startHour * 60 + Math.floor(Math.min(0.999999999, Math.max(0, random())) * ((window.endHour - window.startHour) * 6 + 1)) * 10 : hour * 60 + minute;
+    const candidate = zonedToUtc(year, month, day, Math.floor(chosenMinute / 60), chosenMinute % 60, timezone);
     if (candidate.getTime() > after.getTime()) return candidate;
   }
   return null;

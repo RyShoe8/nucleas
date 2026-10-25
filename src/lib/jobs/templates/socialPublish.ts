@@ -17,7 +17,7 @@ export function socialPublishDesign(input: { noun: string; sourceLabel: string; 
     ],
     sourcePolicy: `Only facts from the ${input.noun}'s own page.`,
     delivery: { method: 'integration', detail: 'Posted through the connected accounts, or prepared as ready-to-post cards.', setupSteps: [] },
-    schedule: { kind: 'hourly' },
+    schedule: input.everyDays ? { kind: 'daily', everyDays: input.everyDays, time: '09:00', timezone: 'UTC' } : { kind: 'hourly' },
     recordsPerRun: 1,
     safeguards: [
       `Only ${input.noun}s that appear after the job is switched on are posted.`,

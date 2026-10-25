@@ -180,7 +180,8 @@ export default function PublishingJobBody({ job, onChange, readyShownAbove = fal
                 {view.admin ? <> · adds to <a href={view.admin.formUrl} target="_blank" rel="noreferrer" className="underline">{new URL(view.admin.formUrl).host}{new URL(view.admin.formUrl).pathname}</a></> : null}
                 {view.minimumSocialValuePct !== undefined ? ` · social value must be over ${view.minimumSocialValuePct}%` : ''}
                 {on ? ` · last checked ${ago(job.lastRunAt)}` : ''}
-                {on && view.postedThisWeek ? ` · ${view.postedThisWeek} posted this week` : ''}
+                {on && view.source.type === 'site' && view.source.rotation && job.nextRunAt ? ` · next scheduled ${new Date(job.nextRunAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}
+                {on && view.postedThisWeek ? ` · ${view.postedThisWeek} social posts delivered this week` : ''}
             </p>
 
             {view.source.type === 'site' && view.source.rotation ? <RotationEditor jobId={job.id} canManage={job.canManage} /> : null}

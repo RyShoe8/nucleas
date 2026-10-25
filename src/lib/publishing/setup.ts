@@ -11,6 +11,8 @@ import { askEngine } from '@/lib/ai/engine/ask';
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 import { readEngineSettings } from '@/lib/ai/engine/select';
 import { socialPublishDesign } from '@/lib/jobs/templates/socialPublish';
+import { nextScheduledAt } from '@/lib/jobs/schedule';
+import { jobScheduleSchema } from '@/lib/jobs/schema';
 import { MANUAL_ONLY, PLATFORM_LABEL, PUBLISH_PLATFORMS, cadenceLabel, SOCIAL_PLATFORMS, publishingConfigSchema, adminFieldRulesSchema, adminTargetSchema, channelSchema, type AdminTarget, normalizeChannels, platformsFor, publishSourceSchema, sourceLabel, type PublishPlatform, type PublishSource, type PublishingConfig } from './config';
 import { readExamplePost } from './examples';
 import { discoverSiteSource, nounFromRequest, type PickPrefix } from './siteSource';
@@ -378,7 +380,7 @@ const settingsSchema = z.object({
 });
 
 /** Change a running job's platforms, auto/manual choices, notify list or examples. Managers only. */
-export async function updatePublishingSettings(viewer: CompanyViewer, job: { _id: Types.ObjectId; organizationId: Types.ObjectId; publishing?: unknown }, raw: unknown, deps: SetupDeps = {}): Promise<{ ok: true } | { ok: false; status: 400 | 403; error: string }> {
+export async function updatePublishingSettings(viewer: CompanyViewer, job: { _id: Types.ObjectId; organizationId: Types.ObjectId; publishing?: unknown; design?: unknown }, raw: unknown, deps: SetupDeps = {}): Promise<{ ok: true } | { ok: false; status: 400 | 403; error: string }> {
   if (!isCompanyManager(viewer)) return { ok: false, status: 403, error: 'Only managers and administrators can change publishing settings.' };
   const parsed = settingsSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, status: 400, error: parsed.error.issues[0]?.message ?? 'Check the settings.' };
@@ -404,7 +406,13 @@ export async function updatePublishingSettings(viewer: CompanyViewer, job: { _id
     const current = publishingConfigSchema.safeParse(job.publishing);
     if (!current.success || current.data.source.type !== 'site' || !current.data.source.rotation) return { ok: false, status: 400, error: 'This job is not an evergreen rotation.' };
     const { everyDays, pool } = parsed.data.rotation;
-    if (everyDays) set['publishing.source.rotation.everyDays'] = everyDays;
+    if (everyDays) {
+      set['publishing.source.rotation.everyDays'] = everyDays;
+      const prior = jobScheduleSchema.safeParse((job.design as { schedule?: unknown })?.schedule);
+      const schedule = { ...(prior.success ? prior.data : {}), kind: 'daily' as const, everyDays, time: prior.success ? prior.data.time ?? '09:00' : '09:00' };
+      set['design.schedule'] = schedule;
+      set.nextRunAt = nextScheduledAt(schedule, new Date());
+    }
     if (pool === null) unset['publishing.source.rotation.pool'] = '';
     else if (pool) {
       const bare = (host: string) => host.toLowerCase().replace(/^www\./, '');

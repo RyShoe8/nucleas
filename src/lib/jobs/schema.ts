@@ -68,6 +68,7 @@ export const jobScheduleSchema = z.object({
   dayOfMonth: z.number().int().min(1).max(28).optional(),
   everyDays: z.number().int().min(1).max(365).optional(),
   anchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  randomWindow: z.object({ startHour: z.number().int().min(0).max(23), endHour: z.number().int().min(1).max(24) }).refine(v => v.endHour > v.startHour, 'Window must end after it starts').optional(),
 });
 export type JobSchedule = z.infer<typeof jobScheduleSchema>;
 

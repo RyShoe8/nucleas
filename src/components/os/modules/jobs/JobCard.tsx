@@ -39,7 +39,7 @@ interface JobDesign {
     fields: JobField[];
     sourcePolicy: string;
     delivery: { method: string; detail: string; setupSteps: string[] };
-    schedule: { kind: 'once' | 'hourly' | 'daily' | 'weekly' | 'monthly'; time?: string; timezone?: string; weekday?: number; dayOfMonth?: number; everyDays?: number; anchorDate?: string };
+    schedule: { kind: 'once' | 'hourly' | 'daily' | 'weekly' | 'monthly'; time?: string; timezone?: string; weekday?: number; dayOfMonth?: number; everyDays?: number; anchorDate?: string; randomWindow?: { startHour: number; endHour: number } };
     recordsPerRun: number;
     safeguards: string[];
     recommendedCompletion: 'review' | 'automatic';
@@ -183,6 +183,10 @@ export function jobListProgress(job: JobView): JobListProgress {
 export function scheduleLabel(s: JobDesign['schedule'] | undefined): string {
     if (!s || s.kind === 'once') return 'Once';
     if (s.kind === 'hourly') return 'Every hour';
+    if (s.randomWindow) {
+        const hour = (h: number) => `${h % 12 || 12} ${h < 12 ? 'AM' : 'PM'}`;
+        return `Every ${s.everyDays && s.everyDays % 7 === 0 ? `${s.everyDays / 7} weeks` : `${s.everyDays ?? 1} days`} · ${hour(s.randomWindow.startHour)}–${hour(s.randomWindow.endHour)}, randomized (${s.timezone === 'America/Chicago' ? 'Central' : s.timezone ?? 'UTC'})`;
+    }
     const at = s.time ? ` at ${s.time}` : '';
     if (s.kind === 'daily') return `${s.everyDays && s.everyDays > 1 ? `Every ${s.everyDays} days` : 'Every day'}${at}`;
     if (s.kind === 'weekly') return `Every ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][s.weekday ?? 1]}${at}`;
