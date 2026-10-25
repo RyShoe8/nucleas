@@ -140,7 +140,7 @@ export type BrowserObserveResult = { url: string; title: string | null; loggedIn
  * worker. The worker never returns the cookies; nothing here logs the request body.
  */
 export async function browserObserve(
-  input: { baseUrl: string; url: string; cookies: unknown[] },
+  input: { baseUrl: string; url: string; cookies: unknown[]; maxChars?: number },
   options: { signal?: AbortSignal; fetcher?: typeof fetch; timeoutMs?: number } = {}
 ): Promise<BrowserObserveResult> {
   if (!isBrowserWorkerConfigured()) {
@@ -164,7 +164,7 @@ export async function browserObserve(
       cache: 'no-store',
       signal: controller.signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
-      body: JSON.stringify({ baseUrl: base.origin, url: target.toString(), cookies: input.cookies, maxChars: 20000 }),
+      body: JSON.stringify({ baseUrl: base.origin, url: target.toString(), cookies: input.cookies, maxChars: Math.min(40000, Math.max(1000, input.maxChars ?? 20000)) }),
     });
     if (!response.ok) {
       await response.body?.cancel();
