@@ -574,6 +574,7 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
   }
 
   let fresh: SourceEntry[];
+  let retryKeys = new Set<string>();
   if (rotation) {
     const turn = await nextRotationItem(job, entries, rotation, config.rotationCycle, noun);
     if ('wait' in turn) {
@@ -582,13 +583,20 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
     }
     fresh = turn.entry ? [turn.entry] : [];
   } else {
-    const known = new Set((await PublishItem.find({ jobId: job._id, key: { $in: entries.map((e) => e.key) } }).select('key').lean<{ key: string }[]>()).map((r) => r.key));
-    fresh = entries.filter((e) => !known.has(e.key)).reverse(); // oldest first, so posts go out in release order
+    const seen = await PublishItem.find({ jobId: job._id, key: { $in: entries.map((e) => e.key) } })
+      .select('key status skipReason').lean<{ key: string; status: string; skipReason?: string }[]>();
+    const byKey = new Map(seen.map((row) => [row.key, row]));
+    retryKeys = new Set(seen.filter((row) => row.status === 'skipped' && /^Could not read /i.test(row.skipReason ?? '') && /(?:aborted due to timeout|timed? out|returned (?:408|429|5\d\d)\b)/i.test(row.skipReason ?? '')).map((row) => row.key));
+    // A transient page-read failure must not permanently discard a real
+    // publication. Retry only those pages; baseline, burst and intentional
+    // skips remain final. Claiming below still prevents duplicate deliveries.
+    fresh = entries.filter((e) => !byKey.has(e.key) || retryKeys.has(e.key)).reverse(); // oldest first
   }
 
-  if (!rotation && fresh.length > MAX_NEW_PER_RUN) {
+  if (!rotation && fresh.filter((entry) => !retryKeys.has(entry.key)).length > MAX_NEW_PER_RUN) {
+    const newEntries = fresh.filter((entry) => !retryKeys.has(entry.key));
     await PublishItem.bulkWrite(
-      fresh.map((e) => ({
+      newEntries.map((e) => ({
         updateOne: {
           filter: { jobId: job._id, key: e.key },
           update: { $setOnInsert: { organizationId: job.organizationId, jobId: job._id, companyId: job.companyId, key: e.key, url: e.url ?? undefined, title: e.title.slice(0, 500), publishedAt: e.date ?? undefined, status: 'skipped', skipReason: 'Arrived in a burst; treated as a site change.' } },
@@ -597,9 +605,9 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
       })),
       { ordered: false }
     );
-    const summary = `${fresh.length} new ${noun}s appeared at once, which looks like a site change rather than new releases. They were recorded and not posted.`;
+    const summary = `${newEntries.length} new ${noun}s appeared at once, which looks like a site change rather than new releases. They were recorded and not posted.`;
     await finishRun(run._id, owner, 'completed', { output: { records: [], summary, gaps: [] } });
-    await notifyPeople(job.organizationId, config.notifyUserIds, { subject: `Nothing posted: ${fresh.length} ${noun}s appeared at once · ${profile.name}`, intro: summary, lines: fresh.slice(0, 8).map((e) => e.title || e.url || e.key), action: 'Open Marketing' }, deps.send);
+    await notifyPeople(job.organizationId, config.notifyUserIds, { subject: `Nothing posted: ${newEntries.length} ${noun}s appeared at once · ${profile.name}`, intro: summary, lines: newEntries.slice(0, 8).map((e) => e.title || e.url || e.key), action: 'Open Marketing' }, deps.send);
     return;
   }
 
@@ -615,18 +623,24 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
       ? await PublishItem.exists({ jobId: job._id, dedupeKey: entry.dedupe, status: 'processed', createdAt: { $gte: new Date(Date.now() - DEDUPE_DAYS * 86_400_000) } })
       : null;
     // Claim the item first: a second run that races this one finds it and moves on.
-    const claim = await PublishItem.updateOne(
-      { jobId: job._id, key: entry.key },
-      {
-        $setOnInsert: {
-          organizationId: job.organizationId, jobId: job._id, companyId: job.companyId, key: entry.key, url: entry.url ?? undefined, title: entry.title.slice(0, 500), publishedAt: entry.date ?? undefined,
-          ...(entry.dedupe ? { dedupeKey: entry.dedupe } : {}),
-          ...(repeat ? { status: 'skipped', skipReason: 'The same deal as an earlier email.' } : { status: 'processed' }),
-        },
-      },
-      { upsert: true }
-    );
-    if (!claim.upsertedId) continue;
+    const retry = retryKeys.has(entry.key)
+      ? await PublishItem.findOne({ jobId: job._id, key: entry.key, status: 'skipped', skipReason: /^Could not read / }).select('_id').lean<{ _id: Types.ObjectId }>()
+      : null;
+    const claim = retry
+      ? await PublishItem.updateOne({ _id: retry._id, status: 'skipped', skipReason: /^Could not read / }, {
+          $set: { status: repeat ? 'skipped' : 'processed', ...(repeat ? { skipReason: 'The same deal as an earlier email.' } : {}) },
+          ...(!repeat ? { $unset: { skipReason: '' } } : {}),
+        })
+      : await PublishItem.updateOne(
+          { jobId: job._id, key: entry.key },
+          { $setOnInsert: {
+            organizationId: job.organizationId, jobId: job._id, companyId: job.companyId, key: entry.key, url: entry.url ?? undefined, title: entry.title.slice(0, 500), publishedAt: entry.date ?? undefined,
+            ...(entry.dedupe ? { dedupeKey: entry.dedupe } : {}),
+            ...(repeat ? { status: 'skipped', skipReason: 'The same deal as an earlier email.' } : { status: 'processed' }),
+          } },
+          { upsert: true }
+        );
+    if (retry ? !claim.modifiedCount : !claim.upsertedId) continue;
     if (rotation) {
       const stored = await Job.findById(job._id).select('design.schedule').lean<{ design?: { schedule?: unknown } }>();
       const parsed = jobScheduleSchema.safeParse(stored?.design?.schedule);
@@ -642,7 +656,7 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
       repeats += 1;
       continue;
     }
-    const itemId = claim.upsertedId as Types.ObjectId;
+    const itemId = retry?._id ?? claim.upsertedId as Types.ObjectId;
     let facts: ItemFacts;
     try {
       facts = await factsFor(job, config, entry, deps);

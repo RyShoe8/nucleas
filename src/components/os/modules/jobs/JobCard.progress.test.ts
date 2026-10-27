@@ -41,4 +41,10 @@ describe('jobListProgress', () => {
     const hourly = { title: 'Post new games', category: 'marketing', instructions: '', fields: [], sourcePolicy: '', delivery: { method: 'integration', detail: '', setupSteps: [] }, schedule: { kind: 'hourly' as const }, recordsPerRun: 1, safeguards: [], recommendedCompletion: 'automatic' as const, findings: [], questions: [] };
     expect(jobListProgress(job({ design: hourly, publishing: { ...publishing, ready: [] } }))).toEqual({ label: 'Checks every hour', percent: 0, tone: 'complete' });
   });
+
+  it('surfaces a link recommendation on the collapsed job card', () => {
+    const design = { title: 'Find links', category: 'marketing', instructions: '', fields: [], sourcePolicy: '', delivery: { method: 'integration', detail: '', setupSteps: [] }, schedule: { kind: 'daily' as const }, recordsPerRun: 1, safeguards: [], recommendedCompletion: 'review' as const, findings: [], questions: [], skill: 'link_building' as const };
+    const opportunity = { id: 'link-1', runId: 'run-1', status: 'recommended' as const, opportunityUrl: 'https://example.org/submit', targetUrl: null, liveLinkUrl: null, values: {}, sources: [], note: null, submittedAt: null, lastVerifiedAt: null, nextVerificationAt: null, verificationMessage: null, updatedAt: '2026-10-27T00:00:00.000Z' };
+    expect(jobListProgress(job({ design, opportunities: [opportunity] }))).toEqual({ label: '1 link recommendation ready', percent: 100, tone: 'waiting' });
+  });
 });

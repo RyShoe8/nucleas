@@ -160,6 +160,11 @@ export function jobListProgress(job: JobView): JobListProgress {
     const waiting = job.publishing?.ready.filter((d) => d.status === 'ready').length ?? 0;
     if (waiting) return { label: `${waiting} waiting for you`, percent: 100, tone: 'waiting' };
 
+    if (job.design?.skill === 'link_building') {
+        const recommended = job.opportunities.filter((opportunity) => opportunity.status === 'recommended').length;
+        if (recommended) return { label: `${recommended} link recommendation${recommended === 1 ? '' : 's'} ready`, percent: 100, tone: 'waiting' };
+    }
+
     const review = job.runs.find((run) => run.status === 'needs_review');
     if (review) return { label: review.progressState.label || 'Ready for review', percent: 100, tone: 'waiting' };
 

@@ -164,6 +164,33 @@ describe('publishing jobs', () => {
     expect(await PublishDelivery.countDocuments()).toBe(3);
   });
 
+  it('retries a game whose page timed out without reposting or reviving other skipped items', async () => {
+    const job = await newJob();
+    await takeBaseline(job.toObject(), deps());
+    pages.push('wings-of-dawn');
+    const first = await newRun(job._id, false);
+    await runPublishing(first, 'owner', (await Job.findById(job._id).lean())!, {
+      ...deps(),
+      fetcher: async (url) => {
+        if (url.endsWith('/games/wings-of-dawn')) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+        return fetcher(url);
+      },
+    });
+    const item = await PublishItem.findOne({ key: 'https://playbound.club/games/wings-of-dawn' }).lean();
+    expect(item).toMatchObject({ status: 'skipped', skipReason: expect.stringContaining('timeout') });
+    expect(await PublishDelivery.countDocuments()).toBe(0);
+
+    const second = await newRun(job._id, false);
+    await runPublishing(second, 'owner', (await Job.findById(job._id).lean())!, deps());
+    expect(await PublishItem.findById(item!._id).lean()).toMatchObject({ status: 'processed' });
+    expect(await PublishDelivery.countDocuments()).toBe(3);
+
+    const third = await newRun(job._id, false);
+    await runPublishing(third, 'owner', (await Job.findById(job._id).lean())!, deps());
+    expect(await PublishDelivery.countDocuments()).toBe(3);
+    expect((await JobRun.findById(third._id).lean())?.output).toMatchObject({ summary: 'No new games.' });
+  });
+
   it('turns a failed automatic post into a card and switches that channel to manual with a note', async () => {
     const job = await newJob();
     await takeBaseline(job.toObject(), deps());

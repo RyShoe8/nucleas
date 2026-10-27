@@ -132,6 +132,6 @@ export function extractPageFacts(html: string, pageUrl: string): PageFacts {
 }
 
 export async function readPageFacts(url: string, fetcher?: FetchLike): Promise<PageFacts> {
-  const res = await fetchPublicText(url, { accept: 'text/html,application/xhtml+xml', maxBytes: 3_000_000, fetcher });
+  const res = await fetchPublicText(url, { accept: 'text/html,application/xhtml+xml', maxBytes: 3_000_000, timeoutMs: 30_000, fetcher });
   return extractPageFacts(res.text, res.url);
 }
