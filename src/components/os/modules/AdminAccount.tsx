@@ -152,7 +152,8 @@ export default function AdminAccount({ companyId, defaultDomain }: { companyId: 
                 ) : null}
                 {isConnecting ? (
                     <div className="space-y-2">
-                        <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://example.com" aria-label="Site address" className="h-7 w-full px-2 rounded border border-border bg-background-elevated text-xs" />
+                        <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://example.com/admin" aria-label="Site address" className="h-7 w-full px-2 rounded border border-border bg-background-elevated text-xs" />
+                        <p className="text-[11px] text-text-secondary">Enter the full admin or login address, including /admin, /login or another path. The login window opens directly there.</p>
                         {!login && !pasting ? (
                             <div className="flex gap-2 items-center">
                                 <button type="button" disabled={busy !== null || !baseUrl || !view.browserWorker} onClick={() => void startLogin()} className="text-[11px] px-2 py-1 rounded bg-primary text-white disabled:opacity-50">

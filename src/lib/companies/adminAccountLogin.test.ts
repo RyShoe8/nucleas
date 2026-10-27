@@ -47,6 +47,7 @@ describe('logging in through a window inside Nucleas', () => {
     const started = await loginStart(viewer('u1'), companyId, 'https://site.example/admin');
     if (!started.ok) throw new Error('start failed');
     expect(started.baseUrl).toBe('https://site.example');
+    expect(worker.calls.find((c) => c.path === '/login/start')).toMatchObject({ body: { baseUrl: 'https://site.example/admin' } });
     expect(started.handle).not.toContain('worker-session-7c1f9e2a');
     expect(await loginFrame(viewer('u1'), companyId, started.handle)).toMatchObject({ ok: true, image: 'AAAA' });
     expect(await loginFrame(viewer('u2'), companyId, started.handle)).toMatchObject({ ok: false });

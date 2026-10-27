@@ -150,13 +150,18 @@ export async function loginStart(viewer: CompanyViewer, companyId: string, siteA
   if (!allowed.ok) return allowed;
   if (!isBrowserWorkerConfigured()) return { ok: false, status: 400, error: 'The browser worker is not configured on the server.' };
   let baseUrl: string;
+  let loginUrl: string;
   try {
     baseUrl = normalizeBaseUrl(siteAddress);
+    const raw = siteAddress.trim();
+    const target = assertSafePublicHttpsUrl(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    target.hash = '';
+    loginUrl = target.toString();
   } catch (error) {
     return { ok: false, status: 400, error: error instanceof Error ? error.message : 'Enter the site’s https address.' };
   }
   try {
-    const started = await browserWorkerCall<{ sessionId: string; width: number; height: number }>('/login/start', { baseUrl });
+    const started = await browserWorkerCall<{ sessionId: string; width: number; height: number }>('/login/start', { baseUrl: loginUrl });
     const handle = sealSecret(HANDLE_PURPOSE, JSON.stringify({ s: started.sessionId, c: companyId, u: viewer.userId, b: baseUrl, x: Date.now() + HANDLE_MINUTES * 60_000 } satisfies LoginHandle));
     return { ok: true, handle, width: started.width, height: started.height, baseUrl };
   } catch (error) {
