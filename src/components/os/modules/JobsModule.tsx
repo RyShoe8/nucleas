@@ -11,6 +11,7 @@ import MarketingComposer from './jobs/MarketingComposer';
 import ReadyPostCard from './jobs/publishing/ReadyPostCard';
 import { ActivityRows, activityFor, useActivity } from './jobs/ActivityList';
 import ActionMenu from '@/components/ui/ActionMenu';
+import { linkNeedsAction } from './jobs/linkAttention';
 
 type Group = { key: string; label: string; test: (j: JobView) => boolean };
 
@@ -19,7 +20,7 @@ const GROUPS: Group[] = [
     {
         key: 'you',
         label: 'Needs your attention',
-        test: (j) => j.status === 'needs_answers' || j.status === 'proposed' || j.runs.some((r) => r.status === 'needs_review') || Boolean(j.publishing?.ready.length),
+        test: (j) => j.status === 'needs_answers' || j.status === 'proposed' || j.runs.some((r) => r.status === 'needs_review') || Boolean(j.publishing?.ready.length) || j.opportunities.some(o => linkNeedsAction(o.status)),
     },
     { key: 'working', label: 'Working', test: (j) => jobIsBusy(j) || j.status === 'testing' },
     { key: 'set', label: 'Configured jobs', test: (j) => ['ready', 'active', 'paused'].includes(j.status) },
@@ -250,6 +251,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
     };
     // Posts waiting for a person, across every job in view: the first thing to see in Marketing.
     const readyPosts = inView.flatMap((job) => (job.publishing?.ready ?? []).filter((d) => d.status === 'ready').map((delivery) => ({ job, delivery })));
+    const readyLinks = inView.flatMap(job => job.opportunities.filter(o => linkNeedsAction(o.status)).map(opportunity => ({ job, opportunity })));
 
     if (error && !jobs) return <div className="p-4 text-sm text-red-400">{error}</div>;
     if (!jobs) return <div className="p-4 text-sm text-text-secondary">Loading…</div>;
@@ -305,9 +307,15 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
             ) : null}
 
             <div className={`flex-1 overflow-y-auto p-3 space-y-4 ${(showAssets && title === 'Marketing' && company !== 'all') || (showOverview && title === 'Marketing' && company !== 'all') || (showInboxes && title === 'Marketing') ? 'hidden' : ''}`}>
-                {readyPosts.length ? (
+                {readyPosts.length || readyLinks.length ? (
                     <section className="space-y-2">
-                        <h3 className="ui-kicker">Needs your review · {readyPosts.length}</h3>
+                        <h3 className="ui-kicker">Needs your review · {readyPosts.length + readyLinks.length}</h3>
+                        {readyLinks.map(({ job: j, opportunity }) => <div key={opportunity.id} className="ui-card space-y-2 p-3">
+                            <p className="text-xs text-text-secondary">{j.companyName} · Link building</p>
+                            <a href={opportunity.opportunityUrl} target="_blank" rel="noreferrer" className="text-sm underline break-all">{opportunity.opportunityUrl}</a>
+                            <p className="text-xs">{opportunity.status === 'approved' ? 'Approved — ready for you to submit.' : 'New opportunity — review and approve or reject.'}</p>
+                            <button type="button" className="ui-button-primary" onClick={() => setOpen(j.id)}>Review opportunity</button>
+                        </div>)}
                         {readyPosts.map(({ job: j, delivery }) => (
                             <ReadyPostCard key={delivery.id} jobId={j.id} companyName={company === 'all' ? j.companyName : undefined} delivery={delivery} subreddit={j.companySubreddit ?? null} formUrl={j.publishing?.admin?.formUrl ?? null} onChange={replace} />
                         ))}

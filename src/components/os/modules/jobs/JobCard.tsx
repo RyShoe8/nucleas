@@ -10,6 +10,7 @@ import { costSummary, type ModelStep } from '@/lib/jobs/modelPath';
 import type { PublishingView } from '@/lib/publishing/engine';
 import PublishingJobBody from './publishing/PublishingJobBody';
 import CasinoDiscoveryPanel from './CasinoDiscoveryPanel';
+import { linkNeedsAction } from './linkAttention';
 
 // ---------- Types (mirror the server's JobView) ----------
 
@@ -161,7 +162,7 @@ export function jobListProgress(job: JobView): JobListProgress {
     if (waiting) return { label: `${waiting} waiting for you`, percent: 100, tone: 'waiting' };
 
     if (job.design?.skill === 'link_building') {
-        const recommended = job.opportunities.filter((opportunity) => opportunity.status === 'recommended').length;
+        const recommended = job.opportunities.filter((opportunity) => linkNeedsAction(opportunity.status)).length;
         if (recommended) return { label: `${recommended} link recommendation${recommended === 1 ? '' : 's'} ready`, percent: 100, tone: 'waiting' };
     }
 
@@ -651,9 +652,9 @@ function OpportunityTracker({ job, onChange }: { job: JobView; onChange: (j: Job
         if (res.error || !res.job) return setError(res.error ?? 'Verification failed');
         onChange(res.job);
     };
-    // Only the opportunity from the latest run that found one: earlier recommendations are not shown.
+    // Keep outstanding human actions visible even after a newer run produces another opportunity.
     const currentRunId = job.runs.map((run) => run.id).find((id) => job.opportunities.some((opportunity) => opportunity.runId === id));
-    const current = currentRunId ? job.opportunities.filter((opportunity) => opportunity.runId === currentRunId) : [];
+    const current = job.opportunities.filter((opportunity) => linkNeedsAction(opportunity.status) || opportunity.runId === currentRunId);
     if (!current.length) return null;
     return (
         <details open className="rounded border border-border p-2">
