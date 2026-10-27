@@ -628,9 +628,14 @@ function OpportunityTracker({ job, onChange }: { job: JobView; onChange: (j: Job
             if (entered === null || (status === 'live' && !entered.trim())) return;
             liveLinkUrl = entered.trim() || undefined;
         }
-        const note = status === 'rejected' || status === 'saved' || status === 'submission_rejected'
-            ? window.prompt('Optional note — Nucleas will use this feedback in future recommendations:') ?? undefined
-            : undefined;
+        let note: string | undefined;
+        if (status === 'rejected' || status === 'saved' || status === 'submission_rejected') {
+            const entered = window.prompt(status === 'submission_rejected'
+                ? 'Only mark this rejected if the destination declined your submission. Optional note (Cancel keeps it submitted):'
+                : 'Optional note — Nucleas will use this feedback in future recommendations:');
+            if (entered === null) return;
+            note = entered || undefined;
+        }
         setBusy(opportunity.id);
         setError(null);
         const res = await post(job.id, { action: 'opportunity_status', opportunityId: opportunity.id, status, liveLinkUrl, note });
@@ -670,7 +675,7 @@ function OpportunityTracker({ job, onChange }: { job: JobView; onChange: (j: Job
                                 {['recommended', 'approved', 'rejected', 'submission_rejected', 'expired'].includes(opportunity.status) ? <button type="button" className={BUTTON} disabled={busy === opportunity.id} onClick={() => void update(opportunity, 'saved')}>Save for later</button> : null}
                                 {['recommended', 'saved', 'approved'].includes(opportunity.status) ? <button type="button" className={BUTTON} disabled={busy === opportunity.id} onClick={() => void update(opportunity, 'rejected')}>Reject</button> : null}
                                 {['approved', 'submission_rejected'].includes(opportunity.status) ? <button type="button" className={PRIMARY} disabled={busy === opportunity.id} onClick={() => void update(opportunity, 'submitted')}>Mark submitted</button> : null}
-                                {opportunity.status === 'submitted' ? <button type="button" className={BUTTON} disabled={busy === opportunity.id} onClick={() => void update(opportunity, 'submission_rejected')}>Submission rejected</button> : null}
+                                {opportunity.status === 'submitted' ? <button type="button" className={BUTTON} disabled={busy === opportunity.id} onClick={() => void update(opportunity, 'submission_rejected')}>Mark submission as rejected</button> : null}
                                 {opportunity.liveLinkUrl && ['submitted', 'live', 'removed'].includes(opportunity.status) ? <button type="button" className={BUTTON} disabled={busy === opportunity.id} onClick={() => void verify(opportunity)}>Verify link</button> : null}
                                 {opportunity.status === 'live' ? <button type="button" className={BUTTON} disabled={busy === opportunity.id} onClick={() => void update(opportunity, 'removed')}>Mark removed</button> : null}
                                 {['removed', 'submission_rejected'].includes(opportunity.status) ? <button type="button" className={BUTTON} disabled={busy === opportunity.id} onClick={() => void update(opportunity, 'expired')}>Expire</button> : null}
