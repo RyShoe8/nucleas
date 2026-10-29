@@ -326,7 +326,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                         {linkBuilding ? (
                             <NewJob placeholder={placeholder} initialCompanyId={company} initialKind="link_building" companyLocked onCancel={() => setLinkBuilding(false)} onCreated={(j) => { setLinkBuilding(false); created(j); }} />
                         ) : (
-                            <MarketingComposer companyId={company} companyName={companyName} onCreated={created} onMarketingPlan={() => void generatePlan()} renderLinkBuilding={(done) => <NewJob placeholder={placeholder} initialCompanyId={company} initialKind="link_building" companyLocked onCancel={done} onCreated={(j) => { done(); created(j); }} />} />
+                            <MarketingComposer key={company} companyId={company} companyName={companyName} onCreated={created} onMarketingPlan={() => void generatePlan()} renderLinkBuilding={(done) => <NewJob placeholder={placeholder} initialCompanyId={company} initialKind="link_building" companyLocked onCancel={done} onCreated={(j) => { done(); created(j); }} />} />
                         )}
                     </div>
                 ) : null}

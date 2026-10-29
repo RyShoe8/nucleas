@@ -33,23 +33,27 @@ export interface ComposeInput {
   example: string;
   brief: string;
   noun: string;
-  facts: { title: string; description?: string; text?: string; video?: string | null; extra?: string[] };
+  facts: { title: string; description?: string; text?: string; video?: string | null; extra?: string[]; requiredLinks?: string[] };
   link: string | null;
   subreddit?: string | null;
   /** The company's overview and approved marketing plan (upstream context): what to stress and what to avoid. */
   strategy?: string;
+  roundup?: boolean;
 }
 
 export const GAME_POST_GUIDANCE = 'Write like someone at the brand recommending this specific game to its community: use the approved Voice’s point of view, rhythm, vocabulary and humor naturally, rather than repeating a stock launch announcement. Lead with a concrete gameplay hook. Explain what the player actually does and what makes the experience interesting, using only details supported by the supplied game page: genre, core actions, setting, objectives, mechanics, pace or supported play modes. Facebook should usually include two concrete gameplay details; Reddit can add two to four details and who might enjoy it; Bluesky should keep one distinctive gameplay hook alongside the game name and link within 300 characters. When source details are sparse, say less rather than inventing mechanics. Do not claim personal playtime, memories, endorsements or firsthand experience unless explicitly supplied as a verified fact. Keep setup/install information secondary unless it is the game’s main verified selling point. Avoid repeating the same opening, catchphrases, rhetorical question or call to action across games.';
 
-export function composeSystemPrompt(input: Pick<ComposeInput, 'platform' | 'companyName' | 'persona' | 'example' | 'brief' | 'noun' | 'subreddit' | 'strategy'>): string {
+export function composeSystemPrompt(input: Pick<ComposeInput, 'platform' | 'companyName' | 'persona' | 'example' | 'brief' | 'noun' | 'subreddit' | 'strategy' | 'roundup'>): string {
   const rules = PLATFORM_RULES[input.platform];
   return [
-    `You write one ${PLATFORM_LABEL[input.platform]} post for ${input.companyName} announcing a new ${input.noun}.`,
+    `You write one ${PLATFORM_LABEL[input.platform]} post for ${input.companyName} ${input.roundup ? 'inviting people to this week’s scheduled events' : `announcing a new ${input.noun}`}.`,
     input.brief ? `What the team asked for: ${input.brief}` : '',
     '',
     'Rules:',
     `- ${rules.rules}`,
+    input.roundup ? '- This is Game Nights This Week, a weekly invitation, not a new-page announcement. Preserve the supplied event dates and timezones. Include the heading Game Nights This Week. Never invent events or links.' : '',
+    input.roundup ? (input.platform === 'bluesky' ? '- Summarize the week with ONLY the full schedule Link in the body. No individual event or installer URLs. Stay within 300 characters including the URL.' : '- Include the schedule Link and list every supplied event with its date/time and every Required link verbatim in the body, paired with the correct event. These instructions override the usual preview-card link rule. Do not replace the required individual links with the schedule link.') : '',
+
     input.platform === 'reddit' && input.subreddit ? `- It is posted to r/${input.subreddit}, the company's own community.` : '',
     '- Write in the brand Voice below: its tone, vocabulary and habits. It must sound like the brand, not like a generic marketer.',
     /^games?$/i.test(input.noun.trim()) ? `- ${GAME_POST_GUIDANCE}` : '',
@@ -67,16 +71,17 @@ export function composeSystemPrompt(input: Pick<ComposeInput, 'platform' | 'comp
   ].filter((line) => line !== '').join('\n');
 }
 
-export function composeUserPrompt(input: Pick<ComposeInput, 'facts' | 'link' | 'noun'>): string {
+export function composeUserPrompt(input: Pick<ComposeInput, 'facts' | 'link' | 'noun' | 'roundup'>): string {
   const { facts } = input;
   return [
-    `# The new ${input.noun}`,
+    input.roundup ? '# Scheduled events this week' : `# The new ${input.noun}`,
     `Name: ${facts.title}`,
     facts.description ? `Summary: ${facts.description}` : '',
     facts.video ? `Trailer or video: ${facts.video}` : '',
     ...(facts.extra ?? []),
+    ...(facts.requiredLinks ?? []).map(url => `Required link (Facebook/Reddit): ${url}`),
     input.link ? `Link: ${input.link}` : '',
-    facts.text ? `\nPage text (for facts only):\n${facts.text.slice(0, 4000)}` : '',
+    facts.text ? `\nPage text (for facts only):\n${facts.text.slice(0, input.roundup ? 20000 : 4000)}` : '',
   ].filter(Boolean).join('\n');
 }
 
@@ -162,7 +167,24 @@ export type Writer = (input: { system: string; user: string; maxTokens: number }
 export async function composePost(input: ComposeInput, write: Writer): Promise<Draft | null> {
   const system = composeSystemPrompt(input);
   const user = composeUserPrompt(input);
-  const first = await write({ system, user, maxTokens: input.platform === 'reddit' ? 1500 : 700 });
+  const maxTokens = input.roundup && input.platform !== 'bluesky' ? 4000 : input.platform === 'reddit' ? 1500 : 700;
+  const first = await write({ system, user, maxTokens });
+  if (input.roundup) {
+    const required = input.platform === 'bluesky' ? [input.link!] : input.facts.requiredLinks?.length ? [...new Set([...input.facts.requiredLinks, input.link!])] : [input.link!];
+    const limit = input.platform === 'facebook' ? 6000 : PLATFORM_RULES[input.platform].maxChars;
+    const validate = (reply: string | null): Draft | null => {
+      const parsed = draftSchema.safeParse(extractJson(reply ?? ''));
+      if (!parsed.success || !input.link) return null;
+      const body = cleanCopy(parsed.data.body, input.platform === 'reddit');
+      const urls: string[] = body.match(/https?:\/\/[^\s<>\)\]]+/g) ?? [];
+      if (required.some(url => !urls.includes(url)) || urls.some(url => !required.includes(url) && url !== input.link) || charCount(body) > limit) return null;
+      if (input.platform === 'reddit' && (!parsed.data.title?.trim() || charCount(parsed.data.title) > 300)) return null;
+      return { body, title: input.platform === 'reddit' ? parsed.data.title! : null };
+    };
+    const valid = validate(first);
+    if (valid) return valid;
+    return validate(await write({ system, user: `${user}\nInclude each of these exact URLs in the body: ${required.join(', ')}. No other URLs except the schedule URL. Stay within ${limit} characters. Never truncate a date or URL.`, maxTokens }));
+  }
   const limit = PLATFORM_RULES[input.platform].maxChars;
   const raw = first ? (draftSchema.safeParse(extractJson(first)).data?.body ?? first) : '';
   if (first && charCount(cleanCopy(raw, input.platform === 'reddit')) > limit) {

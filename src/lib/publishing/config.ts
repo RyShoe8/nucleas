@@ -14,7 +14,7 @@ export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
 
 export const PLATFORM_LABEL: Record<PublishPlatform, string> = { facebook: 'Facebook', bluesky: 'Bluesky', reddit: 'Reddit', admin: 'Admin' };
 
-/** Platforms with no publishing API: Nucleas always prepares a ready-to-post card for a person. */
+/** Platforms not yet supported for automatic publishing by Nucleas: Nucleas always prepares a ready-to-post card for a person. */
 export const MANUAL_ONLY: readonly PublishPlatform[] = ['reddit'];
 
 export const channelSchema = z.object({
@@ -29,7 +29,17 @@ export const siteSourceSchema = z.object({
   type: z.literal('site'),
   /** The sitemap or RSS/Atom feed that lists the pages. */
   feedUrl: z.string().url().max(2000),
-  feedKind: z.enum(['sitemap', 'rss', 'atom']),
+  feedKind: z.enum(['sitemap', 'rss', 'atom', 'events']),
+  roundup: z.object({
+    randomWindow: z.object({ startHour: z.number().int().min(0).max(23), endHour: z.number().int().min(1).max(24) }).refine(v => v.endHour > v.startHour).optional(),
+    individualLinks: z.boolean().optional(),
+    installLinks: z.boolean().optional(),
+    imageRequired: z.boolean().optional(),
+    landingUrl: z.string().url().max(2000),
+    timezone: z.string().refine((v) => { try { new Intl.DateTimeFormat('en', { timeZone: v }); return true; } catch { return false; } }),
+    weekday: z.number().int().min(0).max(6),
+    time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+  }).optional(),
   /** Only pages under this path count, e.g. "/games/". "/" means every page in the feed. */
   pathPrefix: z.string().max(300).regex(/^\//),
   /** What one item is called, for labels ("game", "article"). */
@@ -91,6 +101,7 @@ export const adminFieldRulesSchema = z.array(z.object({
 
 export const publishingConfigSchema = z.object({
   source: publishSourceSchema,
+  image: z.object({ id: objectId, url: z.string().url(), alt: z.string().max(1000) }).optional(),
   /** Public record URL for mailbox social posts; {slug} comes from the matching admin card. */
   socialLinkTemplate: z.string().max(2000).refine((value) => { try { return value.includes('{slug}') && new URL(value.replace('{slug}', 'example')).protocol === 'https:'; } catch { return false; } }, 'Use an https URL containing {slug}.').optional(),
   /** Mailbox social destinations only: require value strictly greater than this percent. */
@@ -134,6 +145,7 @@ export function platformsFor(config: { admin?: unknown }): readonly PublishPlatf
 /** The plain sentence a job card shows for its source. */
 export function sourceLabel(source: PublishSource, host?: string | null): string {
   if (source.type === 'mailbox') return `Watching the inbox for new ${source.noun}s`;
+  if (source.roundup) return `Weekly scheduled-event roundup from ${source.roundup.landingUrl}`;
   const where = `${host ?? new URL(source.feedUrl).host}${source.pathPrefix === '/' ? '' : source.pathPrefix}`;
   if (source.rotation) return `Posting one ${source.noun} from ${where} every ${cadenceLabel(source.rotation.everyDays)}, oldest first`;
   return `Watching ${where} for new ${source.noun}s`;

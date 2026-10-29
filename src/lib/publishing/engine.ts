@@ -1,3 +1,4 @@
+import { readEventRoundup } from './eventRoundup';
 import { applyAdminFieldRules, withDefaultEndDate } from './adminRules';
 import { slugifyTitle } from '@/lib/blog/slugify';
 import { retryDatabaseRead } from '@/lib/db/retryRead';
@@ -74,9 +75,11 @@ interface SourceEntry {
   date: Date | null;
   /** Emails: who sent it and which offer it is, so a repeat of the same deal is recognized. */
   dedupe?: string | null;
+  roundup?: { description: string; text: string; requiredLinks?: string[] };
 }
 
 interface ItemFacts {
+  requiredLinks?: string[];
   editorialText?: string;
   dealValuePct?: number;
   title: string;
@@ -112,6 +115,10 @@ export function readConfig(job: { publishing?: unknown }): PublishingConfig | nu
 
 async function listEntries(job: JobLike, config: PublishingConfig, deps: PublishDeps): Promise<SourceEntry[]> {
   if (config.source.type === 'site') {
+    if (config.source.roundup) {
+      const roundup = await readEventRoundup(config.source, deps.fetcher);
+      return roundup ? [{ ...roundup, roundup }] : [];
+    }
     const pages = await listSitePages(config.source, deps.fetcher);
     return pages.map((p) => ({ key: p.url, url: p.url, title: p.title ?? '', date: p.date }));
   }
@@ -141,8 +148,10 @@ export function dedupeKeyFor(fromEmail: string | undefined, deal: DealMetrics | 
 
 async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEntry, deps: PublishDeps): Promise<ItemFacts> {
   if (config.source.type === 'site') {
+    if (entry.roundup && config.source.roundup?.imageRequired && !config.image) throw new Error('Upload the required image before running this roundup.');
+    if (entry.roundup) return { title: entry.title, ...entry.roundup, extra: [], link: entry.url, image: config.image?.url ?? null, images: [], video: null };
     const page: PageFacts = await readPageFacts(entry.url!, deps.fetcher);
-    return { ...page, title: page.title || entry.title, extra: [], link: entry.url };
+    return { ...page, ...(config.image ? { image: config.image.url, images: [] } : {}), title: page.title || entry.title, extra: [], link: entry.url };
   }
   const [item, watch] = await Promise.all([
     WatchItem.findOne({ _id: new Types.ObjectId(entry.key), organizationId: job.organizationId })
@@ -239,20 +248,21 @@ async function draftAll(job: JobLike, config: PublishingConfig, facts: ItemFacts
         persona: context.persona ?? '',
         example: config.examples[channel.platform]?.text ?? '',
         brief: config.brief,
+        roundup: config.source.type === 'site' && Boolean(config.source.roundup),
         noun: config.source.noun,
-        facts: { title: facts.title, description: facts.description, text: facts.text, video: facts.video, extra: facts.extra },
+        facts: { title: facts.title, description: facts.description, text: facts.text, video: facts.video, extra: facts.extra, requiredLinks: facts.requiredLinks },
         link: facts.link,
         subreddit: context.subreddit,
         strategy: context.strategy,
       },
       write
     ).catch(() => null);
-    if (draft && config.socialLinkTemplate && facts.link && channel.platform === 'reddit') {
+    if (draft && !(config.source.type === 'site' && config.source.roundup) && config.socialLinkTemplate && facts.link && channel.platform === 'reddit') {
       draft.body = draft.body.replace(/https?:\/\/[^\s<>\)\]]+/g, facts.link);
       if (!draft.body.includes(facts.link)) draft.body = `${draft.body}\n\n${facts.link}`;
     }
     // A "New …:" label copied from an example post becomes the source's noun ("New Game:").
-    if (draft?.title && channel.platform === 'reddit' && config.source.type === 'site') draft.title = relabelNewItemTitle(draft.title, config.source.noun);
+    if (draft?.title && channel.platform === 'reddit' && config.source.type === 'site' && !config.source.roundup) draft.title = relabelNewItemTitle(draft.title, config.source.noun);
     out.set(channel.platform, draft ? { draft, written: true } : { draft: fallbackDraft(channel.platform, facts, config.source.noun), written: false });
   }
   return out;
@@ -286,8 +296,8 @@ async function postTo(job: JobLike, platform: PublishPlatform, input: PostInput,
   }
 }
 
-function postInput(delivery: { body: string; link?: string | null; assets?: { kind: string; url: string }[] }, facts: { title?: string | null; description?: string | null }): PostInput {
-  return { text: delivery.body, link: delivery.link ?? null, linkTitle: facts.title ?? '', linkDescription: facts.description ?? '', imageUrl: delivery.assets?.find((a) => a.kind === 'image')?.url ?? null };
+function postInput(delivery: { body: string; link?: string | null; assets?: { kind: string; url: string }[] }, facts: { title?: string | null; description?: string | null }, imageRequired = false): PostInput {
+  return { imageRequired, text: delivery.body, link: delivery.link ?? null, linkTitle: facts.title ?? '', linkDescription: facts.description ?? '', imageUrl: delivery.assets?.find((a) => a.kind === 'image')?.url ?? null };
 }
 
 type AdminPostOutcome = PostOutcome & { screenshot: string | null; warning?: string };
@@ -463,7 +473,7 @@ export async function takeBaseline(job: JobLike, deps: PublishDeps = {}): Promis
   const config = readConfig(job);
   if (!config) return 0;
   // An evergreen rotation posts the existing library one item at a time, so nothing counts as already seen.
-  if (config.source.type === 'site' && config.source.rotation) {
+  if (config.source.type === 'site' && (config.source.rotation || config.source.roundup)) {
     await Job.updateOne({ _id: job._id }, { $set: { 'publishing.baselineAt': new Date() } });
     return 0;
   }
@@ -554,7 +564,7 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
     const admin = config.channels.every((c) => c.platform === 'admin');
     const output: JobRunOutput = {
       records,
-      summary: admin
+      summary: config.source.type === 'site' && config.source.roundup ? `Weekly roundup preview: ${facts.title}. Nothing was posted. Verified schedule:\n${facts.text}` : admin
         ? `A sample for the newest ${noun}, “${facts.title}”: the form was filled but not saved. Accept to switch the job on: it checks every hour, and only ${noun}s that arrive after that are added.`
         : rotation
           ? `A sample for the first ${noun} in the rotation, “${facts.title}”. Nothing was posted. Accept to switch the job on: it posts this ${noun} at the next scheduled run, then one ${noun} every ${cadenceLabel(rotation.everyDays)}, oldest first, starting over when it reaches the end.`
@@ -567,7 +577,7 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
   }
 
   const current = await Job.findById(job._id).select('publishing.baselineAt').lean<{ publishing?: { baselineAt?: Date } }>();
-  if (!rotation && !current?.publishing?.baselineAt) {
+  if (!rotation && !(config.source.type === 'site' && config.source.roundup) && !current?.publishing?.baselineAt) {
     const count = await takeBaseline(job, deps);
     await finishRun(run._id, owner, 'completed', { output: { records: [], summary: `Recorded the ${count} ${noun}${count === 1 ? '' : 's'} that already exist. New ones are posted from now on.`, gaps: [] } });
     return;
@@ -696,7 +706,7 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
       }
       const outcome: PostOutcome & { screenshot?: string | null; warning?: string } = channel.platform === 'admin'
         ? await postToAdmin(job, config, prepared.values ?? {}, facts, context, write, deps)
-        : await postTo(job, channel.platform, postInput(delivery, facts), deps);
+        : await postTo(job, channel.platform, postInput(delivery, facts, Boolean(config.image)), deps);
       const shot = outcome.screenshot ? { screenshot: outcome.screenshot } : {};
       if (outcome.ok) {
         posted += 1;
@@ -875,7 +885,7 @@ export async function postDeliveryNow(job: JobLike, deliveryId: string, userId: 
       ? await postToAdmin(job, config, delivery.values ?? {}, facts, { companyName: '', persona, subreddit: null }, deps.write ?? engineWriter(job), preparedDeps, delivery.valuesReviewed)
       : { ok: false, error: new PublishError('rejected', 'This job’s settings are missing.') };
   } else {
-    outcome = await postTo(job, delivery.platform, postInput(delivery, item?.facts ?? {}), deps);
+    outcome = await postTo(job, delivery.platform, postInput(delivery, item?.facts ?? {}, Boolean(socialConfig?.image)), deps);
   }
   const shot = outcome.screenshot ? { screenshot: outcome.screenshot } : {};
   if (outcome.ok) {
@@ -922,6 +932,7 @@ export interface DeliveryView {
 type DeliveryLean = { _id: Types.ObjectId; itemId: Types.ObjectId; platform: string; status: DeliveryView['status']; title?: string; body: string; link?: string; assets?: { kind: 'image' | 'video'; url: string }[]; postedUrl?: string; postedAt?: Date; error?: string; createdAt: Date; values?: Record<string, string | boolean>; screenshot?: string };
 
 export interface PublishingView {
+  image?: PublishingConfig['image'];
   redditDealNotice?: string;
   adminFieldRules?: PublishingConfig['adminFieldRules'];
   channels: PublishChannel[];
@@ -982,6 +993,7 @@ export async function publishingView(job: { _id: Types.ObjectId; publishing?: un
   }
   return {
     ...(config.redditDealPolicy ? { redditDealNotice: `Reddit casino deals: one per day (${config.redditDealPolicy.timezone}); a casino cannot repeat within three deal posts.${heldReddit ? ` ${heldReddit} queued for a later eligible slot.` : ''}` } : {}),
+    image: config.image,
     channels: config.channels,
     adminFieldRules: config.adminFieldRules,
     minimumSocialValuePct: config.minimumSocialValuePct,

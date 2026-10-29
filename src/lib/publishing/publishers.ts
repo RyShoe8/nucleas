@@ -21,6 +21,7 @@ export interface PostInput {
   linkTitle?: string;
   linkDescription?: string;
   imageUrl?: string | null;
+  imageRequired?: boolean;
 }
 
 const TIMEOUT_MS = 20_000;
@@ -90,6 +91,7 @@ export async function publishToBluesky(credential: string, input: PostInput, fet
     }
   }
 
+  if (input.imageRequired && !thumb) throw new PublishError('rejected', 'The required image could not be attached. Nothing was posted.');
   const facets = blueskyFacets(input.text);
   const record = {
     $type: 'app.bsky.feed.post',
@@ -154,6 +156,7 @@ export async function publishToFacebook(token: string, input: PostInput, fetcher
     const photo = await publishFacebookPhoto(token, { ...input, imageUrl: input.imageUrl }, fetcher);
     if (photo) return photo;
   }
+  if (input.imageRequired) throw new PublishError('rejected', 'The required image could not be attached. Nothing was posted.');
   const form = new URLSearchParams({ message: input.text });
   if (input.link) form.set('link', input.link);
   let res: Response;

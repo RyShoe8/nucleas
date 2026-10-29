@@ -1,3 +1,5 @@
+import { eventRoundupSource, wantsEventRoundup, readEventRoundup } from './eventRoundup';
+import { PublishingImage } from '@/lib/models/PublishingImage';
 import 'server-only';
 import { Types } from 'mongoose';
 import { z } from 'zod';
@@ -155,7 +157,7 @@ async function channelOptions(viewer: CompanyViewer, companyId: string, request:
     let canAuto = false;
     let note: string | null = null;
     if (MANUAL_ONLY.includes(platform)) {
-      note = subreddit ? `Reddit has no posting API: Nucleas prepares the post for r/${subreddit} and tells your team.` : 'Reddit has no posting API, and no subreddit is set for this company (add it in the Company window).';
+      note = subreddit ? `Automatic Reddit posting is not supported in Nucleas yet: Nucleas prepares the post for r/${subreddit} and tells your team.` : 'Automatic Reddit posting is not supported in Nucleas yet, and no subreddit is set for this company (add it in the Company window).';
     } else if (!connected.has(platform)) {
       note = `${PLATFORM_LABEL[platform]} is not connected, so posts come as ready-to-post cards. Connect it in the company’s integrations to post automatically.`;
     } else if (platform === 'facebook') {
@@ -184,7 +186,15 @@ export async function planRequest(viewer: CompanyViewer, input: { companyId: str
 
   let source: PublishSource;
   let newest: PublishPlan['newest'] = null;
-  if (wantsMailbox(request)) {
+  let eventSource: PublishSource | null;
+  try { eventSource = profile.domain && kind === 'social_publish' ? eventRoundupSource(profile.domain, request) : null; }
+  catch (error) { return { ok: false, status: 400, error: error instanceof Error ? error.message : 'Check the event schedule.' }; }
+  if (kind === 'social_publish' && wantsEventRoundup(request) && !eventSource) return { ok: false, status: 400, error: 'This request needs a connected scheduled-events source. Nucleas will not replace it with a new-page watcher.' };
+  if (eventSource && eventSource.type === 'site') {
+    source = eventSource;
+    try { const preview = await readEventRoundup(eventSource, deps.fetcher); newest = preview ? { title: preview.title, url: preview.url } : null; }
+    catch (error) { return { ok: false, status: 400, error: error instanceof Error ? error.message : 'Could not read the scheduled event records.' }; }
+  } else if (wantsMailbox(request)) {
     const watch = await ContentWatch.findOne({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(input.companyId), active: true })
       .sort({ mode: 1, createdAt: 1 })
       .select('_id mode noun')
@@ -233,7 +243,7 @@ export async function planRequest(viewer: CompanyViewer, input: { companyId: str
     ok: true,
     plan: {
       kind: 'social_publish',
-      title: source.type === 'site' && source.rotation ? `Post one ${source.noun} every ${cadenceLabel(source.rotation.everyDays)}` : `Post new ${source.noun}s to social`,
+      title: source.type === 'site' && source.roundup ? 'Game Nights This Week' : source.type === 'site' && source.rotation ? `Post one ${source.noun} every ${cadenceLabel(source.rotation.everyDays)}` : `Post new ${source.noun}s to social`,
       source,
       sourceLabel: sourceLabel(source, profile.domain ?? null),
       newest,
@@ -250,6 +260,7 @@ const createSchema = z.object({
   companyId: z.string().regex(/^[a-f0-9]{24}$/i),
   request: z.string().trim().min(10).max(2000),
   source: publishSourceSchema,
+  imageId: z.string().regex(/^[a-f0-9]{24}$/i).optional(),
   adminFieldRules: adminFieldRulesSchema.optional(),
   adminTimezone: publishingConfigSchema.shape.adminTimezone,
   adminDefaultEndDays: publishingConfigSchema.shape.adminDefaultEndDays,
@@ -284,6 +295,10 @@ async function checkSource(viewer: CompanyViewer, companyId: string, source: Pub
   if (source.type === 'mailbox') {
     const watch = await ContentWatch.exists({ _id: new Types.ObjectId(source.watchId), organizationId: viewer.organizationId, companyId: new Types.ObjectId(companyId) });
     return watch ? null : 'That inbox watch is not available for this company.';
+  }
+  if (source.feedKind === 'events' || source.roundup) {
+    const canonical = eventRoundupSource(new URL(source.feedUrl).hostname, 'Game Nights');
+    if (!canonical || canonical.type !== 'site' || source.feedKind !== 'events' || !source.roundup || source.rotation || source.feedUrl !== canonical.feedUrl || source.roundup.landingUrl !== canonical.roundup?.landingUrl) return 'Use the verified Game Night event feed and schedule page.';
   }
   try {
     assertSafePublicHttpsUrl(source.feedUrl);
@@ -327,9 +342,13 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
   }
   const examples = await resolveExamples(input.examples, deps.fetcher);
   if (!examples.ok) return { ok: false, status: 400, error: examples.error };
+  const image = input.imageId ? await PublishingImage.findOne({ _id: input.imageId, organizationId: viewer.organizationId, companyId: input.companyId }).lean<{ _id: Types.ObjectId; url: string; alt: string }>() : null;
+  if (input.imageId && !image) return { ok: false, status: 400, error: 'That image does not belong to this company.' };
+  if (input.source.type === 'site' && input.source.roundup?.imageRequired && !image) return { ok: false, status: 400, error: 'Upload the requested image before creating this job. A local file path is not accessible to scheduled runs.' };
   const channels = normalizeChannels(input.channels);
   const config: PublishingConfig = {
     source: input.source,
+    ...(image ? { image: { id: String(image._id), url: image.url, alt: image.alt } } : {}),
     ...(input.socialLinkTemplate ? { socialLinkTemplate: input.socialLinkTemplate } : {}),
     ...(input.adminDefaultEndDays ? { adminDefaultEndDays: input.adminDefaultEndDays } : {}),
     ...(input.adminTimezone ? { adminTimezone: input.adminTimezone } : {}),
@@ -343,6 +362,7 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
     brief: input.request,
     ...(admin ? { admin } : {}),
   };
+  const roundup = input.source.type === 'site' ? input.source.roundup : undefined;
   const level = (await readEngineSettings(String(viewer.organizationId))).defaultCostLevel;
   const doc = await Job.create({
     organizationId: viewer.organizationId,
@@ -353,6 +373,7 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
     design: admin
       ? adminPublishDesign({ noun: input.source.noun, sourceLabel: sourceLabel(input.source, profile.domain ?? null), host: new URL(admin.baseUrl).host })
       : socialPublishDesign({ noun: input.source.noun, sourceLabel: sourceLabel(input.source, profile.domain ?? null), platforms: channels.map((c) => PLATFORM_LABEL[c.platform]), ...(input.source.type === 'site' && input.source.rotation ? { everyDays: input.source.rotation.everyDays } : {}) }),
+    ...(roundup ? { design: { ...socialPublishDesign({ noun: input.source.noun, sourceLabel: sourceLabel(input.source), platforms: channels.map(c => PLATFORM_LABEL[c.platform]) }), title: 'Game Nights This Week', schedule: { kind: 'weekly', weekday: roundup.weekday, time: roundup.time, timezone: roundup.timezone, randomWindow: roundup.randomWindow }, safeguards: ['One roundup per local week; retries do not duplicate it.', 'Only validated scheduled Game Nights are included.'] } } : {}),
     publishing: config,
     level,
     designCostMicros: 0,
@@ -365,6 +386,7 @@ export async function createPublishingJob(viewer: CompanyViewer, raw: unknown, d
 }
 
 const settingsSchema = z.object({
+  imageId: z.string().regex(/^[a-f0-9]{24}$/i).nullable().optional(),
   adminFieldRules: adminFieldRulesSchema.optional(),
   adminTimezone: publishingConfigSchema.shape.adminTimezone,
   adminDefaultEndDays: publishingConfigSchema.shape.adminDefaultEndDays,
@@ -380,11 +402,17 @@ const settingsSchema = z.object({
 });
 
 /** Change a running job's platforms, auto/manual choices, notify list or examples. Managers only. */
-export async function updatePublishingSettings(viewer: CompanyViewer, job: { _id: Types.ObjectId; organizationId: Types.ObjectId; publishing?: unknown; design?: unknown }, raw: unknown, deps: SetupDeps = {}): Promise<{ ok: true } | { ok: false; status: 400 | 403; error: string }> {
+export async function updatePublishingSettings(viewer: CompanyViewer, job: { _id: Types.ObjectId; organizationId: Types.ObjectId; publishing?: unknown; design?: unknown; companyId?: Types.ObjectId }, raw: unknown, deps: SetupDeps = {}): Promise<{ ok: true } | { ok: false; status: 400 | 403; error: string }> {
   if (!isCompanyManager(viewer)) return { ok: false, status: 403, error: 'Only managers and administrators can change publishing settings.' };
   const parsed = settingsSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, status: 400, error: parsed.error.issues[0]?.message ?? 'Check the settings.' };
   const set: Record<string, unknown> = {};
+  if (parsed.data.imageId) {
+    if (!job.companyId) return { ok: false, status: 400, error: 'Company is missing.' };
+    const image = await PublishingImage.findOne({ _id: parsed.data.imageId, organizationId: viewer.organizationId, companyId: job.companyId }).lean<{ _id: Types.ObjectId; url: string; alt: string }>();
+    if (!image) return { ok: false, status: 400, error: 'That image does not belong to this company.' };
+    set['publishing.image'] = { id: String(image._id), url: image.url, alt: image.alt };
+  }
   if (parsed.data.socialLinkTemplate) set['publishing.socialLinkTemplate'] = parsed.data.socialLinkTemplate;
   if (parsed.data.adminDefaultEndDays) set['publishing.adminDefaultEndDays'] = parsed.data.adminDefaultEndDays;
   if (parsed.data.adminTimezone) set['publishing.adminTimezone'] = parsed.data.adminTimezone;
@@ -392,6 +420,7 @@ export async function updatePublishingSettings(viewer: CompanyViewer, job: { _id
   if (parsed.data.adminValueField) set['publishing.adminValueField'] = parsed.data.adminValueField;
   if (parsed.data.adminFieldRules) set['publishing.adminFieldRules'] = parsed.data.adminFieldRules;
   const unset: Record<string, ''> = {};
+  if (parsed.data.imageId === null) unset['publishing.image'] = '';
   if (parsed.data.minimumSocialValuePct === null) unset['publishing.minimumSocialValuePct'] = '';
   else if (parsed.data.minimumSocialValuePct !== undefined) set['publishing.minimumSocialValuePct'] = parsed.data.minimumSocialValuePct;
   if (parsed.data.channels) {

@@ -138,3 +138,13 @@ describe('recognizing a request', () => {
     expect(wantsMailbox('Post new games')).toBe(false);
   });
 });
+
+it('does not silently publish without an explicitly required image', async () => {
+  const input = { text: 'Game Nights This Week', link: 'https://playbound.club/events', imageUrl: 'https://playbound.club/required.jpg', imageRequired: true };
+  const facebook = vi.fn(async () => json(400, { error: { code: 100, message: 'Invalid image' } }));
+  await expect(publishToFacebook('t', input, facebook)).rejects.toMatchObject({ code: 'rejected' });
+  expect(facebook).toHaveBeenCalledTimes(1);
+  const bluesky = vi.fn(async (url: string) => url.endsWith('createSession') ? json(200, { accessJwt: 't', did: 'did:plc:1', handle: 'pb' }) : json(404, {}));
+  await expect(publishToBluesky('pb:abcd-efgh-ijkl-mnop', input, bluesky)).rejects.toMatchObject({ code: 'rejected' });
+  expect(bluesky.mock.calls.some(([url]) => url.endsWith('createRecord'))).toBe(false);
+});

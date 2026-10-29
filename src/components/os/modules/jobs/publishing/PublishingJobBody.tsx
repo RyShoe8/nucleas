@@ -1,5 +1,7 @@
 'use client';
 
+import PublishingImagePicker, { type SocialImage } from './PublishingImagePicker';
+import { charCount } from '@/lib/publishing/compose';
 import { useEffect, useMemo, useState } from 'react';
 import { MANUAL_ONLY, PLATFORM_LABEL, platformsFor, sourceLabel, type PublishPlatform } from '@/lib/publishing/config';
 import type { JobRunView, JobView } from '../JobCard';
@@ -69,6 +71,11 @@ function SampleReview({ job, run, onChange }: { job: JobView; run: JobRunView; o
                         </p>
                         {r.values.post_title && !r.values.screenshot ? <p className="font-semibold leading-snug">{String(r.values.post_title)}</p> : null}
                         <p className="whitespace-pre-wrap break-words leading-relaxed">{String(r.values.post_copy ?? '')}</p>
+                        <p className="mt-1 text-xs text-text-secondary">{charCount(String(r.values.post_copy ?? ''))} characters{String(r.values.platform).toLowerCase() === 'bluesky' ? ' / 300' : ''}</p>
+                        {typeof r.values.image_url === 'string' ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={r.values.image_url} alt={job.publishing?.image?.alt ?? 'Social post image'} className="mt-2 max-h-64 w-full rounded object-contain" />
+                        ) : null}
                         {typeof r.values.target_url === 'string' && !r.values.screenshot ? <a href={r.values.target_url} target="_blank" rel="noreferrer" className="mt-2 block break-all text-xs text-primary underline">{r.values.target_url}</a> : null}
                         {!r.values.screenshot ? <button type="button" className="ui-button mt-2" onClick={() => void copySample(i, String(r.values.platform ?? ''), String(r.values.post_copy ?? ''), typeof r.values.target_url === 'string' ? r.values.target_url : null)}>{copied === i ? 'Copied' : 'Copy post with link'}</button> : null}
                         {typeof r.values.screenshot === 'string' ? (
@@ -85,7 +92,7 @@ function SampleReview({ job, run, onChange }: { job: JobView; run: JobRunView; o
                     <button type="button" className="ui-button" disabled={busy !== null} onClick={() => void decide('reject_run')}>Not right</button>
                 </div>
             ) : null}
-            <p className="text-[11px] text-text-secondary">Switching on records what exists now; only {job.publishing?.source.noun ?? 'item'}s that appear later are {job.publishing?.admin ? 'added' : 'posted'}.</p>
+            <p className="text-[11px] text-text-secondary">{job.publishing?.source.type === 'site' && job.publishing.source.roundup ? 'Switching on schedules one roundup each week, using that week’s scheduled events.' : <>Switching on records what exists now; only {job.publishing?.source.noun ?? 'item'}s that appear later are {job.publishing?.admin ? 'added' : 'posted'}.</>}</p>
         </section>
     );
 }
@@ -104,6 +111,8 @@ function Settings({ job, onChange }: { job: JobView; onChange: (j: JobView) => v
         [view]
     );
     const [channels, setChannels] = useState(initial);
+    const [image, setImage] = useState<SocialImage | null>(view.image ?? null);
+    const [uploading, setUploading] = useState(false);
     const [minimumValue, setMinimumValue] = useState(view.minimumSocialValuePct?.toString() ?? '');
     const [notify, setNotify] = useState(view.notifyUserIds);
     const [people, setPeople] = useState<{ userId: string; name: string }[]>([]);
@@ -114,11 +123,11 @@ function Settings({ job, onChange }: { job: JobView; onChange: (j: JobView) => v
         void loadPeople().then((list) => !cancelled && setPeople(list));
         return () => { cancelled = true; };
     }, []);
-    const dirty = minimumValue !== (view.minimumSocialValuePct?.toString() ?? '') || JSON.stringify(channels.map((c) => [c.platform, c.selected, c.mode])) !== JSON.stringify(initial.map((c) => [c.platform, c.selected, c.mode])) || [...notify].sort().join() !== [...view.notifyUserIds].sort().join();
+    const dirty = image?.id !== view.image?.id || minimumValue !== (view.minimumSocialValuePct?.toString() ?? '') || JSON.stringify(channels.map((c) => [c.platform, c.selected, c.mode])) !== JSON.stringify(initial.map((c) => [c.platform, c.selected, c.mode])) || [...notify].sort().join() !== [...view.notifyUserIds].sort().join();
     const save = async () => {
         setBusy(true);
         setError(null);
-        const res = await post(job.id, { action: 'publishing_settings', settings: { minimumSocialValuePct: minimumValue !== '' ? Number(minimumValue) : null, channels: channels.filter((c) => c.selected).map((c) => ({ platform: c.platform, mode: c.mode })), notifyUserIds: notify } });
+        const res = await post(job.id, { action: 'publishing_settings', settings: { imageId: image?.id ?? null, minimumSocialValuePct: minimumValue !== '' ? Number(minimumValue) : null, channels: channels.filter((c) => c.selected).map((c) => ({ platform: c.platform, mode: c.mode })), notifyUserIds: notify } });
         setBusy(false);
         if (res.error || !res.job) return setError(res.error ?? 'Failed');
         onChange(res.job);
@@ -134,10 +143,11 @@ function Settings({ job, onChange }: { job: JobView; onChange: (j: JobView) => v
                 <h4 className="ui-kicker">Notify</h4>
                 <NotifyPicker people={people.length ? people : view.notifyUserIds.map((userId) => ({ userId, name: '…' }))} value={notify} onChange={setNotify} disabled={!job.canManage} />
             </section>
+            {!view.admin && job.canManage ? <PublishingImagePicker companyId={job.companyId} image={image} onChange={setImage} onBusy={setUploading} /> : null}
             {dirty ? (
                 <div className="flex items-center gap-2 sm:col-span-2">
-                    <button type="button" className="ui-button-primary" disabled={busy || !channels.some((c) => c.selected)} onClick={() => void save()}>{busy ? 'Saving…' : 'Save changes'}</button>
-                    <button type="button" className="ui-button" onClick={() => { setChannels(initial); setNotify(view.notifyUserIds); }}>Undo</button>
+                    <button type="button" className="ui-button-primary" disabled={busy || uploading || !channels.some((c) => c.selected)} onClick={() => void save()}>{busy ? 'Saving…' : 'Save changes'}</button>
+                    <button type="button" className="ui-button" onClick={() => { setChannels(initial); setNotify(view.notifyUserIds); setImage(view.image ?? null); }}>Undo</button>
                 </div>
             ) : null}
             {error ? <p role="alert" className="text-xs text-red-400 sm:col-span-2">{error}</p> : null}

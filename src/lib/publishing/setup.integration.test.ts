@@ -78,6 +78,24 @@ async function confirmedPlan(): Promise<PublishPlan> {
 }
 
 describe('setting up a publishing job', () => {
+  it('routes scheduled Game Nights to weekly events instead of the new-games watcher', async () => {
+    const request = 'Every monday at a random time between 9am and 2pm post Game Nights This Week on Reddit, Facebook and Bluesky. Link to each individual game night and the install file. Use Game Nights Image.';
+    const planned = await planRequest(admin, { companyId, request }, {
+      fetcher: async url => {
+        expect(url).toBe('https://playbound.club/api/events?type=game_night');
+        return new Response(JSON.stringify({ events: [] }));
+      },
+      canPostFacebook: async () => true,
+    });
+    expect(planned).toMatchObject({ ok: true, plan: { title: 'Game Nights This Week', source: { feedKind: 'events', roundup: { weekday: 1, randomWindow: { startHour: 9, endHour: 14 }, installLinks: true, imageRequired: true } } } });
+    if (!planned.ok || planned.plan.kind !== 'social_publish') throw new Error('No social plan');
+    const plan = planned.plan as PublishPlan;
+    const result = await createPublishing(admin, { companyId, request, source: plan.source, channels: [{ platform: 'reddit', mode: 'manual' }], examples: {}, notifyUserIds: [] });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('Upload the requested image') });
+    await Client.updateOne({ _id: companyId }, { domain: 'other.example' });
+    expect(await planRequest(admin, { companyId, request })).toMatchObject({ ok: false, error: expect.stringContaining('scheduled-events source') });
+  });
+
   it('turns one sentence into a plan: the section to watch, each platform’s mode, and what is missing', async () => {
     const plan = await confirmedPlan();
     expect(plan).toMatchObject({ title: 'Post new games to social', sourceLabel: 'Watching playbound.club/games/ for new games', newest: { url: 'https://playbound.club/games/openra' }, notifyUserIds: [admin.userId] });

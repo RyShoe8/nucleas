@@ -1,5 +1,6 @@
 'use client';
 
+import PublishingImagePicker, { type SocialImage } from './PublishingImagePicker';
 import { useState } from 'react';
 import { PLATFORM_LABEL } from '@/lib/publishing/config';
 import type { PublishPlan } from '@/lib/publishing/setup';
@@ -10,7 +11,10 @@ import { ChannelPicker, NotifyPicker, type ChannelChoice } from './Pickers';
  * The confirmation Nucleas shows after reading a publishing request: what it will watch, where each
  * post goes (Auto or Manual per platform), and who is told. Confirming starts a dry run; nothing posts.
  */
-export default function PublishPlanCard({ companyId, request, plan, onCreated, onCancel }: { companyId: string; request: string; plan: PublishPlan; onCreated: (job: JobView) => void; onCancel: () => void }) {
+export default function PublishPlanCard({ companyId, request, plan, onCreated, onCancel, initialImage = null }: { initialImage?: SocialImage | null; companyId: string; request: string; plan: PublishPlan; onCreated: (job: JobView) => void; onCancel: () => void }) {
+    const [image, setImage] = useState<SocialImage | null>(initialImage);
+    const [uploading, setUploading] = useState(false);
+    const [roundup, setRoundup] = useState(plan.source.type === 'site' ? plan.source.roundup : undefined);
     const [channels, setChannels] = useState<ChannelChoice[]>(plan.channels);
     const [notify, setNotify] = useState<string[]>(plan.notifyUserIds);
     const [examples, setExamples] = useState<Record<string, string>>({});
@@ -29,7 +33,8 @@ export default function PublishPlanCard({ companyId, request, plan, onCreated, o
                 template: 'social_publish',
                 config: {
                     request,
-                    source: plan.source,
+                    source: { ...plan.source, ...(roundup ? { roundup } : {}) },
+                    ...(image ? { imageId: image.id } : {}),
                     channels: selected.map((c) => ({ platform: c.platform, mode: c.mode })),
                     notifyUserIds: notify,
                     ...(plan.admin ? { admin: plan.admin } : {}),
@@ -51,7 +56,7 @@ export default function PublishPlanCard({ companyId, request, plan, onCreated, o
                 <p className="text-xs text-text-secondary">
                     {plan.source.type === 'site' && plan.source.rotation
                         ? `${plan.sourceLabel}. The first one posts at the next hourly check after you accept, then the rest follow in order and the list starts over at the end.`
-                        : `${plan.sourceLabel} · checks every hour${plan.newest ? ` · newest now: ${plan.newest.title}` : ''}`}
+                        : roundup ? `${plan.sourceLabel} · posts weekly` : `${plan.sourceLabel} · checks every hour${plan.newest ? ` · newest now: ${plan.newest.title}` : ''}`}
                 </p>
             </div>
             {plan.blocker ? <p className="rounded border border-amber-400/40 bg-amber-400/5 p-2 text-xs text-amber-300">{plan.blocker}</p> : null}
@@ -78,6 +83,16 @@ export default function PublishPlanCard({ companyId, request, plan, onCreated, o
                 </section>
             )}
 
+            {!plan.admin ? <PublishingImagePicker companyId={companyId} image={image} onChange={setImage} onBusy={setUploading} /> : null}
+            {roundup ? <section className="space-y-2">
+                <h4 className="ui-kicker">Weekly schedule</h4>
+                {roundup.individualLinks || roundup.installLinks ? <p className="text-xs">Facebook and Reddit: each event link{roundup.installLinks ? ' and its verified game/edition install file' : ''}. Bluesky: events page only.</p> : null}
+                {roundup.imageRequired ? <p className="text-xs">Upload the image named in your request above. Scheduled runs cannot read a file on your computer.</p> : null}
+                <p className="text-xs text-text-secondary">One roundup per week, covering events from this weekday through the following six days. Bluesky summarizes with one link to the full schedule.</p>
+                <label className="block text-xs">Day <select className="ui-control" value={roundup.weekday} onChange={e => setRoundup({ ...roundup, weekday: Number(e.target.value) })}>{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((day,i) => <option key={day} value={i}>{day}</option>)}</select></label>
+                {roundup.randomWindow ? <p className="text-sm">Random time between {roundup.randomWindow.startHour}:00 and {roundup.randomWindow.endHour}:00 each week.</p> : <label className="block text-xs">Time <input className="ui-control" type="time" value={roundup.time} onChange={e => setRoundup({ ...roundup, time: e.target.value })} /></label>}
+                <label className="block text-xs">Timezone <input className="ui-control" value={roundup.timezone} onChange={e => setRoundup({ ...roundup, timezone: e.target.value })} /></label>
+            </section> : null}
             <section className="space-y-2">
                 <h4 className="ui-kicker">Notify</h4>
                 <NotifyPicker people={plan.people} value={notify} onChange={setNotify} />
@@ -105,11 +120,11 @@ export default function PublishPlanCard({ companyId, request, plan, onCreated, o
 
             {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
             <div className="flex flex-wrap items-center gap-2">
-                <button type="button" className="ui-button-primary" disabled={busy || !selected.length || Boolean(plan.blocker)} onClick={() => void create()}>
+                <button type="button" className="ui-button-primary" disabled={busy || uploading || !selected.length || Boolean(plan.blocker)} onClick={() => void create()}>
                     {busy ? 'Starting…' : 'Run a dry run'}
                 </button>
                 <button type="button" className="ui-button" onClick={onCancel}>Cancel</button>
-                <span className="text-[11px] text-text-secondary">{plan.admin ? `Fills the form for the newest ${plan.source.noun} without saving it.` : `Writes sample posts for the newest ${plan.source.noun} and posts nothing.`}</span>
+                <span className="text-[11px] text-text-secondary">{roundup ? 'Previews the weekly schedule and platform drafts. Posts nothing.' : plan.admin ? `Fills the form for the newest ${plan.source.noun} without saving it.` : `Writes sample posts for the newest ${plan.source.noun} and posts nothing.`}</span>
             </div>
         </div>
     );

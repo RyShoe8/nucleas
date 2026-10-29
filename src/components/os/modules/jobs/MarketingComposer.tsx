@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { PublishPlan } from '@/lib/publishing/setup';
 import type { JobView } from './JobCard';
 import PublishPlanCard from './publishing/PublishPlanCard';
+import PublishingImagePicker, { type SocialImage } from './publishing/PublishingImagePicker';
 
 type Recognized = { kind: 'social_publish'; plan: PublishPlan } | { kind: 'link_building' | 'marketing_plan' | 'custom' };
 
@@ -20,12 +21,15 @@ export default function MarketingComposer({ companyId, companyName, onCreated, r
     renderLinkBuilding: (done: () => void) => React.ReactNode;
     onMarketingPlan: () => void;
 }) {
+    const [image, setImage] = useState<SocialImage | null>(null);
+    const [uploading, setUploading] = useState(false);
     const [request, setRequest] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [recognized, setRecognized] = useState<Recognized | null>(null);
 
     const reset = () => {
+        setImage(null);
         setRecognized(null);
         setRequest('');
         setError(null);
@@ -41,12 +45,14 @@ export default function MarketingComposer({ companyId, companyName, onCreated, r
     };
 
     const submit = async () => {
+        if (busy || uploading) return;
         setBusy(true);
         setError(null);
         try {
             const res = await fetch('/api/os/jobs/plan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ companyId, request }) });
             const body = (await res.json().catch(() => ({}))) as { plan?: PublishPlan | { kind: 'link_building' | 'marketing_plan' | 'custom' }; error?: string };
             if (!res.ok || !body.plan) throw new Error(body.error ?? `Failed (${res.status})`);
+            if (image && (body.plan.kind !== 'social_publish' || ('admin' in body.plan && body.plan.admin))) throw new Error('This image can be attached to a social publishing job. Remove it to continue with this other job type.');
             if (body.plan.kind === 'custom') await designCustom();
             else if (body.plan.kind === 'marketing_plan') {
                 onMarketingPlan();
@@ -60,7 +66,7 @@ export default function MarketingComposer({ companyId, companyName, onCreated, r
     };
 
     if (recognized?.kind === 'social_publish') {
-        return <PublishPlanCard companyId={companyId} request={request} plan={recognized.plan} onCreated={(job) => { onCreated(job); reset(); }} onCancel={reset} />;
+        return <PublishPlanCard initialImage={image} companyId={companyId} request={request} plan={recognized.plan} onCreated={(job) => { onCreated(job); reset(); }} onCancel={reset} />;
     }
     if (recognized?.kind === 'link_building') return <>{renderLinkBuilding(reset)}</>;
 
@@ -70,20 +76,21 @@ export default function MarketingComposer({ companyId, companyName, onCreated, r
                 value={request}
                 onChange={(e) => setRequest(e.target.value)}
                 onKeyDown={(e) => {
-                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && request.trim().length >= 10 && !busy) void submit();
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && request.trim().length >= 10 && !busy && !uploading) void submit();
                 }}
                 placeholder={`What should Nucleas do for ${companyName}? e.g. “When something new is published on our site, post it to Facebook and Bluesky” or “Add the best deals from our email to our admin.”`}
                 className="ui-control h-16 w-full resize-y"
                 aria-label="Describe a marketing job"
             />
+            <PublishingImagePicker companyId={companyId} image={image} onChange={setImage} onBusy={setUploading} />
             {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
             <div className="flex flex-wrap items-center gap-2">
-                <button type="button" className="ui-button-primary" disabled={busy || request.trim().length < 10} onClick={() => void submit()}>
+                <button type="button" className="ui-button-primary" disabled={busy || uploading || request.trim().length < 10} onClick={() => void submit()}>
                     {busy ? 'Reading…' : 'Continue'}
                 </button>
                 <span className="text-[11px] text-text-secondary">Nucleas works out the details and shows you a plan before anything runs.</span>
             </div>
-            <details className="text-xs text-text-secondary"><summary className="cursor-pointer">Specialized jobs</summary><button type="button" className="ui-button mt-2" disabled={busy} onClick={() => { setBusy(true); setError(null); void fetch('/api/os/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ companyId, template: 'casino_discovery' }) }).then(async response => { const body = await response.json(); if (!response.ok) throw new Error(body.error ?? 'Could not configure discovery.'); onCreated(body.job); reset(); }).catch(problem => setError(problem.message)).finally(() => setBusy(false)); }}>Casino / sports betting discovery</button></details>
+            <details className="text-xs text-text-secondary"><summary className="cursor-pointer">Specialized jobs</summary><button type="button" className="ui-button mt-2" disabled={busy || uploading || Boolean(image)} onClick={() => { setBusy(true); setError(null); void fetch('/api/os/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ companyId, template: 'casino_discovery' }) }).then(async response => { const body = await response.json(); if (!response.ok) throw new Error(body.error ?? 'Could not configure discovery.'); onCreated(body.job); reset(); }).catch(problem => setError(problem.message)).finally(() => setBusy(false)); }}>Casino / sports betting discovery</button></details>
         </div>
     );
 }
