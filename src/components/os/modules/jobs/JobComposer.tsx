@@ -62,7 +62,7 @@ export default function JobComposer({ companyId, companyName, onCreated, renderL
             const res = await fetch('/api/os/jobs/understand', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ companyId, request, ...(withAnswers ? { answers: withAnswers, previous: { questions: understanding?.questions ?? [] } } : {}) }),
+                body: JSON.stringify({ companyId, request, imageId: image?.id, ...(withAnswers ? { answers: withAnswers, previous: { questions: understanding?.questions ?? [] } } : {}) }),
             });
             const body = (await res.json().catch(() => ({}))) as { understanding?: Understanding; error?: string };
             if (!res.ok || !body.understanding) throw new Error(body.error ?? (res.status === 504 ? 'The server ran out of time (504). Try again.' : `Failed (${res.status})`));
@@ -131,6 +131,12 @@ export default function JobComposer({ companyId, companyName, onCreated, renderL
                     {!u.understood ? <span className="text-[11px] text-amber-300">A guess from the wording: check it</span> : u.confidence < 0.7 ? <span className="text-[11px] text-amber-300">Not sure: check it</span> : null}
                 </div>
                 <p className="text-sm leading-relaxed">{u.summary}</p>
+                {image ? <section className="space-y-2">
+                    <p className="text-xs text-emerald-300">Image uploaded and attached to this job.</p>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={image.url} alt={image.alt} className="max-h-48 max-w-full rounded" />
+                    <button type="button" className="ui-button" disabled={Boolean(busy)} onClick={() => { setImage(null); setUnderstanding(null); setAnswers({}); }}>Remove image and edit request</button>
+                </section> : null}
                 {u.needs.length ? (
                     <div className="space-y-1">
                         <span className="ui-kicker">What it needs</span>

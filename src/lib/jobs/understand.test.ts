@@ -79,3 +79,20 @@ describe('understanding a job request', () => {
     expect(checkedNeeds('custom', facts, 'anything')).toEqual([]);
   });
 });
+
+it('includes an already uploaded image when understanding and revising a publishing request', async () => {
+  const prompts: string[] = [];
+  const ask = async ({ user }: { system: string; user: string }) => {
+    prompts.push(user);
+    return reply({ kind: 'social_publish' })();
+  };
+  const input = { companyId: company.id, request: 'Post Game Nights This Week to Facebook', attachedImage: { alt: 'Game Nights weekly graphic' } };
+  await understandRequest(viewer, input, ask);
+  await understandRequest(viewer, { ...input, answers: { cadence: { text: 'Monday' } } }, ask);
+  expect(prompts).toHaveLength(2);
+  for (const prompt of prompts) {
+    expect(prompt).toContain('already been uploaded');
+    expect(prompt).toContain('Game Nights weekly graphic');
+    expect(prompt).toContain('Do not ask for another upload');
+  }
+});

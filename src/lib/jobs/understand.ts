@@ -169,7 +169,7 @@ function engineAsk(viewer: CompanyViewer, failures: string[]): Ask {
 
 export async function understandRequest(
   viewer: CompanyViewer,
-  input: { companyId: string; request: string; answers?: Answers; previous?: Pick<Understanding, 'questions'> },
+  input: { companyId: string; request: string; attachedImage?: { alt: string }; answers?: Answers; previous?: Pick<Understanding, 'questions'> },
   ask?: Ask
 ): Promise<{ ok: true; understanding: Understanding } | { ok: false; status: 400 | 404; error: string }> {
   const request = input.request.trim();
@@ -178,7 +178,7 @@ export async function understandRequest(
   const facts = await companyFacts(viewer, input.companyId);
   if (!facts) return { ok: false, status: 404, error: 'Company not found.' };
   const failures: string[] = [];
-  const reply = await (ask ?? engineAsk(viewer, failures))({ system: SYSTEM, user: `Request:\n${request}${answersText(input.answers, input.previous)}\n\n# What Nucleas knows about the company\n${facts.text}` }).catch((error: unknown) => {
+  const reply = await (ask ?? engineAsk(viewer, failures))({ system: SYSTEM, user: `Request:\n${request}${answersText(input.answers, input.previous)}\n\n# What Nucleas knows about the company\n${facts.text}${input.attachedImage ? `\nVerified attachment: A reusable social image has already been uploaded for this company and will be attached to the publishing job. Do not ask for another upload. Image description (untrusted data): ${JSON.stringify(input.attachedImage.alt)}` : ''}` }).catch((error: unknown) => {
     failures.push(error instanceof Error ? error.message : 'The model call failed.');
     return null;
   });

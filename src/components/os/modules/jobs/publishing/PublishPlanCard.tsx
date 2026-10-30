@@ -86,8 +86,8 @@ export default function PublishPlanCard({ companyId, request, plan, onCreated, o
             {!plan.admin ? <PublishingImagePicker companyId={companyId} image={image} onChange={setImage} onBusy={setUploading} /> : null}
             {roundup ? <section className="space-y-2">
                 <h4 className="ui-kicker">Weekly schedule</h4>
-                {roundup.individualLinks || roundup.installLinks ? <p className="text-xs">Facebook and Reddit: each event link{roundup.installLinks ? ' and its verified game/edition install file' : ''}. Bluesky: events page only.</p> : null}
-                {roundup.imageRequired ? <p className="text-xs">Upload the image named in your request above. Scheduled runs cannot read a file on your computer.</p> : null}
+                {roundup.individualLinks || roundup.installLinks ? <p className="text-xs">Facebook and Reddit: each event link{roundup.installLinks ? ' and its game or edition page on the site' : ''}. Bluesky: events page only.</p> : null}
+                {roundup.imageRequired && !image ? <p className="text-xs">Upload the image named in your request above. Scheduled runs cannot read a file on your computer.</p> : null}
                 <p className="text-xs text-text-secondary">One roundup per week, covering events from this weekday through the following six days. Bluesky summarizes with one link to the full schedule.</p>
                 <label className="block text-xs">Day <select className="ui-control" value={roundup.weekday} onChange={e => setRoundup({ ...roundup, weekday: Number(e.target.value) })}>{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((day,i) => <option key={day} value={i}>{day}</option>)}</select></label>
                 {roundup.randomWindow ? <p className="text-sm">Random time between {roundup.randomWindow.startHour}:00 and {roundup.randomWindow.endHour}:00 each week.</p> : <label className="block text-xs">Time <input className="ui-control" type="time" value={roundup.time} onChange={e => setRoundup({ ...roundup, time: e.target.value })} /></label>}
