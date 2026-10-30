@@ -23,8 +23,8 @@ const RETENTION_DAYS = 90;
 const DEFAULT_MAX_NEW = 40;
 /** Well inside the 300 s request limit, leaving room to save results and draft posts. */
 const DEFAULT_BUDGET_MS = 200_000;
-/** One email's model call may take this long; a slow or queued model never stalls the whole scan. */
-const MODEL_TIMEOUT_MS = 45_000;
+/** One email's model calls may take this long in all: the free model gets 40 s, its fallback the rest. */
+const MODEL_TIMEOUT_MS = 75_000;
 /** Stop starting new emails when less than this remains of the budget. */
 const MIN_REMAINING_MS = 20_000;
 const MAX_LOG_STEPS = 80;

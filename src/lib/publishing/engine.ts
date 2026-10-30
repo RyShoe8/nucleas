@@ -198,10 +198,10 @@ async function approvedPersona(job: JobLike): Promise<string | null> {
 }
 
 /** failures: each model that gave no answer and why, so a card can say why it could not be filled. */
-function engineWriter(job: JobLike, failures?: string[]): Writer {
+function engineWriter(job: JobLike, failures?: string[], interactive = false): Writer {
   return async ({ system, user, maxTokens }) =>
     (await askEngine({
-      organizationId: String(job.organizationId), userId: String(job.createdByUserId), need: 'write', level: job.level ?? undefined, system, user, maxTokens, signal: AbortSignal.timeout(60_000),
+      organizationId: String(job.organizationId), userId: String(job.createdByUserId), need: 'write', level: job.level ?? undefined, system, user, maxTokens, attemptTimeoutMs: 45_000, interactive,
       onFailure: (f) => {
         console.error(`[publishing] job ${job._id} model gave no answer: ${f.model}: ${f.reason}`);
         failures?.push(`${f.model}: ${f.reason}`.slice(0, 300));
@@ -232,7 +232,7 @@ async function prepareAdmin(target: AdminTarget, config: PublishingConfig, facts
   if (!filled) {
     const why = failures && failures.length > before ? ` (${failures.slice(before).join(' · ')})` : ' (the model’s answer could not be read)';
     return {
-      draft: { title: null, body: [facts.title, facts.description, ...facts.extra, facts.link ?? ''].filter(Boolean).join('\n').trim() },
+      draft: { title: null, body: [facts.title, facts.description, ...facts.extra.filter((line) => !/^(Site timezone|Today|Email sent)\b/.test(line))].filter(Boolean).join('\n').trim() },
       written: false,
       values: {},
       problem: `Nucleas could not fill in the form values${why}. Use “Fill it in again”, or Edit deal to enter them.`.slice(0, 1000),
@@ -1076,7 +1076,7 @@ export async function refillAdminDelivery(job: JobLike, deliveryId: string, deps
   if (!profile) return { ok: false, status: 404, error: 'The company is no longer accessible.' };
   const facts = await factsFor(currentJob, config, { key: item.key, url: item.url ?? null, title: item.title ?? delivery.title ?? '', date: item.createdAt ?? null }, deps);
   const failures: string[] = [];
-  const prepared = await prepareAdmin(config.admin, config, facts, { companyName: profile.name, persona: await approvedPersona(currentJob), subreddit: null }, deps.write ?? engineWriter(currentJob, failures), failures);
+  const prepared = await prepareAdmin(config.admin, config, facts, { companyName: profile.name, persona: await approvedPersona(currentJob), subreddit: null }, deps.write ?? engineWriter(currentJob, failures, true), failures);
   const filled = Boolean(prepared.values && Object.keys(prepared.values).length);
   console.info(`[publishing] job ${job._id} refilled admin card ${deliveryId}: ${filled ? `${Object.keys(prepared.values!).length} values` : 'no values'}${prepared.problem ? ` (${prepared.problem})` : ''}`);
   const done = await PublishDelivery.updateOne(

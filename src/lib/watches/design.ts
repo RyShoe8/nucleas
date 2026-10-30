@@ -91,7 +91,7 @@ export function fallbackDesign(request: string): Omit<WatchDesign, 'designed'> {
 }
 
 function engineAsk(viewer: CompanyViewer): Ask {
-  return async ({ system, user }) => (await askEngine({ organizationId: String(viewer.organizationId), userId: viewer.userId, need: 'plan', system, user, maxTokens: 900 }))?.text ?? null;
+  return async ({ system, user }) => (await askEngine({ organizationId: String(viewer.organizationId), userId: viewer.userId, need: 'plan', system, user, maxTokens: 900, attemptTimeoutMs: 25_000, interactive: true }))?.text ?? null;
 }
 
 export async function designWatch(viewer: CompanyViewer, input: { request: string; companyId?: string | null }, ask?: Ask): Promise<{ ok: true; design: WatchDesign } | { ok: false; status: 400 | 403 | 404; error: string }> {

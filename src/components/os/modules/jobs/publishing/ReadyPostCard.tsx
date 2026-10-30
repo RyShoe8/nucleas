@@ -141,7 +141,7 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
                     </div>
                 ))}
                 {copied === 'failed' ? <p className="text-[11px] text-red-400">Could not copy. Select the text and copy it by hand.</p> : null}
-                {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
+                {error && error !== delivery.error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
             </article>
         );
     }

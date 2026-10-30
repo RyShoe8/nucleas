@@ -145,6 +145,8 @@ From: ${input.from}
 ${input.text.slice(0, MAX_INPUT_CHARS)}`,
     maxTokens: input.fields.length ? 1300 : 900,
     signal: input.signal,
+    // Enough for the free model's usual 30-45 s; the rest of the email's time is the fallback's.
+    attemptTimeoutMs: 40_000,
     onFailure: (f) => failures.push(`${f.model}: ${f.reason}`),
   });
   if (!answer) throw new AnalysisError(failures.join(' · ') || 'No model answered.');

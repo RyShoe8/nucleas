@@ -119,3 +119,14 @@ export async function holdDispatchLock(token: string, ms: number): Promise<void>
     { upsert: true }
   );
 }
+
+/** True when the shared free model is busy with other work right now (someone holds the lock). */
+export async function freeModelBusy(now = new Date()): Promise<boolean> {
+  try {
+    await assertDispatchLockClaimable(now);
+    return false;
+  } catch (error) {
+    if (error instanceof GatewayError) return true;
+    throw error;
+  }
+}

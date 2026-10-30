@@ -164,7 +164,7 @@ export function fallbackUnderstanding(request: string): Understanding {
 
 function engineAsk(viewer: CompanyViewer, failures: string[]): Ask {
   return async ({ system, user }) =>
-    (await askEngine({ organizationId: String(viewer.organizationId), userId: viewer.userId, need: 'plan', system, user, maxTokens: 1400, signal: AbortSignal.timeout(45_000), onFailure: (f) => failures.push(`${f.model}: ${f.reason}`) }))?.text ?? null;
+    (await askEngine({ organizationId: String(viewer.organizationId), userId: viewer.userId, need: 'plan', system, user, maxTokens: 1400, attemptTimeoutMs: 25_000, interactive: true, onFailure: (f) => failures.push(`${f.model}: ${f.reason}`) }))?.text ?? null;
 }
 
 export async function understandRequest(
