@@ -18,9 +18,9 @@ type FieldRow = { label: string; kind: FieldKind };
  * collect and how to rank them (steered by the company's overview and marketing plan), and the person edits
  * that before saving. Mailbox filters and timing are under "More options".
  */
-export default function WatchForm({ watch, mailboxes, onSaved, onCancel, initialCompanyId }: { watch?: WatchView; mailboxes: MailboxView[]; onSaved: (w: WatchView) => void; onCancel: () => void; initialCompanyId?: string }) {
+export default function WatchForm({ watch, mailboxes, onSaved, onCancel, initialCompanyId, initialBrief }: { watch?: WatchView; mailboxes: MailboxView[]; onSaved: (w: WatchView) => void; onCancel: () => void; initialCompanyId?: string; /** A request understood elsewhere (Marketing's request box), ready for Set it up. */ initialBrief?: string }) {
     const { companies } = useOsCompanies();
-    const [brief, setBrief] = useState(watch?.brief ?? '');
+    const [brief, setBrief] = useState(watch?.brief ?? initialBrief ?? '');
     const [designing, setDesigning] = useState(false);
     const [designNote, setDesignNote] = useState<string | null>(null);
     const [shown, setShown] = useState(Boolean(watch));

@@ -24,6 +24,8 @@ const jobSchema = new Schema(
     status: { type: String, enum: JOB_STATUSES, required: true, default: 'designing' },
     /** What was asked for, in the person's words. */
     request: { type: String, required: true, maxlength: 6000 },
+    /** What Nucleas understood and the person confirmed before designing: { kind, summary, brief, needs }. */
+    understanding: { type: Schema.Types.Mixed },
     /** The design (see jobDesignSchema); absent until the designer has run. */
     design: { type: Schema.Types.Mixed },
     /** Publishing jobs only: source, channels with auto/manual, examples and who is notified (see publishingConfigSchema). */

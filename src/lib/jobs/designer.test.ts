@@ -16,6 +16,8 @@ vi.mock('@/lib/building/companyCode', () => ({
 }));
 vi.mock('@/lib/companies/activityLog', () => ({ companyTimeline: async () => [], renderTimeline: () => '' }));
 vi.mock('@/lib/ai/repo/snapshot', () => ({ getRepoSnapshot: async () => ({ ok: false, reason: 'test' }) }));
+vi.mock('@/lib/companies/upstreamContext', () => ({ upstreamContext: async () => 'Approved Marketing Plan:\n- Positioning: the home of browser party games' }));
+vi.mock('./understand', () => ({ CAPABILITIES: '# What Nucleas can do (job kinds)\n- social_publish: posts new pages' }));
 
 import { designerPrompt, designJob } from './designer';
 
@@ -52,6 +54,25 @@ describe('job designer', () => {
     expect(call.userText).toContain('Code repository: RyShoe8/playbound');
     expect(call.userText).toContain('Connected systems: Google Analytics');
     expect(steps).toContain('Designing the job with gpt-6-sol');
+  });
+
+  it('designs from the confirmed understanding, inside the upstream plans and what Nucleas can already do', async () => {
+    chat.mockResolvedValue({ requestId: 'r', role: 'assistant', text: JSON.stringify({ ...DESIGN, questions: [] }), costMicros: 10 });
+    await designJob(viewer, {
+      companyId: 'c'.repeat(24),
+      request: 'ad revenue thing for clients every week',
+      level: 'low',
+      understanding: { kind: 'custom', summary: 'Every Monday, a report of last week’s AdSense revenue per site, emailed to each client.', brief: 'Every Monday, report last week’s AdSense revenue per client site.', needs: [{ label: 'Google AdSense', status: 'ready' }] },
+    });
+    const text = chat.mock.calls[0][0].userText as string;
+    expect(text).toContain('Every Monday, report last week’s AdSense revenue per client site.');
+    expect(text).toContain('# What the person confirmed');
+    expect(text).toContain('Needs identified: Google AdSense (ready)');
+    expect(text).toContain("# The person's original words\nad revenue thing for clients every week");
+    expect(text).toContain('the home of browser party games');
+    expect(text).toContain('# What Nucleas can do (job kinds)');
+    expect(text).toMatch(/not connected yet: .*Google AdSense/);
+    expect(designerPrompt('2026-10-29')).toContain('Use what Nucleas already does');
   });
 
   it('gives the answers back to the designer and recovers from a reply that is not a design', async () => {

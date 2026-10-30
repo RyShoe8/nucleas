@@ -14,6 +14,17 @@ import { companyTimeline, renderTimeline } from '@/lib/companies/activityLog';
 import { getRepoSnapshot } from '@/lib/ai/repo/snapshot';
 import { projectGuide } from '@/lib/ai/repo/projectGuide';
 import { DELIVERY_METHODS, jobDesignSchema, type JobDesign, type JobQuestion } from './schema';
+import { upstreamContext } from '@/lib/companies/upstreamContext';
+import { INTEGRATION_PROVIDERS } from '@/lib/integrations/providers';
+import { CAPABILITIES } from './understand';
+
+/** What the person confirmed in the understanding step: the designer builds exactly this. */
+export interface ConfirmedUnderstanding {
+  kind?: string;
+  summary?: string;
+  brief?: string;
+  needs?: { label: string; status: string; detail?: string }[];
+}
 
 /**
  * The job designer: before any work happens, Nucleas investigates the company (its repository,
@@ -43,6 +54,10 @@ export function designerPrompt(today: string): string {
     '- browser: only for websites with no API; logins and CAPTCHAs are always handed to a person.',
     'Put the exact destination and mechanism in delivery.detail and any one-time setup in delivery.setupSteps.',
     '',
+    '# Use what Nucleas already does',
+    'When part of the job is something Nucleas has a dedicated capability for (listed under "What Nucleas can do"), say so in findings and design around it instead of reinventing it: for example, collect emails with an inbox watch, publish through a publishing job. Say plainly in findings when a needed system has no connector yet, and which data points it would have to provide.',
+    'Stay consistent with the company overview and approved Marketing Plan when they are given: audience, positioning, topics to avoid.',
+    '',
     '# Hard rules',
     '- Never propose giving Nucleas database credentials, environment variables, admin passwords or broad API keys. Never propose direct database access.',
     '- Only legitimate methods: follow platform terms and search-engine guidelines; no paid or exchanged links, spam, fake accounts or reviews, scraping against terms, or bypassing CAPTCHAs or access controls. If the request needs something like that, redesign it the legitimate way and say so in findings.',
@@ -63,6 +78,8 @@ export interface DesignInput {
   /** Answers to earlier questions, and the design they refer to. */
   answers?: Record<string, { option?: string; text?: string }>;
   previous?: { design?: JobDesign | null; questions?: JobQuestion[] };
+  /** What the person confirmed before designing. */
+  understanding?: ConfirmedUnderstanding;
   signal?: AbortSignal;
   onProgress?: ProgressFn;
 }
@@ -90,10 +107,11 @@ export async function designJob(viewer: CompanyViewer, input: DesignInput): Prom
 
   // What Nucleas already knows about the company, gathered in code (cheap and exact).
   say(`Looking at ${profile.name}`);
-  const [connections, repo, recent] = await Promise.all([
+  const [connections, repo, recent, upstream] = await Promise.all([
     listCompanyConnections(viewer, input.companyId).catch(() => null),
     resolveCompanyRepository(viewer, input.companyId).catch(() => null),
     companyTimeline(viewer, input.companyId, { limit: 10 }).catch(() => null),
+    upstreamContext(viewer.organizationId, input.companyId).catch(() => ''),
   ]);
   let guide = '';
   if (repo) {
@@ -101,11 +119,16 @@ export async function designJob(viewer: CompanyViewer, input: DesignInput): Prom
     const snap = await getRepoSnapshot(org, repo.projectId).catch(() => null);
     if (snap?.ok) guide = projectGuide(snap.snapshot, 8000);
   }
-  const connected = (connections ?? []).filter((c) => c.status === 'connected').map((c) => c.providerName);
+  const connectedRows = (connections ?? []).filter((c) => c.status === 'connected');
+  const connected = connectedRows.map((c) => c.providerName);
+  const connectedIds = new Set(connectedRows.map((c) => c.provider));
+  const available = INTEGRATION_PROVIDERS.filter((p) => !connectedIds.has(p.id)).map((p) => p.name);
   const facts = [
     `Company: ${profile.name} (${profile.relationship}) — ${profile.domain ?? 'no production domain'}`,
     profile.description ? `About: ${profile.description}` : '',
     `Connected systems: ${connected.length ? connected.join(', ') : 'none'}`,
+    `Systems Nucleas can connect but are not connected yet: ${available.join(', ') || 'none'}`,
+    upstream ? `Upstream plans (the job must serve these):\n${upstream}` : 'Upstream plans: no completed Company Overview or approved Marketing Plan yet.',
     repo ? `Code repository: ${repo.repository.fullName} (search it with repo_search)` : 'Code repository: none connected',
     recent?.length ? `Recent changes:\n${renderTimeline(recent)}` : '',
     guide ? `Project guide:\n${guide}` : '',
@@ -119,12 +142,16 @@ export async function designJob(viewer: CompanyViewer, input: DesignInput): Prom
   const tools = await buildAssistantTools(viewer, [profile]);
   const projectId: Types.ObjectId = repo?.projectId ?? assistantLedgerProjectId(org);
   const today = new Date().toISOString().slice(0, 10);
+  const u = input.understanding;
   const userText = [
     `Design this job for ${profile.name}:`,
-    input.request,
+    u?.brief?.trim() || input.request,
+    u?.summary ? `\n# What the person confirmed\n${u.summary}${u.needs?.length ? `\nNeeds identified: ${u.needs.map((n) => `${n.label} (${n.status})`).join('; ')}` : ''}\nDesign exactly this. Do not ask again about anything it settles.` : '',
+    u?.brief && u.brief.trim() !== input.request.trim() ? `\n# The person's original words\n${input.request}` : '',
     input.previous?.design ? `\n\n# Your previous design\n${JSON.stringify({ ...input.previous.design, questions: undefined }).slice(0, 8000)}` : '',
     answersBlock(input),
     `\n\n# What Nucleas knows\n${facts}`,
+    `\n\n${CAPABILITIES}`,
   ].join('\n');
 
   let costMicros = 0;

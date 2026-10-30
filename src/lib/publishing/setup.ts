@@ -175,10 +175,11 @@ async function channelOptions(viewer: CompanyViewer, companyId: string, request:
   return out;
 }
 
-export async function planRequest(viewer: CompanyViewer, input: { companyId: string; request: string }, deps: SetupDeps = {}): Promise<PlanResult> {
+/** kind: what the understanding step already decided; without it the request's wording decides (older callers). */
+export async function planRequest(viewer: CompanyViewer, input: { companyId: string; request: string; kind?: RequestKind }, deps: SetupDeps = {}): Promise<PlanResult> {
   const request = input.request.trim();
-  if (request.length < 10 || request.length > 2000) return { ok: false, status: 400, error: 'Describe what you want in a sentence (10–2000 characters).' };
-  const kind = recognizeRequest(request);
+  if (request.length < 10 || request.length > 3000) return { ok: false, status: 400, error: 'Describe what you want in a sentence (10–3000 characters).' };
+  const kind = input.kind ?? recognizeRequest(request);
   if (kind !== 'social_publish' && kind !== 'admin_publish') return { ok: true, plan: { kind } };
   if (!isCompanyManager(viewer)) return { ok: false, status: 403, error: 'Only managers and administrators can set up publishing jobs.' };
   const profile = await getCompanyProfile(viewer, input.companyId);

@@ -159,7 +159,7 @@ export function registerOsModules(): void {
             minSize: { width: 460, height: 320 },
             canPopout: true,
             permissions: 'member',
-            render: (ctx) => createElement(JobsModule, { categories: ['marketing', 'outreach'], title: 'Marketing', initialCompanyId: ctx.payload?.companyId, initialKind: ctx.payload?.kind, initialView: ctx.payload?.view, initialWatchId: ctx.payload?.watchId }),
+            render: (ctx) => createElement(JobsModule, { categories: ['marketing', 'outreach'], title: 'Marketing', initialCompanyId: ctx.payload?.companyId, initialKind: ctx.payload?.kind, initialView: ctx.payload?.view, initialWatchId: ctx.payload?.watchId, initialWatchBrief: ctx.payload?.watchBrief }),
         },
         {
             id: 'content',

@@ -28,6 +28,7 @@ import { cancelPropertyOverviewForJob } from '@/lib/propertyOverview/crawler';
 import { initialRunLease } from './runLifecycle';
 import { editDelivery, markPosted, postDeliveryNow, publishingView, skipDelivery, takeBaseline, type PublishingView } from '@/lib/publishing/engine';
 import { createPublishingJob, updatePublishingSettings } from '@/lib/publishing/setup';
+import type { ConfirmedUnderstanding } from './designer';
 
 /**
  * Jobs: Nucleas designs them, a manager approves them (choosing review or automatic completion and
@@ -89,6 +90,7 @@ export interface JobView {
 
 type JobLean = {
   _id: Types.ObjectId;
+  understanding?: ConfirmedUnderstanding;
   organizationId: Types.ObjectId;
   companyId: Types.ObjectId;
   projectId?: Types.ObjectId;
@@ -236,7 +238,7 @@ export type CreateResult = { ok: true; job: JobView } | { ok: false; status: 400
 /** Creates a job from a request and designs it (Nucleas investigates, then designs or asks). */
 export async function createJob(
   viewer: CompanyViewer,
-  input: { companyId: string; request: string; level?: CostLevel; signal?: AbortSignal; onProgress?: ProgressFn; background?: boolean }
+  input: { companyId: string; request: string; level?: CostLevel; signal?: AbortSignal; onProgress?: ProgressFn; background?: boolean; understanding?: ConfirmedUnderstanding }
 ): Promise<CreateResult> {
   const request = input.request.trim();
   if (request.length < 10 || request.length > 6000) return { ok: false, status: 400, error: 'Describe the job in 10–6000 characters.' };
@@ -249,6 +251,7 @@ export async function createJob(
     createdByUserId: new Types.ObjectId(viewer.userId),
     status: 'designing',
     request,
+    ...(input.understanding ? { understanding: input.understanding } : {}),
     level,
     events: [event(viewer, 'requested')],
   });
@@ -313,6 +316,7 @@ export async function runDesign(viewer: CompanyViewer, jobId: string, options: {
   const result = await designJob(viewer, {
     companyId: String(job.companyId),
     request: job.request,
+    understanding: job.understanding,
     level: job.level ?? 'low',
     answers: job.answers,
     previous: previous.success ? { design: previous.data, questions: previous.data.questions } : undefined,

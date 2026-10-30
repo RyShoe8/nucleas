@@ -10,9 +10,10 @@ export const maxDuration = 60;
 export async function POST(request: NextRequest) {
   const viewer = await requireCompanyViewer(request);
   if (viewer instanceof NextResponse) return viewer;
-  const body = (await request.json().catch(() => ({}))) as { companyId?: unknown; request?: unknown };
+  const body = (await request.json().catch(() => ({}))) as { companyId?: unknown; request?: unknown; kind?: unknown };
   if (typeof body.companyId !== 'string' || typeof body.request !== 'string') return NextResponse.json({ error: 'companyId and request are required.' }, { status: 400 });
-  const result = await planRequest(viewer, { companyId: body.companyId, request: body.request });
+  const kind = body.kind === 'social_publish' || body.kind === 'admin_publish' ? body.kind : undefined;
+  const result = await planRequest(viewer, { companyId: body.companyId, request: body.request, kind });
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
   return NextResponse.json({ plan: result.plan }, { headers: { 'Cache-Control': 'no-store' } });
 }

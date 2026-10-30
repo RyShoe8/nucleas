@@ -8,6 +8,8 @@ import MarketingPlanEditor from './jobs/MarketingPlanEditor';
 import BrandAssetsPanel from './jobs/BrandAssetsPanel';
 import WatchesPanel from './content/WatchesPanel';
 import MarketingComposer from './jobs/MarketingComposer';
+import JobComposer from './jobs/JobComposer';
+import { useWindowManager } from '@/hooks/os/useWindowManager';
 import ReadyPostCard from './jobs/publishing/ReadyPostCard';
 import { ActivityRows, activityFor, useActivity } from './jobs/ActivityList';
 import ActionMenu from '@/components/ui/ActionMenu';
@@ -28,7 +30,17 @@ const GROUPS: Group[] = [
     { key: 'failed', label: 'Failed', test: (j) => j.status === 'failed' },
 ];
 
-function NewJob({ onCreated, onCancel, placeholder, initialCompanyId, initialKind, companyLocked = false }: { onCreated: (j: JobView) => void; onCancel?: () => void; placeholder: string; initialCompanyId?: string; initialKind?: string; companyLocked?: boolean }) {
+function NewJob({ onCreated, onCancel, placeholder, initialCompanyId, initialKind, companyLocked = false, onMarketingPlan, onInboxWatch }: {
+    onCreated: (j: JobView) => void;
+    onCancel?: () => void;
+    placeholder: string;
+    initialCompanyId?: string;
+    initialKind?: string;
+    companyLocked?: boolean;
+    /** Custom requests are understood first; these handle the kinds that are set up elsewhere. */
+    onMarketingPlan?: (companyId: string) => void;
+    onInboxWatch?: (companyId: string, brief: string) => void;
+}) {
     const { companies } = useOsCompanies();
     const [companyId, setCompanyId] = useState(initialCompanyId ?? '');
     const [request, setRequest] = useState('');
@@ -90,6 +102,32 @@ function NewJob({ onCreated, onCancel, placeholder, initialCompanyId, initialKin
         onCreated(body.job);
         window.dispatchEvent(new Event('nucleas:jobs-changed'));
     };
+    if (kind === 'custom') {
+        const name = (companies ?? []).find((c) => c.id === companyId)?.name ?? 'this company';
+        return (
+            <div className="space-y-2">
+                {!companyLocked ? (
+                    <select value={companyId} onChange={(e) => setCompanyId(e.target.value)} className="ui-control" aria-label="Company">
+                        <option value="">Company…</option>
+                        {(companies ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                ) : null}
+                {companyId ? (
+                    <JobComposer
+                        key={companyId}
+                        companyId={companyId}
+                        companyName={name}
+                        placeholder={placeholder}
+                        onCreated={onCreated}
+                        onMarketingPlan={() => onMarketingPlan?.(companyId)}
+                        onInboxWatch={(brief) => onInboxWatch?.(companyId, brief)}
+                        renderLinkBuilding={(done) => <NewJob placeholder={placeholder} initialCompanyId={companyId} initialKind="link_building" companyLocked onCancel={done} onCreated={(j) => { done(); onCreated(j); }} />}
+                    />
+                ) : <p className="text-xs text-text-secondary">Choose the company this job is for.</p>}
+                {onCancel ? <button type="button" onClick={onCancel} className="ui-button">Cancel</button> : null}
+            </div>
+        );
+    }
     return (
         <div className="ui-card p-4 space-y-4">
             <div className="flex gap-2">
@@ -110,7 +148,7 @@ function NewJob({ onCreated, onCancel, placeholder, initialCompanyId, initialKin
                     {kind === 'link_building' ? 'Link building: uses the company’s approved Marketing Plan to reject irrelevant opportunities.' : 'Describe the work; Nucleas investigates, asks what it must, and designs it for your approval.'}
                 </span>
             </div>
-            {kind !== 'custom' && projects.length > 1 ? <label className="block space-y-1"><span className="ui-kicker">Website or project</span><select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="ui-control w-full" aria-label="Website or project"><option value="">Choose a website or project…</option>{projects.map((p) => <option key={p.projectId} value={p.projectId}>{p.projectName}</option>)}</select></label> : null}
+            {projects.length > 1 ? <label className="block space-y-1"><span className="ui-kicker">Website or project</span><select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="ui-control w-full" aria-label="Website or project"><option value="">Choose a website or project…</option>{projects.map((p) => <option key={p.projectId} value={p.projectId}>{p.projectName}</option>)}</select></label> : null}
             {kind === 'link_building' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
                     <label className="space-y-1"><span className="text-text-secondary">Frequency</span><select value={frequency} onChange={(e) => setFrequency(e.target.value as typeof frequency)} className="ui-control block w-full"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
@@ -128,7 +166,7 @@ function NewJob({ onCreated, onCancel, placeholder, initialCompanyId, initialKin
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
             <button
                 type="button"
-                disabled={busy || !companyId || (kind === 'link_building' && !projectId) || (kind === 'custom' && request.trim().length < 10)}
+                disabled={busy || !companyId || !projectId}
                 onClick={() => void create()}
                 className="ui-button-primary"
             >
@@ -158,7 +196,7 @@ function MarketingOverview({ companyId, busy, error, onGenerate }: { companyId: 
  * Jobs: non-code work Nucleas designs and runs for each company. The Marketing and Content windows
  * are this view filtered to their categories.
  */
-export default function JobsModule({ categories, title = 'Jobs', initialCompanyId, initialKind, initialView, initialWatchId }: { categories?: string[]; title?: string; initialCompanyId?: string; initialKind?: string; initialView?: string; initialWatchId?: string }) {
+export default function JobsModule({ categories, title = 'Jobs', initialCompanyId, initialKind, initialView, initialWatchId, initialWatchBrief }: { categories?: string[]; title?: string; initialCompanyId?: string; initialKind?: string; initialView?: string; initialWatchId?: string; /** Open Inboxes with a new rule filled from a request understood elsewhere. */ initialWatchBrief?: string }) {
     const { companies: osCompanies } = useOsCompanies();
     const [jobs, setJobs] = useState<JobView[] | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -167,7 +205,10 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
     const [showOverview, setShowOverview] = useState(initialKind === 'marketing_plan');
     const [showAssets, setShowAssets] = useState(false);
     // Marketing only: the mailboxes and watches that feed its inbox jobs.
-    const [showInboxes, setShowInboxes] = useState(initialView === 'inboxes');
+    const [showInboxes, setShowInboxes] = useState(initialView === 'inboxes' || Boolean(initialWatchBrief));
+    // A request understood as an inbox rule or digest opens a new rule already filled in.
+    const [watchBrief, setWatchBrief] = useState<string | null>(initialWatchBrief ?? null);
+    const wm = useWindowManager();
     const [open, setOpen] = useState<string | null>(null);
     const marketing = title === 'Marketing';
     const [creating, setCreating] = useState(Boolean(initialCompanyId && initialKind && initialKind !== 'marketing_plan'));
@@ -296,7 +337,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
 
             {showInboxes && title === 'Marketing' ? (
                 <div className="flex-1 overflow-y-auto">
-                    <WatchesPanel initialWatchId={initialWatchId} companyId={company === 'all' ? undefined : company} />
+                    <WatchesPanel key={watchBrief ?? 'inboxes'} initialWatchId={initialWatchId} companyId={company === 'all' ? undefined : company} newWatchBrief={watchBrief ?? undefined} />
                 </div>
             ) : null}
 
@@ -326,7 +367,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                         {linkBuilding ? (
                             <NewJob placeholder={placeholder} initialCompanyId={company} initialKind="link_building" companyLocked onCancel={() => setLinkBuilding(false)} onCreated={(j) => { setLinkBuilding(false); created(j); }} />
                         ) : (
-                            <MarketingComposer key={company} companyId={company} companyName={companyName} onCreated={created} onMarketingPlan={() => void generatePlan()} renderLinkBuilding={(done) => <NewJob placeholder={placeholder} initialCompanyId={company} initialKind="link_building" companyLocked onCancel={done} onCreated={(j) => { done(); created(j); }} />} />
+                            <MarketingComposer key={company} companyId={company} companyName={companyName} onCreated={created} onMarketingPlan={() => void generatePlan()} onInboxWatch={(brief) => { setWatchBrief(brief); setShowAssets(false); setShowOverview(false); setShowInboxes(true); }} renderLinkBuilding={(done) => <NewJob placeholder={placeholder} initialCompanyId={company} initialKind="link_building" companyLocked onCancel={done} onCreated={(j) => { done(); created(j); }} />} />
                         )}
                     </div>
                 ) : null}
@@ -342,6 +383,8 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                             setCreating(false);
                             created(j);
                         }}
+                        onMarketingPlan={(companyId) => wm.open('marketing', { payload: { companyId, kind: 'marketing_plan' } })}
+                        onInboxWatch={(companyId, brief) => wm.open('marketing', { payload: { companyId, view: 'inboxes', watchBrief: brief } })}
                     />
                 ) : null}
                 {inView.length === 0 && !creating && !marketing && !(['you', 'working', 'set', 'failed'] as const).some((g) => activityFor(activity, g, company, categories).length) ? (

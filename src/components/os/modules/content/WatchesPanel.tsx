@@ -12,11 +12,11 @@ const ago = (iso: string | null) => {
 };
 
 /** Watches: pick a mailbox, say what to flag, and see the emails that qualify. */
-export default function WatchesPanel({ initialWatchId, companyId }: { initialWatchId?: string; companyId?: string } = {}) {
+export default function WatchesPanel({ initialWatchId, companyId, newWatchBrief }: { initialWatchId?: string; companyId?: string; /** Open a new rule already filled with this request. */ newWatchBrief?: string } = {}) {
     const [watches, setWatches] = useState<WatchView[] | null>(null);
     const [mailboxes, setMailboxes] = useState<MailboxView[]>([]);
     const [error, setError] = useState<string | null>(null);
-    const [editing, setEditing] = useState<WatchView | 'new' | null>(null);
+    const [editing, setEditing] = useState<WatchView | 'new' | null>(newWatchBrief ? 'new' : null);
     const [selected, setSelected] = useState<string | null>(initialWatchId ?? null);
     const openedInitial = useRef(false);
     const [reload, setReload] = useState(0);
@@ -95,6 +95,7 @@ export default function WatchesPanel({ initialWatchId, companyId }: { initialWat
                         key={editing === 'new' ? 'new' : editing.id}
                         watch={editing === 'new' ? undefined : editing}
                         initialCompanyId={companyId}
+                        initialBrief={editing === 'new' ? newWatchBrief : undefined}
                         mailboxes={mailboxes}
                         onCancel={() => setEditing(null)}
                         onSaved={(w) => {
