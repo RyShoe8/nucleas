@@ -26,7 +26,7 @@ import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import { PROPERTY_OVERVIEW_QUEUE_OWNER } from '@/lib/propertyOverview/job';
 import { cancelPropertyOverviewForJob } from '@/lib/propertyOverview/crawler';
 import { initialRunLease } from './runLifecycle';
-import { editDelivery, markPosted, postDeliveryNow, publishingView, skipDelivery, takeBaseline, type PublishingView } from '@/lib/publishing/engine';
+import { editDelivery, markPosted, postDeliveryNow, publishingView, refillAdminDelivery, skipDelivery, takeBaseline, type PublishingView } from '@/lib/publishing/engine';
 import { createPublishingJob, updatePublishingSettings } from '@/lib/publishing/setup';
 import type { ConfirmedUnderstanding } from './designer';
 
@@ -543,7 +543,7 @@ export async function createPublishing(viewer: CompanyViewer, raw: unknown): Pro
   return approveJob(viewer, created.jobId, { completion: 'automatic' });
 }
 
-export type PublishingAction = 'publishing_settings' | 'mark_posted' | 'skip_post' | 'edit_post' | 'post_now';
+export type PublishingAction = 'publishing_settings' | 'mark_posted' | 'skip_post' | 'edit_post' | 'post_now' | 'refill_post';
 
 /**
  * Settings are for managers. Anyone who can see the job may handle its ready-to-post cards: they are the
@@ -559,6 +559,7 @@ export async function publishingAction(viewer: CompanyViewer, id: string, action
     action === 'publishing_settings' ? await retryIdempotentWrite('publishing.settings', () => updatePublishingSettings(viewer, found.job, body.settings))
     : action === 'mark_posted' ? await markPosted(found.job, deliveryId, viewer.userId, typeof body.postedUrl === 'string' ? body.postedUrl : undefined)
     : action === 'skip_post' ? await skipDelivery(found.job, deliveryId, viewer.userId)
+    : action === 'refill_post' ? await refillAdminDelivery(found.job, deliveryId)
       : action === 'edit_post' ? await editDelivery(found.job, deliveryId, { title: typeof body.title === 'string' ? body.title : undefined, body: typeof body.body === 'string' ? body.body : undefined, values: body.values })
     : await postDeliveryNow(found.job, deliveryId, viewer.userId);
   if (!result.ok) return result;

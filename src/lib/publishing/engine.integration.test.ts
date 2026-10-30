@@ -20,7 +20,7 @@ import User from '@/lib/models/User';
 import { WatchItem } from '@/lib/models/Watch';
 import type { AdminBrowser } from './admin';
 import { PublishError } from './publishers';
-import { queueExistingAdminItem, editDelivery, markPosted, postDeliveryNow, publishingView, recoverStuckDeliveries, runPublishing, skipDelivery, takeBaseline, type PublishDeps } from './engine';
+import { queueExistingAdminItem, refillAdminDelivery, editDelivery, markPosted, postDeliveryNow, publishingView, recoverStuckDeliveries, runPublishing, skipDelivery, takeBaseline, type PublishDeps } from './engine';
 import type { PublishingConfig } from './config';
 import { redditDealBlock } from './redditDeals';
 
@@ -332,6 +332,28 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
     expect(saved.map((v) => [v.status, v.facebook, v.bluesky])).toEqual([
       ['published', false, false], ['published', false, false], ['published', true, true],
     ]);
+  });
+
+  it('says why a review card has no values, and fills it in again on request', async () => {
+    const job = await adminJob();
+    await Job.updateOne({ _id: job._id }, { $set: { 'publishing.channels': [{ platform: 'admin', mode: 'manual' }] } });
+    const current = (await Job.findById(job._id).lean())!;
+    await takeBaseline(current, adminDeps());
+    await email('promo@example.com', 'Limited-Time Steal: 60 FREE SC for $40', 40, 60);
+    await runPublishing(await newRun(job._id, false), 'owner', current, { ...adminDeps(), write: async () => null });
+    const card = await PublishDelivery.findOne({ jobId: job._id, platform: 'admin' }).lean();
+    expect(card).toMatchObject({ status: 'ready', error: expect.stringContaining('could not fill in the form values') });
+    expect(Object.keys(card?.values ?? {})).toEqual([]);
+    expect(card?.body).toContain('Limited-Time Steal');
+    expect((await publishingView((await Job.findById(job._id).lean())!))?.ready[0]).toMatchObject({ fields: [], error: expect.stringContaining('Fill it in again') });
+    expect(saved).toEqual([]);
+
+    expect(await refillAdminDelivery(job.toObject(), String(card!._id), adminDeps())).toEqual({ ok: true });
+    const refilled = await PublishDelivery.findById(card!._id).lean();
+    expect(refilled?.values).toMatchObject({ casino: 'Golden Hearts' });
+    expect(refilled?.error).toBeUndefined();
+    expect(saved).toEqual([]);
+    expect(await refillAdminDelivery(job.toObject(), String(card!._id), { ...adminDeps(), write: async () => null })).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('could not fill in') });
   });
 
   it('saves reviewed admin values and posts those edits without regenerating them', async () => {

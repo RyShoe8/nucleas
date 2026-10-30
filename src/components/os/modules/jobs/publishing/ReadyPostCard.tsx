@@ -100,7 +100,15 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
                                     : <input className="ui-control w-full" type={['number', 'date', 'datetime-local', 'time', 'url', 'email', 'tel'].includes(field.type) ? field.type : 'text'} step={field.type === 'number' ? 'any' : undefined} required={field.required} value={String(fieldValues[field.key] ?? '')} onChange={event => setFieldValues({ ...fieldValues, [field.key]: event.target.value })} />}
                     </label>)}
                     <div className="flex gap-2"><button type="submit" className="ui-button-primary" disabled={busy !== null}>{busy === 'edit' ? 'Saving…' : 'Save changes'}</button><button type="button" className="ui-button" disabled={busy !== null} onClick={() => setEditing(false)}>Cancel</button></div>
-                </form> : <dl className="divide-y divide-border rounded border border-border">
+                </form> : !delivery.fields?.length ? (
+                    // No form values: show what the deal is, and offer to fill them again or by hand.
+                    <div className="space-y-2">
+                        {!delivery.error ? <p className="rounded border border-amber-400/40 bg-amber-400/5 p-2 text-xs text-amber-300">Nucleas has not filled in the form values for this deal yet.</p> : null}
+                        {delivery.body ? <p className="whitespace-pre-wrap break-words rounded bg-background-elevated/50 p-2 text-xs leading-relaxed">{delivery.body}</p> : null}
+                        {delivery.link ? <a href={delivery.link} target="_blank" rel="noreferrer" className="block break-all text-xs text-primary underline">{delivery.link}</a> : null}
+                        <button type="button" className="ui-button-primary" disabled={busy !== null} onClick={() => void run('refill', { action: 'refill_post' })}>{busy === 'refill' ? 'Filling it in…' : 'Fill it in again'}</button>
+                    </div>
+                ) : <dl className="divide-y divide-border rounded border border-border">
                     {(delivery.fields ?? []).map((f) => (
                         <div key={f.label} className="flex items-start gap-3 px-2 py-1.5">
                             <dt className="w-32 shrink-0 text-xs text-text-secondary">{f.label}</dt>

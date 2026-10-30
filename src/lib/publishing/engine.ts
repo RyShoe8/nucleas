@@ -197,9 +197,16 @@ async function approvedPersona(job: JobLike): Promise<string | null> {
   return voice?.persona?.trim() || null;
 }
 
-function engineWriter(job: JobLike): Writer {
+/** failures: each model that gave no answer and why, so a card can say why it could not be filled. */
+function engineWriter(job: JobLike, failures?: string[]): Writer {
   return async ({ system, user, maxTokens }) =>
-    (await askEngine({ organizationId: String(job.organizationId), userId: String(job.createdByUserId), need: 'write', level: job.level ?? undefined, system, user, maxTokens, signal: AbortSignal.timeout(60_000) }))?.text ?? null;
+    (await askEngine({
+      organizationId: String(job.organizationId), userId: String(job.createdByUserId), need: 'write', level: job.level ?? undefined, system, user, maxTokens, signal: AbortSignal.timeout(60_000),
+      onFailure: (f) => {
+        console.error(`[publishing] job ${job._id} model gave no answer: ${f.model}: ${f.reason}`);
+        failures?.push(`${f.model}: ${f.reason}`.slice(0, 300));
+      },
+    }))?.text ?? null;
 }
 
 /** When no model can write, a plain post from the facts still lets a person post it (never auto-posted). */
@@ -217,11 +224,20 @@ interface Prepared {
   problem?: string;
 }
 
-type DraftContext = { companyName: string; persona: string | null; subreddit: string | null; strategy?: string };
+type DraftContext = { companyName: string; persona: string | null; subreddit: string | null; strategy?: string; /** Why model calls gave no answer, for card messages. */ failures?: string[] };
 
-async function prepareAdmin(target: AdminTarget, config: PublishingConfig, facts: ItemFacts, context: DraftContext, write: Writer): Promise<Prepared> {
+async function prepareAdmin(target: AdminTarget, config: PublishingConfig, facts: ItemFacts, context: DraftContext, write: Writer, failures?: string[]): Promise<Prepared> {
+  const before = failures?.length ?? 0;
   const filled = await fillValues(target, { title: facts.title, description: facts.description, extra: facts.extra, link: facts.link }, { companyName: context.companyName, noun: config.source.noun, brief: config.brief, persona: context.persona }, write);
-  if (!filled) return { draft: { title: null, body: `${facts.title}\n\n${facts.description}`.trim() }, written: false, values: {}, problem: 'Nucleas could not fill the form, so it was not added automatically. Add it by hand.' };
+  if (!filled) {
+    const why = failures && failures.length > before ? ` (${failures.slice(before).join(' · ')})` : ' (the model’s answer could not be read)';
+    return {
+      draft: { title: null, body: [facts.title, facts.description, ...facts.extra, facts.link ?? ''].filter(Boolean).join('\n').trim() },
+      written: false,
+      values: {},
+      problem: `Nucleas could not fill in the form values${why}. Use “Fill it in again”, or Edit deal to enter them.`.slice(0, 1000),
+    };
+  }
   filled.values = applyAdminFieldRules(config, filled.values, facts.dealValuePct, facts.link);
   if (config.adminDefaultEndDays) filled.values = withDefaultEndDate(target.fields, filled.values, config.adminDefaultEndDays);
   filled.unfilled = target.fields.filter((f) => f.required && f.type !== 'file' && (filled.values[f.key] === undefined || filled.values[f.key] === '')).map((f) => f.label || f.key);
@@ -238,7 +254,7 @@ async function draftAll(job: JobLike, config: PublishingConfig, facts: ItemFacts
   const out = new Map<PublishPlatform, Prepared>();
   for (const channel of config.channels) {
     if (channel.platform === 'admin') {
-      if (config.admin) out.set('admin', await prepareAdmin(config.admin, config, facts, context, write));
+      if (config.admin) out.set('admin', await prepareAdmin(config.admin, config, facts, context, write, context.failures));
       continue;
     }
     const draft = await composePost(
@@ -511,8 +527,9 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
   const persona = await approvedPersona(job);
   // Social posts must sound like the brand; admin records use the Voice for descriptions when there is one.
   if (!persona && config.channels.some((c) => (SOCIAL_PLATFORMS as readonly string[]).includes(c.platform))) return fail(`Approve ${profile.name}’s Voice first, so posts sound like the brand.`);
-  const write = deps.write ?? engineWriter(job);
-  const context = { companyName: profile.name, persona, subreddit: profile.subreddit ?? null, strategy: await upstreamContext(job.organizationId, job.companyId).catch(() => '') };
+  const writeFailures: string[] = [];
+  const write = deps.write ?? engineWriter(job, writeFailures);
+  const context = { companyName: profile.name, persona, subreddit: profile.subreddit ?? null, strategy: await upstreamContext(job.organizationId, job.companyId).catch(() => ''), failures: writeFailures };
   const noun = config.source.noun;
 
   await progress(run._id, owner, `Checking for new ${noun}s`, 'preparing', 10);
@@ -697,7 +714,8 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
         ...(facts.link ? { link: facts.link } : {}),
         assets: channel.platform === 'admin' ? [] : assetsOf(facts),
         ...(prepared.values ? { values: prepared.values } : {}),
-        ...(channel.mode === 'auto' && !written ? { error: prepared.problem ?? 'Nucleas could not write this post, so it was not posted automatically. Check it and post it by hand.' } : {}),
+        // The reason is kept for review cards too, so a card is never silently empty.
+        ...(!written ? { error: prepared.problem ?? (channel.mode === 'auto' ? 'Nucleas could not write this post, so it was not posted automatically. Check it and post it by hand.' : 'No model wrote this, so it shows the plain facts. Check it before posting.') } : {}),
       });
       if (!auto) {
         ready.push(`${PLATFORM_LABEL[channel.platform]}: ${facts.title}`);
@@ -1036,4 +1054,38 @@ export async function queueExistingAdminItem(viewer: CompanyViewer, itemId: stri
   await PublishItem.updateOne({ _id: stored._id }, { $set: { status: 'processed', facts: { title: facts.title, description: facts.description }, title: facts.title } });
   await PublishDelivery.updateOne({ itemId: stored._id, platform: 'admin' }, { $setOnInsert: { organizationId: job.organizationId, companyId: job.companyId, jobId: job._id, itemId: stored._id, platform: 'admin', mode: 'manual', status: 'ready', body: prepared.draft.body, values: prepared.values ?? {}, ...(facts.link ? { link: facts.link } : {}), ...(prepared.problem ? { error: prepared.problem } : {}) } }, { upsert: true });
   return { jobId: String(job._id), status: 'ready' };
+}
+
+/**
+ * "Fill it in again": rereads the item's facts and fills an admin card's form values with a fresh model
+ * call. Only for cards still waiting for a person; never submits the form. When it fails again the card
+ * says why (which model, what went wrong).
+ */
+export async function refillAdminDelivery(job: JobLike, deliveryId: string, deps: PublishDeps = {}): Promise<DeliveryResult> {
+  const filter = deliveryFilter(job, deliveryId);
+  if (!filter) return { ok: false, status: 404, error: 'Card not found.' };
+  const delivery = await PublishDelivery.findOne({ ...filter, status: 'ready' }).lean();
+  if (!delivery || delivery.platform !== 'admin') return { ok: false, status: 409, error: 'This admin card was already handled or is unavailable.' };
+  const currentJob = await Job.findOne({ _id: job._id, organizationId: job.organizationId }).lean<JobLike>();
+  const config = currentJob ? readConfig(currentJob) : null;
+  if (!currentJob || !config?.admin) return { ok: false, status: 400, error: 'This job’s admin form settings are missing. Set the job up again.' };
+  const item = await PublishItem.findOne({ _id: delivery.itemId, organizationId: job.organizationId }).lean<{ key: string; url?: string; title?: string; createdAt?: Date }>();
+  if (!item) return { ok: false, status: 404, error: 'The email or page this card came from is no longer available.' };
+  const viewer = await loadCompanyViewer(String(currentJob.createdByUserId));
+  const profile = viewer ? await getCompanyProfile(viewer, String(currentJob.companyId)) : null;
+  if (!profile) return { ok: false, status: 404, error: 'The company is no longer accessible.' };
+  const facts = await factsFor(currentJob, config, { key: item.key, url: item.url ?? null, title: item.title ?? delivery.title ?? '', date: item.createdAt ?? null }, deps);
+  const failures: string[] = [];
+  const prepared = await prepareAdmin(config.admin, config, facts, { companyName: profile.name, persona: await approvedPersona(currentJob), subreddit: null }, deps.write ?? engineWriter(currentJob, failures), failures);
+  const filled = Boolean(prepared.values && Object.keys(prepared.values).length);
+  console.info(`[publishing] job ${job._id} refilled admin card ${deliveryId}: ${filled ? `${Object.keys(prepared.values!).length} values` : 'no values'}${prepared.problem ? ` (${prepared.problem})` : ''}`);
+  const done = await PublishDelivery.updateOne(
+    { ...filter, status: 'ready' },
+    {
+      $set: { body: prepared.draft.body, ...(filled ? { values: prepared.values } : {}), ...(prepared.problem ? { error: prepared.problem } : {}) },
+      $unset: { screenshot: '', ...(prepared.problem ? {} : { error: '' }) },
+    }
+  );
+  if (!done.matchedCount) return { ok: false, status: 409, error: 'This admin card was handled while it was being filled.' };
+  return filled ? { ok: true } : { ok: false, status: 409, error: prepared.problem ?? 'Nucleas still could not fill in the values.' };
 }

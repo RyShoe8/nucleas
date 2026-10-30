@@ -139,6 +139,7 @@ async function performAction(request: NextRequest, { params }: Context) {
     case 'skip_post':
     case 'edit_post':
     case 'post_now':
+    case 'refill_post':
       result = await publishingAction(viewer, id, body.action, body as Record<string, unknown>);
       break;
     default:
