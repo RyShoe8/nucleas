@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { eventRoundupSource, roundupFromEvents, resolveEventInstaller } from './eventRoundup';
+import { eventGameLink, eventRoundupSource, roundupFromEvents } from './eventRoundup';
 import { composePost } from './compose';
 import { nextScheduledAt } from '@/lib/jobs/schedule';
 
@@ -50,14 +50,6 @@ it('preserves the complete weekly request and schedules inside the Monday window
   expect(nextScheduledAt(schedule, new Date('2026-10-29T16:00:00Z'), () => 0.999)?.toISOString()).toBe('2026-11-02T20:00:00.000Z');
 });
 
-it('requires the exact edition download and rejects a storefront or a different edition', () => {
-  const raw = { game: { slug: 'openra' }, editions: [{ slug: 'official', isDefault: true, installMethod: 'official_download', installConfig: { official_download: { url: 'https://downloads.example/openra.exe' } } }] };
-  expect(resolveEventInstaller(raw, 'openra', 'official')).toBe('https://downloads.example/openra.exe');
-  expect(resolveEventInstaller(raw, 'openra', 'community')).toBeNull();
-  expect(resolveEventInstaller(raw, 'other-game', 'official')).toBeNull();
-  raw.editions[0].installConfig.official_download.url = 'https://store.example/openra';
-  expect(resolveEventInstaller(raw, 'openra', 'official')).toBeNull();
-});
 
 it.each(['facebook', 'reddit'] as const)('requires every event and install URL on %s', async platform => {
   const requiredLinks = ['https://playbound.club/events/aaaaaaaaaaaaaaaaaaaaaaaa', 'https://downloads.example/openra.exe'];
@@ -67,4 +59,28 @@ it.each(['facebook', 'reddit'] as const)('requires every event and install URL o
   expect(await composePost(input, async () => JSON.stringify({ ...draft, body: 'See https://playbound.club/events' }))).toBeNull();
   expect(await composePost({ ...input, platform: 'bluesky' }, async () => JSON.stringify({ body: `Game Nights This Week ${input.link}` }))).toMatchObject({ body: `Game Nights This Week ${input.link}` });
   expect(await composePost({ ...input, platform: 'bluesky' }, async () => JSON.stringify(draft))).toBeNull();
+});
+
+describe('the page a Game Night post links for its game', () => {
+  const site = 'https://playbound.club/api/events?type=game_night';
+  const raw = { game: { slug: 'star-wars-galactic-battlegrounds-saga' }, editions: [
+    { slug: 'official', isDefault: true, status: 'active' },
+    { slug: 'expanding-fronts', name: 'Expanding Fronts', isDefault: false, status: 'active' },
+    { slug: 'beta', isDefault: false, status: 'coming_soon' },
+  ] };
+
+  it('links the game page for the base game, whatever its install method', () => {
+    expect(eventGameLink(raw, 'star-wars-galactic-battlegrounds-saga', null, site)).toEqual({ ok: true, url: 'https://playbound.club/games/star-wars-galactic-battlegrounds-saga', edition: null });
+    expect(eventGameLink(raw, 'star-wars-galactic-battlegrounds-saga', 'official', site)).toEqual({ ok: true, url: 'https://playbound.club/games/star-wars-galactic-battlegrounds-saga', edition: null });
+  });
+
+  it('links the edition page for a named edition, never a file', () => {
+    expect(eventGameLink(raw, 'star-wars-galactic-battlegrounds-saga', 'expanding-fronts', site)).toEqual({ ok: true, url: 'https://playbound.club/games/star-wars-galactic-battlegrounds-saga/editions/expanding-fronts', edition: 'Expanding Fronts' });
+  });
+
+  it('refuses an edition the game does not have or that is not out, and a different game', () => {
+    expect(eventGameLink(raw, 'star-wars-galactic-battlegrounds-saga', 'community', site)).toMatchObject({ ok: false, problem: expect.stringContaining('“community”') });
+    expect(eventGameLink(raw, 'star-wars-galactic-battlegrounds-saga', 'beta', site)).toMatchObject({ ok: false, problem: expect.stringContaining('not available yet') });
+    expect(eventGameLink(raw, 'other-game', null, site)).toMatchObject({ ok: false });
+  });
 });

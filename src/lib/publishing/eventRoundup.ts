@@ -62,30 +62,33 @@ export async function readEventRoundup(source: Extract<PublishSource, { type: 's
   const roundup = roundupFromEvents(JSON.parse(response.text), source, now);
   if (!roundup || !source.roundup?.installLinks) return roundup;
   for (const event of roundup.events) {
-    if (!event.gameSlug) throw new Error(`No game is assigned to ${event.title}; its install file cannot be verified.`);
+    if (!event.gameSlug) throw new Error(`No game is assigned to ${event.title}; Nucleas cannot tell which game to link.`);
     const response = await fetchPublicText(new URL(`/api/games/${encodeURIComponent(event.gameSlug)}/editions`, source.feedUrl).href, { accept: 'application/json', fetcher });
-    const url = resolveEventInstaller(JSON.parse(response.text), event.gameSlug, event.editionSlug);
-    if (!url) throw new Error(`No direct install file is verified for ${event.title} (${event.editionSlug ?? 'default edition'}). Add the correct file to the edition before publishing this roundup.`);
-    roundup.requiredLinks!.push(url);
-    roundup.text += `\nInstall file for ${event.title}: ${url}`;
+    const link = eventGameLink(JSON.parse(response.text), event.gameSlug, event.editionSlug, source.feedUrl);
+    if (!link.ok) throw new Error(`${event.title}: ${link.problem}`);
+    roundup.requiredLinks!.push(link.url);
+    roundup.text += `\n${link.edition ? `Edition page (${link.edition})` : 'Game page'} for ${event.title}: ${link.url}`;
   }
   return roundup;
 }
 
-/** Never substitute the base game's download for a requested edition or use a store page as a file. */
-export function resolveEventInstaller(raw: unknown, gameSlug: string, editionSlug?: string | null): string | null {
-  const parsed = z.object({ game: z.object({ slug: z.string() }), editions: z.array(z.object({
-    slug: z.string(), isDefault: z.boolean().optional(), status: z.string().optional(),
-    installMethod: z.string(), installConfig: z.record(z.unknown()),
-  })) }).safeParse(raw);
-  if (!parsed.success || parsed.data.game.slug !== gameSlug) return null;
-  const matches = parsed.data.editions.filter(e => editionSlug ? e.slug === editionSlug : e.isDefault);
-  if (matches.length !== 1) return null;
-  const edition = matches[0];
-  if (['archived', 'coming_soon'].includes(edition.status ?? '')) return null;
-  const config = z.object({ url: z.string().url(), kind: z.string().optional(), enabled: z.boolean().optional() }).safeParse(edition.installConfig[edition.installMethod]);
-  if (!config.success || config.data.enabled === false) return null;
-  if (edition.installMethod === 'playbound_installer' ? config.data.kind !== 'direct-zip' : !['official_download', 'external_installer'].includes(edition.installMethod)) return null;
-  const url = new URL(config.data.url);
-  return url.protocol === 'https:' && !url.username && !url.password && /\.(?:exe|msi|zip|7z|dmg|pkg|appimage|deb|rpm|tar\.gz)$/i.test(url.pathname) ? url.href : null;
+export type EventGameLink = { ok: true; url: string; /** The edition's name when the event names a non-default edition. */ edition: string | null } | { ok: false; problem: string };
+
+/**
+ * The PlayBound page a Game Night post links for its game: the game's page for the base game, or the
+ * edition's page when the event names another edition. The page explains how to install it; posts never
+ * link install files. A named edition the game does not have, or one that is archived or not out yet,
+ * is a problem to fix on the event: Nucleas never links a different edition.
+ */
+export function eventGameLink(raw: unknown, gameSlug: string, editionSlug: string | null | undefined, siteUrl: string): EventGameLink {
+  const parsed = z.object({ game: z.object({ slug: z.string() }), editions: z.array(z.object({ slug: z.string(), name: z.string().optional(), title: z.string().optional(), isDefault: z.boolean().optional(), status: z.string().optional() })) }).safeParse(raw);
+  if (!parsed.success || parsed.data.game.slug !== gameSlug) return { ok: false, problem: `PlayBound did not return the game “${gameSlug}”. Check the game assigned to this event.` };
+  const gamePage = new URL(`/games/${encodeURIComponent(gameSlug)}`, siteUrl).href;
+  if (!editionSlug) return { ok: true, url: gamePage, edition: null };
+  const edition = parsed.data.editions.find((e) => e.slug === editionSlug);
+  if (!edition) return { ok: false, problem: `this event names the edition “${editionSlug}”, which the game does not have. Pick the right edition on the event, or leave it empty for the base game.` };
+  if (['archived', 'coming_soon'].includes(edition.status ?? '')) return { ok: false, problem: `the “${editionSlug}” edition is ${edition.status === 'archived' ? 'archived' : 'not available yet'} on PlayBound.` };
+  // The default edition is the base game: its page is the game's own page.
+  if (edition.isDefault) return { ok: true, url: gamePage, edition: null };
+  return { ok: true, url: new URL(`/games/${encodeURIComponent(gameSlug)}/editions/${encodeURIComponent(editionSlug)}`, siteUrl).href, edition: edition.name ?? edition.title ?? editionSlug };
 }

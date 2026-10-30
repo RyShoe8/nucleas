@@ -139,8 +139,9 @@ export function checkedNeeds(kind: JobKind, facts: Pick<CompanyFacts, 'hasDomain
 
 function mergeNeeds(model: Understanding['needs'], checked: Understanding['needs']): Understanding['needs'] {
   const key = (label: string) => label.toLowerCase().replace(/[^a-z]+/g, ' ').trim();
-  const checkedKeys = new Set(checked.map((n) => key(n.label)));
-  return [...checked, ...model.filter((n) => !checkedKeys.has(key(n.label)))].slice(0, 10);
+  const checkedKeys = checked.map((n) => key(n.label));
+  // "Approved Brand Voice" repeats the checked "Brand Voice": the checked one wins.
+  return [...checked, ...model.filter((n) => !checkedKeys.some((k) => key(n.label).includes(k)))].slice(0, 10);
 }
 
 function answersText(answers: Answers | undefined, previous: Pick<Understanding, 'questions'> | undefined): string {
