@@ -169,7 +169,8 @@ export default function FloatingWindow({ window: w, module, children }: Floating
                 </WindowButton>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-auto bg-background text-text-primary">
+            {/* touch-comfort: 44px targets and 16px fields on phones and touch screens (globals.css). */}
+            <div className="touch-comfort flex-1 min-h-0 overflow-auto overscroll-contain bg-background text-text-primary">
                 {popoutError && (
                     <div className="px-3 py-2 text-xs text-amber-300 bg-amber-950/40 border-b border-amber-900/50">
                         {popoutError}
