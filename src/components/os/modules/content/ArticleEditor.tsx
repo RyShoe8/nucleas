@@ -1,5 +1,6 @@
 'use client';
 
+import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useEffect, useRef, useState } from 'react';
 import type { ArticleView } from '@/lib/articles/types-client';
 
@@ -43,8 +44,8 @@ export default function ArticleEditor({ id, onBack }: { id: string; onBack: () =
     const active = article?.status === 'queued' || article?.status === 'running';
     useEffect(() => {
         if (!active) return;
-        const timer = window.setInterval(() => setReload((n) => n + 1), 3000);
-        return () => window.clearInterval(timer);
+        const stopPolling = visibleInterval(() => setReload((n) => n + 1), 3000);
+        return stopPolling;
     }, [active]);
 
     const post = async (action: 'continue' | 'restart') => {

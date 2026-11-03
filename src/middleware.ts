@@ -13,6 +13,8 @@ export function middleware(request: NextRequest) {
   const { pathname } = url;
   const host = request.headers.get('host') || '';
   const isOsHost = host.startsWith('os.');
+  // Installers and update metadata must be reachable before a desktop session exists.
+  if (pathname.startsWith('/desktop/releases/windows/')) return NextResponse.next();
   // The main domain is now the OS entry point. Keep API/auth callbacks on their
   // original origin, but send old OS bookmarks to the canonical application.
   if (isOsHost && (pathname === '/' || pathname === '/os' || pathname === '/os/')) {

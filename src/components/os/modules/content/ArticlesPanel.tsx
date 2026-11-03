@@ -1,5 +1,6 @@
 'use client';
 
+import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useCallback, useEffect, useState } from 'react';
 import type { ArticleView } from '@/lib/articles/types-client';
 import { useOsCompanies } from '../CompaniesModule';
@@ -43,8 +44,8 @@ export default function ArticlesPanel() {
 
     useEffect(() => {
         if (!working) return;
-        const timer = window.setInterval(refresh, 4000);
-        return () => window.clearInterval(timer);
+        const stopPolling = visibleInterval(refresh, 4000);
+        return stopPolling;
     }, [working, refresh]);
 
     if (error && !articles) return <p className="p-4 text-sm text-red-400">{error}</p>;

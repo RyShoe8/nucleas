@@ -1,5 +1,6 @@
 'use client';
 
+import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import IdeChatMarkdown from '@/components/ide/IdeChatMarkdown';
 import BuildCard, { type BuildView } from './building/BuildCard';
@@ -105,8 +106,8 @@ async function readAnswerStream(res: Response, onProgress: (text: string) => voi
 function PendingProgress({ turn }: { turn: Turn }) {
     const [now, setNow] = useState(() => Date.now());
     useEffect(() => {
-        const timer = window.setInterval(() => setNow(Date.now()), 1000);
-        return () => window.clearInterval(timer);
+        const stopPolling = visibleInterval(() => setNow(Date.now()), 1000);
+        return stopPolling;
     }, []);
     const steps = turn.progress ?? [];
     const done = steps.slice(0, -1).slice(-5);

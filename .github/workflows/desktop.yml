@@ -1,0 +1,39 @@
+name: Nucleas Desktop
+on:
+  push:
+    branches: [main]
+    paths: ['desktop/**', 'src/components/os/modules/registerModules.ts', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix desktop
+      - run: npm --prefix desktop test
+      - name: Set desktop version
+        run: npm --prefix desktop version 0.1.${{ github.run_number }} --no-git-tag-version
+      - name: Build installer
+        run: npm --prefix desktop run dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nucleas-Windows
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.blockmap
+            desktop/release/latest.yml
+      - name: Publish update feed
+        run: node desktop/scripts/publish.mjs
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}

@@ -1,5 +1,6 @@
 'use client';
 
+import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
@@ -38,8 +39,8 @@ function PropertyOverviewModal({ companyId, companyName, canManage, onClose, onS
   }, [load]);
   useEffect(() => {
     if (!overview || !['queued', 'dispatching', 'crawling'].includes(overview.status)) return;
-    const timer = window.setInterval(() => void load(), 4000);
-    return () => window.clearInterval(timer);
+    const stopPolling = visibleInterval(() => void load(), 4000);
+    return stopPolling;
   }, [overview, load]);
   async function run() {
     setBusy(true); setError(null);

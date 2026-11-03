@@ -1,5 +1,6 @@
 'use client';
 
+import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useOsCompanies } from './CompaniesModule';
 import JobCard, { JobLastChecked, JobStatusBadge, jobIsBusy, jobListProgress, scheduleLabel, type JobView } from './jobs/JobCard';
@@ -258,10 +259,10 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
     // Keep the shared list fresh while idle too, and refresh immediately on return.
     const busy = (jobs?.some(jobIsBusy) ?? false) || Boolean(activity?.busy);
     useEffect(() => {
-        const timer = window.setInterval(() => {
+        const stopPolling = visibleInterval(() => {
             if (document.visibilityState === 'visible') reload();
         }, busy ? 5000 : 15_000);
-        return () => window.clearInterval(timer);
+        return stopPolling;
     }, [busy, reload]);
 
     const inView = useMemo(

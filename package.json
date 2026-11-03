@@ -15,7 +15,10 @@
     "icons:tech": "node scripts/fetch-tech-stack-icons.mjs",
     "icons:marketing": "node scripts/fetch-marketing-stack-icons.mjs",
     "icons:generate-custom": "node scripts/generate-custom-stack-icons.mjs",
-    "postinstall": "node scripts/copy-ffmpeg-core.mjs"
+    "postinstall": "node scripts/copy-ffmpeg-core.mjs",
+    "desktop:dev": "npm --prefix desktop start",
+    "desktop:build": "npm --prefix desktop run dist",
+    "desktop:test": "npm --prefix desktop test"
   },
   "dependencies": {
     "@ffmpeg/core": "^0.12.10",

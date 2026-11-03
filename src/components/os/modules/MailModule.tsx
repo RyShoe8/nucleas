@@ -1,5 +1,6 @@
 'use client';
 
+import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useCallback, useEffect, useState } from 'react';
 import Composer from './mail/Composer';
 import Reader from './mail/Reader';
@@ -97,8 +98,8 @@ export default function MailModule() {
     }, [query]);
     // New mail arrives through the 5-minute background sync; look again every minute while the window is open.
     useEffect(() => {
-        const id = window.setInterval(refresh, 60_000);
-        return () => window.clearInterval(id);
+        const stopPolling = visibleInterval(refresh, 60_000);
+        return stopPolling;
     }, [refresh]);
 
     const syncNow = async () => {

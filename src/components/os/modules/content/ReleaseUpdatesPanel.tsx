@@ -1,5 +1,6 @@
 'use client';
 
+import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useCallback, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -36,8 +37,8 @@ export default function ReleaseUpdatesPanel({ initialCompanyId }: { initialCompa
     const isRunning = Boolean(active && running(active));
     useEffect(() => {
         if (!isRunning) return;
-        const timer = window.setInterval(refresh, 4000);
-        return () => window.clearInterval(timer);
+        const stopPolling = visibleInterval(refresh, 4000);
+        return stopPolling;
     }, [isRunning, refresh]);
     const mutate = async (action: RoundupAction): Promise<RoundupDraft | undefined> => {
         setBusy(true); setError(null);

@@ -1,5 +1,6 @@
 'use client';
 
+import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useEffect, useState } from 'react';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import type { ActivityGroup, ActivityItem } from '@/lib/activity/types-client';
@@ -32,8 +33,8 @@ export function useActivity(reloadKey: number): Activity | null {
         };
     }, [reloadKey, tick]);
     useEffect(() => {
-        const timer = window.setInterval(() => setTick((t) => t + 1), state?.busy ? 5000 : 60_000);
-        return () => window.clearInterval(timer);
+        const stopPolling = visibleInterval(() => setTick((t) => t + 1), state?.busy ? 5000 : 60_000);
+        return stopPolling;
     }, [state?.busy]);
     return state;
 }

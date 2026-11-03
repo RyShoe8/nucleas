@@ -1,5 +1,6 @@
 'use client';
 
+import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useCallback, useEffect, useState } from 'react';
 import BrandVoicePanel from './jobs/BrandVoicePanel';
 import JobCard, { jobIsBusy, type JobView } from './jobs/JobCard';
@@ -37,8 +38,8 @@ export default function BrandVoiceModule({ payload }: ModuleRenderContext) {
     const busy = jobs.some(jobIsBusy);
     useEffect(() => {
         if (!busy) return;
-        const timer = window.setInterval(reload, 5000);
-        return () => window.clearInterval(timer);
+        const stopPolling = visibleInterval(reload, 5000);
+        return stopPolling;
     }, [busy, reload]);
 
     const replace = (next: JobView) => setJobs((list) => list.map((job) => (job.id === next.id ? next : job)));

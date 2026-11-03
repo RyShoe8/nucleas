@@ -1,5 +1,6 @@
 'use client';
 
+import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import BuildCard, { StatusBadge, type BuildStatus, type BuildView } from './building/BuildCard';
 
@@ -54,8 +55,8 @@ export default function BuildingModule() {
     const running = builds?.some((b) => b.status === 'queued' || b.status === 'building') ?? false;
     useEffect(() => {
         if (!running) return;
-        const timer = window.setInterval(load, 8000);
-        return () => window.clearInterval(timer);
+        const stopPolling = visibleInterval(load, 8000);
+        return stopPolling;
     }, [running, load]);
 
     const companies = useMemo(() => [...new Map((builds ?? []).map((b) => [b.companyId, b.companyName])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [builds]);

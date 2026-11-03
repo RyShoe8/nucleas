@@ -1,5 +1,6 @@
 'use client';
 
+import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useEffect, useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import MarketingPlanEditor from './MarketingPlanEditor';
@@ -763,12 +764,12 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
     const busyNow = jobIsBusy(job);
     useEffect(() => {
         if (!busyNow) return;
-        const timer = window.setInterval(async () => {
+        const stopPolling = visibleInterval(async () => {
             const res = await fetch(`/api/os/jobs/${job.id}`, { cache: 'no-store' });
             const body = (await res.json().catch(() => ({}))) as { job?: JobView };
             if (body.job) update(body.job);
         }, 4000);
-        return () => window.clearInterval(timer);
+        return stopPolling;
         // eslint-disable-next-line react-hooks/exhaustive-deps -- poll while busy
     }, [busyNow, job.id]);
 

@@ -1,26 +1,30 @@
 import { createElement } from 'react';
 import ModuleRegistry from '@/lib/os/moduleRegistry';
 import type { ModuleDefinition } from '@/lib/os/types';
-import ProjectsModule from './ProjectsModule';
-import ProjectDetailModule from './ProjectDetailModule';
-import AgendaModule from './AgendaModule';
-import ScheduleModule from './ScheduleModule';
-import VoiceModule from './VoiceModule';
-import PlaceholderModule from './PlaceholderModule';
-import CompaniesModule from './CompaniesModule';
-import CompanyModule from './CompanyModule';
-import TodayModule from './TodayModule';
-import IntegrationsModule from './IntegrationsModule';
-import AssistantModule from './AssistantModule';
-import AiSpendModule from './AiSpendModule';
-import AiBudgetsModule from './AiBudgetsModule';
-import AiRoutingModule from './AiRoutingModule';
-import BuildingModule from './BuildingModule';
-import JobsModule from './JobsModule';
-import ToolsModule from './ToolsModule';
-import MailModule from './MailModule';
-import BrandVoiceModule from './BrandVoiceModule';
-import ContentModule from './ContentModule';
+import dynamic from 'next/dynamic';
+const WorkModule = dynamic(() => import('./WorkModule'));
+const GrowthModule = dynamic(() => import('./GrowthModule'));
+const SettingsModule = dynamic(() => import('./SettingsModule'));
+const ProjectsModule = dynamic(() => import('./ProjectsModule'));
+const ProjectDetailModule = dynamic(() => import('./ProjectDetailModule'));
+const AgendaModule = dynamic(() => import('./AgendaModule'));
+const ScheduleModule = dynamic(() => import('./ScheduleModule'));
+const VoiceModule = dynamic(() => import('./VoiceModule'));
+const PlaceholderModule = dynamic(() => import('./PlaceholderModule'));
+const CompaniesModule = dynamic(() => import('./CompaniesModule'));
+const CompanyModule = dynamic(() => import('./CompanyModule'));
+const TodayModule = dynamic(() => import('./TodayModule'));
+const IntegrationsModule = dynamic(() => import('./IntegrationsModule'));
+const AssistantModule = dynamic(() => import('./AssistantModule'));
+const AiSpendModule = dynamic(() => import('./AiSpendModule'));
+const AiBudgetsModule = dynamic(() => import('./AiBudgetsModule'));
+const AiRoutingModule = dynamic(() => import('./AiRoutingModule'));
+const BuildingModule = dynamic(() => import('./BuildingModule'));
+const JobsModule = dynamic(() => import('./JobsModule'));
+const ToolsModule = dynamic(() => import('./ToolsModule'));
+const MailModule = dynamic(() => import('./MailModule'));
+const BrandVoiceModule = dynamic(() => import('./BrandVoiceModule'));
+const ContentModule = dynamic(() => import('./ContentModule'));
 
 let registered = false;
 
@@ -37,6 +41,36 @@ export function registerOsModules(): void {
     const agendaSize = { width: 960, height: 640 };
 
     const definitions: ModuleDefinition[] = [
+        {
+            id: 'work',
+            title: 'Work',
+            icon: '▤',
+            defaultSize: { width: 1000, height: 720 },
+            minSize: { width: 480, height: 360 },
+            canPopout: true,
+            permissions: 'member',
+            render: () => createElement(WorkModule),
+        },
+        {
+            id: 'growth',
+            title: 'Growth',
+            icon: '↗',
+            defaultSize: { width: 1000, height: 720 },
+            minSize: { width: 480, height: 360 },
+            canPopout: true,
+            permissions: 'member',
+            render: () => createElement(GrowthModule),
+        },
+        {
+            id: 'settings',
+            title: 'Settings',
+            icon: '⚙',
+            defaultSize: { width: 900, height: 700 },
+            minSize: { width: 480, height: 360 },
+            canPopout: true,
+            permissions: 'admin',
+            render: () => createElement(SettingsModule),
+        },
         {
             id: 'today',
             title: 'Today',
@@ -87,6 +121,7 @@ export function registerOsModules(): void {
             minSize: { width: 360, height: 320 },
             canPopout: true,
             permissions: 'admin',
+            launcherHidden: true,
             render: () => createElement(AiBudgetsModule),
         },
         {
@@ -97,6 +132,7 @@ export function registerOsModules(): void {
             minSize: { width: 480, height: 360 },
             canPopout: true,
             permissions: 'admin',
+            launcherHidden: true,
             render: () => createElement(AiSpendModule),
         },
         {
@@ -107,6 +143,7 @@ export function registerOsModules(): void {
             minSize: { width: 520, height: 360 },
             canPopout: true,
             permissions: 'admin',
+            launcherHidden: true,
             render: () => createElement(AiRoutingModule),
         },
         {
@@ -117,6 +154,7 @@ export function registerOsModules(): void {
             minSize: { width: 440, height: 320 },
             canPopout: true,
             permissions: 'member',
+            launcherHidden: true,
             render: () => createElement(BuildingModule),
         },
         {
@@ -149,6 +187,7 @@ export function registerOsModules(): void {
             minSize: { width: 460, height: 320 },
             canPopout: true,
             permissions: 'member',
+            launcherHidden: true,
             render: () => createElement(JobsModule),
         },
         {
@@ -159,6 +198,7 @@ export function registerOsModules(): void {
             minSize: { width: 460, height: 320 },
             canPopout: true,
             permissions: 'member',
+            launcherHidden: true,
             render: (ctx) => createElement(JobsModule, { categories: ['marketing', 'outreach'], title: 'Marketing', initialCompanyId: ctx.payload?.companyId, initialKind: ctx.payload?.kind, initialView: ctx.payload?.view, initialWatchId: ctx.payload?.watchId, initialWatchBrief: ctx.payload?.watchBrief }),
         },
         {
@@ -169,6 +209,7 @@ export function registerOsModules(): void {
             minSize: { width: 460, height: 320 },
             canPopout: true,
             permissions: 'member',
+            launcherHidden: true,
             render: (ctx) => createElement(ContentModule, { initialTab: ctx.payload?.tab, initialCompanyId: ctx.payload?.companyId }),
         },
         {
@@ -179,6 +220,7 @@ export function registerOsModules(): void {
             minSize: { width: 440, height: 420 },
             canPopout: true,
             permissions: 'member',
+            launcherHidden: true,
             render: () => createElement(ToolsModule),
         },
         {

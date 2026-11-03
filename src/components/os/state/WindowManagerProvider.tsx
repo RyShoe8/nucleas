@@ -32,6 +32,7 @@ export default function WindowManagerProvider({ children, userId }: WindowManage
     }, [layout]);
 
     useEffect(() => {
+        if (window.nucleasDesktop) return;
         const persisted = loadOsState(userId);
         if (persisted.layout.windows.length > 0 || persisted.layout.nextZIndex > initialLayout.nextZIndex) {
             const clampedWindows = clampLayoutWindows(
@@ -83,7 +84,7 @@ export default function WindowManagerProvider({ children, userId }: WindowManage
     }, []);
 
     useEffect(() => {
-        if (!hydratedRef.current) return;
+        if (window.nucleasDesktop || !hydratedRef.current) return;
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
         saveTimerRef.current = setTimeout(() => {
             const next: PersistedOsState = {
@@ -103,6 +104,11 @@ export default function WindowManagerProvider({ children, userId }: WindowManage
         const mod = ModuleRegistry.get(moduleId);
         if (!mod) {
             console.warn(`[OS] Tried to open unknown module: ${moduleId}`);
+            return null;
+        }
+
+        if (window.nucleasDesktop) {
+            void window.nucleasDesktop.openModule(moduleId, options?.payload).catch(error => console.error('[Desktop] Could not open app', error));
             return null;
         }
 

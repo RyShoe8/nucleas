@@ -42,3 +42,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Desktop build output
+/desktop/release/
+/desktop/renderer/catalog.json
+/desktop/renderer/icon.png
