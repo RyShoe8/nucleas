@@ -28,6 +28,7 @@
     },
     "files": [
       "main.cjs",
+      "auth.cjs",
       "preload.cjs",
       "policy.cjs",
       "renderer/**"

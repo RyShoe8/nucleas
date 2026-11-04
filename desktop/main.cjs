@@ -5,6 +5,8 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { ORIGIN, trustedRemote, externalUrl, moduleRequest, visibleBounds } = require('./policy.cjs');
 const catalog = require('./renderer/catalog.json');
+const { signIn, authFile, authUrl } = require('./auth.cjs');
+const targets = new Map();
 const launcherFile = path.join(__dirname, 'renderer/index.html');
 const launcherUrl = pathToFileURL(launcherFile).href;
 let launcher, tray, quitting = false, compact = false;
@@ -27,9 +29,14 @@ function secureWindow(win, local = false) {
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (event, url) => {
+    if (!local && trustedRemote(url) && new URL(url).pathname === '/login') { event.preventDefault(); void win.loadFile(authFile); return; }
     if (local || !trustedRemote(url)) { event.preventDefault(); if (!local && externalUrl(url)) void shell.openExternal(url); }
   });
-  win.webContents.on('will-redirect', (event, url) => { if (!local && !trustedRemote(url)) event.preventDefault(); });
+  win.webContents.on('will-redirect', (event, url, _inPlace, mainFrame) => {
+    if (!mainFrame) return;
+    if (!local && trustedRemote(url) && new URL(url).pathname === '/login') { event.preventDefault(); void win.loadFile(authFile); return; }
+    if (!local && !trustedRemote(url)) event.preventDefault();
+  });
   win.webContents.on('will-attach-webview', event => event.preventDefault());
 }
 let probeStarted = false;
@@ -92,13 +99,15 @@ function openModule(raw) {
     title: definition.title, backgroundColor: '#10131e', autoHideMenuBar: true, backgroundMaterial: 'mica',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), partition: 'persist:nucleas', sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true } });
   windows.set(value.key, win);
+  targets.set(win, target.href);
   secureWindow(win);
   win.once('ready-to-show', () => win.show());
   win.on('close', () => { saved[value.key] = win.getNormalBounds(); persist(); });
-  win.on('closed', () => { windows.delete(value.key); broadcast(); });
+  win.on('closed', () => { windows.delete(value.key); targets.delete(win); broadcast(); });
 
   // Login uses the ordinary shared cookie session; return to this app after login.
   win.webContents.on('did-navigate', (_event, url) => {
+    if (trustedRemote(url) && new URL(url).pathname === '/login') { void win.loadFile(authFile); return; }
     if (trustedRemote(url) && ['/', '/os'].includes(new URL(url).pathname)) void win.loadURL(target.href);
   });
   win.webContents.on('did-fail-load', (_event, code, _description, _url, mainFrame) => {
@@ -139,6 +148,14 @@ else {
     tray.on('click', showLauncher);
     if (!globalShortcut.register('Alt+Space', () => launcher?.isVisible() ? launcher.hide() : showLauncher())) status('notice', 'Alt+Space is in use · open Nucleas from the tray');
     ipcMain.handle('module:open', (event, value) => { if (!moduleSender(event)) throw new Error('Not allowed'); return openModule(value); });
+    ipcMain.handle('auth:signin', async event => {
+      const win = [...windows.values()].find(w => w.webContents === event.sender);
+      if (!win || event.senderFrame !== event.sender.mainFrame || event.senderFrame.url !== authUrl) throw new Error('Not allowed');
+      await signIn(profile, message => {
+        for (const w of windows.values()) if (!w.isDestroyed() && w.webContents.getURL() === authUrl) w.webContents.send('auth:status', message);
+      }, () => quitting || windows.size === 0);
+      for (const [w, target] of targets) if (!w.isDestroyed() && w.webContents.getURL() === authUrl) void w.loadURL(target);
+    });
     for (const [channel, handler] of Object.entries({
       'launcher:state': state, 'launcher:hide': () => launcher.hide(),
       'launcher:compact': value => { compact = Boolean(value); launcher.setSize(440, compact ? 92 : 600); launcher.setBounds(bounds(launcher.getBounds())); broadcast(); },

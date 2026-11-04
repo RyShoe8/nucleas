@@ -1,5 +1,8 @@
 import { put } from '@vercel/blob';
 import fs from 'node:fs/promises';
+if (!process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
+  throw new Error('Desktop publishing requires the GitHub Actions repository secret BLOB_READ_WRITE_TOKEN for the same Vercel Blob store used by nucleas.app. The installer artifact is available on this workflow run, but downloads and automatic updates cannot work until this secret is configured.');
+}
 const directory = new URL('../release/', import.meta.url);
 const files = await fs.readdir(directory);
 const assets = files.filter(name => /^Nucleas-Setup-\d+\.\d+\.\d+\.exe(?:\.blockmap)?$/.test(name));

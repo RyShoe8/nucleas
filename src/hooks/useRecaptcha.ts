@@ -76,7 +76,6 @@ export function useRecaptcha() {
 
   useEffect(() => {
     if (!isEnabled) return;
-    if (grecaptchaReady()) return;
 
     let settled = false;
 
@@ -116,6 +115,10 @@ export function useRecaptcha() {
     const timeoutTimer = window.setTimeout(() => {
       if (!grecaptchaReady()) markFailed();
     }, RECAPTCHA_WAIT_MS);
+
+    // The script can finish between the initial render and this effect.
+    // Update React state too; returning early leaves the login button disabled forever.
+    markReady();
 
     return () => {
       settled = true;

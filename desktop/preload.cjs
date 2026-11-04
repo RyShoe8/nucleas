@@ -5,6 +5,8 @@ if (local || location.origin === 'https://nucleas.app') {
   contextBridge.exposeInMainWorld('nucleasDesktop', Object.freeze({
     openModule: (moduleId, payload) => ipcRenderer.invoke('module:open', { moduleId, payload }),
     ...(local ? {
+      signIn: () => ipcRenderer.invoke('auth:signin'),
+      onAuthStatus: callback => { const listener = (_event, message) => callback(message); ipcRenderer.on('auth:status', listener); return () => ipcRenderer.removeListener('auth:status', listener); },
       state: () => ipcRenderer.invoke('launcher:state'),
       hide: () => ipcRenderer.invoke('launcher:hide'),
       compact: value => ipcRenderer.invoke('launcher:compact', Boolean(value)),

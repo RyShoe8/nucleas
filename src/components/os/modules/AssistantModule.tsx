@@ -182,17 +182,30 @@ export default function AssistantModule() {
 
     useEffect(() => {
         let cancelled = false;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        setMode(readMode());
+        setCost(readCostChoice());
+        setStoredSelection(readDirectSelection(SELECTION_KEY));
         void (async () => {
-            const historyRes = await fetch('/api/os/assistant');
-            const history = (await historyRes.json().catch(() => ({}))) as { turns?: Turn[] };
-            if (cancelled) return;
-            setMode(readMode());
-            setCost(readCostChoice());
-            setStoredSelection(readDirectSelection(SELECTION_KEY));
-            setTurns(history.turns ?? []);
+            try {
+                const historyRes = await fetch('/api/os/assistant', { signal: controller.signal });
+                if (!historyRes.ok) throw new Error('History unavailable');
+                const history = await historyRes.json() as { turns?: Turn[] };
+                if (!cancelled) setTurns(current => current ?? history.turns ?? []);
+            } catch {
+                if (!cancelled) {
+                    setTurns(current => current ?? []);
+                    setError('Could not load your previous conversations. You can still ask a new question.');
+                }
+            } finally {
+                clearTimeout(timeout);
+            }
         })();
         return () => {
             cancelled = true;
+            clearTimeout(timeout);
+            controller.abort();
         };
     }, []);
 

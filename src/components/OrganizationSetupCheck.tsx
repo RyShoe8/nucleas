@@ -14,6 +14,7 @@ export default function OrganizationSetupCheck({ children }: { children: React.R
       // Skip check for auth pages, setup page, admin/billing, and public pages
       if (
         pathname === '/' ||
+        pathname === '/desktop/connect' ||
         pathname?.startsWith('/login') ||
         pathname?.startsWith('/register') ||
         pathname === '/setup-organization' ||

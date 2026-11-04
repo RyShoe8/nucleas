@@ -9,7 +9,7 @@ export async function GET(request: Request) {
         const pathname = 'desktop/releases/windows/latest.yml';
         const { blobs } = await list({ prefix: pathname, limit: 5 });
         const manifest = blobs.find(blob => blob.pathname === pathname);
-        if (!manifest) return new NextResponse('The Windows installer is not published yet. Please try again after the desktop release finishes.', { status: 404 });
+        if (!manifest) return new NextResponse('No Windows installer has been published. The release administrator needs to check the Nucleas Desktop workflow and its Publish update feed step in GitHub Actions.', { status: 404, headers: { 'Cache-Control': 'no-store' } });
         const response = await fetch(manifest.url, { cache: 'no-store', signal: AbortSignal.timeout(10_000) });
         if (!response.ok) throw new Error('Manifest unavailable');
         const text = await response.text();

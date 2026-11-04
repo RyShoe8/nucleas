@@ -120,7 +120,9 @@ export default function WindowManagerProvider({ children, userId }: WindowManage
         );
         if (existing) {
             if (existing.poppedOut) {
-                focusPopoutWindow(existing.id, existing, mod);
+                const popup = popoutRefs.current.get(existing.id);
+                if (popup && !popup.closed) popup.focus();
+                else dispatch({ type: 'POP_IN', windowId: existing.id });
             } else {
                 dispatch({ type: 'FOCUS', windowId: existing.id });
             }

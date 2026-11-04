@@ -13,6 +13,17 @@ export function middleware(request: NextRequest) {
   const { pathname } = url;
   const host = request.headers.get('host') || '';
   const isOsHost = host.startsWith('os.');
+  if (pathname === '/desktop/connect') {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set('x-nucleas-shell', 'minimal');
+    return NextResponse.next({ request: { headers: requestHeaders } });
+  }
+  const desktopReturn = request.cookies.get('desktop-login-return')?.value;
+  if ((pathname === '/' || pathname === '/os') && request.cookies.get('session') && desktopReturn && /^[a-f0-9]{64}$/.test(desktopReturn)) {
+    const response = NextResponse.redirect(new URL(`/desktop/connect?request=${desktopReturn}`, request.url));
+    response.cookies.delete('desktop-login-return');
+    return response;
+  }
   // Installers and update metadata must be reachable before a desktop session exists.
   if (pathname === '/desktop/download' || pathname.startsWith('/desktop/releases/windows/')) return NextResponse.next();
   // The main domain is now the OS entry point. Keep API/auth callbacks on their
