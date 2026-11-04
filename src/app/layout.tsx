@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
+import "../styles/nucleas-apps.css";
 import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
 import OrganizationSetupCheck from "@/components/OrganizationSetupCheck";

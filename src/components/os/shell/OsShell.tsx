@@ -57,7 +57,7 @@ export default function OsShell({ children }: { children?: ReactNode }) {
                 const visible = !atHome && active?.id === w.id;
                 return <Activity key={w.id} mode={visible ? 'visible' : 'hidden'}>
                     <section hidden={!visible} aria-label={windowLabel(w, mod)} className={styles.appSurface}>
-                        <div className={styles.appBody}>{mod.render({ windowId: w.id, moduleId: w.moduleId, payload: w.payload })}</div>
+                        <div className={`${styles.appBody} nucleas-app-content`}>{mod.render({ windowId: w.id, moduleId: w.moduleId, payload: w.payload })}</div>
                     </section>
                 </Activity>;
             })}

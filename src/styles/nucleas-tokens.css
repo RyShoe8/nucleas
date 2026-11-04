@@ -81,21 +81,32 @@
   color-scheme: dark;
 }
 
-/* OS shell — same dark palette (explicit for clarity) */
+/* Shared desktop/web app palette, matched to the native launcher. */
 body.nucleas-os {
-  --background: var(--nucleas-ink);
-  --background-card: #2a3348;
-  --background-elevated: #323d52;
+  --background: #0e121c;
+  --background-card: #171c29;
+  --background-elevated: #202638;
 
-  --text-primary: var(--nucleas-white);
-  --text-secondary: #a8b0c4;
-  --text-muted: #6b7589;
+  --text-primary: #f2f4fc;
+  --text-secondary: #aeb7cc;
+  --text-muted: #8d98b0;
 
-  --border: #3d4659;
-  --border-dark: #4a556d;
+  --border: #2b3245;
+  --border-dark: #48516b;
+  --primary: #beb3ff;
+  --primary-hover: #d3cbff;
+  --primary-light: #beb3ff18;
+  --primary-dark: #8f80e4;
+  --secondary: #a7bdff;
+  --secondary-hover: #c4d2ff;
+  --secondary-light: #a7bdff18;
+  --accent: #c6afff;
+  --radius-control: 0.75rem;
+  --radius-card: 1rem;
+  --radius-panel: 1.25rem;
 
-  --shadow-card: 0 12px 34px rgb(3 7 18 / 0.2);
-  --shadow-panel: 0 28px 80px rgb(3 7 18 / 0.5);
+  --shadow-card: inset 0 1px 0 #ffffff06;
+  --shadow-panel: 0 16px 48px #0004, inset 0 1px 0 #ffffff08;
 
   color-scheme: dark;
 }

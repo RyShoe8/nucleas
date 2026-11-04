@@ -1,0 +1,6 @@
+.window { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; color: var(--text-primary); background: var(--background); }
+.header { -webkit-app-region: drag; height: 48px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 0 150px 0 20px; border-bottom: 1px solid #ffffff0c; background: linear-gradient(110deg, #252039, #141822 65%); user-select: none; }
+.mark { width: 25px; height: 25px; border-radius: 8px; display: grid; place-items: center; color: #21193c; background: linear-gradient(135deg, #dad5ff, #8c82fa); font-size: 20px; font-weight: 650; }
+.title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 550; letter-spacing: 0.02em; }
+.body { min-height: 0; flex: 1; overflow: auto; }
+.message { min-height: 100%; display: grid; align-content: center; justify-items: start; gap: 16px; max-width: 520px; padding: 40px; margin: auto; color: var(--text-secondary); line-height: 1.7; }

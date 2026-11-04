@@ -34,7 +34,7 @@ export default function ThreadList({
                 return (
                     <li key={`${t.accountId}:${t.threadId}`}>
                         <div className={`flex gap-2 px-3 py-2 cursor-pointer ${active ? 'bg-primary/10' : 'hover:bg-background-card'}`} onClick={() => onSelect(t)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') onSelect(t); }}>
-                            <span className="mt-1.5 w-2 h-2 rounded-full shrink-0" style={{ background: t.unread ? 'var(--color-primary, #3b82f6)' : 'transparent' }} aria-label={t.unread ? 'Unread' : undefined} />
+                            <span className="mt-1.5 w-2 h-2 rounded-full shrink-0" style={{ background: t.unread ? 'var(--primary)' : 'transparent' }} aria-label={t.unread ? 'Unread' : undefined} />
                             <div className="min-w-0 flex-1">
                                 <div className="flex items-baseline gap-2">
                                     <span className={`truncate text-[13px] ${t.unread ? 'font-semibold text-text-primary' : 'text-text-secondary'}`}>{displayName(t.from)}{t.count > 1 ? <span className="ml-1 text-[11px] text-text-secondary">({t.count})</span> : null}</span>

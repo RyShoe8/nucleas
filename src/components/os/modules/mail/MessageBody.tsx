@@ -27,6 +27,6 @@ export default function MessageBody({ html, text }: { html: string; text: string
 
     if (!html) return <pre className="whitespace-pre-wrap break-words text-sm font-sans text-text-primary">{text || '(no content)'}</pre>;
 
-    const doc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: cid:; style-src 'unsafe-inline'"><style>body{margin:0;font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#e5e7eb;word-wrap:break-word}@media (prefers-color-scheme:light){body{color:#111827}blockquote{color:#4b5563}}a{color:#60a5fa}img{max-width:100%;height:auto}table{max-width:100%}blockquote{margin:8px 0;padding-left:10px;border-left:3px solid #4b5563;color:#9ca3af}</style></head><body>${html}</body></html>`;
+    const doc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: cid:; style-src 'unsafe-inline'"><style>body{margin:0;font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#f2f4fc;color-scheme:dark;word-wrap:break-word}a{color:#beb3ff}img{max-width:100%;height:auto}table{max-width:100%}blockquote{margin:8px 0;padding-left:10px;border-left:3px solid #4b5563;color:#9ca3af}</style></head><body>${html}</body></html>`;
     return <iframe ref={frame} title="Message" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcDoc={doc} style={{ height }} className="w-full border-0 bg-transparent" />;
 }

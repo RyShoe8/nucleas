@@ -7,7 +7,7 @@ export default function VoiceModule() {
 
     if (!voice.enabled) {
         return (
-            <div className="p-6 text-sm text-zinc-500">
+            <div className="p-6 text-sm text-text-secondary">
                 Voice is unavailable. It is limited to Administrators when the voice feature flag is enabled.
             </div>
         );
@@ -16,14 +16,14 @@ export default function VoiceModule() {
     return (
         <div className="p-6 space-y-4">
             <div>
-                <div className="text-xs uppercase tracking-wide text-zinc-500">State</div>
-                <div className="text-sm text-zinc-100 mt-1">{voice.state}</div>
+                <div className="text-xs uppercase tracking-wide text-text-secondary">State</div>
+                <div className="text-sm text-text-primary mt-1">{voice.state}</div>
             </div>
 
             <div>
-                <div className="text-xs uppercase tracking-wide text-zinc-500">Transcript</div>
-                <div className="mt-1 min-h-[40px] text-sm text-zinc-100 bg-zinc-900 border border-zinc-800 rounded p-2 whitespace-pre-wrap">
-                    {voice.transcript || <span className="text-zinc-600">(none)</span>}
+                <div className="text-xs uppercase tracking-wide text-text-secondary">Transcript</div>
+                <div className="mt-1 min-h-[40px] text-sm text-text-primary bg-background-card border border-border rounded p-2 whitespace-pre-wrap">
+                    {voice.transcript || <span className="text-text-muted">(none)</span>}
                 </div>
             </div>
 
@@ -40,7 +40,7 @@ export default function VoiceModule() {
                     <button
                         type="button"
                         onClick={voice.startListening}
-                        className="px-3 h-9 rounded bg-zinc-100 hover:bg-white text-sm text-zinc-900"
+                        className="ui-button-primary"
                     >
                         Start listening
                     </button>

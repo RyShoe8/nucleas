@@ -70,7 +70,7 @@ export default function ProjectsModule() {
                             e.stopPropagation();
                             openProject(p);
                         }}
-                        className="w-full px-4 py-2 hover:bg-zinc-900 cursor-pointer flex items-center justify-between text-left"
+                        className="w-full px-4 py-2 hover:bg-background-card cursor-pointer flex items-center justify-between text-left"
                     >
                         <span className="text-sm text-zinc-100 truncate">{p.name}</span>
                         {p.status && (

@@ -96,7 +96,8 @@ function openModule(raw) {
   target.searchParams.set('module', value.moduleId);
   target.searchParams.set('payload', JSON.stringify(value.payload));
   const win = new BrowserWindow({ ...bounds(saved[value.key] || { width: value.moduleId === 'assistant' ? 720 : 1120, height: 780 }), minWidth: 400, minHeight: 300, show: false,
-    title: definition.title, backgroundColor: '#10131e', autoHideMenuBar: true, backgroundMaterial: 'mica',
+    title: definition.title, backgroundColor: '#0e121c', autoHideMenuBar: true, backgroundMaterial: 'mica',
+    titleBarStyle: 'hidden', titleBarOverlay: { color: '#141822', symbolColor: '#c6cedf', height: 47 },
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), partition: 'persist:nucleas', sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true } });
   windows.set(value.key, win);
   targets.set(win, target.href);

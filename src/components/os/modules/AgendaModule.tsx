@@ -81,8 +81,8 @@ export default function AgendaModule() {
                         onClick={() => setTimeframe(tf)}
                         className={`px-2.5 py-1 text-xs rounded border ${
                             timeframe === tf
-                                ? 'bg-zinc-700 border-zinc-600 text-white'
-                                : 'border-zinc-700 text-zinc-400 hover:text-zinc-200'
+                                ? 'bg-primary-light border-primary text-primary'
+                                : 'border-border text-text-secondary hover:text-text-primary'
                         }`}
                     >
                         {tf.charAt(0).toUpperCase() + tf.slice(1)}
