@@ -6,6 +6,16 @@ function fakeFetch(status: number, body: unknown) {
 }
 
 describe('verifyCredential', () => {
+  it('distinguishes Ahrefs access restrictions from authentication failures', async () => {
+    const denied = await verifyCredential('ahrefs', 'example-key', fakeFetch(403, ['Error', 'API units limit exceeded']));
+    expect(denied).toMatchObject({ ok: false, reason: 'plan_limited' });
+    expect(JSON.stringify(denied)).toContain('API units limit exceeded');
+    expect(await verifyCredential('ahrefs', 'example-key', fakeFetch(429, {}))).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect(await verifyCredential('ahrefs', 'example-key', fakeFetch(200, {}))).toMatchObject({ ok: false });
+    const rejected = await verifyCredential('ahrefs', 'example-key', fakeFetch(401, ['Error', 'Unauthorized example-key']));
+    expect(JSON.stringify(rejected)).not.toContain('example-key');
+    expect(rejected).toMatchObject({ ok: false, reason: 'invalid_credential' });
+  });
   it('reads Brevo account identity and plan', async () => {
     const f = fakeFetch(200, { companyName: 'Frugal Gambler', plan: [{ type: 'free' }] });
     const out = await verifyCredential('brevo', 'xkeysib-abc', f);

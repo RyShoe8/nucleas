@@ -82,6 +82,11 @@ function CompanyIntegrations({ companyId }: { companyId: string }) {
     const reload = useCallback(() => setReloadKey((k) => k + 1), []);
 
     useEffect(() => {
+        window.addEventListener('focus', reload);
+        return () => window.removeEventListener('focus', reload);
+    }, [reload]);
+
+    useEffect(() => {
         let cancelled = false;
         void (async () => {
             const res = await fetch(`/api/os/companies/${companyId}`);
@@ -274,6 +279,9 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                 {c.signIn === 'google' && auth.isManagerOrAdmin && c.companyId ? (
                     <a
                         href={`/api/os/integrations/google/start?companyId=${encodeURIComponent(c.companyId)}&provider=${encodeURIComponent(c.provider)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Connect in your browser, then return here to see the updated status"
                         className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card"
                     >
                         {c.status === 'connected' ? 'Re-sign in' : 'Sign in with Google'}
@@ -282,6 +290,9 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                 {c.signIn === 'facebook' && auth.isManagerOrAdmin && c.companyId ? (
                     <a
                         href={`/api/os/integrations/facebook/start?companyId=${encodeURIComponent(c.companyId)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Connect in your browser, then return here to see the updated status"
                         className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card"
                     >
                         {c.status === 'connected' ? 'Log in again' : 'Log in with Facebook'}

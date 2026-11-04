@@ -80,11 +80,15 @@ export async function verifyCredential(provider: string, credential: string, fet
         if (status >= 400 && /insufficient plan/i.test(JSON.stringify(body))) {
           return { ok: true, accountLabel: 'Ahrefs', planLabel: 'No API access on current plan', planLimited: true };
         }
-        if (status === 401 || status === 403) {
-          return { ok: false, reason: 'invalid_credential', message: 'Ahrefs rejected this API key. Use a key from Account settings → API keys (not an MCP key).' };
-        }
+        const rawReason = Array.isArray(body) && typeof body[1] === 'string' ? body[1] : providerReason(body, key);
+        const safeReason = rawReason && !rawReason.includes(key) ? rawReason.slice(0, 200) : null;
+        const detail = safeReason ? ` Ahrefs says: ${safeReason}.` : '';
+        if (status === 401) return { ok: false, reason: 'invalid_credential', message: `Ahrefs returned HTTP 401 (authentication rejected).${detail} This does not identify the key as an MCP key. Check whether this v3 key is active, unexpired, and copied completely.` };
+        if (status === 403) return { ok: false, reason: 'plan_limited', message: `Ahrefs returned HTTP 403 (access denied).${detail} Check this key’s permissions, API limits, and workspace subscription. This is not evidence of the wrong key type.` };
+        if (status === 429) return { ok: false, reason: 'unreachable', message: 'Ahrefs returned HTTP 429 (rate limited). Wait and retry verification.' };
         const fail = authFailure(status, body, key);
         if (fail) return fail;
+        if (status !== 200 || !body.limits_and_usage || typeof body.limits_and_usage !== 'object') return { ok: false, reason: 'unreachable', message: `Ahrefs returned an unexpected verification response (HTTP ${status}). The key has not been verified; try again.` };
         const limits = (body.limits_and_usage ?? {}) as Record<string, unknown>;
         const plan = typeof limits.subscription === 'string' ? limits.subscription : undefined;
         const used = typeof limits.units_usage_workspace === 'number' ? limits.units_usage_workspace : undefined;

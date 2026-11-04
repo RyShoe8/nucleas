@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getSession } from '@/lib/auth/session';
+import { connectionReturnPath } from '@/lib/auth/connectionReturn';
 import { getCompanyProfile, isCompanyManager } from '@/lib/companies/companyProfile';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import {
@@ -9,6 +11,14 @@ import {
 
 /** Starts Google sign-in for Analytics + Search Console. Managers only. */
 export async function GET(request: NextRequest) {
+  if (!await getSession()) {
+    const returnTo = connectionReturnPath(request.nextUrl.pathname + request.nextUrl.search);
+    if (!returnTo) return NextResponse.json({ error: 'Invalid company connection request.' }, { status: 400 });
+    const response = NextResponse.redirect(new URL('/login', request.url));
+    response.cookies.set('connection-login-return', returnTo, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 600 });
+    response.headers.set('Cache-Control', 'no-store');
+    return response;
+  }
   const viewer = await requireCompanyViewer(request);
   if (viewer instanceof NextResponse) return viewer;
   if (!isCompanyManager(viewer)) return NextResponse.json({ error: 'Only managers can connect integrations.' }, { status: 403 });

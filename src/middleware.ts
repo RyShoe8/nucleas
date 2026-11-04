@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { enforceRateLimit, rateLimitKey } from '@/lib/security/rateLimit';
+import { connectionReturnPath } from '@/lib/auth/connectionReturn';
 
 function osRewriteResponse(url: URL, request: NextRequest): NextResponse {
   const requestHeaders = new Headers(request.headers);
@@ -13,6 +14,12 @@ export function middleware(request: NextRequest) {
   const { pathname } = url;
   const host = request.headers.get('host') || '';
   const isOsHost = host.startsWith('os.');
+  const connectionReturn = connectionReturnPath(request.cookies.get('connection-login-return')?.value);
+  if ((pathname === '/' || pathname === '/os') && request.cookies.get('session') && connectionReturn) {
+    const response = NextResponse.redirect(new URL(connectionReturn, request.url));
+    response.cookies.delete('connection-login-return');
+    return response;
+  }
   if (pathname === '/desktop/connect') {
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set('x-nucleas-shell', 'minimal');
@@ -144,6 +151,8 @@ export function middleware(request: NextRequest) {
   }
 
   // Check for session cookie
+  // These entry points handle browser login themselves and still enforce manager access.
+  if (pathname === '/api/os/integrations/google/start' || pathname === '/api/os/integrations/facebook/start') return NextResponse.next();
   const session = request.cookies.get('session');
 
   // If no session and trying to access protected route, redirect to login
