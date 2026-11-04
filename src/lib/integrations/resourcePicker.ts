@@ -5,6 +5,7 @@ import { getCompanyProfile, isCompanyManager, listCompanyProfiles, type CompanyV
 import { listGa4Properties, listGscSites } from '@/lib/integrations/google/connectGoogle';
 import { refreshGoogleAccessToken } from '@/lib/capabilities/adapters/google';
 import { listAhrefsProjects } from '@/lib/capabilities/adapters/ahrefs';
+import { listAdManagerSites } from '@/lib/capabilities/adapters/admanager';
 import { listAdSenseSites } from '@/lib/capabilities/adapters/adsense';
 import { CapabilityError, type CapabilityRunContext } from '@/lib/capabilities/types';
 
@@ -20,6 +21,7 @@ export const PINNABLE: Record<string, { resourceType: string; secretProvider: st
   ga4: { resourceType: 'property', secretProvider: 'google', noun: 'Analytics property' },
   gsc: { resourceType: 'site', secretProvider: 'google', noun: 'Search Console site' },
   ahrefs: { resourceType: 'project', secretProvider: 'ahrefs', noun: 'Ahrefs project' },
+  admanager: { resourceType: 'site', secretProvider: 'google', noun: 'Ad Manager site' },
   adsense: { resourceType: 'site', secretProvider: 'google', noun: 'AdSense site' },
 };
 
@@ -46,6 +48,10 @@ export interface PinOptions {
 }
 
 async function candidatesFor(provider: string, credential: string, fetchImpl: FetchLike): Promise<Omit<PinCandidate, 'pinnedTo'>[]> {
+  if (provider === 'admanager') {
+    const token = await refreshGoogleAccessToken(credential, fetchImpl);
+    return (await listAdManagerSites(fetchImpl, token)).map(s => ({ externalId: s.name, label: s.domain, detail: s.network }));
+  }
   if (provider === 'adsense') {
     const token = await refreshGoogleAccessToken(credential, fetchImpl);
     return (await listAdSenseSites(fetchImpl, token)).map((s) => ({ externalId: s.name, label: s.domain, detail: s.account.replace('accounts/', '') }));

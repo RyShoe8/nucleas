@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
     const s = result.summary;
     return backToOs(request, {
       company: state.companyId,
-      integration_notice: `Google (${s.accountEmail}): Analytics connected for ${s.analytics.connected.length}, Search Console for ${s.searchConsole.connected.length}, AdSense for ${s.adsense.connected.length} companies.${s.adsense.error ? ' AdSense: ' + s.adsense.error : ''}`,
+      integration_notice: `Google (${s.accountEmail}): Analytics connected for ${s.analytics.connected.length}, Search Console for ${s.searchConsole.connected.length}, AdSense for ${s.adsense.connected.length} companies, Ad Manager for ${s.admanager.connected.length} companies.${s.admanager.error ? ' Ad Manager: ' + s.admanager.error : ''}${s.adsense.error ? ' AdSense: ' + s.adsense.error : ''}`,
     });
   } catch (error) {
     console.error('[os/integrations/google] callback failed', error instanceof Error ? error.message : 'unknown');

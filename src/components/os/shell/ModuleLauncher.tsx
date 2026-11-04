@@ -41,13 +41,13 @@ export function AppLauncherPanel({ onOpen }: { onOpen?: () => void }) {
     </div>;
 }
 
-export default function ModuleLauncher() {
+export default function ModuleLauncher({ onOpen }: { onOpen?: () => void } = {}) {
     const dialog = useRef<HTMLDialogElement>(null);
     return <>
         <button type="button" onClick={() => dialog.current?.showModal()} className={styles.trigger} aria-haspopup="dialog">▦ <span>Apps</span></button>
         <dialog ref={dialog} className={styles.dialog} aria-label="Nucleas apps" onClick={e => { if (e.target === e.currentTarget) dialog.current?.close(); }}>
             <button type="button" className={styles.close} aria-label="Close apps" onClick={() => dialog.current?.close()}>×</button>
-            <AppLauncherPanel onOpen={() => dialog.current?.close()} />
+            <AppLauncherPanel onOpen={() => { dialog.current?.close(); onOpen?.(); }} />
         </dialog>
     </>;
 }

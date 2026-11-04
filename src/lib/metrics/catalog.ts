@@ -1,3 +1,4 @@
+import type { AdxOutput } from '@/lib/capabilities/adapters/admanager';
 import type { TrafficOutput, SearchOutput } from '@/lib/capabilities/adapters/google';
 import { SOCIAL_PLATFORMS } from './social';
 import type { AdRevenueOutput } from '@/lib/capabilities/adapters/adsense';
@@ -45,6 +46,7 @@ const search = (o: unknown) => o as SearchOutput;
 const email = (o: unknown) => o as EmailAudienceOutput;
 const revenue = (o: unknown) => o as RevenueOutput;
 const cash = (o: unknown) => o as CashOutput;
+const adx = (o: unknown) => o as AdxOutput;
 const ads = (o: unknown) => o as AdRevenueOutput;
 
 export const METRICS: MetricDefinition[] = [
@@ -69,7 +71,10 @@ export const METRICS: MetricDefinition[] = [
   { key: 'users_new', label: 'New users', unit: 'count', kind: 'daily', stage: 'user', capabilityId: 'internal.events.signups', provider: 'signups', higherIsBetter: true, extract: () => [] },
   { key: 'revenue_net', label: 'Net revenue', unit: 'money', kind: 'daily', capabilityId: 'payments.revenue.read', provider: 'stripe', higherIsBetter: true, extract: (o) => revenue(o).days.map((d) => moneyPoint(d.date, d.net)) },
   { key: 'subscriber_revenue', label: 'Subscriber revenue', unit: 'money', kind: 'daily', stage: 'subscriber', capabilityId: 'payments.revenue.read', provider: 'stripe', higherIsBetter: true, extract: (o) => revenue(o).days.map((d) => moneyPoint(d.date, d.subscriberRevenue ?? {})) },
-  { key: 'ad_revenue', label: 'Ad revenue', unit: 'money', kind: 'daily', capabilityId: 'ads.revenue.read', provider: 'adsense', higherIsBetter: true, extract: (o) => ads(o).days.map((d) => moneyPoint(d.date, { [ads(o).currency]: d.earnings })) },
+  { key: 'adx_revenue', label: 'AdX revenue', unit: 'money', kind: 'daily', capabilityId: 'ads.adx.revenue.read', provider: 'admanager', higherIsBetter: true, extract: (o) => adx(o).days.map((d) => moneyPoint(d.date, { [adx(o).currency]: d.earnings })) },
+  { key: 'adx_impressions', label: 'AdX impressions', unit: 'count', kind: 'daily', capabilityId: 'ads.adx.revenue.read', provider: 'admanager', higherIsBetter: true, extract: (o) => adx(o).days.map((d) => ({ date: d.date, value: d.impressions })) },
+  { key: 'adx_clicks', label: 'AdX clicks', unit: 'count', kind: 'daily', capabilityId: 'ads.adx.revenue.read', provider: 'admanager', higherIsBetter: true, extract: (o) => adx(o).days.map((d) => ({ date: d.date, value: d.clicks })) },
+  { key: 'ad_revenue', label: 'AdSense revenue', unit: 'money', kind: 'daily', capabilityId: 'ads.revenue.read', provider: 'adsense', higherIsBetter: true, extract: (o) => ads(o).days.map((d) => moneyPoint(d.date, { [ads(o).currency]: d.earnings })) },
   { key: 'payments', label: 'Payments', unit: 'count', kind: 'daily', stage: 'customer', capabilityId: 'payments.revenue.read', provider: 'stripe', higherIsBetter: true, extract: (o) => revenue(o).days.map((d) => ({ date: d.date, value: d.payments })) },
   { key: 'customers_new', label: 'New customers', unit: 'count', kind: 'daily', stage: 'customer', capabilityId: 'payments.revenue.read', provider: 'stripe', higherIsBetter: true, extract: (o) => revenue(o).days.map((d) => ({ date: d.date, value: d.newCustomers })) },
   { key: 'subscribers_active', label: 'Active subscribers', unit: 'count', kind: 'snapshot', stage: 'subscriber', capabilityId: 'payments.revenue.read', provider: 'stripe', higherIsBetter: true, extract: (o, today) => [{ date: today, value: revenue(o).activeSubscriptions }] },
@@ -88,6 +93,7 @@ export const SYNC_CAPABILITIES: { capabilityId: string; provider: string; window
   { capabilityId: 'search.performance.read', provider: 'gsc', windowed: true },
   { capabilityId: 'email.audience.read', provider: 'brevo', windowed: true },
   { capabilityId: 'payments.revenue.read', provider: 'stripe', windowed: true },
+  { capabilityId: 'ads.adx.revenue.read', provider: 'admanager', windowed: true },
   { capabilityId: 'ads.revenue.read', provider: 'adsense', windowed: true },
   { capabilityId: 'finance.cash.read', provider: 'mercury', windowed: false },
 ];

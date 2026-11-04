@@ -4,7 +4,6 @@ import {
     createContext,
     useCallback,
     useContext,
-    useEffect,
     useRef,
     useState,
     type ReactNode,
@@ -12,13 +11,11 @@ import {
 import { usePwaInstall } from '@/hooks/os/usePwaInstall';
 import {
     clearInstallReminders,
-    hasSeenInstallOnLoad,
     isInstallDismissed,
     isRunningAsInstalledPwa,
     markInstallDismissed,
     markInstallEngaged,
     markPwaInstalled,
-    markSeenInstallOnLoad,
 } from '@/lib/os/pwaInstall';
 import OsInstallModal from './OsInstallModal';
 
@@ -97,25 +94,6 @@ export function OsInstallProvider({ children }: { children: ReactNode }) {
         },
         [refreshInstalled]
     );
-
-    useEffect(() => {
-        if (
-            !isOsHost ||
-            installCheckPending ||
-            isRunningAsPwa ||
-            installedRelatedApp ||
-            isInstallDismissed() ||
-            hasSeenInstallOnLoad()
-        ) {
-            return;
-        }
-        markSeenInstallOnLoad();
-        const timer = window.setTimeout(() => {
-            setModalAlreadyInstalled(false);
-            setModalOpen(true);
-        }, 0);
-        return () => window.clearTimeout(timer);
-    }, [isOsHost, isRunningAsPwa, installedRelatedApp, installCheckPending]);
 
     const handleInstall = useCallback(async (): Promise<boolean> => {
         markInstallEngaged();

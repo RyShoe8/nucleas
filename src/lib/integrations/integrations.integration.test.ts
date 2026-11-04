@@ -393,3 +393,32 @@ describe('AdSense at Google sign-in', () => {
     expect(await ExternalResource.countDocuments({ provider: 'adsense' })).toBe(0);
   });
 });
+
+describe('Ad Manager at Google sign-in', () => {
+  function googleAdManager(ambiguous = false) {
+    return vi.fn(async (url: string) => {
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+      if (url.includes('oauth2.googleapis.com')) return json({ access_token: 'at', refresh_token: 'rt', scope: 'https://www.googleapis.com/auth/admanager email' });
+      if (url.includes('openidconnect')) return json({ email: 'reporting@example.com' });
+      if (url.includes('/v1/networks?')) return json({ networks: [{ name: 'networks/1' }] });
+      return json({ sites: [{ name: 'networks/1/sites/1', url: 'playbound.club' }, ...(ambiguous ? [{ name: 'networks/1/sites/2', url: 'playbound.club' }] : [])] });
+    });
+  }
+  beforeEach(() => {
+    vi.stubEnv('GOOGLE_CLIENT_ID', 'cid');
+    vi.stubEnv('GOOGLE_CLIENT_SECRET', 'test');
+  });
+  it('accepts an Ad Manager-only grant and maps only the matching company', async () => {
+    const { completeGoogleConnection } = await import('./google/connectGoogle');
+    const res = await completeGoogleConnection(admin, { code: 'c', redirectUri: 'https://nucleas.app/cb' }, googleAdManager());
+    expect(res).toMatchObject({ ok: true, summary: { admanager: { granted: true, connected: ['PlayBound'] } } });
+    expect(await ExternalResource.findOne({ provider: 'admanager', resourceType: 'site' }).lean()).toMatchObject({ companyId: new Types.ObjectId(ownedId), externalId: 'networks/1/sites/1' });
+    expect(await IntegrationConnection.countDocuments({ provider: 'admanager' })).toBe(1);
+  });
+  it('requires manual selection for ambiguous sites', async () => {
+    const { completeGoogleConnection } = await import('./google/connectGoogle');
+    const res = await completeGoogleConnection(admin, { code: 'c', redirectUri: 'https://nucleas.app/cb' }, googleAdManager(true));
+    expect(res).toMatchObject({ ok: true, summary: { admanager: { connected: [] } } });
+    expect(await ExternalResource.countDocuments({ provider: 'admanager' })).toBe(0);
+  });
+});

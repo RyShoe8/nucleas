@@ -188,6 +188,8 @@ describe('total revenue', () => {
     const both = withTotalRevenue([mk('revenue_net', 20_000, 10_000), mk('ad_revenue', 10_000, 10_000)]);
     expect(both[0]).toMatchObject({ key: 'revenue_total', label: 'Revenue (all sources)', current: 30_000, previous: 20_000, change: 0.5 });
 
+    const withAdx = withTotalRevenue([mk('ad_revenue', 10_000, 5_000), mk('adx_revenue', 5_000, 5_000)]);
+    expect(withAdx[0]).toMatchObject({ key: 'revenue_total', current: 15_000, previous: 10_000 });
     const single = withTotalRevenue([mk('ad_revenue', 20_000, 10_000)]);
     expect(single[0]).toMatchObject({ key: 'revenue_total', label: 'Revenue', current: 20_000 });
     expect(whatChanged(single)).toHaveLength(1);

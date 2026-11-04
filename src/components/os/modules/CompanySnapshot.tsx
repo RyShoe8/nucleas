@@ -119,7 +119,10 @@ const METRIC_GROUPS: { title: string; metrics: MetricSlot[] }[] = [
         metrics: [
             { key: 'revenue_total', label: 'Revenue', unit: 'money', kind: 'daily' },
             { key: 'subscriber_revenue', label: 'Subscriber revenue', unit: 'money', kind: 'daily' },
-            { key: 'ad_revenue', label: 'Ad revenue', unit: 'money', kind: 'daily' },
+            { key: 'ad_revenue', label: 'AdSense revenue', unit: 'money', kind: 'daily' },
+            { key: 'adx_revenue', label: 'AdX revenue', unit: 'money', kind: 'daily' },
+            { key: 'adx_impressions', label: 'AdX impressions', unit: 'count', kind: 'daily' },
+            { key: 'adx_clicks', label: 'AdX clicks', unit: 'count', kind: 'daily' },
             { key: 'mrr', label: 'MRR', unit: 'money', kind: 'snapshot' },
             { key: 'yrr', label: 'YRR', unit: 'money', kind: 'snapshot' },
         ],
@@ -189,7 +192,7 @@ export default function CompanySnapshot({
 }) {
     const auth = useOsAuth();
     const has = (provider: string) => connections.some((c) => c.provider === provider);
-    const hasPerformanceConnection = ['ga4', 'gsc', 'brevo', 'stripe', 'adsense', 'ahrefs', 'mercury', 'signups'].some(has);
+    const hasPerformanceConnection = ['ga4', 'gsc', 'brevo', 'stripe', 'adsense', 'admanager', 'ahrefs', 'mercury', 'signups'].some(has);
     const [data, setData] = useState<{ lastSyncedAt: string | null; metrics: OsMetric[]; changes: string[] } | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
     const [syncing, setSyncing] = useState(false);

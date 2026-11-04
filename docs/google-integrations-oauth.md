@@ -48,3 +48,28 @@ Each Google sign-in is stored separately (by account email), and each company is
 2. The client (or we, with their consent) signs in with their Google account. It is stored as a separate account and never mixed with ours.
 
 The planned onboarding flow (Phase 8) adds a one-time connect link the client opens themselves, so no credentials are ever shared.
+
+
+## Google Ad Manager / AdX
+
+In the company's Connections and setup, add **Google Ad Manager / AdX**, then use its **Sign in with Google** button. This specifically requests the additional `https://www.googleapis.com/auth/admanager` permission. Ordinary Analytics/Search Console sign-in does not add this scope.
+
+One-time Google setup uses the existing OAuth client; no new environment variables:
+- Enable **Ad Manager API** (`admanager.googleapis.com`) in that Google Cloud project.
+- Add the Ad Manager scope to the OAuth consent screen.
+- Enable API access in the Ad Manager network and give the Google user access to reports and the relevant sites.
+- The canonical production callback is `https://nucleas.app/api/os/integrations/google/callback`. Keep older callback URLs only where still used.
+
+Google's readonly scope can run existing reports, but creating a reporting definition requires the full Ad Manager scope. Nucleas creates hidden reporting definitions and reads results. It exposes no ad-trafficking, budget, or campaign-edit capabilities for this connection.
+
+Nucleas lists networks and sites with pagination, auto-pins only unambiguous exact domain matches, respects disabled connections and existing pins, and allows manual site selection. Each report filters the pinned site's domain (including its www variant) and verifies returned rows are within that domain and date range. A whole-network total is never substituted for a company's data.
+
+The three metrics are **AdX revenue**, **AdX impressions**, and **AdX clicks**. These use AD_EXCHANGE_* columns, not total ad-server revenue. AdSense remains separate; total revenue includes both distinct sources. Monetary results carry network currency and report receipts carry network timezone. Historical results can be revised by Google.
+
+The normal metric cron backfills 90 days on the first successful report and refreshes three days afterward. Report operations are persisted under tenant/company/site/date scope with a lease. Slow reports resume on subsequent syncs; failures do not write zero snapshots. Report definitions are reused for identical ranges. Reconnect Google for accounts authorized before this connector was added, select a site if automatic matching cannot decide, then run **Sync now**.
+
+Official references:
+- https://developers.google.com/ad-manager/api/beta/authentication
+- https://developers.google.com/ad-manager/api/beta/reports
+- https://developers.google.com/ad-manager/api/beta/reference/rest/v1/networks.reports/create
+- https://developers.google.com/ad-manager/api/beta/reference/rest/v1/networks.reports/run

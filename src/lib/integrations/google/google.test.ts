@@ -64,3 +64,9 @@ describe('Google OAuth plumbing', () => {
     expect(url.searchParams.get('access_type')).toBe('offline');
   });
 });
+
+it('requests Ad Manager permission only when that connection is selected', () => {
+  const options = { clientId: 'cid', redirectUri: 'https://nucleas.app/cb', state: 's' };
+  expect(new URL(buildGoogleIntegrationAuthUrl(options)).searchParams.get('scope')).not.toContain('/auth/admanager');
+  expect(new URL(buildGoogleIntegrationAuthUrl({ ...options, adManager: true })).searchParams.get('scope')).toContain('/auth/admanager');
+});

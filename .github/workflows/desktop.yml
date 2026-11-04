@@ -2,7 +2,7 @@ name: Nucleas Desktop
 on:
   push:
     branches: [main]
-    paths: ['desktop/**', 'src/components/os/modules/registerModules.ts', '.github/workflows/desktop.yml']
+    paths: ['desktop/**', 'src/components/os/modules/registerModules.ts', 'src/app/desktop/download/**', 'src/components/os/shell/OsInstallButton.tsx', '.github/workflows/desktop.yml']
   workflow_dispatch:
 permissions:
   contents: read

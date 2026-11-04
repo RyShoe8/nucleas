@@ -21,5 +21,5 @@ export async function GET(request: NextRequest) {
   if (!clientId || !redirectUri) return NextResponse.json({ error: 'Google sign-in is not available on this host.' }, { status: 500 });
 
   const state = await createGoogleIntegrationState(viewer.userId, companyId);
-  return NextResponse.redirect(buildGoogleIntegrationAuthUrl({ clientId, redirectUri, state }));
+  return NextResponse.redirect(buildGoogleIntegrationAuthUrl({ clientId, redirectUri, state, adManager: request.nextUrl.searchParams.get("provider") === "admanager" }));
 }

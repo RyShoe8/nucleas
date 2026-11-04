@@ -51,3 +51,12 @@ The website already uses `BLOB_READ_WRITE_TOKEN`. `/desktop/releases/windows/[as
 Remote app content has sandboxing, context isolation and web security enabled, with Node integration disabled. It can request only a validated module window; local launcher IPC additionally controls its own visibility and updater. Native IPC validates the top-level sender and exact application origin. External links open in the normal browser, and arbitrary protocol handlers, filesystem access and generic IPC are not exposed. Camera/microphone/notification requests require an explicit native confirmation. Server permissions and the desktop route's role checks remain authoritative.
 
 The initial release is Windows x64. macOS/Linux installers, native system-wide computer control and offline business data are not part of this change.
+
+
+## Web and native entry points
+
+The web home uses one full-workspace app view and a floating switcher. Old saved window positions no longer create nested draggable windows there. Apps can still pop out into separate browser windows.
+
+The **Windows app** action downloads the native installer from `/desktop/download`, which follows the published updater manifest. A browser-installed PWA is a separate, older installation and does not provide the native launcher. The automatic PWA install prompt is disabled.
+
+The desktop release workflow also runs when the download route or its web entry button changes, so publishing that entry point builds and publishes its installer in the same push. If publishing fails, GitHub still retains the installer artifact; the public download will report that no installer is available.

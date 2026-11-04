@@ -11,7 +11,7 @@ import WebhookSetup from './WebhookSetup';
 import CodeRepositories from './CodeRepositories';
 import AdminAccount from './AdminAccount';
 
-const PINNABLE_PROVIDERS: Record<string, string> = { ga4: 'Choose property', gsc: 'Choose site', ahrefs: 'Choose project', adsense: 'Choose site' };
+const PINNABLE_PROVIDERS: Record<string, string> = { ga4: 'Choose property', gsc: 'Choose site', ahrefs: 'Choose project', adsense: 'Choose site', admanager: 'Choose site' };
 
 const STATUS_STYLE: Record<string, string> = {
     connected: 'text-emerald-400 border-emerald-400/40',
@@ -273,7 +273,7 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                 ) : null}
                 {c.signIn === 'google' && auth.isManagerOrAdmin && c.companyId ? (
                     <a
-                        href={`/api/os/integrations/google/start?companyId=${encodeURIComponent(c.companyId)}`}
+                        href={`/api/os/integrations/google/start?companyId=${encodeURIComponent(c.companyId)}&provider=${encodeURIComponent(c.provider)}`}
                         className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card"
                     >
                         {c.status === 'connected' ? 'Re-sign in' : 'Sign in with Google'}
@@ -361,7 +361,7 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                     }}
                 />
             ) : null}
-            {editing && c.keyGuidance ? <p className="mt-1 ml-[5.5rem] text-[11px] text-text-secondary">{c.keyGuidance}</p> : null}
+            {(editing || c.provider === 'admanager') && c.keyGuidance ? <p className="mt-1 ml-[5.5rem] text-[11px] text-text-secondary">{c.keyGuidance}</p> : null}
             {message ? <p className="mt-1 ml-[5.5rem] text-[11px] text-red-400">{message}</p> : null}
         </li>
     );

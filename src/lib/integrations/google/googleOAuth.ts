@@ -48,12 +48,12 @@ export async function verifyGoogleIntegrationState(token: string): Promise<State
   }
 }
 
-export function buildGoogleIntegrationAuthUrl(options: { clientId: string; redirectUri: string; state: string }): string {
+export function buildGoogleIntegrationAuthUrl(options: { clientId: string; redirectUri: string; state: string; adManager?: boolean }): string {
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   url.searchParams.set('client_id', options.clientId);
   url.searchParams.set('redirect_uri', options.redirectUri);
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', GOOGLE_INTEGRATION_SCOPES.join(' '));
+  url.searchParams.set('scope', [...GOOGLE_INTEGRATION_SCOPES, ...(options.adManager ? ['https://www.googleapis.com/auth/admanager'] : [])].join(' '));
   url.searchParams.set('access_type', 'offline');
   // Always re-consent so Google returns a refresh token even if previously granted.
   url.searchParams.set('prompt', 'consent');

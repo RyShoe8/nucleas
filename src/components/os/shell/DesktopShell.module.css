@@ -31,3 +31,51 @@
 .welcome { width: min(440px, 100%); margin: auto; }
 .tray { margin: 0 8px 8px; border-radius: 16px; border: 1px solid #ffffff18; background: #151822; }
 @media (max-width: 420px) { .panel { padding: 18px; } .toolbar { margin: 4px 4px 0; } .brand small { letter-spacing: 1px; } }
+
+.workspace { position: fixed; inset: 0; display: flex; flex-direction: column; overflow: hidden; color: #edf0fa; background: radial-gradient(ellipse at 85% 5%, #322e5045, transparent 50%), radial-gradient(ellipse at 12% 95%, #1d34354a, transparent 50%), #090d15; }
+.workspaceHeader { display: flex; align-items: center; gap: 28px; padding: 0 32px; min-height: 70px; flex-shrink: 0; z-index: 20; }
+.wordmark { font-size: 26px; font-weight: 600; letter-spacing: -1.4px; }
+.wordmark span { color: #b4a5fa; }
+.breadcrumb { color: #9aa4b7; font-size: 10px; letter-spacing: 1.6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.headerActions { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+.stage { position: relative; isolation: isolate; z-index: 0; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.landing { flex: 1; min-height: 0; overflow: auto; display: flex; align-items: center; justify-content: center; gap: clamp(36px, 7vw, 120px); padding: 30px 6vw; }
+.intro { max-width: 520px; }
+.eyebrow { color: #b5accf; font-size: 9px; letter-spacing: 2px; }
+.intro h1 { font-size: clamp(38px, 4.5vw, 72px); line-height: 1.08; letter-spacing: -3px; font-weight: 500; margin: 26px 0; }
+.intro em { font-style: normal; color: #c4b9f6; }
+.intro p { color: #a1aabd; font-size: 15px; line-height: 1.8; max-width: 310px; }
+.launcherHome { width: 400px; max-width: 100%; flex-shrink: 0; }
+.launcherHome .panel { box-shadow: 0 30px 100px #0005; }
+.appSurface { flex: 1; min-height: 0; display: flex; flex-direction: column; margin: 0 20px; border: 1px solid #ffffff12; border-radius: 20px; background: var(--background, #0d111b); overflow: hidden; }
+.appSurface[hidden] { display: none; }
+.viewActions { display: flex; gap: 4px; }
+.viewActions button { width: 32px; min-height: 32px; font-size: 18px; border-radius: 8px; color: #a7afc0; }
+.viewActions button:hover { background: #ffffff0c; color: white; }
+.appBody { min-height: 0; flex: 1; overflow: auto; color: var(--text-primary, #edf0fa); }
+.dockArea { flex-shrink: 0; display: flex; justify-content: center; padding: 14px 20px 18px; z-index: 20; }
+.dock { display: flex; align-items: center; gap: 8px; max-width: 100%; padding: 8px; border: 1px solid #ffffff20; border-radius: 20px; background: #191d29; box-shadow: 0 10px 40px #0005, inset 0 1px #ffffff06; }
+.dock > button { flex-shrink: 0; }
+.dockAsk { display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-radius: 12px; font-size: 13px; background: #b3a2ff20; color: #ddd3ff; }
+.dockAsk span { font-size: 18px; }
+.appSwitches { display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: thin; }
+.appSwitches button { display: flex; align-items: center; gap: 7px; padding: 10px 12px; border-radius: 10px; font-size: 11px; white-space: nowrap; max-width: 190px; color: #a9b1c4; }
+.appSwitches button[aria-pressed=true] { background: #ffffff0c; color: #f1edff; }
+.switchDot { width: 4px; height: 4px; border-radius: 50%; background: #77758a; flex-shrink: 0; }
+.appSwitches button[aria-pressed=true] .switchDot { background: #b9a7ff; box-shadow: 0 0 8px #b9a7ff66; }
+.workspace button:focus-visible { outline: 2px solid #b5a5ff; outline-offset: 2px; }
+.notice { position: absolute; left: 50%; transform: translateX(-50%); top: 10px; z-index: 30; max-width: 90%; padding: 12px 16px; border-radius: 12px; background: #343044; font-size: 13px; }
+.notice button { margin-left: 14px; }
+@media (max-width: 800px) {
+ .workspaceHeader { min-height: 58px; padding: 0 16px; gap: 14px; }
+ .landing { flex-direction: column; align-items: center; justify-content: flex-start; gap: 24px; padding: 24px 16px; scrollbar-width: thin; scrollbar-color: #393449 transparent; }
+ .intro { width: min(400px, 100%); }
+ .intro h1 { font-size: 38px; letter-spacing: -1.5px; margin: 12px 0; }
+ .intro h1 br { display: none; }
+ .intro p, .eyebrow { display: none; }
+ .appSurface { margin: 0 8px; border-radius: 14px; }
+ .dockArea { padding: 8px; }
+ .breadcrumb { display: none; }
+ .headerActions { gap: 8px; }
+ .appSwitches button { max-width: 130px; }
+}

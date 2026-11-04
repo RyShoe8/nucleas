@@ -73,7 +73,7 @@ function buildView(metric: MetricDefinition, rows: { date: string; value: number
 
 /** Revenue from every source (payments + ads), added when at least one part exists. */
 export function withTotalRevenue(views: MetricView[]): MetricView[] {
-  const parts = views.filter((v) => v.key === 'revenue_net' || v.key === 'ad_revenue');
+  const parts = views.filter((v) => v.key === 'revenue_net' || v.key === 'ad_revenue' || v.key === 'adx_revenue');
   if (parts.length === 0) return views;
   const byDate = new Map<string, number>();
   for (const p of parts) for (const pt of p.series) byDate.set(pt.date, (byDate.get(pt.date) ?? 0) + pt.value);
@@ -104,7 +104,7 @@ function formatValue(unit: MetricUnit, value: number): string {
 export function whatChanged(views: MetricView[]): string[] {
   const lines: { weight: number; text: string }[] = [];
   // With a single revenue source the total equals that source; report it once.
-  const revenueParts = views.filter((v) => v.key === 'revenue_net' || v.key === 'ad_revenue').length;
+  const revenueParts = views.filter((v) => v.key === 'revenue_net' || v.key === 'ad_revenue' || v.key === 'adx_revenue').length;
   for (const v of views) {
     if (v.key === 'revenue_total' && revenueParts < 2) continue;
     if (v.change === null || v.previous === null || v.previous < MIN_BASELINE[v.unit]) continue;

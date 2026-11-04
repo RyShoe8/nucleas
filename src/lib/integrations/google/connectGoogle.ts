@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { ExternalResource, IntegrationConnection, IntegrationSecret } from '@/lib/models/Integration';
 import { sealSecret } from '@/lib/security/secretBox';
 import { domainFromProject } from '@/lib/companies/ownedCompanies';
+import { listAdManagerSites } from '@/lib/capabilities/adapters/admanager';
 import { listAdSenseSites } from '@/lib/capabilities/adapters/adsense';
 import { isCompanyManager, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
 
@@ -75,6 +76,7 @@ export interface GoogleConnectSummary {
   analytics: { granted: boolean; connected: string[]; unmatched: string[] };
   searchConsole: { granted: boolean; connected: string[]; unmatched: string[] };
   adsense: { granted: boolean; connected: string[]; error?: string };
+  admanager: { granted: boolean; connected: string[]; error?: string };
 }
 
 export type GoogleConnectResult = { ok: true; summary: GoogleConnectSummary } | { ok: false; error: string };
@@ -115,8 +117,9 @@ export async function completeGoogleConnection(
   const analyticsGranted = granted.has('https://www.googleapis.com/auth/analytics.readonly');
   const searchGranted = granted.has('https://www.googleapis.com/auth/webmasters.readonly');
   const adsenseGranted = granted.has('https://www.googleapis.com/auth/adsense.readonly');
-  if (!analyticsGranted && !searchGranted) {
-    return { ok: false, error: 'Neither Analytics nor Search Console access was granted.' };
+  const admanagerGranted = granted.has('https://www.googleapis.com/auth/admanager');
+  if (!analyticsGranted && !searchGranted && !adsenseGranted && !admanagerGranted) {
+    return { ok: false, error: 'No supported Google integration access was granted.' };
   }
 
   const userinfo = await googleJson<{ email?: string }>(fetchImpl, 'https://openidconnect.googleapis.com/v1/userinfo', tokens.access_token).catch(
@@ -151,6 +154,7 @@ export async function completeGoogleConnection(
     analytics: { granted: analyticsGranted, connected: [], unmatched: [] },
     searchConsole: { granted: searchGranted, connected: [], unmatched: [] },
     adsense: { granted: adsenseGranted, connected: [] },
+    admanager: { granted: admanagerGranted, connected: [] },
   };
 
   for (const company of companies) {
@@ -269,6 +273,49 @@ export async function completeGoogleConnection(
       }
     } catch (err) {
       summary.adsense.error = err instanceof Error ? err.message : 'AdSense listing failed';
+    }
+  }
+
+  // AdManager: only companies that actually monetise with AdManager (a site matching their domain) get it.
+  if (admanagerGranted) {
+    try {
+      const admanagerSites = await listAdManagerSites(fetchImpl, tokens.access_token);
+      for (const company of companies) {
+        if (!company.domain) continue;
+        const matches = admanagerSites.filter((x) => x.domain === company.domain);
+        const site = matches.length === 1 ? matches[0] : undefined;
+        if (!site) continue;
+        const companyObjectId = new Types.ObjectId(company.id);
+        const existing = await IntegrationConnection.findOne({ organizationId: viewer.organizationId, companyId: companyObjectId, provider: 'admanager' })
+          .select('status')
+          .lean<{ status: string }>();
+        if (existing?.status === 'disabled') continue; // removed on purpose
+        const pin = await ExternalResource.findOne({ organizationId: viewer.organizationId, companyId: companyObjectId, provider: 'admanager', resourceType: 'site' }).lean();
+        const owner = await ExternalResource.findOne({ organizationId: viewer.organizationId, provider: 'admanager', resourceType: 'site', externalId: site.name }).lean();
+        if ((pin && pin.externalId !== site.name) || (owner && String(owner.companyId) !== company.id)) continue;
+        await IntegrationConnection.updateOne(
+          { organizationId: viewer.organizationId, companyId: companyObjectId, provider: 'admanager' },
+          {
+            $set: { status: 'connected', secretId: secret._id, credentialHint: accountEmail, accountLabel: site.domain, connectedByUserId: new Types.ObjectId(viewer.userId), lastVerifiedAt: new Date() },
+            $setOnInsert: { scope: 'company', source: 'onboarding', grantedScopes: [], planLimited: false },
+            $unset: { lastError: '' },
+            $inc: { revision: 1 },
+          },
+          { upsert: true }
+        );
+        await ExternalResource.updateOne(
+          { organizationId: viewer.organizationId, provider: 'admanager', resourceType: 'site', externalId: site.name },
+          { $set: { companyId: companyObjectId, label: site.domain, canonicalType: 'Company', canonicalId: companyObjectId, lastSyncedAt: new Date() } },
+          { upsert: true }
+        );
+        summary.admanager.connected.push(company.name);
+        if (existing?.status !== 'connected') {
+          const { recordActivity } = await import('@/lib/companies/activityLog');
+          await recordActivity({ organizationId: viewer.organizationId, companyId: companyObjectId, kind: 'integration', title: 'Google Ad Manager connected', detail: site.domain, actorUserId: viewer.userId });
+        }
+      }
+    } catch (err) {
+      summary.admanager.error = err instanceof Error ? err.message : 'AdManager listing failed';
     }
   }
 

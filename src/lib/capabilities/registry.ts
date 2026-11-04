@@ -1,3 +1,4 @@
+import { admanagerRevenue, type AdxOutput } from './adapters/admanager';
 import { z } from 'zod';
 import { CapabilityError, type CapabilityDefinition } from './types';
 import { defaultRange } from './adapters/http';
@@ -105,6 +106,16 @@ const adRevenue: CapabilityDefinition<DaysInput, AdRevenueOutput> = {
   },
 };
 
+const adxRevenue: CapabilityDefinition<DaysInput, AdxOutput> = {
+  id: 'ads.adx.revenue.read', version: 1, title: 'AdX revenue and performance',
+  domain: 'ads', kind: 'read', risk: 'read', approval: 'auto',
+  provider: 'admanager', requiresResource: 'site', input: daysInput, cacheSeconds: 600,
+  async run(ctx, input) {
+    const output = await admanagerRevenue(ctx, defaultRange(input.days, ctx.now));
+    return { output, summary: 'AdX performance for ' + output.domain + ' in ' + output.timeZone + ' over ' + input.days + ' days' };
+  },
+};
+
 const financeCash: CapabilityDefinition<Record<string, never>, CashOutput> = {
   id: 'finance.cash.read',
   version: 1,
@@ -176,6 +187,7 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   emailAudience,
   paymentsRevenue,
   adRevenue,
+  adxRevenue,
   financeCash,
   seoOverview,
   seoProjectCreate,

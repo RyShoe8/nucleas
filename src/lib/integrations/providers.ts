@@ -24,6 +24,7 @@ export const INTEGRATION_PROVIDERS: IntegrationProviderDefinition[] = [
   { id: 'website', name: 'Website publishing', domain: 'product', authKind: 'api_key', defaultScope: 'company', stackToolIds: [], credentialHint: 'Configure and test this company’s website adapter in Connections and setup.' },
   { id: 'ga4', name: 'Google Analytics', domain: 'analytics', authKind: 'oauth', defaultScope: 'company', stackToolIds: ['googleanalytics'] },
   { id: 'gsc', name: 'Google Search Console', domain: 'search', authKind: 'oauth', defaultScope: 'company', stackToolIds: [] },
+  { id: 'admanager', name: 'Google Ad Manager / AdX', domain: 'ads', authKind: 'oauth', defaultScope: 'company', stackToolIds: [], credentialHint: 'Connect Google, then choose this company’s Ad Manager site. Enable the Ad Manager API in Google Cloud and API access in the network. Google requests manage access to let Nucleas create reporting definitions; this connection only reads AdX performance and manages its own reports.' },
   { id: 'adsense', name: 'Google AdSense', domain: 'ads', authKind: 'oauth', defaultScope: 'company', stackToolIds: [] },
   { id: 'posthog', name: 'PostHog', domain: 'analytics', authKind: 'api_key', defaultScope: 'company', stackToolIds: ['posthog'], credentialHint: 'Personal API key with read access to the project.' },
   { id: 'ahrefs', name: 'Ahrefs', domain: 'seo', authKind: 'api_key', defaultScope: 'org', stackToolIds: [], credentialHint: 'Ahrefs API v3 key (Account settings → API keys). Free plans return limited data.' },
