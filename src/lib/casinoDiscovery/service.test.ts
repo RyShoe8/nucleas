@@ -1,12 +1,12 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import mongoose, { Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
-const mocks=vi.hoisted(()=>({inventory:vi.fn(),add:vi.fn()}));
-vi.mock('./intake',()=>({casinoIntake:async()=>({origin:'https://fg.test',inventory:mocks.inventory,add:mocks.add})}));
+const mocks=vi.hoisted(()=>({inventory:vi.fn(),add:vi.fn(),addDraft:vi.fn()}));
+vi.mock('./intake',()=>({casinoIntake:async()=>({origin:'https://fg.test',inventory:mocks.inventory,add:mocks.add,addDraft:mocks.addDraft})}));
 vi.mock('@/lib/ai/tools/webFetch',()=>({webFetch:async()=>({text:'Official terms'})}));
 vi.mock('@/lib/companies/companyProfile',()=>({loadCompanyViewer:async()=>null,getCompanyProfile:async()=>null}));
 import { CasinoCandidate } from '@/lib/models/CasinoCandidate';
-import { saveCandidates, decideCandidate } from './service';
+import { saveCandidates, decideCandidate, importCasinoDrafts } from './service';
 import { casinoResearchSchema } from './schema';
 let replica:MongoMemoryReplSet;
 const job={_id:new Types.ObjectId(),organizationId:new Types.ObjectId(),companyId:new Types.ObjectId()};
@@ -21,3 +21,23 @@ it('preserves rejected domains across research runs',async()=>{await saveCandida
 it('excludes inactive catalog sites even when the model recommends them',async()=>{mocks.inventory.mockResolvedValue({casinos:[{name:'Existing',website_url:'https://www.sports.test',status:'inactive'}]});await saveCandidates(job,new Types.ObjectId(),output,true);expect(await CasinoCandidate.countDocuments()).toBe(0);});
 it('adds once and only sends the three automatic platforms with exact page links',async()=>{await saveCandidates(job,new Types.ObjectId(),output,true);const row=await CasinoCandidate.findOne().lean();await decideCandidate(job,String(row!._id),userId,'add','');await decideCandidate(job,String(row!._id),userId,'add','');expect(mocks.add).toHaveBeenCalledTimes(1);const input=mocks.add.mock.calls[0][0];expect(Object.keys(input.social_copy).sort()).toEqual(['bluesky','discord','facebook']);for(const text of Object.values(input.social_copy))expect(text).toContain('/casinos/example-sports');expect(Array.from(input.social_copy.bluesky).length).toBeLessThanOrEqual(300);});
 it('blocks incomplete research and cross-company decisions',async()=>{await saveCandidates(job,new Types.ObjectId(),output,false);const row=await CasinoCandidate.findOne().lean();await expect(decideCandidate(job,String(row!._id),userId,'add','')).rejects.toThrow('Resolve required research');await expect(decideCandidate({...job,companyId:new Types.ObjectId()},String(row!._id),userId,'reject','')).rejects.toThrow('Candidate not found');expect(mocks.add).not.toHaveBeenCalled();});
+it('queues incomplete discovery with explicit unknowns and blocks catalog intake even after a passing review', async () => {
+  const note = 'Affiliate agreement detail remains unverified. '.repeat(6);
+  const values = { ...research, missing_information: [note], payload: { ...research.payload, login_url: null, restricted_states: null, phone_verification: null } };
+  await saveCandidates(job, new Types.ObjectId(), { ...output, records: [{ values, sources: ['https://sports.test/terms'] }] }, true);
+  const row = await CasinoCandidate.findOne().lean();
+  expect(row).toMatchObject({ status: 'review', research: { payload: { login_url: null, restricted_states: null, phone_verification: null } } });
+  expect(row?.blockers).toEqual(expect.arrayContaining([note.trim(), 'Needs verification: payload.login_url']));
+  await expect(decideCandidate(job, String(row!._id), userId, 'add', '')).rejects.toThrow('Resolve required research');
+  expect(mocks.add).not.toHaveBeenCalled();
+});
+
+it('imports an incomplete accepted result into admin using a stable draft request ID', async () => {
+ const runId = new Types.ObjectId();
+ const result = { ...output, records: [{...output.records[0], values: {...research, missing_information: ['Check withdrawal limits']}}] };
+ mocks.addDraft.mockResolvedValue({casino_id:7, admin_url:'https://fg.test/admin/casinos/7/edit'});
+ await expect(importCasinoDrafts(job, runId, result)).resolves.toEqual(['https://fg.test/admin/casinos/7/edit']);
+ await importCasinoDrafts(job, runId, result);
+ expect(mocks.addDraft.mock.calls[1][0]).toEqual(mocks.addDraft.mock.calls[0][0]);
+ expect(mocks.add).not.toHaveBeenCalled();
+});

@@ -1,3 +1,4 @@
+import { importCasinoDrafts } from '@/lib/casinoDiscovery/service';
 import { retryDatabaseRead, retryIdempotentWrite } from '@/lib/db/retryRead';
 import type { ModelStep } from '@/lib/jobs/modelPath';
 import 'server-only';
@@ -40,6 +41,7 @@ const OPEN: JobStatus[] = ['designing', 'needs_answers', 'proposed', 'testing', 
 const STUCK_MS = 20 * 60 * 1000;
 
 export interface JobRunView {
+  adminDraftLinks?: string[];
   id: string;
   dryRun: boolean;
   status: JobRunStatus;
@@ -112,6 +114,7 @@ type JobLean = {
 };
 
 type RunLean = {
+  decisionNote?: string;
   _id: Types.ObjectId;
   jobId: Types.ObjectId;
   dryRun: boolean;
@@ -137,6 +140,7 @@ function runView(r: RunLean): JobRunView {
   const progressState = r.progressState ?? { stage: terminal ? 'complete' : 'preparing', label: fallbackLabel, percent: terminal ? 100 : 5, updatedAt: r.finishedAt ?? r.startedAt };
   return {
     id: String(r._id),
+    adminDraftLinks: r.decisionNote?.startsWith('Frugal Gambler admin: ') ? r.decisionNote.slice('Frugal Gambler admin: '.length).split(' ').filter(link => /^https:\/\/[^\s]+\/admin\/casinos\/\d+\/edit$/.test(link)) : [],
     dryRun: r.dryRun,
     status: r.status,
     attempt: r.attempt ?? 1,
@@ -437,6 +441,18 @@ export async function decideRun(viewer: CompanyViewer, jobId: string, runId: str
   const found = await managed(viewer, jobId);
   if (!found.ok) return found;
   if (!Types.ObjectId.isValid(runId)) return { ok: false, status: 404, error: 'Run not found.' };
+  if (decision === 'accept' && jobDesignSchema.safeParse(found.job.design).data?.skill === 'casino_discovery') {
+    const pending = await JobRun.findOne({ _id: runId, jobId: found.job._id, status: { $in: ['completed', 'needs_review'] } }).lean<RunLean>();
+    if (!pending?.output) return { ok: false, status: 409, error: 'No accepted or reviewable discovery results found.' };
+    try {
+      const links = await importCasinoDrafts(found.job, pending._id, pending.output);
+      note = `Frugal Gambler admin: ${links.join(' ')}`;
+      if (pending.status === 'completed') {
+        await JobRun.updateOne({ _id: pending._id }, { $set: { decisionNote: note } });
+        return done(viewer, jobId);
+      }
+    } catch (error) { return { ok: false, status: 409, error: error instanceof Error ? error.message : 'Admin import failed. Retry this result.' }; }
+  }
   // Validate before completing a run so malformed profiles remain reviewable.
   if (decision === 'accept' && jobDesignSchema.safeParse(found.job.design).data?.skill === 'brand_voice') {
     const pending = await JobRun.findOne({ _id: runId, jobId: found.job._id, status: 'needs_review' }).lean<RunLean>();

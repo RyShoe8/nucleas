@@ -68,6 +68,7 @@ interface LinkOpportunityView {
 }
 
 export interface JobRunView {
+    adminDraftLinks?: string[];
     id: string;
     dryRun: boolean;
     status: 'running' | 'needs_review' | 'completed' | 'rejected' | 'failed';
@@ -602,10 +603,14 @@ function RunBlock({ job, run, onChange, onView }: { job: JobView; run: JobRunVie
                 </div>
             ) : null}
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
+            {run.adminDraftLinks?.map((link, i) => <a key={link} className="block text-xs text-primary underline" href={link} target="_blank" rel="noreferrer">Open casino draft {i + 1} in Frugal Gambler admin</a>)}
+            {job.design?.skill === 'casino_discovery' && !run.adminDraftLinks?.length && run.status === 'completed' && Boolean(run.output?.records.length) && job.canManage ? (
+                <button type="button" className={PRIMARY} disabled={busy !== null} onClick={() => void decide('accept_run')}>Add accepted results to Frugal Gambler admin as drafts</button>
+            ) : null}
             {run.status === 'needs_review' && job.canManage ? (
                 <div className="flex gap-2">
                     <button type="button" className={PRIMARY} disabled={busy !== null} onClick={() => void decide('accept_run')}>
-                        {run.dryRun ? 'Looks right — accept the sample' : 'Accept'}
+                        {job.design?.skill === 'casino_discovery' ? 'Accept and add to Frugal Gambler admin as drafts' : run.dryRun ? 'Looks right — accept the sample' : 'Accept'}
                     </button>
                     <button type="button" className={BUTTON} disabled={busy !== null} onClick={() => void decide('reject_run')}>
                         {run.dryRun ? 'Not right — back to the design' : 'Reject'}

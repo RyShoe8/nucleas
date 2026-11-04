@@ -1,5 +1,7 @@
 'use client';
 
+import styles from './DesktopShell.module.css';
+
 import { type ReactNode } from 'react';
 import TopBar from './TopBar';
 import WindowsTray from './WindowsTray';
@@ -12,7 +14,7 @@ interface OsShellProps {
 
 export default function OsShell({ children }: OsShellProps) {
     return (
-        <div className="fixed inset-0 flex flex-col bg-background text-text-primary overflow-hidden">
+        <div className={`fixed inset-0 flex flex-col text-text-primary overflow-hidden ${styles.desktop}`}>
             <TopBar />
             {/* Keep window focus ordering inside the desktop, below shell navigation. */}
             <div className="relative z-0 isolate flex-1 min-h-0">

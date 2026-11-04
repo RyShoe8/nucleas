@@ -1,5 +1,7 @@
 'use client';
 
+import styles from './DesktopShell.module.css';
+
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import ModuleRegistry from '@/lib/os/moduleRegistry';
 import { windowLabel } from '@/lib/os/windowLabel';
@@ -8,7 +10,7 @@ export default function WindowsTray() {
     const wm = useWindowManager();
 
     return (
-        <footer className="relative z-10 h-14 flex-shrink-0 flex items-center gap-2 px-3 border-t border-border bg-background overflow-x-auto">
+        <footer className={`relative z-10 h-14 flex-shrink-0 flex items-center gap-2 px-3 overflow-x-auto ${styles.tray}`}>
             {wm.windows.length === 0 ? (
                 <span className="text-xs text-text-muted">Your open apps appear here.</span>
             ) : (

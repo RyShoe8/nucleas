@@ -1,4 +1,5 @@
 import 'server-only';
+import { createHash } from 'node:crypto';
 import { Types } from 'mongoose';
 import { CasinoCandidate } from '@/lib/models/CasinoCandidate';
 import type { JobRunOutput } from '@/lib/jobs/schema';
@@ -26,7 +27,7 @@ export async function saveCandidates(job: { _id:Types.ObjectId;organizationId:Ty
   const research=parsed.data, domain=canonicalCasinoDomain(research.website_url);
   if(existingDomains.has(domain)||existingNames.has(research.name.toLowerCase().replace(/\W/g,'')))continue;
   const blockers=readiness(research);if(!reviewPassed)blockers.push('Independent research review has not passed.');
-  const urls=[...new Set([research.website_url,research.terms_url,research.eligibility_url,...(research.program_url?[research.program_url]:[]),...Object.values(research.field_sources).flat()])];
+  const urls=[...new Set([research.website_url,...[research.terms_url,research.eligibility_url].filter((url):url is string=>url!==null),...(research.program_url?[research.program_url]:[]),...Object.values(research.field_sources).flat()])];
   if(urls.length>30)blockers.push('Research contains too many sources to verify automatically; review the sources manually.');
   const pages=await Promise.allSettled(urls.slice(0,30).map(url=>webFetch(url)));
   pages.forEach((page,index)=>{if(page.status==='rejected'||page.value.thin)blockers.push(`Could not verify official page: ${urls[index]}`);});
@@ -40,6 +41,7 @@ export async function candidateList(organizationId: Types.ObjectId, companyId:Ty
 }
 async function queueReddit(candidate: {_id:Types.ObjectId;organizationId:Types.ObjectId;companyId:Types.ObjectId;jobId:Types.ObjectId;name:string;domain:string;research:unknown}, userId:string, siteUrl:string) {
  const parsed=casinoResearchSchema.parse(candidate.research);
+ if(!parsed.payload.about)throw new Error('The approved listing has no description.');
  const item=await PublishItem.findOneAndUpdate({jobId:candidate.jobId,key:`casino:${candidate.domain ?? String(candidate._id)}`},{$setOnInsert:{organizationId:candidate.organizationId,companyId:candidate.companyId,status:'processed',title:candidate.name,url:siteUrl,facts:{title:candidate.name,description:parsed.payload.about}}},{upsert:true,new:true});
  if(await PublishDelivery.exists({itemId:item!._id,platform:'reddit'}))return;
  const voice=await BrandVoice.findOne({organizationId:candidate.organizationId,companyId:candidate.companyId,status:'approved'}).select('persona').lean();
@@ -77,4 +79,21 @@ export async function queueCandidateReddit(job:{_id:Types.ObjectId;organizationI
  const candidate=await CasinoCandidate.findOne(filter).lean();if(!candidate?.siteUrl)return;
  try { await queueReddit(candidate,userId,candidate.siteUrl); await CasinoCandidate.updateOne(filter,{$unset:{error:''}}); }
  catch(error){ await CasinoCandidate.updateOne(filter,{$set:{error:`Site added; Reddit draft needs recovery: ${error instanceof Error?error.message:'Drafting failed.'}`}}); throw error; }
+}
+
+/** Explicit admin draft import, independent of the public listing and social workflow. */
+export async function importCasinoDrafts(job: { organizationId:Types.ObjectId; companyId:Types.ObjectId; _id:Types.ObjectId }, runId:Types.ObjectId, output:JobRunOutput) {
+ if (!output.records.length) throw new Error('This run has no casino records to add.');
+ const records = output.records.map(record => ({ research: casinoResearchSchema.parse(record.values), sources: record.sources }));
+ const intake = await casinoIntake(job.organizationId, job.companyId);
+ const links:string[] = [];
+ for (const record of records) {
+   const domain = canonicalCasinoDomain(record.research.website_url);
+   if (await CasinoCandidate.exists({ organizationId: job.organizationId, companyId: job.companyId, domain, status: 'rejected' })) throw new Error(`${record.research.name} is on the Don't add list.`);
+   const request_id = createHash('sha256').update(`draft:${job._id}:${runId}:${domain}`).digest('hex');
+   const result = await intake.addDraft({ request_id, ...record });
+   if (!Number.isSafeInteger(result.casino_id) || result.admin_url !== `${intake.origin}/admin/casinos/${result.casino_id}/edit`) throw new Error('Frugal Gambler did not confirm the admin record.');
+   links.push(result.admin_url);
+ }
+ return links;
 }

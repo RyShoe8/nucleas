@@ -1,7 +1,10 @@
 'use client';
 
+import styles from './DesktopShell.module.css';
+
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import ModuleRegistry from '@/lib/os/moduleRegistry';
+import { AppLauncherPanel } from './ModuleLauncher';
 import FloatingWindow from '../windows/FloatingWindow';
 
 export default function ModuleCanvas() {
@@ -11,20 +14,8 @@ export default function ModuleCanvas() {
 
     if (wm.windows.length === 0) {
         return (
-            <div className="absolute inset-0 flex items-center justify-center text-center px-6">
-                <div className="max-w-lg text-text-secondary">
-                    <h1 className="text-xl text-text-primary font-medium">What would you like to work on?</h1>
-                    <p className="mt-2 text-sm">Start with a company, review work in progress, or create content.</p>
-                    <div className="mt-5 grid gap-2 text-left sm:grid-cols-3">
-                        {[{ id: 'companies', title: 'Companies', hint: 'Your businesses, accounts and setup' }, { id: 'jobs', title: 'All jobs', hint: 'Running work and items needing review' }, { id: 'content', title: 'Content', hint: 'Write articles and update posts' }].map(item => (
-                            <button key={item.id} type="button" onClick={() => wm.open(item.id)} className="ui-card-interactive p-4">
-                                <span className="block text-sm font-medium text-text-primary">{item.title}</span>
-                                <span className="mt-1 block text-xs">{item.hint}</span>
-                            </button>
-                        ))}
-                    </div>
-                    <p className="mt-4 text-xs">Use Apps in the top bar for other tools.</p>
-                </div>
+            <div className="absolute inset-0 flex overflow-auto p-4 sm:p-6">
+                <div className={styles.welcome}><AppLauncherPanel /></div>
             </div>
         );
     }

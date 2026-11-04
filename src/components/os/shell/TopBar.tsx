@@ -1,5 +1,7 @@
 'use client';
 
+import styles from './DesktopShell.module.css';
+
 import { VoiceButton } from '@/components/voice/VoiceOverlay';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import { useOsAuth } from '@/hooks/os/useOsAuth';
@@ -23,9 +25,9 @@ export default function TopBar() {
     const projectLabel = activeProjectWindow?.payload?.projectName;
 
     return (
-        <header className="relative z-20 h-12 flex-shrink-0 flex items-center gap-2 sm:gap-3 px-2 sm:px-4 border-b border-border bg-background">
+        <header className={`relative z-20 h-14 flex-shrink-0 flex items-center gap-2 sm:gap-3 px-2 sm:px-4 ${styles.toolbar}`}>
             <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
-                <span className="hidden min-[420px]:inline text-sm sm:text-base font-semibold tracking-tight text-text-primary">Nucleas OS</span>
+                <span className="hidden min-[420px]:inline text-sm sm:text-base font-semibold tracking-tight text-text-primary">nucleas<span className={styles.dot}>.</span></span>
                 {projectLabel ? (
                     <span className="hidden sm:inline text-xs text-text-secondary truncate max-w-[200px]">{projectLabel}</span>
                 ) : null}
@@ -40,9 +42,9 @@ export default function TopBar() {
                         setAssistantFocus(null);
                         wm.open('assistant');
                     }}
-                    className="px-3 h-10 sm:h-8 rounded-md bg-primary text-white text-sm hover:opacity-90"
+                    className={styles.trigger}
                 >
-                    ✨ Ask
+                    ✦ Ask
                 </button>
                 <OsInstallButton />
                 <ModuleLauncher />

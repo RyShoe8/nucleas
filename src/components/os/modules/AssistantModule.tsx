@@ -2,7 +2,7 @@
 
 import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import IdeChatMarkdown from '@/components/ide/IdeChatMarkdown';
+import AnswerPresentation from './assistant/AnswerPresentation';
 import BuildCard, { type BuildView } from './building/BuildCard';
 import JobCard, { type JobView } from './jobs/JobCard';
 import AskComposer, { type AttachmentRef } from './assistant/AskComposer';
@@ -330,7 +330,7 @@ export default function AssistantModule() {
                             {t.pending ? (
                                 <PendingProgress turn={t} />
                             ) : t.role === 'assistant' ? (
-                                <IdeChatMarkdown text={t.text} />
+                                <AnswerPresentation text={t.text} />
                             ) : (
                                 <p className="whitespace-pre-wrap">{t.text}</p>
                             )}

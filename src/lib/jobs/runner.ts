@@ -516,7 +516,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     onProgress(compact ? `Retrying within ${shortModel(choice.model)}'s context limit` : correction ? `${researchRetry ? 'Re-researching' : 'Fixing the result format'} with ${shortModel(choice.model)}` : `Researching with ${shortModel(choice.model)}`);
     usedModels.push(choice.model);
     const turn = await attemptCompanyCredentialChat({
-      systemPrompt: runnerPrompt(activeDesign, today),
+      systemPrompt: runnerPrompt(activeDesign, today) + (activeDesign.skill === 'casino_discovery' ? '\nReturn officially identified new operators as candidate records even when program or eligibility details cannot be verified. Keep unknown fields null and explain gaps. Do not omit such operators solely because their terms pages are inaccessible.' : ''),
       organizationId: org,
       projectId: repo?.projectId ?? assistantLedgerProjectId(org),
       userId: viewer.userId,
@@ -590,11 +590,11 @@ export async function executeJobRun(runId: string): Promise<void> {
     }
     if (!parsed.success) return void (await fail(`The model's response could not be read after a formatting retry: ${parsed.error.issues.map((issue) => `${issue.path.join('.') || 'response'}: ${issue.message}`).join('; ')}. No result was saved; retry the run.`, { costMicros: cost, models: usedModels }));
     let output = parsed.data;
-    if (activeDesign.skill === 'casino_discovery' && workCalls < maxWorkCalls && (!output.records.length || output.records.some(record => !casinoResearchSchema.safeParse(record.values).success))) {
+    if (activeDesign.skill === 'casino_discovery' && workCalls < maxWorkCalls && (!output.records.length || !output.records.some(record => casinoResearchSchema.safeParse(record.values).success))) {
       const direct = level === 'free' ? [] : models.filter(model => model.provider === 'openai' && !exhaustedProfiles.has(model.profileId));
       const alternate = (direct.length ? (await selectModel(org, workNeed, level, { models: direct, settings })).primary : null) ?? work.fallback ?? activeWorker;
       activeWorker = alternate;
-      const retry = await doWork(activeWorker, 'The previous attempt returned no usable candidates. New means absent from our catalog, not necessarily newly launched. Research established casinos AND sports betting sites with official affiliate or referral programs too. Open real official pages and return up to three complete research objects with all payload fields. Unverified facts belong in missing_information and must block adding. Never fabricate records to fill a quota.', true);
+      const retry = await doWork(activeWorker, 'The previous attempt returned no usable candidates. New means absent from our catalog, not necessarily newly launched. Research established casinos AND sports betting sites with official affiliate or referral programs too. Open real official pages and return up to three evidenced candidate identities even when program, eligibility or intake research is incomplete. Put unresolved field values in the record as null. Unverified facts belong in missing_information and must block adding. Never fabricate records to fill a quota.', true);
       const replacement = retry.role === 'assistant' ? parseJobOutput(retry.text, activeDesign.skill) : null;
       if (replacement?.success) output = replacement.data;
     }

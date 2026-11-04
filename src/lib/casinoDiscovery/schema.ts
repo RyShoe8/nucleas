@@ -16,14 +16,27 @@ export const casinoPayloadSchema = z.object({
   // Only the account owner's actual tracking links belong here; program/application URLs do not.
   affiliate_link: url.pipe(z.string().max(255)).nullable(), referral_link: url.pipe(z.string().max(255)).nullable(),
 });
-export const casinoResearchSchema = z.object({
+const completeResearchSchema = z.object({
   name: text.min(2), website_url: url,
   site_type: z.enum(['sweepstakes_casino','social_casino','sportsbook','sweepstakes_sportsbook','casino_and_sportsbook']),
   program_type: z.enum(['affiliate','referral','both','none','unverified']), program_url: url.nullable(), program_terms: text,
   operator: text.min(2), terms_url: url, eligibility_url: url,
   eligibility_evidence: text.min(30), bonus_terms: text, redemption_terms: text,
   field_sources: z.record(z.string(), z.array(url).min(1).max(6)),
-  missing_information: list, payload: casinoPayloadSchema,
+  missing_information: z.array(text.min(1)).max(100), payload: casinoPayloadSchema,
+});
+// A verified identity can enter the review queue before its catalog fields are known.
+const draftFields = <T extends z.ZodRawShape>(fields: T) =>
+  Object.fromEntries(Object.entries(fields).map(([key, schema]) => [key, schema.nullable().default(null)])) as {
+    [K in keyof T]: z.ZodDefault<z.ZodNullable<T[K]>>
+  };
+export const casinoResearchSchema = completeResearchSchema.extend({
+  ...draftFields({
+    operator: completeResearchSchema.shape.operator, terms_url: url, eligibility_url: url,
+    eligibility_evidence: completeResearchSchema.shape.eligibility_evidence,
+    bonus_terms: text, redemption_terms: text, program_terms: text,
+  }),
+  payload: z.object(draftFields(casinoPayloadSchema.shape)),
 });
 export type CasinoResearch = z.infer<typeof casinoResearchSchema>;
 export function canonicalCasinoDomain(value: string): string {
@@ -31,8 +44,12 @@ export function canonicalCasinoDomain(value: string): string {
 }
 export function readiness(research: CasinoResearch): string[] {
   const issues = [...research.missing_information];
-  if (canonicalCasinoDomain(research.website_url) !== canonicalCasinoDomain(research.payload.website_url)) issues.push('The candidate and admin website domains do not match.');
-  if (research.name.toLowerCase().replace(/\W/g,'') !== research.payload.name.toLowerCase().replace(/\W/g,'')) issues.push('The candidate and admin casino names do not match.');
+  const complete = completeResearchSchema.safeParse(research);
+  if (!complete.success) {
+    for (const issue of complete.error.issues) issues.push(`Needs verification: ${issue.path.join('.')}`);
+  }
+  if (research.payload.website_url && canonicalCasinoDomain(research.website_url) !== canonicalCasinoDomain(research.payload.website_url)) issues.push('The candidate and admin website domains do not match.');
+  if (research.payload.name && research.name.toLowerCase().replace(/\W/g,'') !== research.payload.name.toLowerCase().replace(/\W/g,'')) issues.push('The candidate and admin casino names do not match.');
   if (['affiliate','referral','both'].includes(research.program_type) && !research.program_url) issues.push('The claimed affiliate/referral program needs an official URL.');
   for (const field of ['name','website_url','login_url','about','game_types','platforms','countries','restricted_states','payment_options','redemption_options','to_redeem','phone_verification','id_and_bank_verification','referral_program','enveloping']) {
     if (!research.field_sources[field]?.length) issues.push(`Missing source for ${field}.`);

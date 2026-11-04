@@ -11,7 +11,6 @@ import WatchesPanel from './content/WatchesPanel';
 import MarketingComposer from './jobs/MarketingComposer';
 import JobComposer from './jobs/JobComposer';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
-import ReadyPostCard from './jobs/publishing/ReadyPostCard';
 import { ActivityRows, activityFor, useActivity } from './jobs/ActivityList';
 import ActionMenu from '@/components/ui/ActionMenu';
 import { linkNeedsAction } from './jobs/linkAttention';
@@ -291,10 +290,6 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
         created(body.job);
         window.dispatchEvent(new Event('nucleas:jobs-changed'));
     };
-    // Posts waiting for a person, across every job in view: the first thing to see in Marketing.
-    const readyPosts = inView.flatMap((job) => (job.publishing?.ready ?? []).filter((d) => d.status === 'ready').map((delivery) => ({ job, delivery })));
-    const readyLinks = inView.flatMap(job => job.opportunities.filter(o => linkNeedsAction(o.status)).map(opportunity => ({ job, opportunity })));
-
     if (error && !jobs) return <div className="p-4 text-sm text-red-400">{error}</div>;
     if (!jobs) return <div className="p-4 text-sm text-text-secondary">Loading…</div>;
 
@@ -349,20 +344,6 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
             ) : null}
 
             <div className={`flex-1 overflow-y-auto p-3 space-y-4 ${(showAssets && title === 'Marketing' && company !== 'all') || (showOverview && title === 'Marketing' && company !== 'all') || (showInboxes && title === 'Marketing') ? 'hidden' : ''}`}>
-                {readyPosts.length || readyLinks.length ? (
-                    <section className="space-y-2">
-                        <h3 className="ui-kicker">Needs your review · {readyPosts.length + readyLinks.length}</h3>
-                        {readyLinks.map(({ job: j, opportunity }) => <div key={opportunity.id} className="ui-card space-y-2 p-3">
-                            <p className="text-xs text-text-secondary">{j.companyName} · Link building</p>
-                            <a href={opportunity.opportunityUrl} target="_blank" rel="noreferrer" className="text-sm underline break-all">{opportunity.opportunityUrl}</a>
-                            <p className="text-xs">{opportunity.status === 'approved' ? 'Approved — ready for you to submit.' : 'New opportunity — review and approve or reject.'}</p>
-                            <button type="button" className="ui-button-primary" onClick={() => setOpen(j.id)}>Review opportunity</button>
-                        </div>)}
-                        {readyPosts.map(({ job: j, delivery }) => (
-                            <ReadyPostCard key={delivery.id} jobId={j.id} companyName={company === 'all' ? j.companyName : undefined} delivery={delivery} subreddit={j.companySubreddit ?? null} formUrl={j.publishing?.admin?.formUrl ?? null} onChange={replace} />
-                        ))}
-                    </section>
-                ) : null}
                 {marketing && company !== 'all' && creating ? (
                     <div className="space-y-3" key={company}>
                         {linkBuilding ? (
@@ -411,7 +392,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                                     const progressTone = progress.tone === 'active' ? 'bg-primary' : progress.tone === 'waiting' ? 'bg-amber-400' : progress.tone === 'complete' ? 'bg-emerald-400' : progress.tone === 'failed' ? 'bg-red-400' : 'bg-text-secondary';
                                     return open === j.id ? (
                                         <li key={j.id}>
-                                            <JobCard job={j} onChange={replace} readyShownAbove />
+                                            <JobCard job={j} onChange={replace} />
                                             <button type="button" className="mt-1 text-[11px] text-text-secondary underline" onClick={() => setOpen(null)}>
                                                 Collapse
                                             </button>
