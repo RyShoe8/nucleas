@@ -11,6 +11,7 @@ describe('signature prospect qualification', () => {
     expect(prospectQualification.safeParse(candidate).success).toBe(true);
     expect(prospectQualification.safeParse({ ...candidate, team_size: 100 }).success).toBe(false);
     expect(prospectQualification.safeParse({ ...candidate, social: 'https://twitter.com/company' }).success).toBe(false);
+    expect(prospectQualification.safeParse({ ...candidate, social: 'https://www.facebook.com/company' }).success).toBe(false);
   });
   it('accepts a one-person company, stated in a founder\'s own short words', () => {
     expect(prospectQualification.safeParse({ ...candidate, team_size: 1, team_quote: 'I run this solo.' }).success).toBe(true);

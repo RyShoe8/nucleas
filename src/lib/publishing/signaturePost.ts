@@ -20,11 +20,11 @@ export async function queueSignaturePost(job: SignatureJob, values: Record<strin
   const imageUrl = read('screenshot');
   const domain = read('prospect_domain');
   if (!company || !post || !imageUrl || !domain) throw new Error('The signature concept is missing its company, post, picture or website.');
-  const platform = new URL(read('social')).hostname === 'bsky.app' ? 'bluesky' : 'facebook';
+  if (new URL(read('social')).hostname !== 'bsky.app') throw new Error('Signature concepts are only posted on Bluesky.');
   if (!readConfig(job)?.taggedPosts) {
     const publishing = publishingConfigSchema.parse({
       source: { type: 'site', feedUrl: 'https://tailnote.io/sitemap.xml', feedKind: 'sitemap', pathPrefix: '/', noun: 'signature concept' },
-      channels: [{ platform: 'bluesky', mode: 'manual' }, { platform: 'facebook', mode: 'manual' }],
+      channels: [{ platform: 'bluesky', mode: 'manual' }],
       taggedPosts: true,
       brief: 'Start a conversation with a small business, with the signature concept made for it.',
       notifyUserIds: [String(job.createdByUserId)],
@@ -40,7 +40,7 @@ export async function queueSignaturePost(job: SignatureJob, values: Record<strin
     { upsert: true, new: true }
   );
   await PublishDelivery.updateOne(
-    { itemId: item!._id, platform },
+    { itemId: item!._id, platform: 'bluesky' },
     { $setOnInsert: { organizationId: job.organizationId, companyId: job.companyId, jobId: job._id, mode: 'manual', status: 'ready', body: post, link: item!.url, assets: [{ kind: 'image', url: imageUrl }] } },
     { upsert: true }
   );

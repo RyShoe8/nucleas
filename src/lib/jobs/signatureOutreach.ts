@@ -25,10 +25,10 @@ export async function captureOutreach(values: Record<string, unknown>, sources: 
   if (!sources.some(s => s.replace(/\/$/, '') === destination.href.replace(/\/$/, ''))) throw new Error('Cite the working destination for the secondary CTA.');
   const social = assertSafePublicHttpsUrl(read('social'));
   if (!homepage.links.some(link => link.replace(/\/$/, '').toLowerCase() === social.href.replace(/\/$/, '').toLowerCase())) throw new Error('The official homepage must link to this social profile.');
-  const handle = social.pathname.match(social.hostname === 'bsky.app' ? /^\/profile\/([\w.-]+)\/?$/ : /^(?:www\.)?facebook\.com$/.test(social.hostname) ? /^\/([\w.-]+)\/?$/ : /$^/)?.[1];
+  const handle = social.hostname === 'bsky.app' ? social.pathname.match(/^\/profile\/([\w.-]+)\/?$/)?.[1] : undefined;
   const mentions = read('post').match(/@[a-z0-9_.-]+/gi) ?? [];
   if (!handle || !mentions.some(m => m.replace(/[.]$/, '').toLowerCase() === '@' + handle.toLowerCase())) throw new Error('The post must tag the verified company profile.');
-  if (social.hostname === 'bsky.app' && Array.from(read('post')).length > 300) throw new Error('Bluesky post exceeds 300 characters.');
+  if (Array.from(read('post')).length > 300) throw new Error('Bluesky post exceeds 300 characters.');
   const concept = Object.fromEntries(['company','website','first_name','last_name','role','email','feed','logo','primary_color','secondary_color','social','preset','cta_type','cta_label','cta_url'].map(key => [key, read(key)]));
   const { jpeg, headline } = await browserWorkerCall<{ jpeg: string; headline: string }>('/signature/capture', concept, { timeoutMs: 55000 });
   values.latest_article = headline;

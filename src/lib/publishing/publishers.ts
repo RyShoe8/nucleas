@@ -174,12 +174,11 @@ ${input.link}` : input.text;
 }
 
 export async function publishToFacebook(token: string, input: PostInput, fetcher: FetchLike = fetch): Promise<{ url: string }> {
-  // A link post takes its picture from the page's preview image, and the whole picture links there.
-  if (input.imageUrl && !input.taggedPost) {
+  if (input.imageUrl) {
     const photo = await publishFacebookPhoto(token, { ...input, imageUrl: input.imageUrl }, fetcher);
     if (photo) return photo;
   }
-  if (input.imageRequired && !input.taggedPost) throw new PublishError('rejected', 'The required image could not be attached. Nothing was posted.');
+  if (input.imageRequired) throw new PublishError('rejected', 'The required image could not be attached. Nothing was posted.');
   const form = new URLSearchParams({ message: input.text });
   if (input.link) form.set('link', input.link);
   let res: Response;

@@ -10,7 +10,7 @@ export const prospectQualification = z.object({
     growth_quote: z.string().min(30).max(1000),
     growth_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     website: z.string().url(),
-    social: z.string().regex(/^https:\/\/(?:bsky\.app\/profile\/|(?:www\.)?facebook\.com\/)[\w.-]+\/?$/),
+    social: z.string().regex(/^https:\/\/bsky\.app\/profile\/[\w.-]+\/?$/, 'Use the company Bluesky profile.'),
 });
 
 /** Open primary evidence before a reviewer decides whether its meaning supports the claims. */
