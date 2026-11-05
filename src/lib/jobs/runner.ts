@@ -1,4 +1,5 @@
 import 'server-only';
+import { upgradeSignatureFields } from './templates/signatureOutreach';
 import { qualifySignatureProspect } from './signatureQualification';
 import { captureOutreach } from './signatureOutreach';
 import { discoveryMemory, saveCandidates } from '@/lib/casinoDiscovery/service';
@@ -101,7 +102,7 @@ function reviewerPrompt(): string {
 const LINK_QUALITY_RULES = 'QUALITY BAR. Recommend an opportunity only after opening its exact page with a tool in this run and reading it. It must be an independent third-party site (never a casino, brand or shop that only promotes itself) whose page itself shows a free, self-service way to get a link, such as a submission form, add-a-resource instructions or a contribution flow, and whose audience matches the company. Put at least one exact quotation (25+ characters, in double quotes) copied from that page into the relevance evidence. Nucleas opens every recommended page and rejects a page that does not exist, a quotation that is not on it, or a site that is not what you claimed. Prefer one excellent, verified opportunity over a plausible guess.';
 
 function currentDesign(design: JobDesign): JobDesign {
-  const upgraded = withLinkDiscoveryFocus(upgradedDesign(design));
+  const upgraded = withLinkDiscoveryFocus(upgradeSignatureFields(upgradedDesign(design)));
   if (upgraded.skill !== 'link_building' || upgraded.instructions.includes('QUALITY BAR.')) return upgraded;
   return { ...upgraded, instructions: `${upgraded.instructions}\n\n${LINK_QUALITY_RULES}`, safeguards: [...upgraded.safeguards, 'Every recommended page is opened and checked: it must exist, quote itself in the evidence, and be a genuine third-party place to add a link.'] };
 }
@@ -609,7 +610,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       const firstProblem = replyProblem(turn.text);
       const firstStep = modelPath.at(-1);
       if (firstStep) firstStep.error = firstProblem;
-      const repairPrompt = `Format the previous research as the required JSON envelope. Do not add research or invent evidence. Return JSON only, using short concrete entries for each field. Validation: ${errors}\nUse {"records":[{"values":{${activeDesign.fields.map((field) => `"${field.key}": ${field.key === 'brand_profile' ? '{"positioning":{"primary":"..."},"audienceRelationship":{"style":"..."},"rhetoricalPatterns":["..."]}' : field.type === 'list' ? '["..."]' : '"..."'}`).join(',')}},"sources":[]}],"summary":"...","gaps":[]}. Fill values and sources from the research below; placeholders are not answers.\nPrevious reply:\n${turn.text.length > 12000 ? turn.text.slice(0, 6000) + '\n…\n' + turn.text.slice(-6000) : turn.text}`;
+      const repairPrompt = `Format the previous research as the required JSON envelope. Do not add research or invent evidence. Return JSON only, using short concrete entries for each field. Validation: ${errors}\nUse {"records":[{"values":{${activeDesign.fields.map((field) => `"${field.key}": ${field.key === 'brand_profile' ? '{"positioning":{"primary":"..."},"audienceRelationship":{"style":"..."},"rhetoricalPatterns":["..."]}' : field.type === 'list' ? '["..."]' : field.type === 'number' ? '0' : '"..."'}`).join(',')}},"sources":[]}],"summary":"...","gaps":[]}. Fill values and sources from the research below; placeholders are not answers.\nPrevious reply:\n${turn.text.length > 12000 ? turn.text.slice(0, 6000) + '\n…\n' + turn.text.slice(-6000) : turn.text}`;
       const again = await doWork(activeWorker, repairPrompt);
       if (again.role !== 'assistant') return void (await fail(again.text, { costMicros: cost, models: usedModels }));
       parsed = parseJobOutput(again.text, activeDesign.skill);

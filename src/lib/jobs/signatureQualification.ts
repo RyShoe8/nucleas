@@ -15,7 +15,13 @@ export const prospectQualification = z.object({
 
 /** Open primary evidence before a reviewer decides whether its meaning supports the claims. */
 export async function qualifySignatureProspect(values: Record<string, unknown>, sources: string[], excluded: string[], needsBlog: boolean) {
-    const candidate = prospectQualification.parse(values);
+    const parsed = prospectQualification.safeParse(values);
+    if (!parsed.success) {
+        const missing = parsed.error.issues.filter(issue => issue.code === 'invalid_type' && issue.received === 'undefined').map(issue => issue.path.join('.'));
+        const invalid = parsed.error.issues.filter(issue => !(issue.code === 'invalid_type' && issue.received === 'undefined')).map(issue => issue.path.join('.') + ': ' + issue.message);
+        throw new Error([missing.length ? 'Research omitted required evidence fields: ' + missing.join(', ') + '.' : '', ...invalid].filter(Boolean).join(' '));
+    }
+    const candidate = parsed.data;
     const host = (raw: string) => assertSafePublicHttpsUrl(raw).hostname.toLowerCase().replace(/^www\./, '');
     const domain = host(candidate.website);
     if (excluded.some(raw => {
