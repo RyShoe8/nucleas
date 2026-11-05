@@ -7,7 +7,7 @@ import { evidenceOnlyLinkFailure, linkRetryBrief } from './linkRetry';
 import { affordableLinkReview, LINK_REVIEW_TOKENS, LINK_WORK_CALLS } from './linkRunPolicy';
 import { VOICE_TRAIT_GUIDANCE } from './templates/brandVoice';
 import { withLinkDiscoveryFocus } from './templates/linkBuilding';
-import { manualArtifact, parseJobOutput } from './output';
+import { manualArtifact, replyProblem, parseJobOutput } from './output';
 import { brandVoiceContext, generatedVoice } from '@/lib/brandVoice/service';
 import { collectSocialVoiceSamples } from '@/lib/social/voiceSamples';
 import { brandMediaPrompt, brandMediaSources } from '@/lib/brandAssets/brandAssets';
@@ -593,11 +593,28 @@ export async function executeJobRun(runId: string): Promise<void> {
     let parsed = parseJobOutput(turn.text, activeDesign.skill);
     if (!parsed.success) {
       const errors = parsed.error.issues.map((issue) => `${issue.path.join('.') || 'response'}: ${issue.message}`).join('; ');
-      const again = await doWork(activeWorker, `Format the previous research as the required JSON envelope. Do not add research or invent evidence. Validation: ${errors}\nUse {"records":[{"values":{${activeDesign.fields.map((field) => `"${field.key}": ${field.key === 'brand_profile' ? '{"positioning":{"primary":"..."},"audienceRelationship":{"style":"..."},"rhetoricalPatterns":["..."]}' : '"..."'}`).join(',')}},"sources":[]}],"summary":"...","gaps":[]}. Fill values and sources from the research below; placeholders are not answers.\nPrevious reply:\n${turn.text.slice(-24000)}`);
+      const firstProblem = replyProblem(turn.text);
+      const firstStep = modelPath.at(-1);
+      if (firstStep) firstStep.error = firstProblem;
+      const repairPrompt = `Format the previous research as the required JSON envelope. Do not add research or invent evidence. Return JSON only, using short concrete entries for each field. Validation: ${errors}\nUse {"records":[{"values":{${activeDesign.fields.map((field) => `"${field.key}": ${field.key === 'brand_profile' ? '{"positioning":{"primary":"..."},"audienceRelationship":{"style":"..."},"rhetoricalPatterns":["..."]}' : field.type === 'list' ? '["..."]' : '"..."'}`).join(',')}},"sources":[]}],"summary":"...","gaps":[]}. Fill values and sources from the research below; placeholders are not answers.\nPrevious reply:\n${turn.text.length > 12000 ? turn.text.slice(0, 6000) + '\n…\n' + turn.text.slice(-6000) : turn.text}`;
+      const again = await doWork(activeWorker, repairPrompt);
       if (again.role !== 'assistant') return void (await fail(again.text, { costMicros: cost, models: usedModels }));
       parsed = parseJobOutput(again.text, activeDesign.skill);
+      if (!parsed.success) {
+        const step = modelPath.at(-1);
+        if (step) step.error = replyProblem(again.text);
+        const fallback = work.fallback;
+        if (activeDesign.skill === 'marketing_plan' && fallback && workCalls < maxWorkCalls &&
+            !exhaustedProfiles.has(fallback.profileId) && (fallback.model !== activeWorker.model || fallback.profileId !== activeWorker.profileId)) {
+          const recovery = await doWork(fallback, repairPrompt);
+          if (recovery.role !== 'assistant') return void (await fail(recovery.text, { costMicros: cost, models: usedModels }));
+          parsed = parseJobOutput(recovery.text, activeDesign.skill);
+          const last = modelPath.at(-1);
+          if (!parsed.success && last) last.error = replyProblem(recovery.text);
+        }
+      }
     }
-    if (!parsed.success) return void (await fail(`The model's response could not be read after a formatting retry: ${parsed.error.issues.map((issue) => `${issue.path.join('.') || 'response'}: ${issue.message}`).join('; ')}. No result was saved; retry the run.`, { costMicros: cost, models: usedModels }));
+    if (!parsed.success) return void (await fail(`The response could not be read after a formatting retry. ${modelPath.at(-1)?.model ?? activeWorker.model}: ${modelPath.at(-1)?.error ?? 'Invalid job output.'} ${parsed.error.issues.filter(issue => issue.path.length).map(issue => issue.path.join('.') + ': ' + issue.message).join('; ')} No result was saved; retry the run.`, { costMicros: cost, models: usedModels }));
     let output = parsed.data;
     if (activeDesign.skill === 'casino_discovery' && workCalls < maxWorkCalls && (!output.records.length || !output.records.some(record => casinoResearchSchema.safeParse(record.values).success))) {
       const direct = level === 'free' ? [] : models.filter(model => model.provider === 'openai' && !exhaustedProfiles.has(model.profileId));

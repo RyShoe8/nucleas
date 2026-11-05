@@ -36,8 +36,8 @@ export default function DesktopModule() {
     return <WindowManagerProvider userId={auth.userId}><OsIntentLayer>
         <div className={styles.window}>
             <header className={styles.header}>
-                {hasLauncher ? <button type="button" className={styles.launcher} onClick={() => void window.nucleasDesktop?.showLauncher?.()} aria-label="Open Nucleas app launcher">
-                    <span className={styles.mark} aria-hidden>n</span> Apps
+                {hasLauncher ? <button type="button" className={styles.launcher} title="Open the main Nucleas window" onClick={() => void window.nucleasDesktop?.showLauncher?.()} aria-label="Open the main Nucleas window">
+                    <span className={styles.mark} aria-hidden>n</span> Nucleas apps
                 </button> : <span className={styles.mark} aria-hidden>n</span>}
                 <span className={styles.title}>{title}</span>
             </header>

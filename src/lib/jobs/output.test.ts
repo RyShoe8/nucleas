@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { parseJobOutput } from './output';
+import { parseJobOutput, replyProblem } from './output';
 
 const profile = { positioning: { primary: 'Practical game discovery' }, audienceRelationship: { style: 'Fellow players' }, rhetoricalPatterns: ['Concrete recommendations'] };
 const record = { values: { brand_profile: profile }, sources: ['https://playbound.club/'] };
 describe('job output recovery', () => {
+  it('recovers a marketing record between unrelated JSON fragments without treating braces inside a string as delimiters', () => {
+    const plan = { values: { summary: 'A {branded} signature' }, sources: ['https://tailnote.io/'] };
+    const text = 'Research {"tool":"search"} Final ' + JSON.stringify({ records: [plan] }) + ' End {"status":"done"}';
+    expect(parseJobOutput(text, 'marketing_plan')).toMatchObject({ success: true, data: { records: [plan] } });
+    expect(replyProblem('<think>unfinished')).toContain('no final answer');
+    expect(replyProblem('Here is the strategy')).toContain('prose');
+  });
   it('keeps a generated persona when source citations exceed the storage limit', () => {
     const sources = Array.from({ length: 27 }, (_, i) => `https://playbound.club/games/${i}`);
     const parsed = parseJobOutput(JSON.stringify({ records: [{ values: record.values, sources: [sources[0], ...sources, ' '] }] }), 'brand_voice');

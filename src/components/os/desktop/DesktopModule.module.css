@@ -4,5 +4,5 @@
 .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 550; letter-spacing: 0.02em; }
 .body { min-height: 0; flex: 1; overflow: auto; }
 .message { min-height: 100%; display: grid; align-content: center; justify-items: start; gap: 16px; max-width: 520px; padding: 40px; margin: auto; color: var(--text-secondary); line-height: 1.7; }
-.launcher { -webkit-app-region: no-drag; display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; padding: 3px 8px 3px 3px; border-radius: 8px; color: inherit; font-size: 12px; cursor: pointer; }
+.launcher { -webkit-app-region: no-drag; display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; padding: 3px 8px 3px 3px; border: 1px solid #a89aff66; border-radius: 8px; background: #a89aff18; color: inherit; font-size: 12px; cursor: pointer; }
 .launcher:hover, .launcher:focus-visible { background: #ffffff18; }
