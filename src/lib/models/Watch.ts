@@ -120,6 +120,8 @@ const itemSchema = new Schema(
     keyPoints: { type: [{ category: String, text: String, _id: false }], default: [] },
     deals: { type: [Schema.Types.Mixed], default: [] },
     bestDeal: { type: Schema.Types.Mixed },
+    /** Every package the email offers, best first. Each is posted as its own deal. Absent on emails scanned before this. */
+    offers: { type: [Schema.Types.Mixed], default: undefined },
     /** The watch's fields for this email: { field key: value }. */
     values: { type: Schema.Types.Mixed },
     link: { type: String, maxlength: 2000 },

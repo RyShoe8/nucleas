@@ -584,6 +584,36 @@ function dealFromLlmPartial(p: DealMetricsLlmPartial, source: DealMetricsSource)
 }
 
 /**
+ * Every package an email offers, best first. Each one becomes its own public deal, so a package is only added when the
+ * email itself shows both its amounts, in the same unit as the best deal, at a price not already listed.
+ */
+export function offersInEmail(
+  best: DealMetrics | null | undefined,
+  regexDeals: readonly DealMetrics[],
+  llmOthers: readonly DealMetricsLlmPartial[],
+  sourceText: string,
+): DealMetrics[] {
+  if (!best) return [];
+  const text = sourceText.replace(/\s+/g, " ");
+  const plain = text.replace(/(\d),(?=\d{3})/g, "$1");
+  const shown = (amount: number | undefined) =>
+    amount != null && new RegExp(`(?<![\\d.])${reEsc(String(amount))}(?:\\.0+)?(?!\\d)`).test(plain);
+  const offers = [best];
+  const consider = (deal: DealMetrics | null) => {
+    if (!deal || !shown(deal.you_pay) || !shown(deal.baseline_value)) return;
+    if (normalizeUnit(deal.credit_unit) !== normalizeUnit(best.credit_unit)) return;
+    if (offers.some((offer) => offer.you_pay === deal.you_pay)) return;
+    offers.push(deal);
+  };
+  for (const other of llmOthers) {
+    if (other.confidence >= 0.45) consider(applyPlausibility(dealFromLlmPartial(other, "llm"), text));
+  }
+  // One pattern match is usually the same offer read differently. Only a real list counts as more packages.
+  if (regexDeals.length > 1) regexDeals.forEach(consider);
+  return offers;
+}
+
+/**
  * Prefer LLM when it returns a valid pair with decent confidence; otherwise regex; merge when both agree roughly.
  */
 export function mergeDealExtractions(

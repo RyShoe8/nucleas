@@ -334,6 +334,81 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
     ]);
   });
 
+  describe('an email that lists several packages', () => {
+    const amountFields = [
+      ...fields,
+      { key: 'spend', label: 'Spend', type: 'number' as const, selector: '#spend', required: false },
+      { key: 'get', label: 'Get', type: 'number' as const, selector: '#get', required: false },
+      { key: 'value', label: 'Value', type: 'number' as const, selector: '#value', required: false },
+    ];
+    const packaged = (from: string, subject: string, offers: ReturnType<typeof deal>[]) => WatchItem.create({ organizationId: org, watchId, mailboxId, gmailId: `g${(n += 1)}`, fromEmail: from, fromName: 'Golden Hearts', subject, sentAt: new Date(Date.now() - (100 - n) * 60_000), flagged: true, summary: subject, bestDeal: offers[0], deals: offers, offers });
+    // The model always picks the small package, as it did on the card that started this.
+    const wrongPackage = async ({ user }: { user: string }) => JSON.stringify({ casino: 'Golden Hearts', offer: /Deal: (.*)/.exec(user)?.[1] ?? 'offer', spend: 25, get: 30, value: 99 });
+    const splitDeps = (): PublishDeps => ({ ...adminDeps(), write: wrongPackage });
+    const splitJob = async () => {
+      const job = await adminJob();
+      await Job.updateOne({ _id: job._id }, { $set: { 'publishing.admin.fields': amountFields, 'publishing.adminValueField': 'value' } });
+      const current = (await Job.findById(job._id).lean())!;
+      await takeBaseline(current, splitDeps());
+      return current;
+    };
+
+    it('adds one deal per package, each with its own amounts and value, once', async () => {
+      const job = await splitJob();
+      await packaged('promo@spinfinite.example', 'Winfinite Wednesday', [deal(50, 63), deal(25, 30)]);
+      await runPublishing(await newRun(job._id, false), 'owner', job, splitDeps());
+      expect(saved.map((v) => [v.spend, v.get, v.value])).toEqual([['25', '30', '20'], ['50', '63', '26']]);
+      await runPublishing(await newRun(job._id, false), 'owner', job, splitDeps());
+      expect(saved).toHaveLength(2);
+    });
+
+    it('shares only the best package, while every package goes on the site', async () => {
+      const job = await splitJob();
+      await Job.updateOne({ _id: job._id }, { $set: { 'publishing.admin.fields': [...amountFields, { key: 'facebook', label: 'Facebook', type: 'checkbox' as const, selector: '#facebook', required: false }], 'publishing.adminFieldRules': [{ field: 'facebook', value: true, otherwise: false, whenValueOverPct: 30 }] } });
+      await packaged('promo@share.example', 'Both over thirty', [deal(50, 80), deal(25, 35)]);
+      await runPublishing(await newRun(job._id, false), 'owner', (await Job.findById(job._id).lean())!, splitDeps());
+      expect(saved.map((v) => [v.spend, v.facebook])).toEqual([['25', false], ['50', true]]);
+    });
+
+    it('gives a social job only the best package', async () => {
+      await BrandVoice.create({ organizationId: org, companyId, status: 'approved', persona: 'Plain and friendly.', updatedByUserId: userId });
+      const social = await newJob();
+      await Job.updateOne({ _id: social._id }, { $set: { publishing: { source: adminConfig.source, channels: [{ platform: 'bluesky', mode: 'manual' }], minimumSocialValuePct: 10 } } });
+      const current = (await Job.findById(social._id).lean())!;
+      await takeBaseline(current, deps());
+      const item = await packaged('promo@social.example', 'Two packages', [deal(50, 80), deal(25, 35)]);
+      await runPublishing(await newRun(social._id, false), 'owner', current, deps());
+      const items = await PublishItem.find({ jobId: social._id, status: 'processed' }).lean();
+      expect(items.map((row) => row.key)).toEqual([String(item._id)]);
+      expect(await PublishDelivery.countDocuments({ jobId: social._id, platform: 'bluesky' })).toBe(1);
+    });
+
+    it('keeps an email scanned before packages were recorded as one deal', async () => {
+      const job = await splitJob();
+      await WatchItem.create({ organizationId: org, watchId, mailboxId, gmailId: `g${(n += 1)}`, fromEmail: 'old@spinfinite.example', fromName: 'Golden Hearts', subject: 'Older email', sentAt: new Date(), flagged: true, summary: 'Older email', bestDeal: deal(50, 63), deals: [deal(50, 63), deal(25, 30)] });
+      await runPublishing(await newRun(job._id, false), 'owner', job, splitDeps());
+      expect(saved.map((v) => [v.spend, v.get])).toEqual([['50', '63']]);
+    });
+
+    it('does not mistake several packages for a flood of new items', async () => {
+      const job = await splitJob();
+      await packaged('a@one.example', 'One', [deal(50, 63), deal(25, 30), deal(100, 130)]);
+      await packaged('b@two.example', 'Two', [deal(50, 70), deal(25, 32), deal(100, 140)]);
+      await runPublishing(await newRun(job._id, false), 'owner', job, splitDeps());
+      expect(saved).toHaveLength(6);
+    });
+
+    it('queues every package when an email is added by hand', async () => {
+      const job = await splitJob();
+      await Job.updateOne({ _id: job._id }, { $set: { status: 'active' } });
+      await Job.updateMany({ _id: { $ne: job._id }, 'publishing.source.watchId': String(watchId) }, { $set: { status: 'paused' } });
+      const item = await packaged('c@three.example', 'Three', [deal(50, 63), deal(25, 30)]);
+      await queueExistingAdminItem({ organizationId: org, userId, role: 'admin' } as never, String(item._id), splitDeps());
+      const cards = await PublishDelivery.find({ jobId: job._id, platform: 'admin', status: 'ready' }).lean();
+      expect(cards.map((card) => [card.values?.spend, card.values?.get]).sort()).toEqual([['25', '30'], ['50', '63']]);
+    });
+  });
+
   it('says why a review card has no values, and fills it in again on request', async () => {
     const job = await adminJob();
     await Job.updateOne({ _id: job._id }, { $set: { 'publishing.channels': [{ platform: 'admin', mode: 'manual' }] } });

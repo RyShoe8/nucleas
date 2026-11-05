@@ -6,7 +6,7 @@ import { openSecret } from '@/lib/security/secretBox';
 import { GmailAccessTokenRejected, GmailApi, GmailAuthError, refreshAccessToken } from '@/lib/mail/gmailClient';
 import { markMailboxDisconnected, watchGoogleCredentials, watchMailboxPurpose } from './mailboxHealth';
 import { parseGmailMessage, type ParsedMessage } from '@/lib/mail/gmailParse';
-import { extractDealMetricsRegex, extractDealsFoundRegex, mergeDealExtractions, pickBestDeal } from './dealMetrics';
+import { extractDealMetricsRegex, extractDealsFoundRegex, mergeDealExtractions, pickBestDeal, offersInEmail } from './dealMetrics';
 import { extractAnchorHrefs, pickDealLink } from './dealLink';
 import { extractKeyPointsFallback } from './keyPoints';
 import { cleanEmailText, dealScore, detectKeywords, effectiveLookbackHours, gmailQueryFor, keywordMatchScore, prefilter, relevanceScore, type WatchRule } from './scan';
@@ -198,12 +198,14 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
 
   let deals: DealMetrics[] = [];
   let best: DealMetrics | null = null;
+  let offers: DealMetrics[] = [];
   let discountPct: number | null = null;
   if (settings.rank === 'discount') {
     deals = extractDealsFoundRegex(m.subject, text, rule.dealUnitTokens);
     const regexBest = pickBestDeal(deals) ?? extractDealMetricsRegex(m.subject, text, rule.dealUnitTokens);
     best = mergeDealExtractions(analysis?.deal ?? null, regexBest, `${m.subject}\n${text}`) ?? null;
     if (best && !deals.length) deals = [best];
+    offers = offersInEmail(best, deals, analysis?.otherDeals ?? [], `${m.subject}\n${text}`);
     discountPct = dealScore(best);
     scoreBasis = 'deal';
     const line = best ? formatDealLine(best) : 'No offer found in this email.';
@@ -233,6 +235,7 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
         keyPoints: analysis?.keyPoints.length ? analysis.keyPoints : extractKeyPointsFallback(text, m.subject),
         deals,
         bestDeal: best ?? undefined,
+        ...(offers.length ? { offers } : {}),
         values: analysis?.values && Object.keys(analysis.values).length ? analysis.values : undefined,
         link: pickDealLink(extractAnchorHrefs(m.bodyHtml), { html: m.bodyHtml, subject: m.subject, from: m.from.email }) ?? undefined,
         htmlPreview: m.bodyHtml.slice(0, 80_000) || undefined,

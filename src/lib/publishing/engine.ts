@@ -1,4 +1,5 @@
 import { readEventRoundup } from './eventRoundup';
+import { dealForKey, emailOffers, hasSeveralOffers, isBestOffer, sourceItemId, type EmailOffers } from './dealOffers';
 import { applyAdminFieldRules, paidOfferCalledFree, withDealAmounts, withDefaultEndDate, type DealAmounts } from './adminRules';
 import { slugifyTitle } from '@/lib/blog/slugify';
 import { retryDatabaseRead } from '@/lib/db/retryRead';
@@ -84,6 +85,8 @@ interface ItemFacts {
   dealValuePct?: number;
   /** The amounts of the deal dealValuePct was worked out from. */
   dealAmounts?: DealAmounts;
+  /** Not the email's best package: it goes on the site but is never shared. */
+  lesserOffer?: boolean;
   title: string;
   description: string;
   text: string;
@@ -127,19 +130,24 @@ async function listEntries(job: JobLike, config: PublishingConfig, deps: Publish
   const rows = await WatchItem.find({ organizationId: job.organizationId, watchId: new Types.ObjectId(config.source.watchId), flagged: true })
     .sort({ sentAt: -1 })
     .limit(100)
-    .select('_id subject sentAt link fromEmail bestDeal text summary keyPoints')
-    .lean<{ _id: Types.ObjectId; subject?: string; sentAt?: Date; link?: string; fromEmail?: string; bestDeal?: DealMetrics; text?: string; summary?: string; keyPoints?: { text?: string }[] }[]>();
-  let eligible = config.minimumSocialValuePct !== undefined && config.channels.some((c) => c.platform !== 'admin')
-    ? rows.filter((r) => r.bestDeal && dealStrengthPct(r.bestDeal) > config.minimumSocialValuePct! / 100 + Number.EPSILON)
-    : rows;
-  eligible = eligible.filter((row) => !publicDealProblem(row));
+    .select('_id subject sentAt link fromEmail bestDeal offers text summary keyPoints')
+    .lean<{ _id: Types.ObjectId; subject?: string; sentAt?: Date; link?: string; fromEmail?: string; bestDeal?: DealMetrics; offers?: DealMetrics[]; text?: string; summary?: string; keyPoints?: { text?: string }[] }[]>();
+  const watch = rows.some(hasSeveralOffers) ? await ContentWatch.findOne({ _id: new Types.ObjectId(config.source.watchId), organizationId: job.organizationId }).select('fields rank mode threshold minDiscountPct').lean() : null;
+  const minPct = watch ? watchSettings(watch).minDiscountPct : 0;
+  // Each package an email offers is its own deal, judged on its own value.
+  let eligible = rows.filter((row) => !publicDealProblem(row)).flatMap((row) => emailOffers(row, minPct).map((offer) => ({ row, ...offer })));
+  // A job with no admin channel only posts to social, which carries only the best package.
+  if (!config.channels.some((c) => c.platform === 'admin')) eligible = eligible.filter(({ key }) => isBestOffer(key));
+  if (config.minimumSocialValuePct !== undefined && config.channels.some((c) => c.platform !== 'admin')) {
+    eligible = eligible.filter(({ key, deal }) => !isBestOffer(key) || (deal && dealStrengthPct(deal) > config.minimumSocialValuePct! / 100 + Number.EPSILON));
+  }
   if (config.socialLinkTemplate && !config.channels.some((channel) => channel.platform === 'admin')) {
     const deliveries = await PublishDelivery.find({ organizationId: job.organizationId, companyId: job.companyId, platform: 'admin', status: 'posted', 'values.slug': { $type: 'string', $ne: '' } }).select('itemId').lean();
-    const items = await PublishItem.find({ _id: { $in: deliveries.map((delivery) => delivery.itemId) }, organizationId: job.organizationId, companyId: job.companyId, key: { $in: eligible.map((row) => String(row._id)) } }).select('key').lean();
+    const items = await PublishItem.find({ _id: { $in: deliveries.map((delivery) => delivery.itemId) }, organizationId: job.organizationId, companyId: job.companyId, key: { $in: eligible.map(({ key }) => key) } }).select('key').lean();
     const publishedKeys = new Set(items.map((item) => item.key));
-    eligible = eligible.filter((row) => publishedKeys.has(String(row._id)));
+    eligible = eligible.filter(({ key }) => publishedKeys.has(key));
   }
-  return eligible.map((r) => ({ key: String(r._id), url: r.link ?? null, title: r.subject ?? '', date: r.sentAt ?? null, dedupe: dedupeKeyFor(r.fromEmail, r.bestDeal) }));
+  return eligible.map(({ row, key, deal }) => ({ key, url: row.link ?? null, title: `${row.subject ?? ''}${hasSeveralOffers(row) && deal ? ` · ${formatDealLine(deal)}` : ''}`, date: row.sentAt ?? null, dedupe: dedupeKeyFor(row.fromEmail, deal) }));
 }
 
 /** "goldenhearts.com|20-40-sc-pay_vs_credited_value": the sender's domain and the offer's amounts. */
@@ -156,14 +164,16 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
     return { ...page, ...(config.image ? { image: config.image.url, images: [] } : {}), title: page.title || entry.title, extra: [], link: entry.url };
   }
   const [item, watch] = await Promise.all([
-    WatchItem.findOne({ _id: new Types.ObjectId(entry.key), organizationId: job.organizationId })
-      .select('subject text summary keyPoints bestDeal values link fromName sentAt')
-      .lean<{ subject?: string; text?: string; summary?: string; keyPoints?: { text?: string }[]; bestDeal?: DealMetrics; values?: Record<string, string>; link?: string; fromName?: string; sentAt?: Date }>(),
+    WatchItem.findOne({ _id: new Types.ObjectId(sourceItemId(entry.key)), organizationId: job.organizationId })
+      .select('subject text summary keyPoints bestDeal offers values link fromName sentAt')
+      .lean<{ subject?: string; text?: string; summary?: string; keyPoints?: { text?: string }[]; bestDeal?: DealMetrics; offers?: DealMetrics[]; values?: Record<string, string>; link?: string; fromName?: string; sentAt?: Date }>(),
     ContentWatch.findOne({ _id: new Types.ObjectId(config.source.watchId), organizationId: job.organizationId }).select('fields rank mode threshold minDiscountPct').lean(),
   ]);
   const fields = watch ? watchSettings(watch).fields : [];
   const dealProblem = item ? publicDealProblem(item) : null;
   if (dealProblem) throw new Error(dealProblem);
+  const deal = item ? dealForKey(item, entry.key) : null;
+  const several = Boolean(item && deal && hasSeveralOffers(item));
   let link = item?.link ?? entry.url;
   if (config.socialLinkTemplate && !config.channels.some((channel) => channel.platform === 'admin')) {
     const siblings = await PublishItem.find({ organizationId: job.organizationId, companyId: job.companyId, key: entry.key }).select('_id').lean();
@@ -172,8 +182,9 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
     link = typeof admin?.values?.slug === 'string' ? config.socialLinkTemplate.replace('{slug}', encodeURIComponent(admin.values.slug)) : null;
   }
   return {
-    ...(item?.bestDeal ? { dealValuePct: dealStrengthPct(item.bestDeal) * 100, dealAmounts: { pay: item.bestDeal.you_pay, ...(item.bestDeal.mode === 'retail_list_vs_sale' ? {} : { credit: item.bestDeal.baseline_value }) } } : {}),
-    title: item?.subject ?? entry.title,
+    ...(isBestOffer(entry.key) ? {} : { lesserOffer: true }),
+    ...(deal ? { dealValuePct: dealStrengthPct(deal) * 100, dealAmounts: { pay: deal.you_pay, ...(deal.mode === 'retail_list_vs_sale' ? {} : { credit: deal.baseline_value }) } } : {}),
+    title: several ? `${item?.subject ?? entry.title} · ${formatDealLine(deal!)}` : item?.subject ?? entry.title,
     description: item?.summary ?? '',
     text: '',
     image: null,
@@ -184,7 +195,8 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
       ...(config.adminTimezone ? [`Site timezone: ${config.adminTimezone}. Use this timezone for all admin dates and times.`, `Today at the site: ${new Intl.DateTimeFormat('en-CA', { timeZone: config.adminTimezone }).format(new Date())}`, ...(item?.sentAt ? [`Email sent at the site: ${new Intl.DateTimeFormat('en-US', { timeZone: config.adminTimezone, dateStyle: 'full', timeStyle: 'short' }).format(item.sentAt)}`] : [])] : []),
       `Today (UTC): ${new Date().toISOString().slice(0, 10)}`,
       ...(item?.sentAt ? [`Email sent (UTC): ${item.sentAt.toISOString()}`] : []),
-      item?.bestDeal ? `Deal: ${formatDealLine(item.bestDeal)}` : '',
+      deal ? `Deal: ${formatDealLine(deal)}` : '',
+      several ? `The email lists ${item!.offers!.length} packages and each is its own separate ${config.source.noun}. This one covers only the package in the Deal line, so never mention the others. Its title must say what is paid and what is received, so it can be told apart from them.` : '',
       ...watchValueLines(item?.values, fields),
       ...(item?.keyPoints ?? []).slice(0, 6).map((p) => `Key fact: ${p.text ?? ''}`),
     ].filter(Boolean),
@@ -240,7 +252,7 @@ async function prepareAdmin(target: AdminTarget, config: PublishingConfig, facts
       problem: `Nucleas could not fill in the form values${why}. Use “Fill it in again”, or Edit deal to enter them.`.slice(0, 1000),
     };
   }
-  filled.values = withDealAmounts(target.fields, applyAdminFieldRules(config, filled.values, facts.dealValuePct, facts.link), facts.dealAmounts);
+  filled.values = withDealAmounts(target.fields, applyAdminFieldRules(config, filled.values, facts.dealValuePct, facts.link, !facts.lesserOffer), facts.dealAmounts);
   if (config.adminDefaultEndDays) filled.values = withDefaultEndDate(target.fields, filled.values, config.adminDefaultEndDays);
   filled.unfilled = target.fields.filter((f) => f.required && f.type !== 'file' && (filled.values[f.key] === undefined || filled.values[f.key] === '')).map((f) => f.label || f.key);
   const calledFree = paidOfferCalledFree(target.fields, filled.values, facts.dealAmounts);
@@ -323,7 +335,7 @@ type AdminPostOutcome = PostOutcome & { screenshot: string | null; warning?: str
 
 /** Adds one record through the admin form; a changed form is learned again (and saved to the job) once. */
 async function postToAdmin(job: JobLike, config: PublishingConfig, values: Record<string, string | boolean>, facts: ItemFacts, context: DraftContext, write: Writer, deps: PublishDeps, reviewed = false): Promise<AdminPostOutcome> {
-  if (!reviewed) values = withDealAmounts(config.admin?.fields ?? [], applyAdminFieldRules(config, values, facts.dealValuePct, facts.link), facts.dealAmounts);
+  if (!reviewed) values = withDealAmounts(config.admin?.fields ?? [], applyAdminFieldRules(config, values, facts.dealValuePct, facts.link, !facts.lesserOffer), facts.dealAmounts);
   // Cards written before the end-date rule existed get it now, when "Add it for me" is used.
   if (config.admin && config.adminDefaultEndDays) values = withDefaultEndDate(config.admin.fields, values, config.adminDefaultEndDays);
   if (!config.admin) return { ok: false, error: new PublishError('rejected', 'This job has no admin form set up.'), screenshot: null };
@@ -623,7 +635,8 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
     fresh = entries.filter((e) => !byKey.has(e.key) || retryKeys.has(e.key)).reverse(); // oldest first
   }
 
-  if (!rotation && fresh.filter((entry) => !retryKeys.has(entry.key)).length > MAX_NEW_PER_RUN) {
+  // Counted by email: one email with several packages is not a flood.
+  if (!rotation && new Set(fresh.filter((entry) => !retryKeys.has(entry.key)).map((entry) => sourceItemId(entry.key))).size > MAX_NEW_PER_RUN) {
     const newEntries = fresh.filter((entry) => !retryKeys.has(entry.key));
     await PublishItem.bulkWrite(
       newEntries.map((e) => ({
@@ -697,8 +710,9 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
       continue;
     }
     await PublishItem.updateOne({ _id: itemId }, { $set: { title: facts.title.slice(0, 500), facts: { title: facts.title, description: facts.description, text: facts.text, image: facts.image ?? undefined, images: facts.images, video: facts.video ?? undefined } } });
-    const drafts = await draftAll(job, config, facts, context, write);
-    for (const channel of config.channels) {
+    const channels = isBestOffer(entry.key) ? config.channels : config.channels.filter((c) => c.platform === 'admin');
+    const drafts = await draftAll(job, { ...config, channels }, facts, context, write);
+    for (const channel of channels) {
       const prepared = drafts.get(channel.platform);
       if (!prepared) continue;
       const { draft, written } = prepared;
@@ -868,8 +882,9 @@ export async function editDelivery(job: { _id: Types.ObjectId; organizationId: T
 /** Post a ready card through the platform's API now (after an account is fixed, or instead of copying by hand). */
 async function deliveryDealProblem(delivery: { itemId: Types.ObjectId; organizationId: Types.ObjectId }): Promise<string | null> {
   const item = await PublishItem.findOne({ _id: delivery.itemId, organizationId: delivery.organizationId }).select('key').lean();
-  if (!item || !Types.ObjectId.isValid(item.key)) return null;
-  const email = await WatchItem.findOne({ _id: item.key, organizationId: delivery.organizationId }).select('subject text summary keyPoints bestDeal').lean();
+  const emailId = item ? sourceItemId(item.key) : '';
+  if (!item || !Types.ObjectId.isValid(emailId)) return null;
+  const email = await WatchItem.findOne({ _id: emailId, organizationId: delivery.organizationId }).select('subject text summary keyPoints bestDeal').lean();
   return email ? publicDealProblem(email) : null;
 }
 
@@ -881,8 +896,10 @@ export async function postDeliveryNow(job: JobLike, deliveryId: string, userId: 
   const socialConfig = currentJob ? readConfig(currentJob) : null;
   if (candidate && candidate.platform !== 'admin' && socialConfig?.source.type === 'mailbox' && socialConfig.minimumSocialValuePct !== undefined) {
     const source = await PublishItem.findOne({ _id: candidate.itemId, organizationId: job.organizationId }).select('key').lean();
-    const email = source && Types.ObjectId.isValid(source.key) ? await WatchItem.findOne({ _id: new Types.ObjectId(source.key), organizationId: job.organizationId }).select('bestDeal').lean() : null;
-    if (!email?.bestDeal || !(dealStrengthPct(email.bestDeal as DealMetrics) > socialConfig.minimumSocialValuePct / 100 + Number.EPSILON)) return { ok: false, status: 409, error: `This deal does not have confirmed value over ${socialConfig.minimumSocialValuePct}%; it cannot be posted to social.` };
+    const emailId = source ? sourceItemId(source.key) : '';
+    const email = source && Types.ObjectId.isValid(emailId) ? await WatchItem.findOne({ _id: new Types.ObjectId(emailId), organizationId: job.organizationId }).select('bestDeal offers').lean<{ bestDeal?: DealMetrics; offers?: DealMetrics[] }>() : null;
+    const sourceDeal = email && source ? dealForKey(email, source.key) : null;
+    if (!sourceDeal || !(dealStrengthPct(sourceDeal) > socialConfig.minimumSocialValuePct / 100 + Number.EPSILON)) return { ok: false, status: 409, error: `This deal does not have confirmed value over ${socialConfig.minimumSocialValuePct}%; it cannot be posted to social.` };
   }
   if (!candidate) return { ok: false, status: 409, error: 'This post was already handled.' };
   const dealProblem = await deliveryDealProblem(candidate);
@@ -1041,8 +1058,18 @@ export async function queueExistingAdminItem(viewer: CompanyViewer, itemId: stri
   if (!config?.admin) throw new Error('Admin form settings are missing.');
   const profile = await getCompanyProfile(viewer, String(job.companyId));
   if (!profile) throw new Error('Company not accessible.');
-  const stored = await PublishItem.findOneAndUpdate({ jobId: job._id, key: itemId }, { $setOnInsert: { organizationId: job.organizationId, companyId: job.companyId, jobId: job._id, key: itemId, title: item.subject, status: 'processed' } }, { upsert: true, new: true });
-  const dedupe = dedupeKeyFor(item.fromEmail ?? undefined, item.bestDeal as DealMetrics | undefined);
+  let first: { jobId: string; status: string } | null = null;
+  for (const offer of emailOffers(item as unknown as EmailOffers)) {
+    const queued = await queueAdminOffer(job, config, profile.name, item, offer, deps);
+    first ??= queued;
+  }
+  return first ?? { jobId: String(job._id), status: 'ready' };
+}
+
+async function queueAdminOffer(job: JobLike, config: PublishingConfig, companyName: string, item: { subject?: string | null; fromEmail?: string | null; sentAt?: Date | null; link?: string | null }, offer: { key: string; deal: DealMetrics | null }, deps: PublishDeps): Promise<{ jobId: string; status: string }> {
+  if (!config.admin) throw new Error('Admin form settings are missing.');
+  const stored = await PublishItem.findOneAndUpdate({ jobId: job._id, key: offer.key }, { $setOnInsert: { organizationId: job.organizationId, companyId: job.companyId, jobId: job._id, key: offer.key, title: item.subject, status: 'processed' } }, { upsert: true, new: true });
+  const dedupe = dedupeKeyFor(item.fromEmail ?? undefined, offer.deal ?? undefined);
   if (dedupe) {
     const matching = await PublishItem.find({ jobId: job._id, organizationId: job.organizationId, dedupeKey: dedupe, _id: { $ne: stored._id }, createdAt: { $gte: new Date(Date.now() - DEDUPE_DAYS * 86_400_000) } }).select('_id').lean();
     const prior = await PublishDelivery.findOne({ itemId: { $in: matching.map((m) => m._id) }, platform: 'admin', status: { $in: ['ready', 'publishing', 'posted'] } }).lean();
@@ -1051,8 +1078,8 @@ export async function queueExistingAdminItem(viewer: CompanyViewer, itemId: stri
   }
   const existing = await PublishDelivery.findOne({ itemId: stored._id, platform: 'admin' }).lean();
   if (existing) return { jobId: String(job._id), status: existing.status };
-  const facts = await factsFor(job, config, { key: itemId, title: item.subject, date: item.sentAt ?? null, url: item.link ?? null }, deps);
-  const prepared = await prepareAdmin(config.admin, config, facts, { companyName: profile.name, persona: await approvedPersona(job), subreddit: null }, deps.write ?? engineWriter(job));
+  const facts = await factsFor(job, config, { key: offer.key, title: item.subject ?? '', date: item.sentAt ?? null, url: item.link ?? null }, deps);
+  const prepared = await prepareAdmin(config.admin, config, facts, { companyName, persona: await approvedPersona(job), subreddit: null }, deps.write ?? engineWriter(job));
   if (!prepared.values || !Object.keys(prepared.values).length) throw new Error(prepared.problem ?? 'No form values could be prepared. Please retry.');
   await PublishItem.updateOne({ _id: stored._id }, { $set: { status: 'processed', facts: { title: facts.title, description: facts.description }, title: facts.title } });
   await PublishDelivery.updateOne({ itemId: stored._id, platform: 'admin' }, { $setOnInsert: { organizationId: job.organizationId, companyId: job.companyId, jobId: job._id, itemId: stored._id, platform: 'admin', mode: 'manual', status: 'ready', body: prepared.draft.body, values: prepared.values ?? {}, ...(facts.link ? { link: facts.link } : {}), ...(prepared.problem ? { error: prepared.problem } : {}) } }, { upsert: true });

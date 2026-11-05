@@ -1,6 +1,7 @@
 import mongoose, { Schema, type ClientSession, type Types } from 'mongoose';
 import { PublishDelivery, PublishItem } from '@/lib/models/Publishing';
 import { WatchItem } from '@/lib/models/Watch';
+import { sourceItemId } from './dealOffers';
 
 const lockSchema = new Schema({ _id: String, version: { type: Number, default: 0 } });
 const RedditDealLock = mongoose.models.RedditDealLock ?? mongoose.model('RedditDealLock', lockSchema);
@@ -10,8 +11,9 @@ type DealCard = { organizationId: Types.ObjectId; companyId: Types.ObjectId; ite
 /** Prefer the saved admin casino ID/name; never guess a casino from generated copy. */
 export async function casinoFor(card: DealCard): Promise<string | null> {
   const item = await PublishItem.findOne({ _id: card.itemId, organizationId: card.organizationId, companyId: card.companyId }).select('key').lean();
-  if (!item || !mongoose.isValidObjectId(item.key)) return null;
-  const email = await WatchItem.findOne({ _id: item.key, organizationId: card.organizationId }).select('bestDeal fromEmail values').lean();
+  const emailId = item ? sourceItemId(item.key) : '';
+  if (!item || !mongoose.isValidObjectId(emailId)) return null;
+  const email = await WatchItem.findOne({ _id: emailId, organizationId: card.organizationId }).select('bestDeal fromEmail values').lean();
   if (!email?.bestDeal) return null;
   const siblings = await PublishItem.find({ organizationId: card.organizationId, companyId: card.companyId, key: item.key }).select('_id').lean();
   const admin = await PublishDelivery.findOne({ organizationId: card.organizationId, companyId: card.companyId, platform: 'admin', status: 'posted', itemId: { $in: siblings.map((row) => row._id) } }).sort({ postedAt: -1, createdAt: -1 }).select('values').lean();

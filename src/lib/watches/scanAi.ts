@@ -36,6 +36,8 @@ export interface AnalyzeResult {
   summary: string;
   keyPoints: KeyPoint[];
   deal: DealMetricsLlmPartial | null;
+  /** The email's other purchase packages, when it lists several. */
+  otherDeals?: DealMetricsLlmPartial[];
   values: Record<string, string>;
 }
 
@@ -71,7 +73,7 @@ ${wanted
   );
   if (input.mode === 'deal') {
     rules.push('- Eligibility: if the offer is only redeemable by this email recipient or account, explicitly record that restriction as an eligibility key point using the email wording (including a named email when given). Never describe a recipient-only deal as public. A greeting, delivery address, or the word exclusive alone is not an eligibility restriction.');
-    fields.push('"deal": {"you_pay": number|null, "baseline_value": number|null, "pay_unit": string|null, "credit_unit": string|null, "mode": "retail_list_vs_sale"|"pay_vs_credited_value"|"unknown", "confidence": number}|null');
+    fields.push('"deal": {"you_pay": number|null, "baseline_value": number|null, "pay_unit": string|null, "credit_unit": string|null, "mode": "retail_list_vs_sale"|"pay_vs_credited_value"|"unknown", "confidence": number}|null', '"other_deals": [objects shaped like deal]');
     const units = input.dealUnitTokens.length
       ? `Amount units to prefer when reading numbers (including $ if listed): ${input.dealUnitTokens.join(', ')}.`
       : 'No custom units provided; infer USD ($) or generic promotional amounts.';
@@ -86,7 +88,7 @@ ${wanted
   - If pay is USD and the credited amount is in a custom token with no USD equivalent, still give the token amount and its unit.
   - mode: retail_list_vs_sale for list versus sale price; pay_vs_credited_value when comparing cash paid to credited value; unknown otherwise.
   - confidence: 0 to 1, lower when guessing or when units are mixed.
-  - When several purchase tiers are listed, extract ONE tier only. Never combine the lowest price with the highest credit from different tiers.`
+- other_deals: when the email lists several purchase packages, put the strongest in deal and every other one in other_deals, each with its own price and its own credited amount exactly as listed. Never combine the price of one package with the credit of another. Empty array when there is only one.`
     );
   }
   return [`You analyze one email for a monitoring rule. ${DATA_RULE}`, 'Reply with JSON only, with exactly these fields:', `{${fields.join(', ')}}`, 'Rules:', ...rules].join('\n');
@@ -107,23 +109,26 @@ export function parseAnalysis(raw: unknown, input: Pick<AnalyzeInput, 'mode' | '
     input.description.trim() && m && typeof m.score === 'number' && Number.isFinite(m.score)
       ? { score: Math.round(Math.min(100, Math.max(0, m.score))), reason: typeof m.reason === 'string' ? m.reason.trim().slice(0, 300) : '' }
       : null;
-  const d = o.deal as Record<string, unknown> | null | undefined;
-  const deal: DealMetricsLlmPartial | null =
-    input.mode === 'deal' && d && typeof d === 'object'
-      ? {
-          you_pay: positive(d.you_pay),
-          baseline_value: positive(d.baseline_value),
-          pay_unit: typeof d.pay_unit === 'string' && d.pay_unit.trim() ? d.pay_unit.trim() : null,
-          credit_unit: typeof d.credit_unit === 'string' && d.credit_unit.trim() ? d.credit_unit.trim() : null,
-          mode: (typeof d.mode === 'string' && DEAL_MODES.has(d.mode) ? d.mode : 'unknown') as DealMetricsMode,
-          confidence: typeof d.confidence === 'number' && Number.isFinite(d.confidence) ? Math.min(1, Math.max(0, d.confidence)) : 0.35,
-        }
-      : null;
+  const readDeal = (d: unknown): DealMetricsLlmPartial | null => {
+    if (input.mode !== 'deal' || !d || typeof d !== 'object') return null;
+    const r = d as Record<string, unknown>;
+    return {
+      you_pay: positive(r.you_pay),
+      baseline_value: positive(r.baseline_value),
+      pay_unit: typeof r.pay_unit === 'string' && r.pay_unit.trim() ? r.pay_unit.trim() : null,
+      credit_unit: typeof r.credit_unit === 'string' && r.credit_unit.trim() ? r.credit_unit.trim() : null,
+      mode: (typeof r.mode === 'string' && DEAL_MODES.has(r.mode) ? r.mode : 'unknown') as DealMetricsMode,
+      confidence: typeof r.confidence === 'number' && Number.isFinite(r.confidence) ? Math.min(1, Math.max(0, r.confidence)) : 0.35,
+    };
+  };
+  const deal = readDeal(o.deal);
+  const otherDeals = (Array.isArray(o.other_deals) ? o.other_deals : []).map(readDeal).filter((d): d is DealMetricsLlmPartial => d !== null);
   return {
     match,
     summary: typeof o.summary === 'string' ? o.summary.trim().slice(0, 1500) : '',
     keyPoints: parseKeyPoints(o.key_points),
     deal,
+    ...(otherDeals.length ? { otherDeals } : {}),
     values: cleanValues(o.values, input.fields ?? []),
   };
 }

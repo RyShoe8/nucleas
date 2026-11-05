@@ -53,6 +53,12 @@ it('keeps the start time on date-time fields', () => {
 const typed = (key: string, label: string, type: 'number' | 'text') => ({ key, label, type, selector: `#${key}`, required: false, options: [] }) as never;
 const dealForm = [typed('title', 'Title', 'text'), typed('slug', 'Slug', 'text'), typed('spend', 'Spend', 'number'), typed('get', 'Get', 'number'), typed('value', 'Value', 'number')];
 
+it('never opts a lesser package into site sharing, whatever its value', () => {
+  const config = { adminFieldRules: [{ field: 'status', value: 'published' }, { field: 'facebook', value: true, otherwise: false, whenValueOverPct: 30 }] };
+  expect(applyAdminFieldRules(config, {}, 50, null, false)).toMatchObject({ status: 'published', facebook: false });
+  expect(applyAdminFieldRules(config, {}, 50, null)).toMatchObject({ status: 'published', facebook: true });
+});
+
 it('keeps spend and get on the same package as the value when an email lists several', () => {
   const chosenByModel = { title: 'Winfinite Wednesday', spend: '25', get: '30', value: '26' };
   expect(withDealAmounts(dealForm, chosenByModel, { pay: 50, credit: 63 })).toMatchObject({ spend: '50', get: '63', value: '26' });

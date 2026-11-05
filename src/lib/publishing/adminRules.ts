@@ -1,9 +1,9 @@
 import type { FormField, PublishingConfig } from './config';
 
-export function applyAdminFieldRules(config: Pick<PublishingConfig, 'adminFieldRules' | 'adminValueField' | 'adminLinkField'>, values: Record<string, string | boolean>, valuePct?: number, sourceLink?: string | null): Record<string, string | boolean> {
+export function applyAdminFieldRules(config: Pick<PublishingConfig, 'adminFieldRules' | 'adminValueField' | 'adminLinkField'>, values: Record<string, string | boolean>, valuePct?: number, sourceLink?: string | null, shareable = true): Record<string, string | boolean> {
   const result = { ...values };
   for (const rule of config.adminFieldRules ?? []) {
-    const applies = rule.whenValueOverPct === undefined || (valuePct !== undefined && Number.isFinite(valuePct) && valuePct / 100 > rule.whenValueOverPct / 100 + Number.EPSILON);
+    const applies = rule.whenValueOverPct === undefined || (shareable && valuePct !== undefined && Number.isFinite(valuePct) && valuePct / 100 > rule.whenValueOverPct / 100 + Number.EPSILON);
     const value = applies ? rule.value : rule.otherwise;
     if (value === undefined) delete result[rule.field];
     else result[rule.field] = value;
