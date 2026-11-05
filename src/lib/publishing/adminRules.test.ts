@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { applyAdminFieldRules, withDefaultEndDate } from './adminRules';
+import { applyAdminFieldRules, paidOfferCalledFree, withDealAmounts, withDefaultEndDate } from './adminRules';
 
 it('publishes records and opts into site sharing only above the verified threshold', () => {
   const config = { adminFieldRules: [
@@ -48,4 +48,28 @@ it('keeps an end date the source gave, and does nothing without a start date or 
 it('keeps the start time on date-time fields', () => {
   const fields = [field('starts_at', 'Starts at', 'datetime-local'), field('ends_at', 'Ends at', 'datetime-local')];
   expect(withDefaultEndDate(fields, { starts_at: '2026-10-20T09:30' }).ends_at).toBe('2026-10-21T09:30');
+});
+
+const typed = (key: string, label: string, type: 'number' | 'text') => ({ key, label, type, selector: `#${key}`, required: false, options: [] }) as never;
+const dealForm = [typed('title', 'Title', 'text'), typed('slug', 'Slug', 'text'), typed('spend', 'Spend', 'number'), typed('get', 'Get', 'number'), typed('value', 'Value', 'number')];
+
+it('keeps spend and get on the same package as the value when an email lists several', () => {
+  const chosenByModel = { title: 'Winfinite Wednesday', spend: '25', get: '30', value: '26' };
+  expect(withDealAmounts(dealForm, chosenByModel, { pay: 50, credit: 63 })).toMatchObject({ spend: '50', get: '63', value: '26' });
+});
+
+it('leaves the amounts alone when there is no deal, an amount is unknown, or a field is ambiguous', () => {
+  const values = { spend: '25', get: '30' };
+  expect(withDealAmounts(dealForm, values)).toEqual(values);
+  expect(withDealAmounts(dealForm, values, { pay: 50 })).toEqual({ spend: '50', get: '30' });
+  expect(withDealAmounts([typed('title', 'Title', 'text')], { title: 'Spend and get' }, { pay: 50, credit: 63 })).toEqual({ title: 'Spend and get' });
+  expect(withDealAmounts([typed('a', 'Price', 'number'), typed('b', 'Cost', 'number')], {}, { pay: 50 })).toEqual({});
+});
+
+it('finds a paid offer called free in its title or slug, and nowhere else', () => {
+  const values = { title: 'Winfinite Wednesday: 63 SC Free', slug: 'winfinite-wednesday-63-sc-free', notes: 'free text' };
+  expect(paidOfferCalledFree(dealForm, values, { pay: 50, credit: 63 })).toEqual(['Title', 'Slug']);
+  expect(paidOfferCalledFree(dealForm, values, { credit: 63 })).toEqual([]);
+  expect(paidOfferCalledFree(dealForm, values)).toEqual([]);
+  expect(paidOfferCalledFree(dealForm, { title: '$50 gets 63 SC', slug: 'freedom-deal' }, { pay: 50 })).toEqual([]);
 });

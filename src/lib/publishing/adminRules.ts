@@ -30,6 +30,36 @@ const isDateField = (field: FormField) => field.type === 'date' || field.type ==
 const fieldWords = (field: FormField) => `${field.label ?? ''} ${field.key}`.replace(/[_-]+/g, ' ');
 const pad = (n: number) => String(n).padStart(2, '0');
 
+/** The amounts of the one deal a record is about. */
+export interface DealAmounts { pay?: number; credit?: number }
+
+const PAY_WORDS = /\b(?:spend|pay|price|cost)\b/i;
+const CREDIT_WORDS = /\b(?:get|gets|receive|receives|credit|credits)\b/i;
+const HEADING_WORDS = /\b(?:title|name|headline|slug)\b/i;
+
+/**
+ * An email can list several packages. The number fields for what is paid and what is received come from the same deal
+ * as the verified value, never from a model's choice of package, so the three always describe one offer.
+ */
+export function withDealAmounts(fields: FormField[], values: Record<string, string | boolean>, deal?: DealAmounts): Record<string, string | boolean> {
+  if (!deal) return values;
+  const result = { ...values };
+  const set = (words: RegExp, other: RegExp, amount?: number) => {
+    if (amount === undefined || !Number.isFinite(amount)) return;
+    const matches = fields.filter((f) => f.type === 'number' && words.test(fieldWords(f)) && !other.test(fieldWords(f)));
+    if (matches.length === 1) result[matches[0]!.key] = String(amount);
+  };
+  set(PAY_WORDS, CREDIT_WORDS, deal.pay);
+  set(CREDIT_WORDS, PAY_WORDS, deal.credit);
+  return result;
+}
+
+/** Labels of the headings that call an offer free when it has a price. A person checks these before they go out. */
+export function paidOfferCalledFree(fields: FormField[], values: Record<string, string | boolean>, deal?: DealAmounts): string[] {
+  if (!deal?.pay) return [];
+  return fields.filter((f) => f.type === 'text' && HEADING_WORDS.test(fieldWords(f)) && typeof values[f.key] === 'string' && /\bfree\b/i.test(values[f.key] as string)).map((f) => f.label || f.key);
+}
+
 /**
  * When the source gives no end date but the form has one (and a start date is filled in), the item ends one day
  * after it starts. An end date the source did give is never changed.

@@ -1,5 +1,5 @@
 import { readEventRoundup } from './eventRoundup';
-import { applyAdminFieldRules, withDefaultEndDate } from './adminRules';
+import { applyAdminFieldRules, paidOfferCalledFree, withDealAmounts, withDefaultEndDate, type DealAmounts } from './adminRules';
 import { slugifyTitle } from '@/lib/blog/slugify';
 import { retryDatabaseRead } from '@/lib/db/retryRead';
 import { recipientOnlyItem } from '@/lib/watches/offerEligibility';
@@ -82,6 +82,8 @@ interface ItemFacts {
   requiredLinks?: string[];
   editorialText?: string;
   dealValuePct?: number;
+  /** The amounts of the deal dealValuePct was worked out from. */
+  dealAmounts?: DealAmounts;
   title: string;
   description: string;
   text: string;
@@ -170,7 +172,7 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
     link = typeof admin?.values?.slug === 'string' ? config.socialLinkTemplate.replace('{slug}', encodeURIComponent(admin.values.slug)) : null;
   }
   return {
-    ...(item?.bestDeal ? { dealValuePct: dealStrengthPct(item.bestDeal) * 100 } : {}),
+    ...(item?.bestDeal ? { dealValuePct: dealStrengthPct(item.bestDeal) * 100, dealAmounts: { pay: item.bestDeal.you_pay, ...(item.bestDeal.mode === 'retail_list_vs_sale' ? {} : { credit: item.bestDeal.baseline_value }) } } : {}),
     title: item?.subject ?? entry.title,
     description: item?.summary ?? '',
     text: '',
@@ -238,15 +240,16 @@ async function prepareAdmin(target: AdminTarget, config: PublishingConfig, facts
       problem: `Nucleas could not fill in the form values${why}. Use “Fill it in again”, or Edit deal to enter them.`.slice(0, 1000),
     };
   }
-  filled.values = applyAdminFieldRules(config, filled.values, facts.dealValuePct, facts.link);
+  filled.values = withDealAmounts(target.fields, applyAdminFieldRules(config, filled.values, facts.dealValuePct, facts.link), facts.dealAmounts);
   if (config.adminDefaultEndDays) filled.values = withDefaultEndDate(target.fields, filled.values, config.adminDefaultEndDays);
   filled.unfilled = target.fields.filter((f) => f.required && f.type !== 'file' && (filled.values[f.key] === undefined || filled.values[f.key] === '')).map((f) => f.label || f.key);
+  const calledFree = paidOfferCalledFree(target.fields, filled.values, facts.dealAmounts);
   const lines = valueLines(target.fields, filled.values);
   return {
     draft: { title: facts.title.slice(0, 300) || null, body: lines.map((l) => `${l.label}: ${l.value}`).join('\n') || facts.title },
-    written: filled.unfilled.length === 0,
+    written: filled.unfilled.length === 0 && calledFree.length === 0,
     values: filled.values,
-    ...(filled.unfilled.length ? { problem: `The facts did not give these required fields, so it was not added automatically: ${filled.unfilled.join(', ')}.` } : {}),
+    ...(filled.unfilled.length ? { problem: `The facts did not give these required fields, so it was not added automatically: ${filled.unfilled.join(', ')}.` } : calledFree.length ? { problem: `This offer has a price, but ${calledFree.join(' and ')} calls it free, so it was not added automatically. Use “Fill it in again”, or Edit deal to change the wording.` } : {}),
   };
 }
 
@@ -320,7 +323,7 @@ type AdminPostOutcome = PostOutcome & { screenshot: string | null; warning?: str
 
 /** Adds one record through the admin form; a changed form is learned again (and saved to the job) once. */
 async function postToAdmin(job: JobLike, config: PublishingConfig, values: Record<string, string | boolean>, facts: ItemFacts, context: DraftContext, write: Writer, deps: PublishDeps, reviewed = false): Promise<AdminPostOutcome> {
-  if (!reviewed) values = applyAdminFieldRules(config, values, facts.dealValuePct, facts.link);
+  if (!reviewed) values = withDealAmounts(config.admin?.fields ?? [], applyAdminFieldRules(config, values, facts.dealValuePct, facts.link), facts.dealAmounts);
   // Cards written before the end-date rule existed get it now, when "Add it for me" is used.
   if (config.admin && config.adminDefaultEndDays) values = withDefaultEndDate(config.admin.fields, values, config.adminDefaultEndDays);
   if (!config.admin) return { ok: false, error: new PublishError('rejected', 'This job has no admin form set up.'), screenshot: null };
