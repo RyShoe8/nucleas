@@ -516,7 +516,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     onProgress(compact ? `Retrying within ${shortModel(choice.model)}'s context limit` : correction ? `${researchRetry ? 'Re-researching' : 'Fixing the result format'} with ${shortModel(choice.model)}` : `Researching with ${shortModel(choice.model)}`);
     usedModels.push(choice.model);
     const turn = await attemptCompanyCredentialChat({
-      systemPrompt: runnerPrompt(activeDesign, today) + (activeDesign.skill === 'casino_discovery' ? '\nReturn officially identified new operators as candidate records even when program or eligibility details cannot be verified. Keep unknown fields null and explain gaps. Do not omit such operators solely because their terms pages are inaccessible.' : ''),
+      systemPrompt: runnerPrompt(activeDesign, today) + (activeDesign.skill === 'casino_discovery' ? '\nReturn officially identified new operators as candidate records even when program or eligibility details cannot be verified. Keep unknown fields null and explain gaps. Do not omit such operators solely because their terms pages are inaccessible. Before leaving any payload field null, try to find it: open the home, sign-up, login, promotions, banking or payments, FAQ or help, terms and app pages, and open a page with browser_navigate when web_fetch comes back thin or blocked. Fill a payload field whenever an official page shows it, including facts you already wrote in about (game types, platforms, countries or states), and cite that page in field_sources. Only then may a field stay null.' : ''),
       organizationId: org,
       projectId: repo?.projectId ?? assistantLedgerProjectId(org),
       userId: viewer.userId,
