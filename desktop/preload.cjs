@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const local = location.protocol === 'file:';
 if (local || location.origin === 'https://nucleas.app') {
   contextBridge.exposeInMainWorld('nucleasDesktop', Object.freeze({
+    showLauncher: () => ipcRenderer.invoke('launcher:show'),
     openModule: (moduleId, payload) => ipcRenderer.invoke('module:open', { moduleId, payload }),
     ...(local ? {
       signIn: () => ipcRenderer.invoke('auth:signin'),

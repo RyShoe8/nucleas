@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     if (result.dryRunId) after(() => executeJobRun(result.dryRunId!));
     return NextResponse.json({ job: result.job });
   }
-  if (body.template === 'link_building' || body.template === 'seo_brief' || body.template === 'marketing_plan' || body.template === 'brand_voice') {
+  if (body.template === 'signature_outreach' || body.template === 'link_building' || body.template === 'seo_brief' || body.template === 'marketing_plan' || body.template === 'brand_voice') {
     const result = await createTemplateJob(viewer, {
       companyId: body.companyId,
       template: body.template,

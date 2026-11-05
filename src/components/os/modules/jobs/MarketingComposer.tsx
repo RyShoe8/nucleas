@@ -19,11 +19,11 @@ export default function MarketingComposer({ companyId, companyName, onCreated, r
 }) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const discovery = async () => {
+    const discovery = async (template = 'casino_discovery') => {
         setBusy(true);
         setError(null);
         try {
-            const res = await fetch('/api/os/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ companyId, template: 'casino_discovery' }) });
+            const res = await fetch('/api/os/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ companyId, template }) });
             const body = (await res.json().catch(() => ({}))) as { job?: JobView; error?: string };
             if (!res.ok || !body.job) throw new Error(body.error ?? 'Could not configure discovery.');
             onCreated(body.job);
@@ -47,6 +47,7 @@ export default function MarketingComposer({ companyId, companyName, onCreated, r
             />
             <details className="text-xs text-text-secondary">
                 <summary className="cursor-pointer">Specialized jobs</summary>
+                {/tailnote/i.test(companyName) && <button type="button" className="ui-button mt-2" disabled={busy} onClick={() => void discovery('signature_outreach')}>Tailnote signature spotlight</button>}
                 <button type="button" className="ui-button mt-2" disabled={busy} onClick={() => void discovery()}>Casino / sports betting discovery</button>
                 {error ? <p role="alert" className="mt-1 text-red-400">{error}</p> : null}
             </details>

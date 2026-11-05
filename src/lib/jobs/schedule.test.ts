@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { nextScheduledAt } from './schedule';
+import { signatureOutreachDesign } from './templates/signatureOutreach';
 
 describe('nextScheduledAt', () => {
+  it('runs Tailnote at 9 Central on Monday, Wednesday and Friday across the fall clock change', () => {
+    let cursor = new Date('2026-10-29T00:00:00Z');
+    for (const expected of ['2026-10-30T14:00:00.000Z', '2026-11-02T15:00:00.000Z', '2026-11-04T15:00:00.000Z', '2026-11-06T15:00:00.000Z']) {
+      cursor = nextScheduledAt(signatureOutreachDesign().schedule, cursor)!;
+      expect(cursor.toISOString()).toBe(expected);
+    }
+  });
   it('draws a fresh daytime time every 21 local days, including the DST transition', () => {
     const schedule = { kind: 'daily' as const, everyDays: 21, anchorDate: '2026-10-20', timezone: 'America/Chicago', randomWindow: { startHour: 9, endHour: 19 } };
     const earliest = nextScheduledAt(schedule, new Date('2026-10-20T16:30:10.112Z'), () => 0)!;

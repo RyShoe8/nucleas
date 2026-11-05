@@ -41,6 +41,7 @@ export default function JobComposer({ companyId, companyName, onCreated, renderL
     const [error, setError] = useState<string | null>(null);
     const [understanding, setUnderstanding] = useState<Understanding | null>(null);
     const [answers, setAnswers] = useState<Answers>({});
+    const [buildTitle, setBuildTitle] = useState('');
     const [plan, setPlan] = useState<PublishPlan | null>(null);
     const [linkBuilding, setLinkBuilding] = useState(false);
 
@@ -56,6 +57,7 @@ export default function JobComposer({ companyId, companyName, onCreated, renderL
 
     const understand = async (withAnswers?: Answers) => {
         if (busy || uploading) return;
+        setBuildTitle('');
         setBusy(withAnswers ? 'Updating…' : 'Reading…');
         setError(null);
         try {
@@ -100,7 +102,7 @@ export default function JobComposer({ companyId, companyName, onCreated, renderL
                 const res = await fetch('/api/os/jobs', {
                     method: 'POST',
                     headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ companyId, request, understanding: { kind: u.kind, summary: u.summary, brief: u.brief, needs: u.needs } }),
+                    body: JSON.stringify({ companyId, request, ...(u.kind === 'signature_outreach' ? { template: u.kind } : {}), understanding: { kind: u.kind, summary: u.summary, brief: u.brief, needs: u.needs } }),
                 });
                 const body = (await res.json().catch(() => ({}))) as { job?: JobView; error?: string };
                 if (!res.ok || !body.job) throw new Error(body.error ?? `Failed (${res.status})`);
@@ -114,6 +116,19 @@ export default function JobComposer({ companyId, companyName, onCreated, renderL
             setBusy(null);
         }
     };
+
+    async function planMissingCapability() {
+        if (!understanding || busy) return;
+        setBusy('Planning capability…'); setError(null);
+        try {
+            const response = await fetch('/api/os/jobs/capability-build', { method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ companyId, brief: understanding.brief, missing: understanding.needs.filter(n => n.status === 'missing').map(n => (n.label + ' — ' + n.detail).slice(0, 500)) }) });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error ?? 'Build planning failed.');
+            setBuildTitle(body.title);
+        } catch (e) { setError(e instanceof Error ? e.message : 'Build planning failed.'); }
+        finally { setBusy(null); }
+    }
 
     if (plan && understanding) return <PublishPlanCard initialImage={image} companyId={companyId} request={understanding.brief} plan={plan} onCreated={(job) => { onCreated(job); reset(); }} onCancel={reset} />;
     if (linkBuilding) return <>{renderLinkBuilding(reset)}</>;
@@ -172,12 +187,14 @@ export default function JobComposer({ companyId, companyName, onCreated, renderL
                 <div className="flex flex-wrap items-center gap-2">
                     {u.questions.length ? (
                         <button type="button" className="ui-button-primary" disabled={Boolean(busy) || open.length > 0} onClick={() => void understand(answers)} title={open.length ? 'Answer each question first' : undefined}>{busy ?? 'Use these answers'}</button>
+                    ) : blocked ? (
+                        buildTitle ? <span role="status">Review “{buildTitle}” in Building. After the capability ships, reopen this request.</span> : <button type="button" className="ui-button-primary" disabled={Boolean(busy)} onClick={planMissingCapability}>{busy ?? 'Plan missing capabilities in Building'}</button>
                     ) : (
                         <button type="button" className="ui-button-primary" disabled={Boolean(busy)} onClick={() => void proceed()}>{busy ?? (u.kind === 'custom' ? 'Yes, design this job' : u.kind === 'inbox_watch' || u.kind === 'digest' ? 'Yes, set up the inbox rule' : u.kind === 'marketing_plan' ? 'Yes, generate it' : 'Yes, continue')}</button>
                     )}
                     <button type="button" className="ui-button" disabled={Boolean(busy)} onClick={() => { setUnderstanding(null); setAnswers({}); }}>Not quite: change the request</button>
                     {!u.questions.length && answeredAny ? <span className="text-[11px] text-text-secondary">Updated with your answers.</span> : null}
-                    {blocked && !u.questions.length ? <span className="text-[11px] text-amber-300">Part of this needs something Nucleas cannot do yet; the design will say what.</span> : null}
+
                 </div>
             </div>
         );

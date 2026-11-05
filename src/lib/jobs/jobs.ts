@@ -17,6 +17,7 @@ import { executeJobRun, monthSpendMicros } from './runner';
 import { DELIVERY_LABEL, deliveryRunnable, jobDesignSchema, type JobDesign, type JobRunOutput, type RecordIssue } from './schema';
 import { nextScheduledAt } from './schedule';
 import { linkBuildingConfigSchema, linkBuildingDesign } from './templates/linkBuilding';
+import { signatureOutreachDesign } from './templates/signatureOutreach';
 import { seoBriefConfigSchema, seoBriefDesign } from './templates/seoBrief';
 import { approvedSeoBrief, saveGeneratedSeoBrief } from './seoBriefs';
 import { marketingPlanConfigSchema, marketingPlanDesign } from './templates/marketingPlan';
@@ -268,12 +269,13 @@ export async function createJob(
 /** Creates a reviewed first-party skill job without spending a model call redesigning known instructions. */
 export async function createTemplateJob(
   viewer: CompanyViewer,
-  input: { companyId: string; template: 'link_building' | 'seo_brief' | 'marketing_plan' | 'brand_voice'; config: unknown; level?: CostLevel }
+  input: { companyId: string; template: 'signature_outreach' | 'link_building' | 'seo_brief' | 'marketing_plan' | 'brand_voice'; config: unknown; level?: CostLevel }
 ): Promise<CreateResult> {
   if (!isCompanyManager(viewer)) return { ok: false, status: 403, error: 'Only managers and administrators can configure skills.' };
   const profile = await getCompanyProfile(viewer, input.companyId);
   if (!profile) return { ok: false, status: 404, error: 'Company not found.' };
-  const parsed = input.template === 'brand_voice' ? marketingPlanConfigSchema.safeParse({ companyName: profile.name }) : input.template === 'link_building' ? linkBuildingConfigSchema.safeParse(input.config) : input.template === 'marketing_plan' ? marketingPlanConfigSchema.safeParse(input.config) : seoBriefConfigSchema.safeParse(input.config);
+  if (input.template === 'signature_outreach' && !/^(?:https?:\/\/)?(?:www\.)?tailnote\.io\/?$/i.test(profile.domain ?? '')) return { ok: false, status: 400, error: 'Select the Tailnote company for signature outreach.' };
+  const parsed = input.template === 'signature_outreach' || input.template === 'brand_voice' ? marketingPlanConfigSchema.safeParse({ companyName: profile.name }) : input.template === 'link_building' ? linkBuildingConfigSchema.safeParse(input.config) : input.template === 'marketing_plan' ? marketingPlanConfigSchema.safeParse(input.config) : seoBriefConfigSchema.safeParse(input.config);
   if (!parsed.success) return { ok: false, status: 400, error: parsed.error.issues[0]?.message ?? 'Invalid skill settings.' };
   const projectId = 'projectId' in parsed.data ? parsed.data.projectId : null;
   const project = projectId ? await Project.findOne({ _id: projectId, clientId: new Types.ObjectId(input.companyId) }).select('name').lean<{ _id: Types.ObjectId; name: string }>() : null;
@@ -288,10 +290,10 @@ export async function createTemplateJob(
     'design.skill': input.template,
     status: { $nin: ['rejected', 'archived', 'done'] },
   });
-  if (existing) return { ok: false, status: 409, error: `${profile.name} already has an open ${input.template === 'brand_voice' ? 'Voice job' : input.template === 'link_building' ? 'Link Building job' : input.template === 'marketing_plan' ? 'Marketing Plan job' : 'SEO brief job'}. Open it to review or archive it.` };
+  if (existing) return { ok: false, status: 409, error: `${profile.name} already has an open ${input.template === 'signature_outreach' ? 'signature outreach job' : input.template === 'brand_voice' ? 'Voice job' : input.template === 'link_building' ? 'Link Building job' : input.template === 'marketing_plan' ? 'Marketing Plan job' : 'SEO brief job'}. Open it to review or archive it.` };
   // A voice is rarely regenerated and people edit it closely, so it defaults to a paid writer whatever the org default is.
   const level = input.level ?? (input.template === 'brand_voice' ? 'high' : (await readEngineSettings(String(viewer.organizationId))).defaultCostLevel);
-  const design = input.template === 'brand_voice' ? brandVoiceDesign(profile.name) : input.template === 'link_building'
+  const design = input.template === 'signature_outreach' ? signatureOutreachDesign() : input.template === 'brand_voice' ? brandVoiceDesign(profile.name) : input.template === 'link_building'
     ? linkBuildingDesign(parsed.data as ReturnType<typeof linkBuildingConfigSchema.parse>)
     : input.template === 'marketing_plan'
       ? marketingPlanDesign(parsed.data as ReturnType<typeof marketingPlanConfigSchema.parse>)
@@ -302,7 +304,7 @@ export async function createTemplateJob(
     ...(project ? { projectId: project._id } : {}),
     createdByUserId: new Types.ObjectId(viewer.userId),
     status: 'proposed',
-    request: input.template === 'brand_voice' ? `Build the brand Voice for ${profile.name}.` : input.template === 'link_building' ? `Find the best free, self-service link-building opportunities for ${project!.name}.` : input.template === 'marketing_plan' ? `Create a complete Marketing Plan for ${profile.name}.` : `Create an SEO brief for ${project!.name}.`,
+    request: input.template === 'signature_outreach' ? design.instructions : input.template === 'brand_voice' ? `Build the brand Voice for ${profile.name}.` : input.template === 'link_building' ? `Find the best free, self-service link-building opportunities for ${project!.name}.` : input.template === 'marketing_plan' ? `Create a complete Marketing Plan for ${profile.name}.` : `Create an SEO brief for ${project!.name}.`,
     design,
     level,
     designCostMicros: 0,

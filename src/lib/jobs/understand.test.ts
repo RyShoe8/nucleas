@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
-const company = vi.hoisted(() => ({ id: 'c'.repeat(24) }));
+const company = vi.hoisted(() => ({ id: 'c'.repeat(24), domain: 'frugalgambler.club' }));
 vi.mock('@/lib/companies/companyProfile', () => ({
   isCompanyManager: () => true,
-  getCompanyProfile: async (_v: unknown, id: string) => (id === company.id ? { id, name: 'Frugal Gambler', relationship: 'owned', domain: 'frugalgambler.club', socialLinks: [{ network: 'facebook', url: 'x' }], stackToolIds: [], urls: [], teamEmployeeIds: [], profileSource: 'client' } : null),
+  getCompanyProfile: async (_v: unknown, id: string) => (id === company.id ? { id, name: 'Frugal Gambler', relationship: 'owned', domain: company.domain, socialLinks: [{ network: 'facebook', url: 'x' }], stackToolIds: [], urls: [], teamEmployeeIds: [], profileSource: 'client' } : null),
 }));
 vi.mock('@/lib/companies/upstreamContext', () => ({ upstreamContext: async () => 'Approved Marketing Plan:\n- Positioning: honest casino deal hunting' }));
 vi.mock('@/lib/companies/adminAccount', () => ({ getAdminAccount: async () => null }));
@@ -21,6 +21,16 @@ const viewer = { userId: 'u'.repeat(24), organizationId: 'o'.repeat(24), employe
 const reply = (o: Record<string, unknown>) => async () => JSON.stringify({ kind: 'custom', summary: 'A weekly report.', confidence: 0.9, brief: 'Every Monday, report ad revenue.', needs: [], questions: [], ...o });
 
 describe('understanding a job request', () => {
+  it('routes Tailnote prospect signatures to the renderer even if the request also asks for social posts', async () => {
+    const ask = vi.fn();
+    company.domain = 'tailnote.io';
+    try {
+      const result = await understandRequest(viewer, { companyId: company.id, request: 'Scout a company and create an email signature for a tagged social post.' }, ask);
+      expect(result).toMatchObject({ ok: true, understanding: { kind: 'signature_outreach' } });
+      expect(ask).not.toHaveBeenCalled();
+    } finally { company.domain = 'frugalgambler.club'; }
+  });
+
   it('trusts the model over misleading words, and shows it the company and its upstream plans', async () => {
     let seen = '';
     const ask = async ({ user }: { system: string; user: string }) => {

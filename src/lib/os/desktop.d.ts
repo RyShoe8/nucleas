@@ -1,6 +1,6 @@
 export {};
 declare global {
     interface Window {
-        nucleasDesktop?: { openModule: (moduleId: string, payload?: Record<string, string>) => Promise<void> };
+        nucleasDesktop?: { showLauncher?: () => Promise<void>; openModule: (moduleId: string, payload?: Record<string, string>) => Promise<void> };
     }
 }

@@ -1,5 +1,5 @@
 'use client';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useOsAuth } from '@/hooks/os/useOsAuth';
 import { registerOsModules } from '@/components/os/modules/registerModules';
@@ -12,6 +12,8 @@ registerOsModules();
 
 export default function DesktopModule() {
     const params = useSearchParams();
+    const [hasLauncher, setHasLauncher] = useState(false);
+    useEffect(() => { setHasLauncher(Boolean(window.nucleasDesktop?.showLauncher)); }, []);
     const auth = useOsAuth();
     const moduleId = params.get('module') ?? 'assistant';
     const definition = ModuleRegistry.get(moduleId);
@@ -33,7 +35,12 @@ export default function DesktopModule() {
     // The intent layer brings voice, its confirmation dialogs and the Ctrl+K palette to every app window.
     return <WindowManagerProvider userId={auth.userId}><OsIntentLayer>
         <div className={styles.window}>
-            <header className={styles.header}><span className={styles.mark} aria-hidden>n</span><span className={styles.title}>{title}</span></header>
+            <header className={styles.header}>
+                {hasLauncher ? <button type="button" className={styles.launcher} onClick={() => void window.nucleasDesktop?.showLauncher?.()} aria-label="Open Nucleas app launcher">
+                    <span className={styles.mark} aria-hidden>n</span> Apps
+                </button> : <span className={styles.mark} aria-hidden>n</span>}
+                <span className={styles.title}>{title}</span>
+            </header>
             <main className={`${styles.body} nucleas-app-content`} aria-label={title}>
                 {content ? <div className={styles.message}>{content}</div> : definition!.render({ windowId: `desktop-${moduleId}`, moduleId, payload })}
             </main>

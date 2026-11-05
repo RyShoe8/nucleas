@@ -35,6 +35,7 @@ function readBody(req: http.IncomingMessage, maxBytes: number): Promise<string> 
   });
 }
 
+import { captureSignature } from './signatureCapture';
 import { isSafePublicHttpsUrl } from '../../src/lib/ai/tools/ssrf';
 import { contextIdentity, HIDE_AUTOMATION_SCRIPT, IGNORE_DEFAULT_ARGS, LAUNCH_ARGS, withSiteHeader } from './browserIdentity';
 import { cancelLogin, finishLogin, loginFrame, loginInput, startLogin, type LoginInput } from './loginSessions';
@@ -296,7 +297,7 @@ export function startBrowserWorkerServer() {
         res.end(JSON.stringify({ ok: true }));
         return;
       }
-      if (req.method !== 'POST' || !['/navigate', '/fetch', '/observe', '/admin/inspect', '/admin/fill', '/admin/intake', '/login/start', '/login/frame', '/login/input', '/login/finish', '/login/cancel'].includes(req.url ?? '')) {
+      if (req.method !== 'POST' || !['/signature/capture', '/navigate', '/fetch', '/observe', '/admin/inspect', '/admin/fill', '/admin/intake', '/login/start', '/login/frame', '/login/input', '/login/finish', '/login/cancel'].includes(req.url ?? '')) {
         res.writeHead(404);
         res.end();
         return;
@@ -305,6 +306,13 @@ export function startBrowserWorkerServer() {
       if (auth !== `Bearer ${SECRET}`) {
         res.writeHead(401);
         res.end();
+        return;
+      }
+      if (req.url === '/signature/capture') {
+        const concept = JSON.parse(await readBody(req, 16000));
+        const result = await captureSignature(concept);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
         return;
       }
       if (req.url?.startsWith('/login/')) {

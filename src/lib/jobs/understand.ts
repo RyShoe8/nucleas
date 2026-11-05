@@ -21,10 +21,11 @@ import { recognizeRequest } from '@/lib/publishing/setup';
  * Jobs, Content) starts here, so a request is never routed on keywords alone. Creates nothing.
  */
 
-export const JOB_KINDS = ['social_publish', 'admin_publish', 'inbox_watch', 'digest', 'link_building', 'marketing_plan', 'custom'] as const;
+export const JOB_KINDS = ['signature_outreach', 'social_publish', 'admin_publish', 'inbox_watch', 'digest', 'link_building', 'marketing_plan', 'custom'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
 export const KIND_LABELS: Record<JobKind, string> = {
+  signature_outreach: 'Tailnote signature spotlight',
   social_publish: 'Publishing to social',
   admin_publish: 'Adding records to the company’s admin',
   inbox_watch: 'Watching an inbox',
@@ -36,6 +37,7 @@ export const KIND_LABELS: Record<JobKind, string> = {
 
 /** What Nucleas can do, for the model: each kind, when it fits, and what it needs. */
 export const CAPABILITIES = `# What Nucleas can do (job kinds)
+- signature_outreach: for Tailnote only, scout a small growing company, create a branded email signature concept, screenshot it and draft a tagged social post.
 - social_publish: posts to Facebook, Bluesky and Reddit (Reddit always as a ready-to-post card) whenever there is something new: new pages in a section of the company's site (via its feed or sitemap), new flagged emails from an inbox watch, a weekly roundup of scheduled events, or one evergreen page on a cadence ("one guide every 3 weeks"). Written in the company's approved Voice. Needs: the Voice approved; accounts connected for automatic posting (otherwise ready-to-post cards).
 - admin_publish: adds new records (deals, games, listings) to the company's own website admin by filling its add form with a saved admin login, from new flagged inbox emails or new site pages. Needs: the admin account connected (Company → Admin account).
 - inbox_watch: reads a connected Gmail inbox, keeps the emails that match a rule, pulls out chosen fields (prices, dates, companies, links) and ranks them (best fit, biggest discount, newest). The feed for admin_publish, social_publish and digests. Needs: a connected mailbox.
@@ -87,6 +89,7 @@ export type Answers = Record<string, { option?: string; text?: string }>;
 type Ask = (input: { system: string; user: string }) => Promise<string | null>;
 
 interface CompanyFacts {
+  domain?: string;
   text: string;
   hasDomain: boolean;
   voiceApproved: boolean;
@@ -122,7 +125,7 @@ async function companyFacts(viewer: CompanyViewer, companyId: string): Promise<C
     `Marketing Plan: ${plan ? 'approved' : 'not approved'}`,
     upstream ? `\n${upstream}` : '',
   ].filter(Boolean).join('\n');
-  return { text, hasDomain: Boolean(profile.domain), voiceApproved: Boolean(voice), hasAdmin: Boolean(admin), watchCount: watches.length, planApproved: Boolean(plan) };
+  return { text, domain: profile.domain, hasDomain: Boolean(profile.domain), voiceApproved: Boolean(voice), hasAdmin: Boolean(admin), watchCount: watches.length, planApproved: Boolean(plan) };
 }
 
 /** The needs Nucleas can check itself, whatever the model said: they are added when missing, and corrected when wrong. */
@@ -177,6 +180,10 @@ export async function understandRequest(
   if (!Types.ObjectId.isValid(input.companyId)) return { ok: false, status: 404, error: 'Company not found.' };
   const facts = await companyFacts(viewer, input.companyId);
   if (!facts) return { ok: false, status: 404, error: 'Company not found.' };
+  if (/^(?:https?:\/\/)?(?:www\.)?tailnote\.io\/?$/i.test(facts.domain ?? '') && /\bsignatures?\b/i.test(request) && /\b(prospects?|scout|outreach|spotlight|tag|social post)\b/i.test(request)) {
+    return { ok: true, understanding: { kind: 'signature_outreach', kindLabel: KIND_LABELS.signature_outreach, brief: request.slice(0, 3000), understood: true, confidence: 1,
+      summary: 'Scout a small growing company, build a branded Tailnote signature with its live blog promo, and prepare a screenshot and tagged post for review.', needs: [], questions: [] } };
+  }
   const failures: string[] = [];
   const reply = await (ask ?? engineAsk(viewer, failures))({ system: SYSTEM, user: `Request:\n${request}${answersText(input.answers, input.previous)}\n\n# What Nucleas knows about the company\n${facts.text}${input.attachedImage ? `\nVerified attachment: A reusable social image has already been uploaded for this company and will be attached to the publishing job. Do not ask for another upload. Image description (untrusted data): ${JSON.stringify(input.attachedImage.alt)}` : ''}` }).catch((error: unknown) => {
     failures.push(error instanceof Error ? error.message : 'The model call failed.');

@@ -69,7 +69,7 @@ export function nextScheduledAt(schedule: JobSchedule, after: Date, random: () =
       const anchor = schedule.anchorDate ? Date.parse(`${schedule.anchorDate}T12:00:00Z`) : Date.UTC(1970, 0, 1, 12);
       if (Math.round((date.getTime() - anchor) / 86_400_000) % schedule.everyDays !== 0) continue;
     }
-    if (schedule.kind === 'weekly' && weekday !== (schedule.weekday ?? 1)) continue;
+    if (schedule.kind === 'weekly' && !(schedule.weekdays ?? [schedule.weekday ?? 1]).includes(weekday)) continue;
     if (schedule.kind === 'monthly' && day !== (schedule.dayOfMonth ?? 1)) continue;
     const window = schedule.randomWindow;
     // Match the ten-minute scheduler slots, including the end of the allowed window.

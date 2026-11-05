@@ -35,14 +35,14 @@ interface JobQuestion {
 }
 
 interface JobDesign {
-    skill?: 'casino_discovery' | 'link_building' | 'seo_brief' | 'marketing_plan' | 'brand_voice' | 'social_media' | 'ai_citations' | 'property_overview' | 'social_publish';
+    skill?: 'signature_outreach' | 'casino_discovery' | 'link_building' | 'seo_brief' | 'marketing_plan' | 'brand_voice' | 'social_media' | 'ai_citations' | 'property_overview' | 'social_publish';
     title: string;
     category: string;
     instructions: string;
     fields: JobField[];
     sourcePolicy: string;
     delivery: { method: string; detail: string; setupSteps: string[] };
-    schedule: { kind: 'once' | 'hourly' | 'daily' | 'weekly' | 'monthly'; time?: string; timezone?: string; weekday?: number; dayOfMonth?: number; everyDays?: number; anchorDate?: string; randomWindow?: { startHour: number; endHour: number } };
+    schedule: { kind: 'once' | 'hourly' | 'daily' | 'weekly' | 'monthly'; time?: string; timezone?: string; weekday?: number; weekdays?: number[]; dayOfMonth?: number; everyDays?: number; anchorDate?: string; randomWindow?: { startHour: number; endHour: number } };
     recordsPerRun: number;
     safeguards: string[];
     recommendedCompletion: 'review' | 'automatic';
@@ -198,7 +198,7 @@ export function scheduleLabel(s: JobDesign['schedule'] | undefined): string {
     }
     const at = s.time ? ` at ${s.time}` : '';
     if (s.kind === 'daily') return `${s.everyDays && s.everyDays > 1 ? `Every ${s.everyDays} days` : 'Every day'}${at}`;
-    if (s.kind === 'weekly') return `Every ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][s.weekday ?? 1]}${at}`;
+    if (s.kind === 'weekly') return `Every ${(s.weekdays ?? [s.weekday ?? 1]).map(day => ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][day]).join(', ')}${at}`;
     return `Monthly on day ${s.dayOfMonth ?? 1}${at}`;
 }
 
@@ -512,6 +512,7 @@ function Results({ job, run }: { job: JobView; run: JobRunView }) {
                 <article key={i} className="overflow-hidden rounded-lg border border-border">
                     <header className="border-b border-border bg-background-elevated px-4 py-3"><h3 className="text-base font-semibold">{job.design?.skill === 'brand_voice' ? 'Brand voice' : job.design?.skill === 'marketing_plan' ? 'Marketing plan' : records.length === 1 ? 'Opportunity details' : `Opportunity ${i + 1}`}</h3></header>
                     {job.design?.skill === 'social_media' ? <RedditPostPanel values={r.values} subreddit={job.companySubreddit} /> : null}
+                    {job.design?.skill === 'signature_outreach' && typeof r.values.screenshot === 'string' && /^https:\/\/[\w.-]+\.public\.blob\.vercel-storage\.com\//.test(r.values.screenshot) ? <a href={r.values.screenshot} target="_blank" rel="noreferrer"><img src={r.values.screenshot} alt={`Tailnote signature concept for ${r.values.company}`} className="mx-auto max-h-96 max-w-full" /></a> : null}
                     <dl className="divide-y divide-border">
                         {fields.map((f) => {
                                         const v = r.values[f.key];

@@ -336,6 +336,17 @@ export async function postIntakeJson(input: AdminSession & { path: string; body:
   })()`));
 }
 
+export function uniqueChoiceLabel(labels: string[], value: string, fieldLabel: string): string | undefined {
+  const normalize = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  const choices = labels.map(label => label.trim()).filter(Boolean);
+  const exact = choices.filter(label => normalize(label) === normalize(value));
+  if (exact.length) return exact.length === 1 ? exact[0] : undefined;
+  if (!/^casino\s*\*?$/i.test(fieldLabel.trim())) return undefined;
+  const brand = (text: string) => normalize(text.trim().replace(/\s+casinos?$/i, ''));
+  const aliases = choices.filter(label => brand(value) && brand(label) === brand(value));
+  return aliases.length === 1 ? aliases[0] : undefined;
+}
+
 export async function fillAdminForm(
   input: AdminSession & { fields: FormField[]; values: Record<string, string | boolean>; submit: boolean; submitSelector?: string | null },
   options: Options = {}
@@ -371,7 +382,6 @@ export async function fillAdminForm(
           await control.locator('.fi-select-input-btn').click({ timeout: 5000 });
           const search = control.locator('input').first();
           if (await search.count()) { await search.fill(String(value), { timeout: 5000 }); await page.waitForTimeout(600); }
-          const normalized = (text: string) => text.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
           let label: string | undefined;
           for (let attempt = 0; attempt < 12; attempt++) {
             if (attempt === 6 && await search.count()) {
@@ -381,8 +391,8 @@ export async function fillAdminForm(
               await search.fill(words.length > 1 ? words[0] : String(value).replace(/\s+/g, ''), { timeout: 5000 });
             }
             const labels = await control.locator('[role="option"]').allTextContents();
-            const matches = labels.map((text) => text.trim()).filter((text) => normalized(text) === normalized(String(value)));
-            if (matches.length === 1) { label = matches[0]; break; }
+            label = uniqueChoiceLabel(labels, String(value), field.label);
+            if (label) break;
             await page.waitForTimeout(500);
           }
           if (!label) throw new Error('No unique matching choice was returned by the site.');

@@ -1,4 +1,5 @@
 import 'server-only';
+import { captureOutreach } from './signatureOutreach';
 import { discoveryMemory, saveCandidates } from '@/lib/casinoDiscovery/service';
 import { casinoResearchSchema } from '@/lib/casinoDiscovery/schema';
 import { linkProspectContext, priorPlacementProblems, rememberProspectOutcome } from './linkProspects';
@@ -427,7 +428,7 @@ export async function executeJobRun(runId: string): Promise<void> {
   // Long prompts are trimmed from the end for small-context models, so the evidence that shapes voice goes first.
   const priorityFacts: string[] = [];
   if (overviewGrounding.context) facts.push(overviewGrounding.context);
-  const wantsVoice = activeDesign.skill === 'brand_voice' || activeDesign.category === 'content' || activeDesign.skill === 'social_media';
+  const wantsVoice = activeDesign.skill === 'signature_outreach' || activeDesign.skill === 'brand_voice' || activeDesign.category === 'content' || activeDesign.skill === 'social_media';
   const voiceContext = wantsVoice
     ? await brandVoiceContext(job.organizationId, job.companyId, activeDesign.skill === 'brand_voice') : '';
   if (voiceContext) priorityFacts.push(voiceContext);
@@ -488,6 +489,14 @@ export async function executeJobRun(runId: string): Promise<void> {
     }
   }
   const groundingFacts = [...priorityFacts, ...facts].join('\n\n');
+  let requireBlogShowcase = false;
+  if (activeDesign.skill === 'signature_outreach') {
+    const completed = await JobRun.countDocuments({ jobId: job._id, status: 'completed', dryRun: false });
+    requireBlogShowcase = completed % 5 !== 4;
+    activeDesign.instructions += !requireBlogShowcase
+      ? '\nThis run may spotlight an alternative CTA. Omit feed only for a strong prospect without a suitable blog.'
+      : '\nThis is a blog showcase. A verified RSS or Atom feed is required.';
+  }
   const tools = await buildAssistantTools(viewer, [profile]);
   const today = new Date().toISOString().slice(0, 10);
   let done: string;
@@ -767,6 +776,19 @@ export async function executeJobRun(runId: string): Promise<void> {
       break;
     }
 
+    if (activeDesign.skill === 'signature_outreach') {
+      const candidate = output.records[0];
+      if (output.records.length !== 1 || !candidate || issues.length || verdict?.verdict !== 'pass') {
+        await fail('No qualified signature concept passed validation and review. ' + (issues[0]?.problem ?? verdict?.notes ?? output.gaps.join(' ')), { costMicros: cost, models: usedModels });
+        return;
+      }
+      if (requireBlogShowcase && !String(candidate.values.feed ?? '').trim()) throw new Error('Find a prospect with an official blog feed for this showcase.');
+      const domain = new URL(String(candidate.values.website)).hostname.toLowerCase().replace(/^www\./, '');
+      if (await JobRun.exists({ jobId: job._id, _id: { $ne: run._id }, 'output.records.values.prospect_domain': domain })) throw new Error('This prospect already has a signature concept.');
+      candidate.values.prospect_domain = domain;
+      delete candidate.values.screenshot;
+      candidate.values.screenshot = await captureOutreach(candidate.values, candidate.sources, `signature-concepts/${job.organizationId}/${job.companyId}/${run._id}.jpg`);
+    }
     if (!verdict) issues.push({ record: 0, field: 'review', problem: 'Independent review did not complete. Check Models used for provider errors; human review is required.' });
     if (activeDesign.skill === 'casino_discovery' && !output.records.length) {
       await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { output, issues, ...(verdict ? { review: verdict } : {}) } });
@@ -776,7 +798,7 @@ export async function executeJobRun(runId: string): Promise<void> {
 
     // Dry runs always wait for a person; real runs complete by themselves only when automatic and clean.
     const clean = issues.length === 0 && verdict?.verdict !== 'fail';
-    const status = !manualArtifact(activeDesign.skill) && !run.dryRun && job.completion === 'automatic' && clean ? 'completed' : 'needs_review';
+    const status = activeDesign.skill !== 'signature_outreach' && !manualArtifact(activeDesign.skill) && !run.dryRun && job.completion === 'automatic' && clean ? 'completed' : 'needs_review';
     await progress(run._id, owner, 'Saving results and recommendations', { stage: 'saving', percent: 95 });
     const saved = await JobRun.updateOne(
       { _id: run._id, status: 'running', leaseOwner: owner },

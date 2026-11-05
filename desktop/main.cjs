@@ -158,6 +158,7 @@ else {
     ]));
     tray.on('click', showLauncher);
     if (!globalShortcut.register('Alt+Space', () => launcher?.isVisible() ? launcher.hide() : showLauncher())) status('notice', 'Alt+Space is in use · open Nucleas from the tray');
+    ipcMain.handle('launcher:show', event => { if (!moduleSender(event)) throw new Error('Not allowed'); showLauncher(); });
     ipcMain.handle('module:open', (event, value) => { if (!moduleSender(event)) throw new Error('Not allowed'); return openModule(value); });
     ipcMain.handle('auth:signin', async event => {
       const win = [...windows.values()].find(w => w.webContents === event.sender);
