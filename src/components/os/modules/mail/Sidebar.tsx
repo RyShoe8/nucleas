@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useOsCompanies } from '../CompaniesModule';
+import { beginDesktopConnection } from '@/lib/os/desktopConnectionFlow';
 import { accountColor, api, type Account, type Counts, type View } from './types';
 
 interface Selection { view: View; accountId: string | null; companyId: string | null }
@@ -105,7 +106,7 @@ export default function Sidebar({
                         ))}
                     </div>
                     {googleConfigured ? (
-                        <a href="/api/os/mail/google/start" target="_blank" rel="noopener noreferrer" title="Sign in with Google in your browser, then come back here" className="mt-1 block px-2 py-1 text-[12px] text-primary hover:underline">
+                        <a href="/api/os/mail/google/start" onClick={beginDesktopConnection} target="_blank" rel="noopener noreferrer" title="Sign in with Google in your browser, then come back here" className="mt-1 block px-2 py-1 text-[12px] text-primary hover:underline">
                             + Connect a Gmail mailbox
                         </a>
                     ) : (
@@ -148,7 +149,7 @@ function AccountEditor({ account, onDone }: { account: Account; onDone: () => vo
             </select>
             {account.lastSyncError ? <p className="text-[11px] text-amber-400">{account.lastSyncError}</p> : null}
             {account.needsReauth ? (
-                <a href={`/api/os/mail/google/start${account.companyId ? `?companyId=${account.companyId}` : ''}`} target="_blank" rel="noopener noreferrer" title="Sign in with Google in your browser, then come back here" className="block text-[11px] text-primary underline">
+                <a href={`/api/os/mail/google/start${account.companyId ? `?companyId=${account.companyId}` : ''}`} onClick={beginDesktopConnection} target="_blank" rel="noopener noreferrer" title="Sign in with Google in your browser, then come back here" className="block text-[11px] text-primary underline">
                     Reconnect this mailbox
                 </a>
             ) : null}

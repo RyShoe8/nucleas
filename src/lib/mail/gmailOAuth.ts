@@ -23,7 +23,7 @@ export function gmailRedirectUri(requestUrl: string): string | null {
   return `${protocol}//${url.host}${GMAIL_CALLBACK_PATH}`;
 }
 
-type StatePayload = { userId: string; companyId: string | null; purpose: 'mail-google'; nonce: string };
+type StatePayload = { userId: string; companyId: string | null; purpose: 'mail-google'; nonce: string; desktopFlow?: string };
 
 function stateKey(): Uint8Array {
   const secret = process.env.NEXTAUTH_SECRET;
@@ -32,8 +32,8 @@ function stateKey(): Uint8Array {
 }
 
 /** The state carries who is connecting and which company (if any) the mailbox should be filed under. */
-export async function createGmailState(userId: string, companyId: string | null): Promise<string> {
-  return new SignJWT({ userId, companyId, purpose: 'mail-google', nonce: randomUUID() } satisfies StatePayload)
+export async function createGmailState(userId: string, companyId: string | null, desktopFlow?: string): Promise<string> {
+  return new SignJWT({ userId, companyId, purpose: 'mail-google', nonce: randomUUID(), ...(desktopFlow ? { desktopFlow } : {}) } satisfies StatePayload)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('10m')

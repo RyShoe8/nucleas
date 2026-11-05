@@ -16,6 +16,13 @@ describe('Connection sign-in return destination', () => {
         expect(connectionReturnPath('/api/os/content/gmail/start?email=deals%40example.com&returnTo=https://evil.test')).toBe('/api/os/content/gmail/start?email=deals%40example.com');
         expect(connectionReturnPath('/api/os/content/gmail/start?email=not-an-address')).toBe('/api/os/content/gmail/start');
     });
+    it('keeps the desktop completion identifier for mailboxes too', () => {
+        const flow = 'b'.repeat(32);
+        expect(connectionReturnPath(`/api/os/content/gmail/start?email=deals%40example.com&desktopFlow=${flow}`)).toBe(`/api/os/content/gmail/start?email=deals%40example.com&desktopFlow=${flow}`);
+        expect(connectionReturnPath(`/api/os/content/gmail/start?desktopFlow=${flow}`)).toBe(`/api/os/content/gmail/start?desktopFlow=${flow}`);
+        expect(connectionReturnPath('/api/os/content/gmail/start?desktopFlow=invalid')).toBe('/api/os/content/gmail/start');
+        expect(connectionReturnPath(`/api/os/mail/google/start?companyId=${company}&desktopFlow=${flow}`)).toBe(`/api/os/mail/google/start?companyId=${company}&desktopFlow=${flow}`);
+    });
     it('resumes connecting Mail, Calendar and Workspace, dropping anything else from the address', () => {
         expect(connectionReturnPath(`/api/os/mail/google/start?companyId=${company}&x=1`)).toBe(`/api/os/mail/google/start?companyId=${company}`);
         expect(connectionReturnPath('/api/os/mail/google/start?companyId=nope')).toBe('/api/os/mail/google/start');

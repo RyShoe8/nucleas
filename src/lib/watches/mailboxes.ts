@@ -25,7 +25,7 @@ export function watchRedirectUri(requestUrl: string): string | null {
   return `${protocol}//${url.host}${WATCH_GMAIL_CALLBACK_PATH}`;
 }
 
-type StatePayload = { userId: string; purpose: 'watch-google'; nonce: string };
+type StatePayload = { userId: string; purpose: 'watch-google'; nonce: string; desktopFlow?: string };
 
 function stateKey(): Uint8Array {
   const secret = process.env.NEXTAUTH_SECRET;
@@ -33,18 +33,19 @@ function stateKey(): Uint8Array {
   return new TextEncoder().encode(`watch-google:${secret}`);
 }
 
-export async function createWatchState(userId: string): Promise<string> {
-  return new SignJWT({ userId, purpose: 'watch-google', nonce: randomUUID() } satisfies StatePayload)
+export async function createWatchState(userId: string, desktopFlow?: string): Promise<string> {
+  return new SignJWT({ userId, purpose: 'watch-google', nonce: randomUUID(), ...(desktopFlow ? { desktopFlow } : {}) } satisfies StatePayload)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('10m')
     .sign(stateKey());
 }
 
-export async function verifyWatchState(token: string): Promise<{ userId: string } | null> {
+export async function verifyWatchState(token: string): Promise<{ userId: string; desktopFlow?: string } | null> {
   try {
     const { payload } = await jwtVerify(token, stateKey());
-    return payload.purpose === 'watch-google' && typeof payload.userId === 'string' ? { userId: payload.userId } : null;
+    if (payload.purpose !== 'watch-google' || typeof payload.userId !== 'string') return null;
+    return { userId: payload.userId, ...(typeof payload.desktopFlow === 'string' ? { desktopFlow: payload.desktopFlow } : {}) };
   } catch {
     return null;
   }

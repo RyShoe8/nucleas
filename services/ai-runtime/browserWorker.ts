@@ -38,7 +38,7 @@ function readBody(req: http.IncomingMessage, maxBytes: number): Promise<string> 
 import { isSafePublicHttpsUrl } from '../../src/lib/ai/tools/ssrf';
 import { contextIdentity, HIDE_AUTOMATION_SCRIPT, IGNORE_DEFAULT_ARGS, LAUNCH_ARGS, withSiteHeader } from './browserIdentity';
 import { cancelLogin, finishLogin, loginFrame, loginInput, startLogin, type LoginInput } from './loginSessions';
-import { fillAdminForm, inspectAdminPage, type AdminSession, type FormField } from './adminForms';
+import { fillAdminForm, inspectAdminPage, postIntakeJson, type AdminSession, type FormField } from './adminForms';
 
 
 async function navigate(url: string, maxChars: number) {
@@ -296,7 +296,7 @@ export function startBrowserWorkerServer() {
         res.end(JSON.stringify({ ok: true }));
         return;
       }
-      if (req.method !== 'POST' || !['/navigate', '/fetch', '/observe', '/admin/inspect', '/admin/fill', '/login/start', '/login/frame', '/login/input', '/login/finish', '/login/cancel'].includes(req.url ?? '')) {
+      if (req.method !== 'POST' || !['/navigate', '/fetch', '/observe', '/admin/inspect', '/admin/fill', '/admin/intake', '/login/start', '/login/frame', '/login/input', '/login/finish', '/login/cancel'].includes(req.url ?? '')) {
         res.writeHead(404);
         res.end();
         return;
@@ -330,6 +330,18 @@ export function startBrowserWorkerServer() {
           res.end(JSON.stringify({ error: error instanceof Error ? error.message.slice(0, 200) : 'Login failed' }));
           return;
         }
+      }
+      if (req.url === '/admin/intake') {
+        const b = JSON.parse(await readBody(req, 300_000)) as Partial<AdminSession> & { path?: string; body?: unknown };
+        if (typeof b.baseUrl !== 'string' || typeof b.url !== 'string' || typeof b.path !== 'string' || !Array.isArray(b.cookies) || b.body === undefined) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid request' }));
+          return;
+        }
+        const reply = await postIntakeJson({ baseUrl: b.baseUrl, url: b.url, cookies: b.cookies, path: b.path, body: b.body });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(reply));
+        return;
       }
       if (req.url === '/admin/inspect' || req.url === '/admin/fill') {
         const b = JSON.parse(await readBody(req, 300_000)) as Partial<AdminSession> & { fields?: FormField[]; values?: Record<string, string | boolean>; submit?: boolean; submitSelector?: string | null };

@@ -2,7 +2,7 @@ import 'server-only';
 import { Types } from 'mongoose';
 import { adminSessionFor } from '@/lib/companies/adminAccount';
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
-import { browserObserve } from '@/lib/ai/tools/browserClient';
+import { browserObserve, browserWorkerCall } from '@/lib/ai/tools/browserClient';
 import { z } from 'zod';
 
 const inventorySchema = z.object({ casinos: z.array(z.object({ name: z.string(), slug: z.string(), status: z.string(), website_url: z.string().nullish(), login_url: z.string().nullish() })) }).passthrough();
@@ -14,10 +14,25 @@ export async function casinoIntake(organizationId: Types.ObjectId, companyId: Ty
  if (!session) throw new Error('Reconnect the company admin account before discovering or adding sites.');
  const origin = new URL(assertSafePublicHttpsUrl(session.baseUrl)).origin;
  const jar = new Map(session.cookies.filter(cookie => { const domain = cookie.domain.replace(/^\./,''); return new URL(origin).hostname === domain || new URL(origin).hostname.endsWith(`.${domain}`); }).map(cookie => [cookie.name,cookie.value]));
+ // Direct requests from a cloud server can be refused before they reach the site, as Cloudflare does, even with a valid
+ // session. The same session in the real browser gets through. A person has already approved this write, and each
+ // request carries its request_id, so a repeat cannot add a second record.
+ const writeThroughBrowser = async (path: string, body: unknown): Promise<IntakeResponse> => {
+  const reply = await browserWorkerCall<{ status: number; text: string }>('/admin/intake', { baseUrl: origin, url: `${origin}/admin/intake/casinos`, cookies: session.cookies, path, body }, { timeoutMs: 90_000 });
+  let data: IntakeResponse & { message?: string } = {};
+  try { data = JSON.parse(reply.text); } catch { /* A non-JSON reply is reported by its status below. */ }
+  if (reply.status >= 200 && reply.status < 300) return data;
+  if (reply.status === 404) throw new Error(`The site does not have ${path} yet. Deploy the intake update to the site, then try again.`);
+  if ([401,419].includes(reply.status)) throw new Error('The saved admin login is no longer signed in. Reconnect it in Company → Admin account, then try again.');
+  if (reply.status === 403) throw new Error('The signed-in admin account is not allowed to add sites, or the site blocked the browser. Check that this account is an administrator.');
+  throw new Error(data.message ?? `Site intake returned HTTP ${reply.status}.`);
+ };
  const call = async (method: 'GET'|'POST', body?: unknown, csrf?: string, draft = false): Promise<IntakeResponse> => {
-  const response = await fetch(`${origin}/admin/intake/casinos${draft ? '/drafts' : ''}`, { method, redirect: 'manual', signal: AbortSignal.timeout(45000), headers: { accept: 'application/json', cookie: [...jar].map(([key,value])=>`${key}=${value}`).join('; '), ...(body ? {'content-type':'application/json', 'x-csrf-token':csrf!, origin} : {}) }, ...(body ? {body:JSON.stringify(body)} : {}) });
+  const path = `/admin/intake/casinos${draft ? '/drafts' : ''}`;
+  const response = await fetch(`${origin}${path}`, { method, redirect: 'manual', signal: AbortSignal.timeout(45000), headers: { accept: 'application/json', cookie: [...jar].map(([key,value])=>`${key}=${value}`).join('; '), ...(body ? {'content-type':'application/json', 'x-csrf-token':csrf!, origin} : {}) }, ...(body ? {body:JSON.stringify(body)} : {}) });
   for(const cookie of response.headers.getSetCookie()){const pair=cookie.split(';')[0];const index=pair.indexOf('=');jar.set(pair.slice(0,index),pair.slice(index+1));}
   const data = await response.json().catch(()=>({}));
+  if (!response.ok && method === 'POST' && [401,403,419].includes(response.status)) return writeThroughBrowser(path, body);
   if (!response.ok && method === 'GET' && [401,403,419,302].includes(response.status)) {
    // The session check uses this same browser transport. Direct cloud requests can be blocked
    // even while the captured browser session is authenticated. This fallback can only read.

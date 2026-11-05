@@ -7,6 +7,11 @@ import { buildGmailAuthUrl, createGmailState, gmailRedirectUri } from '@/lib/mai
 
 export const dynamic = 'force-dynamic';
 
+const desktopFlowOf = (request: NextRequest) => {
+  const flow = request.nextUrl.searchParams.get('desktopFlow') ?? '';
+  return /^[a-f0-9]{32}$/.test(flow) ? flow : undefined;
+};
+
 /** Starts Google sign-in for one Gmail mailbox. Optional ?companyId= files it under a company. */
 export async function GET(request: NextRequest) {
   const login = await loginFirstForConnection(request);
@@ -19,6 +24,6 @@ export async function GET(request: NextRequest) {
   const clientId = process.env.GOOGLE_MAIL_CLIENT_ID?.trim() || process.env.GOOGLE_CLIENT_ID;
   const redirectUri = gmailRedirectUri(request.url);
   if (!clientId || !redirectUri) return NextResponse.json({ error: 'Google sign-in is not available on this host.' }, { status: 500 });
-  const state = await createGmailState(viewer.userId, companyId || null);
+  const state = await createGmailState(viewer.userId, companyId || null, desktopFlowOf(request));
   return NextResponse.redirect(buildGmailAuthUrl({ clientId, redirectUri, state }));
 }

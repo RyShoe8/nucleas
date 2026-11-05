@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Composer from './mail/Composer';
 import Reader from './mail/Reader';
 import Sidebar from './mail/Sidebar';
+import { beginDesktopConnection, useConnectionFinished } from '@/lib/os/desktopConnectionFlow';
 import ThreadList from './mail/ThreadList';
 import { api, post, type Account, type Counts, type ThreadSummary, type View } from './mail/types';
 import MailAiTools from './mail/MailAiTools';
@@ -60,6 +61,12 @@ export default function MailModule() {
         setThreads((cur) => [...(cur ?? []), ...res.data.threads]);
         setHasMore(res.data.threads.length >= PAGE);
     };
+
+    // A sign-in started from the desktop app finished in the browser: show the result here.
+    useConnectionFinished((result) => {
+        if (result.error) setError(result.message);
+        refresh();
+    });
 
     // Google sign-in happens in the browser: show the result when the person comes back. Only while there is
     // a mailbox to connect, so returning to the window never disturbs mail being read.
@@ -150,7 +157,7 @@ export default function MailModule() {
                 {!accounts.length ? (
                     <div className="p-4 text-sm text-text-secondary space-y-2">
                         <p>No mailboxes are connected yet.</p>
-                        {googleConfigured ? <a href="/api/os/mail/google/start" target="_blank" rel="noopener noreferrer" title="Sign in with Google in your browser, then come back here" className="inline-block h-8 leading-8 px-3 rounded bg-primary text-white text-[13px]">Connect a Gmail mailbox</a> : <p className="text-amber-400">Google sign-in is not configured on the server.</p>}
+                        {googleConfigured ? <a href="/api/os/mail/google/start" onClick={beginDesktopConnection} target="_blank" rel="noopener noreferrer" title="Sign in with Google in your browser, then come back here" className="inline-block h-8 leading-8 px-3 rounded bg-primary text-white text-[13px]">Connect a Gmail mailbox</a> : <p className="text-amber-400">Google sign-in is not configured on the server.</p>}
                     </div>
                 ) : (
                     <div className="flex-1 overflow-y-auto">

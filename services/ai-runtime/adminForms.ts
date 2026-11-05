@@ -311,6 +311,31 @@ async function shot(page: Page): Promise<string | null> {
   }
 }
 
+/** Only structured first-party intake endpoints can be written to this way. */
+const INTAKE_PATH = /^\/admin\/intake\/[a-z0-9_-]+(?:\/[a-z0-9_-]+)*$/;
+const MAX_INTAKE_REPLY = 100_000;
+
+export interface IntakeReply { status: number; text: string }
+
+/**
+ * POSTs JSON to a site's own intake endpoint from inside the signed-in browser. Some sites refuse direct requests from
+ * a cloud server even with a valid session, as Cloudflare does; this is the same session in a real browser. input.url
+ * is a page on that intake that returns { csrf_token }, read in the same session just before the write.
+ */
+export async function postIntakeJson(input: AdminSession & { path: string; body: unknown }, options: Options = {}): Promise<IntakeReply> {
+  if (!INTAKE_PATH.test(input.path)) throw new Error('That is not an intake endpoint.');
+  const state = new URL(input.url);
+  if (!INTAKE_PATH.test(state.pathname)) throw new Error('That is not an intake endpoint.');
+  return openPage(input, options, true, (page) => page.evaluate<IntakeReply>(`(async () => {
+    const state = await fetch(${JSON.stringify(state.pathname)}, { credentials: 'same-origin', headers: { accept: 'application/json' } });
+    if (!state.ok || state.redirected) return { status: state.redirected ? 401 : state.status, text: '' };
+    const csrf = (await state.json().catch(() => ({}))).csrf_token;
+    if (typeof csrf !== 'string' || !csrf) return { status: 419, text: '' };
+    const reply = await fetch(${JSON.stringify(input.path)}, { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/json', 'x-csrf-token': csrf }, body: ${JSON.stringify(JSON.stringify(input.body))} });
+    return { status: reply.redirected ? 401 : reply.status, text: (await reply.text()).slice(0, ${MAX_INTAKE_REPLY}) };
+  })()`));
+}
+
 export async function fillAdminForm(
   input: AdminSession & { fields: FormField[]; values: Record<string, string | boolean>; submit: boolean; submitSelector?: string | null },
   options: Options = {}

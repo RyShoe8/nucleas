@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import http from 'http';
 import fs from 'fs';
 import type { AddressInfo } from 'net';
-import { fillAdminForm, inspectAdminPage } from './adminForms';
+import { fillAdminForm, inspectAdminPage, postIntakeJson } from './adminForms';
 
 const chrome = ['/opt/pw-browsers/chromium/chrome-linux/chrome', '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'].find((p) => fs.existsSync(p));
 let playwrightAvailable = true;
@@ -152,4 +152,12 @@ describe.skipIf(!chrome || !playwrightAvailable)('admin forms (real browser, loc
       expect(out).toMatchObject({ loggedIn: false, fields: [] });
     });
   }, 60_000);
+});
+
+describe('writing to a site intake through the browser', () => {
+  it('refuses anything but an intake endpoint, before opening a browser', async () => {
+    const session = { baseUrl: 'https://example.com', url: 'https://example.com/admin/intake/casinos', cookies: [], body: {} };
+    for (const path of ['/admin/users', '/login', '/admin/intake/../users', 'https://evil.test/admin/intake/casinos', '/admin/intake/']) await expect(postIntakeJson({ ...session, path })).rejects.toThrow('not an intake endpoint');
+    await expect(postIntakeJson({ ...session, url: 'https://example.com/admin/users', path: '/admin/intake/casinos' })).rejects.toThrow('not an intake endpoint');
+  });
 });
