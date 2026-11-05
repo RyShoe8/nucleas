@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Types } from 'mongoose';
-import { admanagerRevenue, adxReportDefinition, listAdManagerSites, parseAdxRows, type AdxRow } from './admanager';
+import { admanagerRevenue, adxReportDefinition, implausibleCpm, listAdManagerSites, parseAdxRows, type AdxRow } from './admanager';
 import { ExternalResource } from '@/lib/models/Integration';
 import type { CapabilityRunContext } from '../types';
 
@@ -24,6 +24,35 @@ describe('Ad Manager reporting', () => {
   it('aggregates same-day rows before rounding micros to hundredths', () => {
     expect(parseAdxRows([row('playbound.club', '1234500'), row('www.playbound.club', '5000')], 'playbound.club', range))
       .toEqual([{ date: '2026-11-01', earnings: 124, impressions: 240, clicks: 6 }]);
+  });
+  describe('the money format in report rows', () => {
+    const withValues = (revenue: unknown, impressions: unknown = { intValue: '1000' }, clicks: unknown = { intValue: '3' }) => ({
+      dimensionValues: [{ stringValue: '2026-11-01' }, { stringValue: 'playbound.club' }],
+      metricValueGroups: [{ primaryValues: [revenue, impressions, clicks] }],
+    }) as AdxRow;
+    it('reads a decimal as currency units and an integer as micros, to the same amount', () => {
+      const expected = [{ date: '2026-11-01', earnings: 1234, impressions: 1000, clicks: 3 }];
+      expect(parseAdxRows([withValues({ doubleValue: 12.34 })], 'playbound.club', range)).toEqual(expected);
+      expect(parseAdxRows([withValues({ intValue: '12340000' })], 'playbound.club', range)).toEqual(expected);
+    });
+    it('adds decimal amounts without losing cents across rows', () => {
+      const rows = [withValues({ doubleValue: 0.1 }), withValues({ doubleValue: 0.2 })];
+      expect(parseAdxRows(rows, 'playbound.club', range)[0]).toMatchObject({ earnings: 30, impressions: 2000 });
+    });
+    it('accepts counts sent as whole doubles, and a day with impressions but no revenue', () => {
+      expect(parseAdxRows([withValues({ doubleValue: 0 }, { doubleValue: 500 }, { doubleValue: 0 })], 'playbound.club', range)).toEqual([{ date: '2026-11-01', earnings: 0, impressions: 500, clicks: 0 }]);
+    });
+    it('refuses revenue off by a factor of a million in either direction, instead of recording it', () => {
+      expect(() => parseAdxRows([withValues({ doubleValue: 12340000 })], 'playbound.club', range)).toThrow('does not fit its impressions');
+      expect(() => parseAdxRows([withValues({ intValue: '12' }, { intValue: '500000' })], 'playbound.club', range)).toThrow('does not fit its impressions');
+      expect(implausibleCpm(50_000_000, 10)).toBe(false);
+    });
+    it('names the metric and the field Google sent, never the amount', () => {
+      expect(() => parseAdxRows([withValues({ stringValue: '12.34' })], 'playbound.club', range)).toThrow('AD_EXCHANGE_REVENUE (stringValue)');
+      expect(() => parseAdxRows([withValues({})], 'playbound.club', range)).toThrow('AD_EXCHANGE_REVENUE (no value)');
+      expect(() => parseAdxRows([withValues({ intValue: '1' }, { doubleValue: 1.5 })], 'playbound.club', range)).toThrow('AD_EXCHANGE_IMPRESSIONS (doubleValue)');
+      expect(() => parseAdxRows([withValues({ stringValue: 'secret-12.34' })], 'playbound.club', range)).not.toThrow('secret');
+    });
   });
   it('rejects foreign sites, out-of-window dates, and missing values instead of recording zero', () => {
     expect(() => parseAdxRows([row('other.com')], 'playbound.club', range)).toThrow('outside');

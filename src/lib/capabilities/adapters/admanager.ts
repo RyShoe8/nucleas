@@ -68,11 +68,38 @@ export function adxReportDefinition(domain: string, range: { startDate: string; 
   };
 }
 
-function integer(value: Value | undefined): number {
-  if (value?.intValue === undefined || !/^-?\d+$/.test(value.intValue)) throw new CapabilityError('failed', 'Ad Manager returned an unsupported numeric value.');
-  const n = Number(value.intValue);
-  if (!Number.isSafeInteger(n)) throw new CapabilityError('failed', 'Ad Manager returned an out-of-range number.');
+/** Which field Google filled, never the amount: enough to diagnose a format problem without logging revenue. */
+function unsupported(metric: string, value: Value | undefined): CapabilityError {
+  const fields = Object.keys(value ?? {}).join(', ') || 'no value';
+  return new CapabilityError('failed', `Ad Manager returned an unsupported value for ${metric} (${fields}).`);
+}
+
+function parseInteger(value: Value | undefined, metric: string): number {
+  const n = value?.intValue !== undefined && /^-?\d+$/.test(value.intValue) ? Number(value.intValue)
+    : typeof value?.doubleValue === 'number' && Number.isInteger(value.doubleValue) ? value.doubleValue : null;
+  if (n === null) throw unsupported(metric, value);
+  if (!Number.isSafeInteger(n)) throw new CapabilityError('failed', `Ad Manager returned an out-of-range number for ${metric}.`);
   return n;
+}
+
+/**
+ * A MONEY value as micros. Google does not document the unit of MONEY in report rows, so the two cases are read by
+ * what they can be: an integer is micros, and a decimal is currency units. implausibleCpm catches a wrong reading.
+ */
+function moneyMicros(value: Value | undefined, metric: string): number {
+  if (typeof value?.doubleValue === 'number' && Number.isFinite(value.doubleValue)) return Math.round(value.doubleValue * 1_000_000);
+  return parseInteger(value, metric);
+}
+
+/** Enough impressions for a CPM to mean something, and bounds no real AdX day falls outside. */
+const CPM_MIN_IMPRESSIONS = 100;
+const CPM_RANGE = { min: 0.001, max: 2000 };
+
+/** Micros per impression, as a CPM in currency units, far outside any real range: the money unit was read wrongly. */
+export function implausibleCpm(micros: number, impressions: number): boolean {
+  if (micros <= 0 || impressions < CPM_MIN_IMPRESSIONS) return false;
+  const cpm = (micros / 1_000_000 / impressions) * 1000;
+  return cpm < CPM_RANGE.min || cpm > CPM_RANGE.max;
 }
 
 export function parseAdxRows(rows: AdxRow[], domain: string, range: { startDate: string; endDate: string }): AdxOutput['days'] {
@@ -88,12 +115,16 @@ export function parseAdxRows(rows: AdxRow[], domain: string, range: { startDate:
     const values = row.metricValueGroups[0].primaryValues;
     if (values?.length !== 3) throw new CapabilityError('failed', 'Ad Manager returned incomplete AdX metrics.');
     const day = days.get(date) ?? { date, micros: 0, impressions: 0, clicks: 0 };
-    day.micros += integer(values[0]);
-    day.impressions += integer(values[1]);
-    day.clicks += integer(values[2]);
+    day.micros += moneyMicros(values[0], 'AD_EXCHANGE_REVENUE');
+    day.impressions += parseInteger(values[1], 'AD_EXCHANGE_IMPRESSIONS');
+    day.clicks += parseInteger(values[2], 'AD_EXCHANGE_CLICKS');
     days.set(date, day);
   }
-  // Ad Manager MONEY values use micros. Nucleas money points use hundredths.
+  // A wrong unit is off by orders of magnitude: refuse it rather than record revenue nobody can trust.
+  for (const day of days.values()) {
+    if (implausibleCpm(day.micros, day.impressions)) throw new CapabilityError('failed', `Ad Manager revenue for ${day.date} does not fit its impressions, so it was not recorded. Its money format may have changed.`);
+  }
+  // Nucleas money points use hundredths.
   return [...days.values()].sort((a, b) => a.date.localeCompare(b.date)).map(d => ({
     date: d.date, earnings: Math.round(d.micros / 10_000), impressions: d.impressions, clicks: d.clicks,
   }));
@@ -169,6 +200,8 @@ export async function admanagerRevenue(ctx: CapabilityRunContext, range: { start
       if ((pageToken && seen.has(pageToken)) || seen.size >= 100 || rows.length > 100_000) throw new CapabilityError('failed', 'Ad Manager report exceeded the supported pagination limit.');
       seen.add(pageToken);
     } while (pageToken);
+    const first = rows[0]?.metricValueGroups?.[0]?.primaryValues?.[0];
+    if (first) console.info(`[admanager] ${domain}: ${rows.length} report rows, revenue sent as ${Object.keys(first).join(', ') || 'no value'}`);
     const days = parseAdxRows(rows, domain, range);
     if (!state.completedAt) await save({ completedAt: new Date().toISOString() });
     return { site, domain, ...range, currency: info.currencyCode.toLowerCase(), timeZone: info.timeZone, days,
