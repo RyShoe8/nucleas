@@ -1,3 +1,5 @@
+import { readTokenUsage } from '../../ai-contracts/src/tokenUsage';
+export { readTokenUsage } from '../../ai-contracts/src/tokenUsage';
 import {
   modelRequestSchema,
   modelToolRequestSchema,
@@ -131,12 +133,11 @@ const responseSchema = z.object({
       })
     )
     .min(1),
-  usage: z
-    .object({
-      prompt_tokens: z.number().int().nonnegative().optional(),
-      completion_tokens: z.number().int().nonnegative().optional(),
-    })
-    .optional(),
+  usage: z.unknown(),
+  usageMetadata: z.unknown(),
+  x_groq: z.unknown(),
+  prompt_eval_count: z.unknown(),
+  eval_count: z.unknown(),
 });
 
 const imageResponseSchema = z.object({
@@ -306,7 +307,8 @@ export async function readStreamedCompletion(response: Response, maxTextChars: n
   let content = '';
   let reasoning = '';
   let finishReason: string | null = null;
-  let usage: unknown;
+  let promptTokens: number | null = null;
+  let completionTokens: number | null = null;
   const calls: { id?: string; name: string; args: string }[] = [];
 
   const handle = (payload: string): boolean => {
@@ -318,7 +320,9 @@ export async function readStreamedCompletion(response: Response, maxTextChars: n
     try { event = JSON.parse(payload); } catch { return false; }
     if (event.error) throw new GatewayError('unavailable', { kind: 'stream_error' });
     if (typeof event.model === 'string') model = event.model;
-    if (event.usage) usage = event.usage;
+    const usage = readTokenUsage(event);
+    promptTokens = usage.inputTokens ?? promptTokens;
+    completionTokens = usage.outputTokens ?? completionTokens;
     for (const choice of event.choices?.slice(0, 1) ?? []) {
       const delta = choice.delta;
       if (delta?.content) content += delta.content;
@@ -373,7 +377,7 @@ export async function readStreamedCompletion(response: Response, maxTextChars: n
       },
       finish_reason: finishReason,
     }],
-    ...(usage ? { usage } : {}),
+    usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens },
   };
 }
 
@@ -527,8 +531,7 @@ export async function invokeModel(
     return {
       content: visible.text,
       model: config.model,
-      inputTokens: parsed.usage?.prompt_tokens ?? null,
-      outputTokens: parsed.usage?.completion_tokens ?? null,
+      ...readTokenUsage(parsed),
       latencyMs: Date.now() - started,
       finishReason: choice.finish_reason ?? null,
     };
@@ -598,8 +601,7 @@ export function parseResponsesOutput(body: unknown): { text: string; toolCalls: 
     text: stripThinkTags(text.join('\n')),
     toolCalls: parseToolCalls(raw),
     truncated: reply.status === 'incomplete',
-    inputTokens: typeof reply.usage?.input_tokens === 'number' ? reply.usage.input_tokens : null,
-    outputTokens: typeof reply.usage?.output_tokens === 'number' ? reply.usage.output_tokens : null,
+    ...readTokenUsage(reply),
   };
 }
 
@@ -739,8 +741,7 @@ export async function invokeModelWithTools(
       content: visible.text,
       toolCalls,
       model: config.model,
-      inputTokens: parsed.usage?.prompt_tokens ?? null,
-      outputTokens: parsed.usage?.completion_tokens ?? null,
+      ...readTokenUsage(parsed),
       latencyMs: Date.now() - started,
       finishReason: choice.finish_reason ?? null,
     };

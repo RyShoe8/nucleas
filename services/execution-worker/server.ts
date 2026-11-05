@@ -1,3 +1,4 @@
+import { readTokenUsage } from '../../packages/ai-contracts/src/tokenUsage';
 import { createServer } from 'node:http';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdtemp, readdir, realpath, rm } from 'node:fs/promises';
@@ -92,8 +93,9 @@ export async function modelReply(messages: ChatMessage[], inference: Inference, 
       const payload = await response.json() as { model?: unknown; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown }; choices?: { message?: { content?: string | null; tool_calls?: ToolCall[] } }[] };
       const message = payload.choices?.[0]?.message;
       if (!message) throw new Error('Inference returned no message.');
-      if (typeof payload.usage?.prompt_tokens === 'number' && typeof payload.usage?.completion_tokens === 'number') {
-        usage.inputTokens += payload.usage.prompt_tokens; usage.outputTokens += payload.usage.completion_tokens; usage.reported = true;
+      const counts = readTokenUsage(payload);
+      if (counts.inputTokens !== null && counts.outputTokens !== null) {
+        usage.inputTokens += counts.inputTokens; usage.outputTokens += counts.outputTokens; usage.reported = true;
       }
       const reportedModel = typeof payload.model === 'string' && payload.model.trim() && payload.model.trim().length <= 200
         ? payload.model.trim() : null;

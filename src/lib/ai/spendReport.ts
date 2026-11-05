@@ -19,6 +19,10 @@ export interface SpendRow {
   detail?: string;
   costMicros: number;
   runs: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** Finished runs whose provider never reported tokens. Unknown, not zero. */
+  unknownTokenRuns: number;
 }
 
 export interface OrgAiSpend {
@@ -41,7 +45,7 @@ export function isValidPeriod(period: string): boolean {
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(period);
 }
 
-type Group = { _id: unknown; costMicros: number; runs: number; unknown?: number };
+type Group = { _id: unknown; costMicros: number; runs: number; inputTokens: number; outputTokens: number; unknownTokenRuns: number };
 
 export async function getOrgAiSpend(organizationId: string, period: string, now = new Date()): Promise<OrgAiSpend> {
   const { start, end } = monthBounds(period);
@@ -72,12 +76,21 @@ export async function getOrgAiSpend(organizationId: string, period: string, now 
   const group = (field: string) =>
     AiRun.aggregate<Group>([
       { $match: match },
-      { $group: { _id: field, costMicros: { $sum: costExpr }, runs: { $sum: 1 } } },
+      {
+        $group: {
+          _id: field,
+          costMicros: { $sum: costExpr },
+          runs: { $sum: 1 },
+          inputTokens: { $sum: { $ifNull: ['$inputTokens', 0] } },
+          outputTokens: { $sum: { $ifNull: ['$outputTokens', 0] } },
+          unknownTokenRuns: { $sum: { $cond: [{ $and: [{ $eq: ['$status', 'completed'] }, { $eq: [{ $type: '$inputTokens' }, 'missing'] }, { $eq: [{ $type: '$outputTokens' }, 'missing'] }] }, 1, 0] } },
+        },
+      },
       { $sort: { costMicros: -1, runs: -1 } },
     ]);
 
   const [days, sources, models, users] = await Promise.all([
-    AiRun.aggregate<Group>([
+    AiRun.aggregate<Pick<Group, '_id' | 'costMicros' | 'runs'>>([
       { $match: match },
       { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, costMicros: { $sum: costExpr }, runs: { $sum: 1 } } },
       { $sort: { _id: 1 } },
@@ -100,18 +113,18 @@ export async function getOrgAiSpend(organizationId: string, period: string, now 
   const clientName = new Map(clients.map((c) => [String(c._id), c.name]));
   const projectById = new Map(projects.map((p) => [String(p._id), p]));
 
+  const usage = (g: Group) => ({ costMicros: g.costMicros, runs: g.runs, inputTokens: g.inputTokens, outputTokens: g.outputTokens, unknownTokenRuns: g.unknownTokenRuns });
   const bySource: SpendRow[] = sources.map((s) => {
     const id = String(s._id);
-    if (id === assistant) return { key: id, label: 'Ask Nucleas', detail: 'Portfolio assistant', costMicros: s.costMicros, runs: s.runs };
-    if (id === freeChat) return { key: id, label: 'Free Chat', detail: 'IDE', costMicros: s.costMicros, runs: s.runs };
+    if (id === assistant) return { key: id, label: 'Ask Nucleas', detail: 'Portfolio assistant', ...usage(s) };
+    if (id === freeChat) return { key: id, label: 'Free Chat', detail: 'IDE', ...usage(s) };
     const p = projectById.get(id);
     const company = p?.clientId ? clientName.get(String(p.clientId)) : undefined;
     return {
       key: id,
       label: p?.name ?? 'Deleted project',
       detail: company && company !== p?.name ? `${company} · IDE / planning` : 'IDE / planning',
-      costMicros: s.costMicros,
-      runs: s.runs,
+      ...usage(s),
     };
   });
 
@@ -138,8 +151,8 @@ export async function getOrgAiSpend(organizationId: string, period: string, now 
     totals: totalsRow ?? { costMicros: 0, runs: 0, unknownCostRuns: 0, inputTokens: 0, outputTokens: 0 },
     byDay: days.map((d) => ({ date: String(d._id), costMicros: d.costMicros, runs: d.runs })),
     bySource,
-    byModel: models.map((m) => ({ key: String(m._id ?? 'unknown'), label: m._id ? String(m._id) : 'Unknown model', costMicros: m.costMicros, runs: m.runs })),
-    byUser: users.map((u) => ({ key: String(u._id), label: userName.get(String(u._id)) ?? 'Unknown', costMicros: u.costMicros, runs: u.runs })),
+    byModel: models.map((m) => ({ key: String(m._id ?? 'unknown'), label: m._id ? String(m._id) : 'Unknown model', ...usage(m) })),
+    byUser: users.map((u) => ({ key: String(u._id), label: userName.get(String(u._id)) ?? 'Unknown', ...usage(u) })),
     search: { braveQueries, googleQueries, estimatedMicros: estimateSearchApiMicros({ braveQueries, googleCseQueries: googleQueries, dayOfMonth }) },
   };
 }

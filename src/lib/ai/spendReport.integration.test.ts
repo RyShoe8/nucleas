@@ -84,6 +84,13 @@ describe('organization AI spend', () => {
       ['Free Chat', 500_000, 1],
       ['Tailnote', 250_000, 2],
     ]);
+    expect(spend.byUser.reduce((sum, row) => sum + row.inputTokens, 0)).toBe(500);
+    expect(spend.byModel.reduce((sum, row) => sum + row.outputTokens, 0)).toBe(250);
+    expect(spend.bySource.every((row) => row.unknownTokenRuns === 0)).toBe(true);
+    await AiRun.collection.insertOne({ organizationId: org, projectId: 'unreported', model: 'free/no-usage', status: 'completed', createdAt: new Date('2026-09-20T12:00:00Z') } as never);
+    const unreported = (await getOrgAiSpend(org, '2026-09')).byModel.find((row) => row.key === 'free/no-usage');
+    expect(unreported).toMatchObject({ runs: 1, inputTokens: 0, outputTokens: 0, unknownTokenRuns: 1 });
+    await AiRun.collection.deleteOne({ model: 'free/no-usage' });
     expect(spend.byModel.map((m) => [m.label, m.costMicros])).toEqual([
       ['claude-sonnet', 3_000_000],
       ['gpt-5', 750_000],

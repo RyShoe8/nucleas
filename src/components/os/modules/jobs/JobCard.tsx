@@ -480,20 +480,26 @@ function RedditPostPanel({ values, subreddit }: { values: Record<string, unknown
 
 function ModelPath({ run }: { run: JobRunView }) {
     const steps = run.modelPath ?? [];
-    if (!steps.length) return null;
+    if (!steps.length) return <p className="text-xs text-text-secondary">No model calls were recorded for this run.</p>;
     const { unknownModels } = costSummary(steps);
     return (
         <section className="rounded-lg border border-border bg-background-elevated/40 p-4" aria-label="Models used">
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-secondary">Models used</h3>
+            <p className="mb-4 text-xs text-text-secondary">{steps.length} model {steps.length === 1 ? 'call' : 'calls'} · {usd(run.costMicros)} recorded{unknownModels.length ? ' + unknown charges' : ''}</p>
             <ol className="space-y-2">
                 {steps.map((step, i) => (
-                    <li key={i} className="text-sm leading-6">
-                        <span className="font-medium">{step.stage === 'work' ? 'Work' : 'Review'}</span>
+                    <li key={i} className="relative ml-2 space-y-1 border-l-2 border-primary/30 pb-3 pl-4 text-sm leading-6">
+                        <span aria-hidden="true" className="absolute -left-[5px] top-2 h-2 w-2 rounded-full bg-primary" />
+                        <span className="mr-2 text-xs tabular-nums text-text-secondary">{i + 1}</span>
+                        <span className="font-medium">{step.stage === 'plan' ? 'Plan' : step.stage === 'work' ? 'Work' : 'Review'}</span>
                         <span className="text-text-secondary"> · {step.note} · </span>
                         <span className="font-mono text-xs">{step.model}</span>
                         <span className={`ml-2 rounded border px-1.5 py-0.5 text-[10px] ${step.free ? 'border-border text-text-secondary' : 'border-primary/40 text-primary'}`}>{step.free ? 'Free' : 'Paid'}</span>
                         <span className="ml-2 text-xs text-text-secondary">{step.costMicros === null ? (step.free ? '' : 'cost unknown') : usd(step.costMicros)}</span>
                         <p className="text-xs text-text-secondary">{step.reason}</p>
+                        {step.assignment && <p className="text-xs"><strong>Assignment</strong> · {step.assignment}</p>}
+                        {step.tools?.length ? <p className="text-xs"><strong>Tools used</strong> · {step.tools.join(', ')}</p> : null}
+                        {step.outcome && <p className="whitespace-pre-line text-xs"><strong>{step.stage === 'plan' ? 'Instructions sent to worker' : 'Result'}</strong> · {step.outcome}</p>}
                         {step.error ? <p className="text-xs text-amber-300">Failed: {step.error}</p> : null}
                     </li>
                 ))}
@@ -508,6 +514,7 @@ function Results({ job, run }: { job: JobView; run: JobRunView }) {
     const records = run.output?.records ?? [];
     return (
         <div className="space-y-5 text-sm">
+            {run.error && <p className="text-sm text-amber-300">{run.error}</p>}
             {run.output?.summary ? <section className="rounded-lg border border-border bg-background-elevated/40 p-4"><h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-secondary">Summary</h3><p className="whitespace-pre-wrap leading-6">{run.output.summary}</p></section> : null}
             {records.map((r, i) => (
                 <article key={i} className="overflow-hidden rounded-lg border border-border">
@@ -550,7 +557,7 @@ function Results({ job, run }: { job: JobView; run: JobRunView }) {
             ) : null}
             {run.output?.gaps.length ? <p className="text-text-secondary">Could not find: {run.output.gaps.join('; ')}</p> : null}
             <ModelPath run={run} />
-            <p className="text-[10px] text-text-secondary">Cost {usd(run.costMicros)}{run.costUnknown ? ' + unknown (see Models used)' : ''}</p>
+
         </div>
     );
 }
@@ -596,8 +603,8 @@ function RunBlock({ job, run, onChange, onView }: { job: JobView; run: JobRunVie
                 </div>
             ) : null}
             {run.error ? <p className="text-xs text-red-400">{run.error}</p> : null}
-            {run.status === 'failed' && run.modelPath?.length ? (
-                <details><summary className="cursor-pointer text-xs text-text-secondary">Models tried and errors</summary><div className="mt-2"><ModelPath run={run} /></div></details>
+            {run.status === 'failed' && !run.output ? (
+                <button type="button" className={BUTTON} onClick={() => onView(run)}>View run results</button>
             ) : null}
             {run.output ? (
                 <div className="flex items-center justify-between gap-3 rounded border border-border bg-background-elevated/40 p-2">

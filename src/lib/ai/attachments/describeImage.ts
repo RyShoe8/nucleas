@@ -4,7 +4,7 @@ import { selectModel, type CostLevel } from '@/lib/ai/engine/select';
 import { listAvailableModels, priceTokens } from '@/lib/ai/engine/catalog';
 import { recordModelFailure, recordModelSuccess } from '@/lib/ai/engine/health';
 import { gatewayFromModelProfile } from '@/lib/ai/rolePipeline/profiles';
-import { sanitizeProviderMessage } from '@nucleas/ai-core/gateway';
+import { readTokenUsage, sanitizeProviderMessage } from '@nucleas/ai-core/gateway';
 import { AiRun } from '@/lib/models/AiControl';
 
 /**
@@ -72,9 +72,9 @@ export async function describeImage(input: {
         continue;
       }
       void recordModelSuccess(choice.profileId, choice.model).catch(() => undefined);
-      const usage = { inputTokens: body.usage?.prompt_tokens ?? 0, outputTokens: body.usage?.completion_tokens ?? 0 };
+      const { inputTokens, outputTokens } = readTokenUsage(body);
       const provider = models.find((m) => m.profileId === choice.profileId && m.model === choice.model)?.provider;
-      const costMicros = body.usage ? await priceTokens({ model: choice.model, provider, profileId: choice.profileId, free: choice.free, ...usage }) : choice.free ? 0 : null;
+      const costMicros = inputTokens !== null && outputTokens !== null ? await priceTokens({ model: choice.model, provider, profileId: choice.profileId, free: choice.free, inputTokens, outputTokens }) : choice.free ? 0 : null;
       await AiRun.create({
         organizationId: input.organizationId,
         projectId: input.projectId,
@@ -86,7 +86,8 @@ export async function describeImage(input: {
         createdByUserId: new Types.ObjectId(input.userId),
         startedAt: started,
         completedAt: new Date(),
-        ...(body.usage ? usage : {}),
+        ...(inputTokens !== null ? { inputTokens } : {}),
+        ...(outputTokens !== null ? { outputTokens } : {}),
         ...(costMicros !== null ? { costMicros } : {}),
       }).catch(() => undefined);
       return { ok: true, text: text.slice(0, 20_000), model: choice.model, costMicros };

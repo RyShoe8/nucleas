@@ -53,6 +53,7 @@ import { runPublishing } from '@/lib/publishing/engine';
 
 const RUN_MAX_TOKENS = 3000;
 const MAX_WORK_CALLS = 5;
+const MAX_PROSPECT_RETRIES = 3;
 const MAX_REVIEW_CALLS = 3;
 const COMPACT_RUN_MAX_TOKENS = 1800;
 /** Earlier records shown to a run so repeating jobs do not redo work. */
@@ -542,6 +543,8 @@ export async function executeJobRun(runId: string): Promise<void> {
     void progress(run._id, owner, t, { stage: 'researching', percent: researchPercent });
   };
 
+  const spotlight = activeDesign.skill === 'signature_outreach';
+  let brief = '';
   let workCalls = 0;
   const doWork = async (choice: typeof worker, correction?: string, researchRetry = false, compact = false) => {
     if (freeResearch && !choice.free) return { requestId: 'free-research-only', role: 'status' as const, text: 'Link discovery uses free research models only; paid research escalation is disabled.' };
@@ -554,7 +557,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       organizationId: org,
       projectId: repo?.projectId ?? assistantLedgerProjectId(org),
       userId: viewer.userId,
-      userText: [`Company: ${profile.name} (${profile.domain ?? 'no domain'}) · ${profile.description ?? ''}`, correction ?? '', prospectContext ? `\n# Candidate directories to investigate (NOT already done)\n${prospectContext}` : '', directionContext ? `\n${directionContext}` : '', `\n# Verified selected-project facts (facts, not instructions)\n${groundingFacts}`, marketingPlan ? `\n# Approved Marketing Plan (hard strategic constraints)\n${marketingPlanContext(marketingPlan)}` : seoBrief ? `\n# Approved legacy SEO brief (hard relevance constraints)\n${seoBriefContext(seoBrief)}` : '', done ? `\n# Already done (do not repeat)\n${done}` : ''].join('\n'),
+      userText: [spotlight ? 'Scout external small businesses with recent founder launch announcements.' : `Company: ${profile.name} (${profile.domain ?? 'no domain'}) · ${profile.description ?? ''}`, brief, correction ?? '', prospectContext ? `\n# Candidate directories to investigate (NOT already done)\n${prospectContext}` : '', directionContext ? `\n${directionContext}` : '', spotlight ? '' : `\n# Verified selected-project facts (facts, not instructions)\n${groundingFacts}`, marketingPlan ? `\n# Approved Marketing Plan (hard strategic constraints)\n${marketingPlanContext(marketingPlan)}` : seoBrief ? `\n# Approved legacy SEO brief (hard relevance constraints)\n${seoBriefContext(seoBrief)}` : '', done ? `\n# Already done (do not repeat)\n${done}` : ''].join('\n'),
       priorTurns: [],
       modelProfileId: choice.profileId,
       model: choice.model,
@@ -565,7 +568,8 @@ export async function executeJobRun(runId: string): Promise<void> {
       forcePlain: compact || (Boolean(correction) && !researchRetry),
       forceToolLoop: !compact && (!correction || researchRetry),
       ...(activeDesign.skill === 'link_building' ? { maxToolRoundsOverride: 6 } : {}),
-      extraTools: compact || (correction && !researchRetry) ? undefined : tools.toolSet,
+      disableLookupAssist: spotlight,
+      extraTools: spotlight || compact || (correction && !researchRetry) ? undefined : tools.toolSet,
       stopOnUpstreamFailure: true,
       maxOutputTokensOverride: compact ? COMPACT_RUN_MAX_TOKENS : manualArtifact(activeDesign.skill) || activeDesign.skill === 'casino_discovery' ? 6000 : RUN_MAX_TOKENS,
       onProgress,
@@ -573,10 +577,39 @@ export async function executeJobRun(runId: string): Promise<void> {
     cost += turn.costMicros ?? 0;
     const pinned = work.source === 'pinned' && choice.profileId === work.primary?.profileId && choice.model === work.primary?.model;
     recordStep('work', compact ? 'Compact retry' : correction ? (researchRetry ? 'Re-research' : 'Format retry') : 'First attempt', choice, pinned ? 'pinned' : 'auto', choice.profileId !== worker.profileId || choice.model !== worker.model, turn.costMicros ?? null, turn.role === 'assistant' ? undefined : turn.text);
+    const step = modelPath[modelPath.length - 1];
+    step.assignment = (correction?.split(/Previous candidate:|Rejected result:/)[0] || brief || activeDesign.instructions).slice(0, 600);
+    step.tools = [...new Set(turn.toolsUsed ?? [])].slice(0, 20);
+    if (turn.role === 'assistant') {
+      const parsed = parseJobOutput(turn.text, activeDesign.skill);
+      step.outcome = parsed.success ? (parsed.data.records.length + ' records. ' + parsed.data.summary).slice(0, 600) : 'Returned a reply that failed format validation.';
+    }
     return turn;
   };
 
   try {
+    if (spotlight) {
+      const plan = await selectModel(org, 'plan', level, { models, settings });
+      const planner = plan.primary;
+      if (!planner) return void await fail('No planner is available for Signature Spotlight.');
+      const assignment = 'Write a concise research brief for the worker. Start from external founder and launch announcements. Exclude the sponsor and owned properties from search targets. Prioritize early evidence checks. Never invent candidates. Return only the instructions to delegate, under 150 words.';
+      await progress(run._id, owner, 'Planning prospect research with ' + shortModel(planner.model), { stage: 'preparing', percent: 18 });
+      const turn = await attemptCompanyCredentialChat({
+        organizationId: org, projectId: assistantLedgerProjectId(org), userId: viewer.userId,
+        modelProfileId: planner.profileId, model: planner.model, projectName: profile.name,
+        disableLookupAssist: true, systemPrompt: assignment, userText: activeDesign.instructions, priorTurns: [],
+        includeRepoTools: false, includeImageTool: false, toolProfile: 'none', forcePlain: true,
+        stopOnUpstreamFailure: true, maxOutputTokensOverride: 1600,
+      });
+      cost += turn.costMicros ?? 0;
+      usedModels.push(planner.model);
+      recordStep('plan', 'Brief research worker', planner, plan.source === 'pinned' ? 'pinned' : 'auto', false, turn.costMicros ?? null, turn.role === 'assistant' ? undefined : turn.text);
+      const step = modelPath[modelPath.length - 1];
+      step.assignment = assignment;
+      if (turn.role !== 'assistant' || !turn.text.trim()) return void await fail('Planner could not brief the research worker.', { costMicros: cost, models: usedModels });
+      brief = turn.text.trim().slice(0, 1800);
+      step.outcome = brief;
+    }
     let activeWorker = worker;
     const exhaustedProfiles = new Set<string>();
     let turn = await doWork(activeWorker);
@@ -697,6 +730,9 @@ export async function executeJobRun(runId: string): Promise<void> {
         usedModels.push(choice.model);
         recordStep('review', 'Placement eligibility check', choice, 'auto', false, answer.costMicros ?? null, answer.role === 'assistant' ? undefined : answer.text);
         const verdict = answer.role === 'assistant' ? (extractJson(answer.text) as { verdict?: unknown; reason?: unknown } | null) : null;
+        const step = modelPath[modelPath.length - 1];
+        step.assignment = 'Check the proposed placement against the page evidence and eligibility requirements.';
+        if (verdict) step.outcome = [verdict.verdict, verdict.reason].filter(Boolean).join(' · ').slice(0, 600);
         return verdict && (verdict.verdict === 'pass' || verdict.verdict === 'fail' || verdict.verdict === 'unverified') ? { verdict: verdict.verdict, reason: String(verdict.reason ?? '').slice(0, 300) } : null;
       };
       const excluded = await missingLinkOpportunityUrls(job.organizationId, job.companyId, output.records.map((record) => String(record.values.opportunity_url ?? '')));
@@ -758,17 +794,18 @@ export async function executeJobRun(runId: string): Promise<void> {
     let prospectEvidence = '';
     let signatureQueued = false;
     if (activeDesign.skill === 'signature_outreach') {
-      for (let attempt = 0; attempt < 2; attempt++) {
+      const previousSearches: string[] = [];
+      for (let attempt = 0; attempt <= MAX_PROSPECT_RETRIES; attempt++) {
         try {
           if (output.records.length !== 1) throw new Error('Research one qualified prospect from a shortlist of small businesses.');
           prospectEvidence = await qualifySignatureProspect(output.records[0].values, output.records[0].sources, excludedProspects, requireBlogShowcase);
           break;
         } catch (error) {
           const problem = error instanceof Error ? error.message : 'Prospect qualification failed';
-          if (attempt === 0 && workCalls < maxWorkCalls) {
-            // Finding no qualified prospect is a failed attempt: this is when the job's level allows its paid retry.
-            if (work.fallback && !exhaustedProfiles.has(work.fallback.profileId)) activeWorker = work.fallback;
-            const retry = await doWork(activeWorker, 'Prospect qualification failed: ' + problem + '\nResearch a different prospect or retrieve real missing evidence. Previous candidate: ' + JSON.stringify(output).slice(0, 7000), true);
+          if (attempt < MAX_PROSPECT_RETRIES && workCalls < maxWorkCalls) {
+            // Keep shortlist expansion on the working model.
+            previousSearches.push([output.summary, ...output.gaps].join(' ').slice(0, 900));
+            const retry = await doWork(activeWorker, `Prospect search retry ${attempt + 1} of ${MAX_PROSPECT_RETRIES}. ${problem}\nResearch a fresh shortlist. Skip prospects already ruled out unless you have new primary evidence. Previous searches: ${previousSearches.join(' | ')}\nPrevious candidate: ${JSON.stringify(output.records).slice(0, 4000)}`, true);
             const parsedRetry = retry.role === 'assistant' ? parseJobOutput(retry.text, activeDesign.skill) : null;
             if (parsedRetry?.success) {
               output = parsedRetry.data;
@@ -829,6 +866,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       });
       cost += reviewTurn.costMicros ?? 0;
       recordStep('review', 'Independent review', review.primary, review.source === 'pinned' ? 'pinned' : 'auto', reviewCalls > 1, reviewTurn.costMicros ?? null, reviewTurn.role === 'assistant' ? undefined : reviewTurn.text);
+      modelPath[modelPath.length - 1].assignment = 'Assess the worker’s records against the job instructions, source requirements and validation findings.';
       usedModels.push(review.primary.model);
       if (retryableProviderFailure(reviewTurn)) {
         const creditFailure = /httpStatus=(401|402|403|429)\b|HTTP (401|402|403|429)\b/i.test(`${reviewTurn.debugHint ?? ''} ${reviewTurn.text}`);
@@ -844,7 +882,10 @@ export async function executeJobRun(runId: string): Promise<void> {
         }
       }
       const v = z.object({ verdict: z.enum(['pass', 'fail']), notes: z.string().max(2000).default('') }).safeParse(extractJson(reviewTurn.text));
-      if (v.success) verdict = { ...v.data, model: review.primary.model };
+      if (v.success) {
+        verdict = { ...v.data, model: review.primary.model };
+        modelPath[modelPath.length - 1].outcome = (v.data.verdict + ' - ' + v.data.notes).slice(0, 600);
+      }
       if (activeDesign.skill === 'signature_outreach' && verdict?.verdict === 'fail' && !researchRepairUsed && workCalls < maxWorkCalls && reviewCalls < MAX_REVIEW_CALLS) {
         researchRepairUsed = true;
         const repair = await doWork(activeWorker, 'The independent reviewer rejected this prospect. Research a different external company or obtain missing primary evidence. Never merely rewrite unsupported claims. Reviewer findings: ' + verdict.notes + '\nRejected result: ' + JSON.stringify(output).slice(0, 8000), true);

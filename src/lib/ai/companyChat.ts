@@ -211,6 +211,8 @@ export async function attemptCompanyCredentialChat(input: {
   forcePlain?: boolean;
   /** Free credentials: skip plain_first and run the tool loop (orchestra dig stages). */
   forceToolLoop?: boolean;
+  /** Research jobs supply a structured brief. Let the worker choose searches instead of querying the whole brief. */
+  disableLookupAssist?: boolean;
   /** Pre-fetched repo dig from orchestra; skips proactive tryRepoAssistPlain. */
   repoContextBlock?: string;
   /**
@@ -417,6 +419,7 @@ export async function attemptCompanyCredentialChat(input: {
   let contextChars = contextBudgetChars(contextTokens, maxOutputTokens);
 
   // Only release a rejection automatically when no earlier call could have incurred usage.
+  let failedToolUsage: { inputTokens?: number | null; outputTokens?: number | null } | undefined;
   let priorInference = false;
   let uncertainInference = false;
   const rejectedBeforeInference = (error: unknown) => error instanceof GatewayError
@@ -427,9 +430,9 @@ export async function attemptCompanyCredentialChat(input: {
     let phase: ChatPhase = 'tool_loop';
     let lastError: unknown;
     const usePlain = Boolean(input.forcePlain) || input.toolProfile === 'none';
-    const isImageLookup = looksLikeImageSearchQuery(input.userText);
+    const isImageLookup = !input.disableLookupAssist && looksLikeImageSearchQuery(input.userText);
     const projectInternal = looksLikeProjectInternalQuery(input.userText, input.projectName);
-    const isLookup = !projectInternal && !isImageLookup && looksLikeWebLookupQuery(input.userText);
+    const isLookup = !input.disableLookupAssist && !projectInternal && !isImageLookup && looksLikeWebLookupQuery(input.userText);
     const toolNeedy = looksLikeToolNeedyQuery(input.userText);
     const repoToolsOn = input.includeRepoTools !== false;
     const repoContextBlock = input.repoContextBlock?.trim() ?? '';
@@ -707,6 +710,7 @@ export async function attemptCompanyCredentialChat(input: {
         onToolCall: input.onProgress ? (name, argsJson) => input.onProgress!(describeToolCall(name, argsJson)) : undefined,
         onModelResponse: () => { priorInference = true; },
       }); priorInference = true; return result; } catch (error) {
+        failedToolUsage = (error as { usage?: typeof failedToolUsage })?.usage;
         if (!rejectedBeforeInference(error)) uncertainInference = true;
         throw error;
       }
@@ -977,6 +981,8 @@ export async function attemptCompanyCredentialChat(input: {
       throw new GatewayError('invalid_response', { kind: 'unresolved', contentChars: 0 });
     }
 
+    if (failedToolUsage?.inputTokens != null) loop.inputTokens = (loop.inputTokens ?? 0) + failedToolUsage.inputTokens;
+    if (failedToolUsage?.outputTokens != null) loop.outputTokens = (loop.outputTokens ?? 0) + failedToolUsage.outputTokens;
     const content = appendArtifacts(loop.content, loop.artifacts).trim();
     if (!content) {
       phase = 'empty_content';
@@ -1054,7 +1060,7 @@ export async function attemptCompanyCredentialChat(input: {
       evidenceReceipts: loop.evidenceReceipts,
     };
   } catch (error) {
-    const errorUsage = (error as { usage?: { inputTokens?: number; outputTokens?: number } })?.usage;
+    const errorUsage = failedToolUsage ?? (error as { usage?: { inputTokens?: number; outputTokens?: number } })?.usage;
     const failureCode = error instanceof GatewayError ? error.code : classifyProbeFailure(error);
     const hint = formatDebugHint({
       phase: 'failed',
@@ -1077,6 +1083,7 @@ export async function attemptCompanyCredentialChat(input: {
       : null;
     await finish({
       actualMicros: errorCost,
+      result: errorUsage,
       status: 'blocked',
       summary: `Chat model/tool call failed after admission. ${confirmedRejection ? "Confirmed rejection before inference; unused reservation released. " : ""}${hint}`.slice(0, 500),
       failureCode,

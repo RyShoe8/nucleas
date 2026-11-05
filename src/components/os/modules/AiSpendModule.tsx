@@ -1,5 +1,6 @@
 'use client';
 
+import { tokenDetail, tokenLabel } from '@/lib/ai/tokenLabel';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 
 import type { PendingHold } from '@/lib/ai/pendingHolds';
@@ -11,6 +12,9 @@ interface Row {
     detail?: string;
     costMicros: number;
     runs: number;
+    inputTokens: number;
+    outputTokens: number;
+    unknownTokenRuns: number;
 }
 
 interface Spend {
@@ -158,6 +162,7 @@ function Breakdown({ title, rows, total }: { title: string; rows: Row[]; total: 
                                 {r.detail ? <div className="text-[10px] text-text-secondary">{r.detail}</div> : null}
                             </td>
                             <td className="py-1.5 px-2 text-right tabular-nums text-text-secondary text-xs">{nf.format(r.runs)} runs</td>
+                            <td className="py-1.5 px-2 text-right tabular-nums text-text-secondary text-xs whitespace-nowrap" title={tokenDetail(r)}>{tokenLabel(r)}</td>
                             <td className="py-1.5 px-2 text-right tabular-nums">{usd(r.costMicros)}</td>
                             <td className="py-1.5 pl-2 w-20">
                                 <div className="h-1.5 rounded bg-background-card overflow-hidden">
