@@ -46,7 +46,7 @@ function secureWindow(win, local = false) {
 }
 let probeStarted = false;
 function createLauncher() {
-    launcher = new BrowserWindow({ ...bounds(saved.launcher), width: 440, height: compact ? 92 : 600, frame: false, transparent: true, resizable: false, alwaysOnTop: true, skipTaskbar: true, show: false,
+    launcher = new BrowserWindow({ ...bounds(saved.launcher), width: 440, height: compact ? 92 : 600, frame: false, transparent: true, resizable: false, alwaysOnTop: false, skipTaskbar: true, show: false,
       webPreferences: { preload: path.join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false } });
     secureWindow(launcher, true);
     const current = launcher;

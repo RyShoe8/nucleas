@@ -9,6 +9,7 @@ import { SEARCH_LAG_DAYS } from '@/lib/capabilities/registry';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { METRICS, SYNC_CAPABILITIES, type MetricPoint } from './catalog';
 import { dailyEventCounts, EVENTS_PROVIDER } from '@/lib/integrations/companyEvents';
+import { readServiceData, refreshServiceData, serviceCompanyIds } from '@/lib/companies/serviceData';
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -153,6 +154,14 @@ export async function runCompanySync(
       now,
       fetchImpl: options.fetchImpl,
     });
+    if (await readServiceData(company.organizationId, String(company._id))) {
+      try {
+        await refreshServiceData(company.organizationId, String(company._id));
+        result.results.push({ capabilityId: 'service.metrics.read', status: 'succeeded' });
+      } catch {
+        result.results.push({ capabilityId: 'service.metrics.read', status: 'failed', error: 'Service data could not refresh. Check the saved admin session; previous data is retained.' });
+      }
+    }
     const ok = result.results.every((r) => r.status === 'succeeded');
     const newlyBackfilled = result.results.filter((r) => r.status === 'succeeded' && !done.has(r.capabilityId)).map((r) => r.capabilityId);
     await MetricSyncState.updateOne(
@@ -182,6 +191,7 @@ export async function processMetricSync(options: { now?: Date; budgetMs?: number
   const summary = { synced: 0, skipped: 0, failed: 0 };
 
   const companyIds = (await IntegrationConnection.distinct('companyId', { status: 'connected', companyId: { $ne: null } })) as Types.ObjectId[];
+  companyIds.push(...await serviceCompanyIds());
   const companies = await Client.find({ _id: { $in: companyIds } })
     .select('organizationId')
     .lean<{ _id: Types.ObjectId; organizationId: Types.ObjectId }[]>();

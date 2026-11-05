@@ -5,6 +5,7 @@ import { useOsAuth } from '@/hooks/os/useOsAuth';
 import { SOCIAL_PLATFORMS } from '@/lib/metrics/social';
 import { revenueMetricVisible } from '@/lib/metrics/revenueVisibility';
 import type { OsConnection } from './companyTypes';
+import ServiceDataPanel from './ServiceDataPanel';
 
 /** Mirrors the server InvocationView fields the UI needs. */
 export interface OsInvocation {
@@ -198,6 +199,7 @@ export default function CompanySnapshot({
     const hasPerformanceConnection = ['ga4', 'gsc', 'brevo', 'stripe', 'adsense', 'admanager', 'ahrefs', 'mercury', 'signups'].some(has);
     const [data, setData] = useState<{ lastSyncedAt: string | null; metrics: OsMetric[]; changes: string[] } | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
+    const [serviceBusiness, setServiceBusiness] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
     const [seo, setSeo] = useState<string | null>(null);
@@ -290,8 +292,10 @@ export default function CompanySnapshot({
                 </ul>
             ) : null}
 
+            <ServiceDataPanel companyId={companyId} onEnabled={setServiceBusiness} />
             {METRIC_GROUPS.map((group) => {
-                const slots = group.title === 'Revenue' ? group.metrics.filter(slot => revenueMetricVisible(slot.key, connections)) : group.metrics;
+                if (serviceBusiness && group.title === 'Audience') return null;
+                const slots = group.title === 'Revenue' ? group.metrics.filter(slot => revenueMetricVisible(slot.key, connections) && (!serviceBusiness || !['subscriber_revenue', 'mrr', 'yrr'].includes(slot.key))) : group.metrics;
                 return slots.length ? <MetricGroup key={group.title} title={group.title} slots={slots} metrics={metrics} /> : null;
             })}
             <MetricGroup title="Social" slots={[...SOCIAL_PLATFORMS, { id: 'other', label: 'Other social' }].map(({ id, label }) => ({ key: `social_sessions_${id}`, label: `${label} visits`, unit: 'count', kind: 'daily' }))} metrics={metrics} />

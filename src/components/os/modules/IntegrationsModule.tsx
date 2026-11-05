@@ -10,6 +10,7 @@ import ResourcePicker from './ResourcePicker';
 import WebhookSetup from './WebhookSetup';
 import CodeRepositories from './CodeRepositories';
 import AdminAccount from './AdminAccount';
+import ServiceDataPanel from './ServiceDataPanel';
 
 const PINNABLE_PROVIDERS: Record<string, string> = { ga4: 'Choose property', gsc: 'Choose site', ahrefs: 'Choose project', adsense: 'Choose site', admanager: 'Choose site' };
 
@@ -110,6 +111,7 @@ function CompanyIntegrations({ companyId }: { companyId: string }) {
             <ConnectionsSection companyId={detail.company.id} connections={detail.connections} onChanged={reload} />
             {!detail.connections.some(connection => connection.provider === 'github') && <CodeRepositories companyId={detail.company.id} />}
             <AdminAccount companyId={detail.company.id} defaultDomain={detail.company.domain} />
+            <ServiceDataPanel companyId={detail.company.id} setup />
         </div>
     );
 }

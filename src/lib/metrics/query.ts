@@ -3,6 +3,24 @@ import { MetricSnapshot, MetricSyncState } from '@/lib/models/Metric';
 import { getCompanyProfile, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { METRICS, type MetricDefinition, type MetricUnit } from './catalog';
 import { windowDates } from './sync';
+import { readServiceData } from '@/lib/companies/serviceData';
+import type { ServiceReport } from '@/lib/companies/serviceReport';
+
+function withServiceMetrics(views: MetricView[], report: ServiceReport | null): MetricView[] {
+  if (!report) return views;
+  const replaced = new Set(['leads_new', 'customers_new', 'contacts_total', 'subscribers_active', 'subscriber_revenue', 'mrr', 'yrr']);
+  const out = views.filter(v => !replaced.has(v.key));
+  for (const [key, label, rows] of [
+    ['leads_new', 'New leads', report.leads], ['bookings_new', 'Bookings created', report.bookings], ['customers_new', 'New customers', report.customers],
+  ] as const) {
+    const series = rows.slice(-29, -1);
+    const current = series.slice(-7).reduce((s, r) => s + r.value, 0);
+    const previous = series.slice(-14, -7).reduce((s, r) => s + r.value, 0);
+    out.push({ key, label, unit: 'count', kind: 'daily', series, current, previous, change: previous ? (current - previous) / previous : null, lastDay: series.at(-1) ?? null });
+  }
+  out.push({ key: 'customers_total', label: 'Customers', unit: 'count', kind: 'snapshot', series: [], current: report.customersTotal, previous: null, change: null, lastDay: null });
+  return out;
+}
 
 export interface MetricView {
   key: string;
@@ -149,9 +167,9 @@ export async function getCompanyMetrics(
   const cid = new Types.ObjectId(companyId);
 
   const rows = await loadRows([cid], defs.map((m) => m.key), sinceDate(days, now));
-  const views = withTotalRevenue(
+  const views = withServiceMetrics(withTotalRevenue(
     defs.map((m) => buildView(m, rows.filter((r) => r.metricKey === m.key), now, days)).filter((v): v is MetricView => v !== null)
-  );
+  ), await readServiceData(viewer.organizationId, companyId));
   const state = await MetricSyncState.findOne({ companyId: cid }).select('lastSuccessAt lastRunAt').lean<{ lastSuccessAt?: Date; lastRunAt?: Date }>();
   return { lastSyncedAt: (state?.lastSuccessAt ?? state?.lastRunAt)?.toISOString() ?? null, metrics: views, changes: whatChanged(views) };
 }
@@ -182,8 +200,9 @@ export async function getTodayOverview(viewer: CompanyViewer, options: { now?: D
   const totals: Record<string, number> = {};
   for (const company of companies) {
     const mine = rows.filter((r) => String(r.companyId) === company.id);
-    if (mine.length === 0) continue;
-    const views = withTotalRevenue(defs.map((m) => buildView(m, mine.filter((r) => r.metricKey === m.key), now, 28)).filter((v): v is MetricView => v !== null));
+    const service = await readServiceData(viewer.organizationId, company.id);
+    if (mine.length === 0 && !service) continue;
+    const views = withServiceMetrics(withTotalRevenue(defs.map((m) => buildView(m, mine.filter((r) => r.metricKey === m.key), now, 28)).filter((v): v is MetricView => v !== null)), service);
     const metrics: TodayRow['metrics'] = {};
     for (const v of views) {
       if (!(TODAY_METRICS as readonly string[]).includes(v.key)) continue;
