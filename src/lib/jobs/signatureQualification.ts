@@ -5,7 +5,7 @@ import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 export const prospectQualification = z.object({
     team_size: z.number().int().min(1).max(25),
     team_source: z.string().url(),
-    team_quote: z.string().min(20).max(1000),
+    team_quote: z.string().min(10).max(1000),
     growth_source: z.string().url(),
     growth_quote: z.string().min(30).max(1000),
     growth_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -21,6 +21,8 @@ export async function qualifySignatureProspect(values: Record<string, unknown>, 
         const invalid = parsed.error.issues.filter(issue => !(issue.code === 'invalid_type' && issue.received === 'undefined')).map(issue => issue.path.join('.') + ': ' + issue.message);
         throw new Error([missing.length ? 'Research omitted required evidence fields: ' + missing.join(', ') + '.' : '', ...invalid].filter(Boolean).join(' '));
     }
+    // Checked here, before the pages are opened, so a post with a link gets the retry.
+    if (/https?:\/\/|\bwww\.|(?<!@)\btailnote\.io\b/i.test(String(values.post ?? ''))) throw new Error('Leave every link out of the social post. It starts a conversation, and the link can wait until they reply.');
     const candidate = parsed.data;
     const host = (raw: string) => assertSafePublicHttpsUrl(raw).hostname.toLowerCase().replace(/^www\./, '');
     const domain = host(candidate.website);

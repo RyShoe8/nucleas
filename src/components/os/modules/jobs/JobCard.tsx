@@ -12,6 +12,7 @@ import { costSummary, type ModelStep } from '@/lib/jobs/modelPath';
 import type { PublishingView } from '@/lib/publishing/engine';
 import PublishingJobBody from './publishing/PublishingJobBody';
 import CasinoDiscoveryPanel from './CasinoDiscoveryPanel';
+import ReadyPostCard from './publishing/ReadyPostCard';
 import { linkNeedsAction } from './linkAttention';
 
 // ---------- Types (mirror the server's JobView) ----------
@@ -870,6 +871,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
 
             {reviewRun ? <RunBlock job={job} run={reviewRun} onChange={update} onView={setResultRun} /> : null}
             {!compact && d?.skill === 'link_building' ? <OpportunityTracker job={job} onChange={update} /> : null}
+            {!compact && d?.skill === 'signature_outreach' ? job.publishing?.ready.map((delivery) => <ReadyPostCard key={delivery.id} jobId={job.id} delivery={delivery} subreddit={null} formUrl={null} onChange={() => { void fetch(`/api/os/jobs/${job.id}`, { cache: 'no-store' }).then(response => response.json()).then(body => { if (body.job) update(body.job); }); }} />) : null}
             {!compact && d?.skill === 'casino_discovery' ? <CasinoDiscoveryPanel job={job} onChange={() => { void fetch(`/api/os/jobs/${job.id}`, { cache: 'no-store' }).then(response => response.json()).then(body => { if (body.job) update(body.job); }); }} /> : null}
             {!compact && d?.skill === 'seo_brief' ? <SeoBriefEditor job={job} /> : null}
             {!compact && d?.skill === 'marketing_plan' ? <MarketingPlanEditor companyId={job.companyId} updatedAt={job.updatedAt} /> : null}

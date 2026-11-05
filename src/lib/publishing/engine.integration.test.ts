@@ -16,6 +16,8 @@ import { Job, JobRun } from '@/lib/models/Job';
 import { PublishDelivery, PublishItem } from '@/lib/models/Publishing';
 import { BrandVoice } from '@/lib/models/BrandVoice';
 import { IntegrationConnection } from '@/lib/models/Integration';
+import { publicSignatureConcept, queueSignaturePost } from './signaturePost';
+import type { PostInput } from './publishers';
 import User from '@/lib/models/User';
 import { WatchItem } from '@/lib/models/Watch';
 import type { AdminBrowser } from './admin';
@@ -539,6 +541,38 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
     expect(draft?.link).toBe('https://fg.club/deals/new-deal');
     expect(draft?.body).toContain('https://fg.club/deals/new-deal');
     expect(draft?.body).not.toContain('https://offer');
+  });
+
+  describe('a signature concept', () => {
+    const values = { company: 'Bright Leaf', website: 'https://brightleaf.example', social: 'https://bsky.app/profile/brightleaf.example', post: '@brightleaf.example How did the launch go?', screenshot: 'https://x.public.blob.vercel-storage.com/a.jpg', prospect_domain: 'brightleaf.example' };
+
+    it('waits on a card, can be edited, and posts as a picture linking to its landing page', async () => {
+      const job = await newJob();
+      await queueSignaturePost(job, values);
+      await queueSignaturePost(job, values);
+      const current = (await Job.findById(job._id).lean())!;
+      const view = await publishingView(current);
+      expect(view?.ready).toHaveLength(1);
+      const card = view!.ready[0]!;
+      expect(card).toMatchObject({ platform: 'bluesky', status: 'ready', assets: [{ kind: 'image', url: values.screenshot }] });
+      expect(card.link).toMatch(/^https:\/\/tailnote\.io\/signature-example\/[a-f0-9]{32}$/);
+      const edited = '@brightleaf.example Edited: how did the launch go?';
+      expect(await editDelivery(current, card.id, { body: edited })).toMatchObject({ ok: true });
+      const posted: PostInput[] = [];
+      const result = await postDeliveryNow(current, card.id, String(userId), { ...deps(), publish: { bluesky: async (_c: string, input: PostInput) => { posted.push(input); return { url: 'https://bsky.app/p/1' }; } } });
+      expect(result).toMatchObject({ ok: true });
+      expect(posted[0]).toMatchObject({ text: edited, link: card.link, imageUrl: values.screenshot, imageRequired: true, taggedPost: true });
+    });
+
+    it('shows its public page only until the post is skipped, and only its name and picture', async () => {
+      const job = await newJob();
+      await queueSignaturePost(job, { ...values, prospect_domain: 'other.example' });
+      const item = (await PublishItem.findOne({ jobId: job._id, key: 'signature:other.example' }).lean())!;
+      expect(await publicSignatureConcept(item.publicToken!)).toEqual({ company: 'Bright Leaf', imageUrl: values.screenshot });
+      expect(await publicSignatureConcept('not-a-token')).toBeNull();
+      await PublishDelivery.updateOne({ itemId: item._id }, { $set: { status: 'skipped' } });
+      expect(await publicSignatureConcept(item.publicToken!)).toBeNull();
+    });
   });
 
   it('applies the configured next-day expiry when retrying an old card without an end date', async () => {

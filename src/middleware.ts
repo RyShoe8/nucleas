@@ -108,6 +108,7 @@ export function middleware(request: NextRequest) {
     pathname.startsWith('/api/auth') ||
     pathname.startsWith('/api/invitations/') ||
     pathname.startsWith('/api/portal/') ||
+    pathname.startsWith('/api/public/') ||
     pathname.startsWith('/api/contact') ||
     pathname.startsWith('/api/sales-calls') ||
     pathname.startsWith('/login') ||
@@ -156,7 +157,7 @@ export function middleware(request: NextRequest) {
   const session = request.cookies.get('session');
 
   // If no session and trying to access protected route, redirect to login
-  if (!session && !pathname.startsWith('/api/auth') && !pathname.startsWith('/api/invitations/') && !pathname.startsWith('/api/portal/')) {
+  if (!session && !pathname.startsWith('/api/auth') && !pathname.startsWith('/api/invitations/') && !pathname.startsWith('/api/portal/') && !pathname.startsWith('/api/public/')) {
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

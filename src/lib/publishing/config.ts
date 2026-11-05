@@ -109,6 +109,8 @@ export const publishingConfigSchema = z.object({
   /** One Reddit casino deal per local day; the last two casinos cannot repeat. */
   redditDealPolicy: z.object({ timezone: z.string().refine((value) => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }, 'Use a valid timezone.') }).optional(),
   channels: z.array(channelSchema).min(1).max(PUBLISH_PLATFORMS.length),
+  /** Posts that must carry their clickable picture and really tag who they mention, or not go out at all. */
+  taggedPosts: z.boolean().optional(),
   /** Example posts per platform: their structure (not their wording) shapes the drafts. */
   examples: z.record(z.enum(PUBLISH_PLATFORMS), z.object({ url: z.string().max(2000).optional(), text: z.string().max(6000).default('') })).default({}),
   /** People told when a card is ready to post or the job needs attention. */

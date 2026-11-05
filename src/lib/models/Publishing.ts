@@ -35,10 +35,15 @@ const itemSchema = new Schema(
     /** The same offer arriving in several emails shares this key, so it is added once. */
     dedupeKey: { type: String, maxlength: 300 },
     facts: { type: factsSchema },
+    /** Unguessable address of this item's public page, when it has one. */
+    publicToken: { type: String, maxlength: 64 },
+    /** What that public page shows. */
+    concept: { type: new Schema({ company: String, imageUrl: String }, { _id: false }) },
   },
   { timestamps: true }
 );
 itemSchema.index({ jobId: 1, key: 1 }, { unique: true });
+itemSchema.index({ publicToken: 1 }, { unique: true, sparse: true });
 itemSchema.index({ jobId: 1, createdAt: -1 });
 itemSchema.index({ jobId: 1, dedupeKey: 1, createdAt: -1 });
 

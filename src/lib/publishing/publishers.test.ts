@@ -37,6 +37,51 @@ describe('Bluesky', () => {
     expect(record.record.embed.external).toMatchObject({ uri: 'https://playbound.club/games/x', thumb: { ref: 'b' } });
   });
 
+  it('makes a tagged post a clickable picture card that really mentions the account, with no link in the text', async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      calls.push({ url, body: typeof init?.body === 'string' ? JSON.parse(init.body) : null });
+      if (url.includes('resolveHandle')) return json(200, { did: 'did:plc:bright' });
+      if (url.endsWith('createSession')) return json(200, { accessJwt: 't', did: 'did:plc:1', handle: 'tailnote.io' });
+      if (url.endsWith('uploadBlob')) return json(200, { blob: { ref: 'b' } });
+      if (url.endsWith('createRecord')) return json(200, { uri: 'at://did:plc:1/app.bsky.feed.post/3abc' });
+      if (url.endsWith('.jpg')) return new Response(new Uint8Array([255, 216]), { status: 200, headers: { 'content-type': 'image/jpeg' } });
+      return json(404, {});
+    });
+    const text = 'Hi @bright.example, how did the launch go?';
+    await publishToBluesky('t.bsky.social:abcd-efgh-ijkl-mnop', { text, link: 'https://tailnote.io/signature-example/abc', linkTitle: 'Concept', imageUrl: 'https://playbound.club/cover.jpg', imageRequired: true, taggedPost: true }, fetcher);
+    const { record } = calls.find((c) => c.url.endsWith('createRecord'))!.body as { record: { embed: { external: { uri: string; thumb: unknown } }; facets: { index: { byteStart: number; byteEnd: number }; features: { did?: string }[] }[]; text: string } };
+    expect(record.embed.external).toMatchObject({ uri: 'https://tailnote.io/signature-example/abc', thumb: { ref: 'b' } });
+    expect(record.facets[0]).toMatchObject({ index: { byteStart: 3, byteEnd: 18 }, features: [{ did: 'did:plc:bright' }] });
+    expect(record.text).toBe(text);
+  });
+
+  it('posts nothing when a tagged post names an account that does not exist, or tags nobody', async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url.includes('resolveHandle')) return json(400, { error: 'InvalidRequest' });
+      if (url.endsWith('createSession')) return json(200, { accessJwt: 't', did: 'did:plc:1', handle: 'tailnote.io' });
+      if (url.endsWith('uploadBlob')) return json(200, { blob: { ref: 'b' } });
+      if (url.endsWith('.jpg')) return new Response(new Uint8Array([255, 216]), { status: 200, headers: { 'content-type': 'image/jpeg' } });
+      return json(404, {});
+    });
+    const input = { link: 'https://tailnote.io/x', imageUrl: 'https://playbound.club/cover.jpg', imageRequired: true, taggedPost: true };
+    await expect(publishToBluesky('t:abcd-efgh-ijkl-mnop', { ...input, text: 'Hi @nobody.example' }, fetcher)).rejects.toThrow('could not find @nobody.example');
+    await expect(publishToBluesky('t:abcd-efgh-ijkl-mnop', { ...input, text: 'Hi there' }, fetcher)).rejects.toThrow('does not tag anyone');
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('createRecord'))).toBe(false);
+  });
+
+  it('leaves an ordinary post alone when a handle cannot be found', async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url.endsWith('createSession')) return json(200, { accessJwt: 't', did: 'did:plc:1', handle: 'tailnote.io' });
+      if (url.endsWith('createRecord')) return json(200, { uri: 'at://did:plc:1/app.bsky.feed.post/3abc' });
+      return json(400, {});
+    });
+    await expect(publishToBluesky('t:abcd-efgh-ijkl-mnop', { text: 'Email us @ help or @someone.example', link: null }, fetcher)).resolves.toMatchObject({ url: expect.stringContaining('3abc') });
+  });
+
   it('reports a rejected app password as needing reconnection', async () => {
     const fetcher = async () => json(401, { error: 'AuthenticationRequired' });
     await expect(publishToBluesky('pb:abcd-efgh-ijkl-mnop', { text: 'x', link: null }, fetcher)).rejects.toMatchObject({ code: 'needs_reauth' });

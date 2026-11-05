@@ -23,7 +23,6 @@ export async function captureOutreach(values: Record<string, unknown>, sources: 
   if (host(new URL(contactPage.url)) !== host(website) || !contactPage.text.toLowerCase().includes(read('email').toLowerCase())) throw new Error('Work email must be publicly listed on the contact page.');
   const destination = assertSafePublicHttpsUrl(read('cta_url'));
   if (!sources.some(s => s.replace(/\/$/, '') === destination.href.replace(/\/$/, ''))) throw new Error('Cite the working destination for the secondary CTA.');
-  if (!read('post').includes('tailnote.io')) throw new Error('Include the Tailnote link in the social draft.');
   const social = assertSafePublicHttpsUrl(read('social'));
   if (!homepage.links.some(link => link.replace(/\/$/, '').toLowerCase() === social.href.replace(/\/$/, '').toLowerCase())) throw new Error('The official homepage must link to this social profile.');
   const handle = social.pathname.match(social.hostname === 'bsky.app' ? /^\/profile\/([\w.-]+)\/?$/ : /^(?:www\.)?facebook\.com$/.test(social.hostname) ? /^\/([\w.-]+)\/?$/ : /$^/)?.[1];

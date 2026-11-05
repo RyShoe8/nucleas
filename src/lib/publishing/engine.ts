@@ -923,7 +923,7 @@ export async function postDeliveryNow(job: JobLike, deliveryId: string, userId: 
       ? await postToAdmin(job, config, delivery.values ?? {}, facts, { companyName: '', persona, subreddit: null }, deps.write ?? engineWriter(job), preparedDeps, delivery.valuesReviewed)
       : { ok: false, error: new PublishError('rejected', 'This job’s settings are missing.') };
   } else {
-    outcome = await postTo(job, delivery.platform, postInput(delivery, item?.facts ?? {}, Boolean(socialConfig?.image)), deps);
+    outcome = await postTo(job, delivery.platform, { ...postInput(delivery, item?.facts ?? {}, Boolean(socialConfig?.image || socialConfig?.taggedPosts)), taggedPost: Boolean(socialConfig?.taggedPosts) }, deps);
   }
   const shot = outcome.screenshot ? { screenshot: outcome.screenshot } : {};
   if (outcome.ok) {

@@ -22,13 +22,15 @@ export interface PostInput {
   linkDescription?: string;
   imageUrl?: string | null;
   imageRequired?: boolean;
+  /** The picture is a card that links to input.link, and everyone @mentioned must really be tagged, or nothing is posted. */
+  taggedPost?: boolean;
 }
 
 const TIMEOUT_MS = 20_000;
 
 // ---------- Bluesky ----------
 
-type Facet = { index: { byteStart: number; byteEnd: number }; features: ({ $type: 'app.bsky.richtext.facet#link'; uri: string } | { $type: 'app.bsky.richtext.facet#tag'; tag: string })[] };
+type Facet = { index: { byteStart: number; byteEnd: number }; features: ({ $type: 'app.bsky.richtext.facet#link'; uri: string } | { $type: 'app.bsky.richtext.facet#tag'; tag: string } | { $type: 'app.bsky.richtext.facet#mention'; did: string })[] };
 
 /** Links and hashtags in post text as Bluesky facets (byte offsets in UTF-8), so they are clickable. */
 export function blueskyFacets(text: string): Facet[] {
@@ -71,6 +73,23 @@ async function xrpc<T>(fetcher: FetchLike, url: string, init: RequestInit): Prom
   return body;
 }
 
+/** @handles in post text as Bluesky mentions. Without this they are plain text and the account is never told. */
+export async function blueskyMentions(text: string, fetcher: FetchLike = fetch): Promise<{ facets: Facet[]; unknown: string[] }> {
+  const encoder = new TextEncoder();
+  const byteAt = (index: number) => encoder.encode(text.slice(0, index)).length;
+  const facets: Facet[] = [];
+  const unknown: string[] = [];
+  for (const match of text.matchAll(/(^|[\s(])@([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+)/gi)) {
+    const did = await fetcher(`https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(match[2]!)}`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_MS) })
+      .then(async (res) => (res.ok ? ((await res.json()) as { did?: string }).did : undefined))
+      .catch(() => undefined);
+    if (!did) { unknown.push(match[2]!); continue; }
+    const start = match.index! + match[1]!.length;
+    facets.push({ index: { byteStart: byteAt(start), byteEnd: byteAt(start + 1 + match[2]!.length) }, features: [{ $type: 'app.bsky.richtext.facet#mention', did }] });
+  }
+  return { facets, unknown };
+}
+
 export async function publishToBluesky(credential: string, input: PostInput, fetcher: FetchLike = fetch): Promise<{ url: string }> {
   const { identifier, password } = splitBlueskyCredential(credential);
   const session = await xrpc<{ accessJwt: string; did: string; handle: string; didDoc?: { service?: { id?: string; serviceEndpoint?: string }[] } }>(fetcher, 'https://bsky.social/xrpc/com.atproto.server.createSession', {
@@ -92,7 +111,10 @@ export async function publishToBluesky(credential: string, input: PostInput, fet
   }
 
   if (input.imageRequired && !thumb) throw new PublishError('rejected', 'The required image could not be attached. Nothing was posted.');
-  const facets = blueskyFacets(input.text);
+  const mentions = await blueskyMentions(input.text, fetcher);
+  if (input.taggedPost && mentions.unknown.length) throw new PublishError('rejected', `Bluesky could not find @${mentions.unknown.join(', @')}. Edit the post to fix the handle. Nothing was posted.`);
+  if (input.taggedPost && !mentions.facets.length) throw new PublishError('rejected', 'This post does not tag anyone on Bluesky. Edit it to add their handle. Nothing was posted.');
+  const facets = [...blueskyFacets(input.text), ...mentions.facets];
   const record = {
     $type: 'app.bsky.feed.post',
     text: input.text,
@@ -152,11 +174,12 @@ ${input.link}` : input.text;
 }
 
 export async function publishToFacebook(token: string, input: PostInput, fetcher: FetchLike = fetch): Promise<{ url: string }> {
-  if (input.imageUrl) {
+  // A link post takes its picture from the page's preview image, and the whole picture links there.
+  if (input.imageUrl && !input.taggedPost) {
     const photo = await publishFacebookPhoto(token, { ...input, imageUrl: input.imageUrl }, fetcher);
     if (photo) return photo;
   }
-  if (input.imageRequired) throw new PublishError('rejected', 'The required image could not be attached. Nothing was posted.');
+  if (input.imageRequired && !input.taggedPost) throw new PublishError('rejected', 'The required image could not be attached. Nothing was posted.');
   const form = new URLSearchParams({ message: input.text });
   if (input.link) form.set('link', input.link);
   let res: Response;

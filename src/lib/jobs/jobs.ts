@@ -187,7 +187,7 @@ async function toView(job: JobLean, company: { name: string; subreddit?: string 
     runs: runs.map(runView),
     canManage,
     opportunities: design?.skill === 'link_building' ? await listLinkOpportunities(job._id) : [],
-    publishing: design?.skill === 'social_publish' || design?.skill === 'casino_discovery' ? await publishingView(job) : null,
+    publishing: design?.skill === 'social_publish' || design?.skill === 'casino_discovery' || design?.skill === 'signature_outreach' ? await publishingView(job) : null,
   };
 }
 
@@ -570,7 +570,7 @@ export type PublishingAction = 'publishing_settings' | 'mark_posted' | 'skip_pos
 export async function publishingAction(viewer: CompanyViewer, id: string, action: PublishingAction, body: Record<string, unknown>): Promise<ActionResult> {
   const found = await retryDatabaseRead('publishing.authorize', () => managed(viewer, id, { anyMember: action !== 'publishing_settings' }));
   if (!found.ok) return found;
-  if (!['social_publish','casino_discovery'].includes(jobDesignSchema.safeParse(found.job.design).data?.skill ?? '')) return { ok: false, status: 400, error: 'This job has no publishing actions.' };
+  if (!['social_publish','casino_discovery','signature_outreach'].includes(jobDesignSchema.safeParse(found.job.design).data?.skill ?? '')) return { ok: false, status: 400, error: 'This job has no publishing actions.' };
   const deliveryId = typeof body.deliveryId === 'string' ? body.deliveryId : '';
   const result =
     // A settings save only sets values, so a dropped connection can safely be retried.
