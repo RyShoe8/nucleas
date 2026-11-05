@@ -403,8 +403,9 @@ export async function executeJobRun(runId: string): Promise<void> {
     ? (await listCompanyProfiles(viewer)).filter(company => company.relationship === 'owned' || company.relationship === 'internal').map(company => company.domain).filter((domain): domain is string => Boolean(domain))
     : [];
   if (activeDesign.skill === 'signature_outreach') {
+    activeDesign.fields = activeDesign.fields.filter(field => field.key !== 'phone');
     activeDesign.instructions += '\nScout an external business. Tailnote is the sender, never the prospect. Exclude these owned properties and their subdomains: ' + excludedProspects.join(', ') +
-      '. Do not reuse names, emails, phone numbers or sample logos from Tailnote marketing examples. Research multiple candidates and skip any with evidence gaps. Phone is optional: omit it unless publicly verified. Return no records if none qualifies. Cite exact team, contact, feed and CTA URLs, plus a dated growth announcement. The CTA promotes the prospect; the social post promotes Tailnote. Explicitly call it an unsolicited design concept and, for blog showcases, explain the latest-article feature.';
+      '. Do not reuse names, emails, phone numbers or sample logos from Tailnote marketing examples. Research multiple candidates and skip any with evidence gaps. Exclude phone numbers from the signature, even if public or requested by an older saved job. Return no records if none qualifies. Cite exact team, contact, feed and CTA URLs, plus a dated growth announcement. The CTA promotes the prospect; the social post promotes Tailnote. Explicitly call it an unsolicited design concept and, for blog showcases, explain the latest-article feature.';
   }
 
   const usesMarketingPlan = activeDesign.skill === 'link_building' || activeDesign.skill === 'social_media' || activeDesign.skill === 'ai_citations';
@@ -830,6 +831,7 @@ export async function executeJobRun(runId: string): Promise<void> {
         return domain === host || domain.endsWith('.' + host);
       })) throw new Error('Choose an external prospect, not an owned company.');
       candidate.values.prospect_domain = domain;
+      delete candidate.values.phone;
       delete candidate.values.screenshot;
       candidate.values.screenshot = await captureOutreach(candidate.values, candidate.sources, `signature-concepts/${job.organizationId}/${job.companyId}/${run._id}.jpg`);
     }
