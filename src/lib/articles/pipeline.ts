@@ -2,6 +2,7 @@ import 'server-only';
 import { Types } from 'mongoose';
 import { ArticleDraft } from '@/lib/models/ArticleDraft';
 import { BrandVoice } from '@/lib/models/BrandVoice';
+import { upstreamContext } from '@/lib/companies/upstreamContext';
 import { analyzeGenericity, enforceTaboos, extractStyleKit, fidelityRetryIssues, findAiPhrases, measureStyle, plainText, scoreFidelity, styleRulesFromProfile, AI_PHRASES, type StyleProfile } from './style';
 import type { Need } from '@/lib/ai/engine/select';
 
@@ -29,6 +30,8 @@ interface VoiceInputs {
   revision: number;
   profile: StyleProfile;
   kitText: string;
+  /** The company's overview and approved plan. */
+  strategy?: string;
 }
 
 const GLOBAL_RULES = ['No emojis.', 'No em dashes or en dashes. Use commas or periods.', 'No exclamation-mark hype.', 'Never invent facts, numbers, names, quotes or sources. Use only the facts provided.'];
@@ -58,6 +61,7 @@ function writerSystem(voice: VoiceInputs): string {
     voice.persona.trim(),
     rules.length ? `STYLE, measured from this company's own writing:\n${rules.map((r) => `- ${r}`).join('\n')}` : '',
     voice.kitText ? `${voice.kitText}\n\nMatch their cadence and word choice. Never copy their sentences.` : '',
+    voice.strategy ? `COMPANY STRATEGY (stay on it; it is not a source of facts, so never state it as one):\n${voice.strategy}` : '',
     `HARD RULES:\n${GLOBAL_RULES.map((r) => `- ${r}`).join('\n')}`,
     `Never use these stock phrases: ${AI_PHRASES.slice(0, 30).map((p) => `"${p}"`).join(', ')}.`,
     'Write like a person with something to say, not a template. Vary sentence length. Prefer concrete specifics to general claims. Start sections with the point, not a lead-in.',
@@ -121,7 +125,7 @@ async function outlineStage(doc: ArticleRecord, deps: ArticleDeps, ctx: Ctx) {
   const rules = styleRulesFromProfile(ctx.voice.profile).filter((r) => /Heading/.test(r)).join(' ');
   const out = await deps.ask({
     need: 'plan', ...ctx.who, maxTokens: 1500,
-    system: `You outline articles in the voice of a specific company. Reply with JSON only: {"title": string, "angle": string, "sections": [{"heading": string, "points": string[]}]}. 4 to 7 sections for a ${doc.targetWords} word article. Each point is something concrete the section will say, drawn from the facts when possible. ${rules} ${doc.faq ? 'Make the last section "FAQ" with the questions readers actually ask as its points.' : ''}\n\n${ctx.voice.persona.slice(0, 3000)}`,
+    system: `${ctx.voice.strategy ? `Company strategy (stay on it; never state it as fact):\n${ctx.voice.strategy}\n\n` : ''}You outline articles in the voice of a specific company. Reply with JSON only: {"title": string, "angle": string, "sections": [{"heading": string, "points": string[]}]}. 4 to 7 sections for a ${doc.targetWords} word article. Each point is something concrete the section will say, drawn from the facts when possible. ${rules} ${doc.faq ? 'Make the last section "FAQ" with the questions readers actually ask as its points.' : ''}\n\n${ctx.voice.persona.slice(0, 3000)}`,
     user: [`Topic: ${doc.topic}`, doc.notes ? `Direction: ${doc.notes}` : '', doc.facts.length ? `Facts:\n${doc.facts.map((f) => `- ${f.text}`).join('\n')}` : 'No researched facts are available; keep points general.'].filter(Boolean).join('\n\n'),
   });
   ctx.note(out?.model);
@@ -290,7 +294,7 @@ export async function advanceArticle(articleId: string | Types.ObjectId, deps: A
     await doc.save();
     return 'failed';
   }
-  const voice = buildVoiceInputs(voiceDoc);
+  const voice = { ...buildVoiceInputs(voiceDoc), strategy: await upstreamContext(doc.organizationId, doc.companyId).catch(() => '') };
   doc.voiceRevision = voice.revision;
   const ctx: Ctx = {
     who: { organizationId: String(doc.organizationId), userId: String(doc.createdByUserId) },

@@ -242,7 +242,7 @@ type DraftContext = { companyName: string; persona: string | null; subreddit: st
 
 async function prepareAdmin(target: AdminTarget, config: PublishingConfig, facts: ItemFacts, context: DraftContext, write: Writer, failures?: string[]): Promise<Prepared> {
   const before = failures?.length ?? 0;
-  const filled = await fillValues(target, { title: facts.title, description: facts.description, extra: facts.extra, link: facts.link }, { companyName: context.companyName, noun: config.source.noun, brief: config.brief, persona: context.persona }, write);
+  const filled = await fillValues(target, { title: facts.title, description: facts.description, extra: facts.extra, link: facts.link }, { companyName: context.companyName, noun: config.source.noun, brief: config.brief, persona: context.persona, strategy: context.strategy }, write);
   if (!filled) {
     const why = failures && failures.length > before ? ` (${failures.slice(before).join(' · ')})` : ' (the model’s answer could not be read)';
     return {
@@ -1079,7 +1079,7 @@ async function queueAdminOffer(job: JobLike, config: PublishingConfig, companyNa
   const existing = await PublishDelivery.findOne({ itemId: stored._id, platform: 'admin' }).lean();
   if (existing) return { jobId: String(job._id), status: existing.status };
   const facts = await factsFor(job, config, { key: offer.key, title: item.subject ?? '', date: item.sentAt ?? null, url: item.link ?? null }, deps);
-  const prepared = await prepareAdmin(config.admin, config, facts, { companyName, persona: await approvedPersona(job), subreddit: null }, deps.write ?? engineWriter(job));
+  const prepared = await prepareAdmin(config.admin, config, facts, { companyName, persona: await approvedPersona(job), subreddit: null, strategy: await upstreamContext(job.organizationId, job.companyId).catch(() => '') }, deps.write ?? engineWriter(job));
   if (!prepared.values || !Object.keys(prepared.values).length) throw new Error(prepared.problem ?? 'No form values could be prepared. Please retry.');
   await PublishItem.updateOne({ _id: stored._id }, { $set: { status: 'processed', facts: { title: facts.title, description: facts.description }, title: facts.title } });
   await PublishDelivery.updateOne({ itemId: stored._id, platform: 'admin' }, { $setOnInsert: { organizationId: job.organizationId, companyId: job.companyId, jobId: job._id, itemId: stored._id, platform: 'admin', mode: 'manual', status: 'ready', body: prepared.draft.body, values: prepared.values ?? {}, ...(facts.link ? { link: facts.link } : {}), ...(prepared.problem ? { error: prepared.problem } : {}) } }, { upsert: true });
@@ -1106,7 +1106,7 @@ export async function refillAdminDelivery(job: JobLike, deliveryId: string, deps
   if (!profile) return { ok: false, status: 404, error: 'The company is no longer accessible.' };
   const facts = await factsFor(currentJob, config, { key: item.key, url: item.url ?? null, title: item.title ?? delivery.title ?? '', date: item.createdAt ?? null }, deps);
   const failures: string[] = [];
-  const prepared = await prepareAdmin(config.admin, config, facts, { companyName: profile.name, persona: await approvedPersona(currentJob), subreddit: null }, deps.write ?? engineWriter(currentJob, failures, true), failures);
+  const prepared = await prepareAdmin(config.admin, config, facts, { companyName: profile.name, persona: await approvedPersona(currentJob), subreddit: null, strategy: await upstreamContext(currentJob.organizationId, currentJob.companyId).catch(() => '') }, deps.write ?? engineWriter(currentJob, failures, true), failures);
   const filled = Boolean(prepared.values && Object.keys(prepared.values).length);
   console.info(`[publishing] job ${job._id} refilled admin card ${deliveryId}: ${filled ? `${Object.keys(prepared.values!).length} values` : 'no values'}${prepared.problem ? ` (${prepared.problem})` : ''}`);
   const done = await PublishDelivery.updateOne(

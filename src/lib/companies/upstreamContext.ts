@@ -9,7 +9,7 @@ import { approvedMarketingPlan } from '@/lib/jobs/marketingPlans';
  * overview drives the plan and the plan drives everything below it: jobs, watches, digests and posts all
  * read this, so their output stays on strategy. Short on purpose, so cheap models can carry it.
  */
-export async function upstreamContext(organizationId: Types.ObjectId | string, companyId: Types.ObjectId | string, maxChars = 2400): Promise<string> {
+export async function upstreamContext(organizationId: Types.ObjectId | string, companyId: Types.ObjectId | string, maxChars = 3200): Promise<string> {
   const org = new Types.ObjectId(String(organizationId));
   const company = new Types.ObjectId(String(companyId));
   const [overview, plan] = await Promise.all([
@@ -20,22 +20,30 @@ export async function upstreamContext(organizationId: Types.ObjectId | string, c
       .catch(() => null),
     approvedMarketingPlan(org, company).catch(() => null),
   ]);
+  return renderUpstream(overview, plan, maxChars);
+}
+
+type OverviewFacts = { propertyDescription?: string; primaryKeywords?: string[]; demographicTarget?: string };
+type PlanFacts = { summary?: string; audience?: string; positioning?: string; messagingPillars: string[]; socialContentPillars: string[]; excludedTopics: string[] };
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+
+/** Each part has its own limit and what to avoid comes first in the plan, so one long part can never push it out. */
+export function renderUpstream(overview: OverviewFacts | null, plan: PlanFacts | null, maxChars = 3200): string {
   const lines: string[] = [];
   if (overview) {
     lines.push('Company Overview:');
-    if (overview.propertyDescription) lines.push(`- What it is: ${overview.propertyDescription}`);
-    if (overview.demographicTarget) lines.push(`- Audience: ${overview.demographicTarget}`);
-    if (overview.primaryKeywords?.length) lines.push(`- Topics: ${overview.primaryKeywords.slice(0, 12).join(', ')}`);
+    if (overview.propertyDescription) lines.push(`- What it is: ${clip(overview.propertyDescription, 700)}`);
+    if (overview.demographicTarget) lines.push(`- Audience: ${clip(overview.demographicTarget, 300)}`);
+    if (overview.primaryKeywords?.length) lines.push(`- Topics: ${clip(overview.primaryKeywords.slice(0, 12).join(', '), 200)}`);
   }
   if (plan) {
     lines.push('Approved Marketing Plan:');
-    if (plan.summary) lines.push(`- Summary: ${plan.summary}`);
-    if (plan.audience) lines.push(`- Audience: ${plan.audience}`);
-    if (plan.positioning) lines.push(`- Positioning: ${plan.positioning}`);
-    if (plan.messagingPillars.length) lines.push(`- Messaging pillars: ${plan.messagingPillars.join('; ')}`);
-    if (plan.socialContentPillars.length) lines.push(`- Content pillars: ${plan.socialContentPillars.join('; ')}`);
-    if (plan.excludedTopics.length) lines.push(`- Avoid: ${plan.excludedTopics.join('; ')}`);
+    if (plan.excludedTopics.length) lines.push(`- Avoid: ${clip(plan.excludedTopics.join('; '), 600)}`);
+    if (plan.summary) lines.push(`- Summary: ${clip(plan.summary, 500)}`);
+    if (plan.audience) lines.push(`- Audience: ${clip(plan.audience, 300)}`);
+    if (plan.positioning) lines.push(`- Positioning: ${clip(plan.positioning, 400)}`);
+    if (plan.messagingPillars.length) lines.push(`- Messaging pillars: ${clip(plan.messagingPillars.join('; '), 400)}`);
+    if (plan.socialContentPillars.length) lines.push(`- Content pillars: ${clip(plan.socialContentPillars.join('; '), 400)}`);
   }
-  const text = lines.join('\n');
-  return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+  return clip(lines.join('\n'), maxChars);
 }

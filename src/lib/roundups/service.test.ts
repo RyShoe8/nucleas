@@ -10,6 +10,7 @@ import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { getWebsiteConnection, getPinnedWebsiteConnection } from '@/lib/connectors/connections';
 import { invokeCapability } from '@/lib/capabilities/runtime';
 
+vi.mock('@/lib/companies/upstreamContext', () => ({ upstreamContext: vi.fn(async () => '') }));
 vi.mock('@/lib/companies/companyProfile', () => ({ getCompanyProfile: vi.fn(async () => ({ name: 'PlayBound', domain: 'playbound.club' })), isCompanyManager: (v: CompanyViewer) => v.role === 'Manager' }));
 vi.mock('@/lib/brandVoice/service', () => ({ brandVoiceContext: vi.fn(async () => 'Approved voice') }));
 vi.mock('@/lib/ai/engine/ask', () => ({ askEngine: vi.fn() }));

@@ -8,6 +8,8 @@ import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { createJob } from '@/lib/jobs/jobs';
 import { canUseMail, MAIL_FORBIDDEN } from './access';
 import type { Bucket } from './triage';
+import { brandVoiceContext } from '@/lib/brandVoice/service';
+import { upstreamContext } from '@/lib/companies/upstreamContext';
 
 /**
  * AI help for mail: summaries, suggested replies, turning an email into a job, and the second opinion on mail the
@@ -62,14 +64,21 @@ export async function draftReply(viewer: CompanyViewer, input: { accountId: stri
   if (!canUseMail(viewer)) return { ok: false, status: 403, error: MAIL_FORBIDDEN };
   const t = await loadThread(viewer, input.accountId, input.threadId);
   if (!t) return { ok: false, status: 404, error: 'Conversation not found.' };
+  // A company mailbox replies in that company's Voice. A platform mailbox belongs to no company.
+  const companyId = t.account.companyId as Types.ObjectId | null | undefined;
+  const [voice, strategy] = companyId
+    ? await Promise.all([brandVoiceContext(viewer.organizationId, companyId).catch(() => ''), upstreamContext(viewer.organizationId, companyId).catch(() => '')])
+    : ['', ''];
   const text = await ask(String(viewer.organizationId), viewer.userId, {
     need: 'write',
     system: [
       `You draft a reply to an email conversation, in the voice of the owner of ${t.account.emailAddress}.`,
       DATA_RULE,
+      voice.slice(0, 4000),
+      strategy ? `Company strategy (stay on it; never state it as fact):\n${strategy}` : '',
       'Write only the reply body: direct, warm, concise, no subject line, no "Dear", no signature block, no placeholders like [name]. If something needed to answer is unknown, ask one short question instead of inventing it. Never promise prices, dates or refunds unless the owner\'s instruction says so.',
       input.instruction ? `The owner\'s instruction for this reply (this one IS from the owner): ${input.instruction.slice(0, 500)}` : 'The owner gave no instruction: write the most useful, safe reply.',
-    ].join('\n'),
+    ].filter(Boolean).join('\n'),
     user: threadForModel(t.rows, t.account.emailAddress),
     maxTokens: 700,
   });

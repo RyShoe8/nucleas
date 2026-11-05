@@ -6,6 +6,8 @@ import { getCompanyProfile, listCompanyProfiles, type CompanyProfile, type Compa
 import { listCompanyConnections } from '@/lib/integrations/connections';
 import { getCompanyMetrics, getTodayOverview } from '@/lib/metrics/query';
 import { companyTimeline, renderTimeline } from '@/lib/companies/activityLog';
+import { brandVoiceContext } from '@/lib/brandVoice/service';
+import { upstreamContext } from '@/lib/companies/upstreamContext';
 
 /**
  * Assembles what Nucleas knows about one company for the AI, within a character budget.
@@ -68,6 +70,17 @@ export async function resolveCompanyContext(
       .join('\n'),
   });
   sources.push('company profile');
+
+  // The company's direction and Voice, so anything the assistant advises or writes stays on them.
+  const [direction, voice] = await Promise.all([upstreamContext(viewer.organizationId, cid).catch(() => ''), brandVoiceContext(viewer.organizationId, cid).catch(() => '')]);
+  if (direction) {
+    sections.push({ key: 'direction', title: 'Company direction (aims and what to avoid; not evidence)', body: direction });
+    sources.push('company overview and marketing plan');
+  }
+  if (voice) {
+    sections.push({ key: 'voice', title: 'Company Voice (use it for anything written for this company)', body: voice.replace(/^# .*\n/, '').slice(0, 1500) });
+    sources.push('company voice');
+  }
 
   // Integrations
   const connections = (await listCompanyConnections(viewer, companyId)) ?? [];
