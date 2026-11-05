@@ -35,6 +35,11 @@ export default function MarketingComposer({ companyId, companyName, onCreated, r
     };
     return (
         <div className="space-y-2">
+            {/tailnote/i.test(companyName) && <div className="ui-card space-y-2 p-3">
+                <button type="button" className="ui-button-primary" disabled={busy} onClick={() => void discovery('signature_outreach')}>{busy ? 'Preparing job…' : 'Create Tailnote signature spotlight'}</button>
+                <p className="text-xs text-text-secondary">Scout a growing company, create its branded signature with a blog promo, and review the screenshot and tagged social post. Monday, Wednesday and Friday at 9 a.m. Central after activation.</p>
+            </div>}
+            {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
             <JobComposer
                 companyId={companyId}
                 companyName={companyName}
@@ -45,12 +50,10 @@ export default function MarketingComposer({ companyId, companyName, onCreated, r
                 allowImage
                 placeholder={`What should Nucleas do for ${companyName}? e.g. “When something new is published on our site, post it to Facebook and Bluesky” or “Add the best deals from our email to our admin.”`}
             />
-            <details className="text-xs text-text-secondary">
+            {/^(?:frugal\s*gambler)(?:\.club)?$/i.test(companyName.trim()) ? <details className="text-xs text-text-secondary">
                 <summary className="cursor-pointer">Specialized jobs</summary>
-                {/tailnote/i.test(companyName) && <button type="button" className="ui-button mt-2" disabled={busy} onClick={() => void discovery('signature_outreach')}>Tailnote signature spotlight</button>}
                 <button type="button" className="ui-button mt-2" disabled={busy} onClick={() => void discovery()}>Casino / sports betting discovery</button>
-                {error ? <p role="alert" className="mt-1 text-red-400">{error}</p> : null}
-            </details>
+            </details> : null}
         </div>
     );
 }

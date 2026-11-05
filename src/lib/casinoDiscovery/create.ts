@@ -10,6 +10,7 @@ import { nextScheduledAt } from '@/lib/jobs/schedule';
 export async function createCasinoDiscovery(viewer:CompanyViewer,companyId:string,activate=false){
  if(!isCompanyManager(viewer))throw new Error('A manager or administrator must configure discovery.');
  const profile=await getCompanyProfile(viewer,companyId);if(!profile)throw new Error('Company not found.');
+ if(!/^(?:https?:\/\/)?(?:www\.)?frugalgambler\.club\/?$/i.test(profile.domain??''))throw new Error('Casino discovery is available for Frugal Gambler. Select that company first.');
  const existing=await Job.findOne({organizationId:viewer.organizationId,companyId,'design.skill':'casino_discovery',status:{$nin:['rejected','archived','done']}}).select('_id').lean();if(existing)return String(existing._id);
  const session=await adminSessionFor(viewer.organizationId,companyId);if(!session)throw new Error('Connect this company’s site admin account first.');
  const anchorDate=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago'}).format(new Date());

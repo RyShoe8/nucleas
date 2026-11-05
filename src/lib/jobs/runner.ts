@@ -21,7 +21,7 @@ import { buildAssistantTools } from '@/lib/ai/company/companyTools';
 import { extractJson } from '@/lib/ai/json';
 import { shortModel } from '@/lib/ai/progress';
 import { assistantLedgerProjectId } from '@/lib/ai/company/assistantLedger';
-import { loadCompanyViewer, getCompanyProfile } from '@/lib/companies/companyProfile';
+import { loadCompanyViewer, getCompanyProfile, listCompanyProfiles } from '@/lib/companies/companyProfile';
 import { resolveCompanyRepository } from '@/lib/building/companyCode';
 import { Job, JobRun, type JobRunProgressStage } from '@/lib/models/Job';
 import { claimJobRunExecution, heartbeatJobRun, startJobRunHeartbeat } from './runLifecycle';
@@ -399,6 +399,14 @@ export async function executeJobRun(runId: string): Promise<void> {
   const viewer = await loadCompanyViewer(String(job.createdByUserId));
   const profile = viewer ? await getCompanyProfile(viewer, String(job.companyId)) : null;
   if (!viewer || !profile) return fail('The company is no longer accessible.');
+  const excludedProspects = activeDesign.skill === 'signature_outreach'
+    ? (await listCompanyProfiles(viewer)).filter(company => company.relationship === 'owned' || company.relationship === 'internal').map(company => company.domain).filter((domain): domain is string => Boolean(domain))
+    : [];
+  if (activeDesign.skill === 'signature_outreach') {
+    activeDesign.instructions += '\nScout an external business. Tailnote is the sender, never the prospect. Exclude these owned properties and their subdomains: ' + excludedProspects.join(', ') +
+      '. Do not reuse names, emails, phone numbers or sample logos from Tailnote marketing examples. Research multiple candidates and skip any with evidence gaps. Phone is optional: omit it unless publicly verified. Return no records if none qualifies. Cite exact team, contact, feed and CTA URLs, plus a dated growth announcement. The CTA promotes the prospect; the social post promotes Tailnote. Explicitly call it an unsolicited design concept and, for blog showcases, explain the latest-article feature.';
+  }
+
   const usesMarketingPlan = activeDesign.skill === 'link_building' || activeDesign.skill === 'social_media' || activeDesign.skill === 'ai_citations';
   const marketingPlan = usesMarketingPlan ? await approvedMarketingPlan(job.organizationId, job.companyId) : null;
   const seoBrief = activeDesign.skill === 'link_building' && !marketingPlan ? await approvedSeoBrief(job.organizationId, job.companyId, job.projectId) : null;
@@ -739,7 +747,8 @@ export async function executeJobRun(runId: string): Promise<void> {
     }
     const attemptedReviews = new Set<string>();
     let reviewCalls = 0;
-    const reviewUserText = freeResearch
+    let researchRepairUsed = false;
+    let reviewUserText = freeResearch
       ? [`Company: ${profile.name}. ${profile.description ?? ''}`, 'Check this sourced directory/forum recommendation for truthful eligibility, a free public link-placement path and useful submission copy. General directories with suitable categories are allowed. Do not invent prohibitions. Authority and metrics may be unknown.', `Result: ${JSON.stringify(output).slice(0, 7000)}`, `Checks: ${JSON.stringify(issues).slice(0, 1000)}`].join('\n')
       : [`# Instructions\n${activeDesign.instructions}`, voiceContext, marketingPlan ? `# Approved Marketing Plan\n${marketingPlanContext(marketingPlan)}` : seoBrief ? `# Approved legacy SEO brief\n${seoBriefContext(seoBrief)}` : '', `# Source policy\n${activeDesign.sourcePolicy}`, `# Result\n${JSON.stringify(output).slice(0, 30000)}`, issues.length ? `# Problems found by code\n${issues.map((i) => `- ${i.problem}`).join('\n')}` : ''].join('\n\n');
     while (review.primary && (!freeResearch || issues.length === 0) && reviewCalls < (freeResearch ? 2 : MAX_REVIEW_CALLS)) {
@@ -790,18 +799,36 @@ export async function executeJobRun(runId: string): Promise<void> {
       }
       const v = z.object({ verdict: z.enum(['pass', 'fail']), notes: z.string().max(2000).default('') }).safeParse(extractJson(reviewTurn.text));
       if (v.success) verdict = { ...v.data, model: review.primary.model };
+      if (activeDesign.skill === 'signature_outreach' && verdict?.verdict === 'fail' && !researchRepairUsed && workCalls < maxWorkCalls && reviewCalls < MAX_REVIEW_CALLS) {
+        researchRepairUsed = true;
+        const repair = await doWork(activeWorker, 'The independent reviewer rejected this prospect. Research a different external company or obtain missing primary evidence. Never merely rewrite unsupported claims. Reviewer findings: ' + verdict.notes + '\nRejected result: ' + JSON.stringify(output).slice(0, 8000), true);
+        const revised = repair.role === 'assistant' ? parseJobOutput(repair.text, activeDesign.skill) : null;
+        if (revised?.success) {
+          output = revised.data;
+          issues = checkRecords(activeDesign.fields, output);
+          verdict = null;
+          reviewUserText = ['Instructions: ' + activeDesign.instructions, 'Source policy: ' + activeDesign.sourcePolicy, 'Re-researched result: ' + JSON.stringify(output).slice(0, 30000), 'Checks: ' + JSON.stringify(issues)].join('\n');
+          continue;
+        }
+      }
+
       break;
     }
 
     if (activeDesign.skill === 'signature_outreach') {
       const candidate = output.records[0];
       if (output.records.length !== 1 || !candidate || issues.length || verdict?.verdict !== 'pass') {
+        await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { output, issues, ...(verdict ? { review: verdict } : {}) } });
         await fail('No qualified signature concept passed validation and review. ' + (issues[0]?.problem ?? verdict?.notes ?? output.gaps.join(' ')), { costMicros: cost, models: usedModels });
         return;
       }
       if (requireBlogShowcase && !String(candidate.values.feed ?? '').trim()) throw new Error('Find a prospect with an official blog feed for this showcase.');
       const domain = new URL(String(candidate.values.website)).hostname.toLowerCase().replace(/^www\./, '');
       if (await JobRun.exists({ jobId: job._id, _id: { $ne: run._id }, 'output.records.values.prospect_domain': domain })) throw new Error('This prospect already has a signature concept.');
+      if (excludedProspects.some(owned => {
+        const host = owned.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '').toLowerCase();
+        return domain === host || domain.endsWith('.' + host);
+      })) throw new Error('Choose an external prospect, not an owned company.');
       candidate.values.prospect_domain = domain;
       delete candidate.values.screenshot;
       candidate.values.screenshot = await captureOutreach(candidate.values, candidate.sources, `signature-concepts/${job.organizationId}/${job.companyId}/${run._id}.jpg`);
