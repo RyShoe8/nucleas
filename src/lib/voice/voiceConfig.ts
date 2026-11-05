@@ -62,6 +62,15 @@ const HIGH_RISK_ACTIONS = new Set([
     'EDIT_ENTITY', // Status changes, unassign
 ]);
 
+/**
+ * Whether speech goes through the server. Electron has the Web Speech API but no service behind it, so it
+ * always fails there; some browsers do not have it at all.
+ */
+export function usesServerSpeech(): boolean {
+    if (typeof window === 'undefined') return false;
+    return Boolean(window.nucleasDesktop) || !isWebSpeechAvailable();
+}
+
 /** Check if Web Speech API is available */
 export function isWebSpeechAvailable(): boolean {
     if (typeof window === 'undefined') return false;

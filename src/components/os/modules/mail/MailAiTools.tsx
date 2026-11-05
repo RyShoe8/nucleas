@@ -1,5 +1,6 @@
 'use client';
 
+import { askText } from '@/lib/os/askText';
 import { useState } from 'react';
 import { useOsCompanies } from '../CompaniesModule';
 import type { AiToolsContext } from './Reader';
@@ -23,7 +24,9 @@ export default function MailAiTools({ thread, note, draftInto, compact }: AiTool
     };
 
     const draft = async () => {
-        const instruction = window.prompt('Anything you want the reply to say? (optional)\nFor example: "Offer Thursday at 2pm" or "Decline politely".') ?? '';
+        const answer = await askText('Anything you want the reply to say? (optional)\nFor example: "Offer Thursday at 2pm" or "Decline politely".', { confirm: 'Draft reply' });
+        if (answer === null) return;
+        const instruction = answer;
         setBusy('draft');
         note(null);
         const res = await post<{ text: string }>('/api/os/mail/ai', { action: 'draft', instruction, ...base });

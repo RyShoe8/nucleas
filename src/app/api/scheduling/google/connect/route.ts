@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth/middleware';
+import { loginFirstForConnection } from '@/lib/auth/connectionStart';
 import {
   getCalendarOAuthRedirectUri,
   getCalendarOAuthScopes,
@@ -8,6 +9,8 @@ import { createCalendarOAuthState } from '@/lib/scheduling/oauthState';
 
 export async function GET(request: NextRequest) {
   try {
+    const login = await loginFirstForConnection(request);
+    if (login) return login;
     const session = await requireAuth(request);
     if (session instanceof NextResponse) return session;
 

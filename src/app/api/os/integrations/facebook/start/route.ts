@@ -29,6 +29,6 @@ export async function GET(request: NextRequest) {
   }
   if (!redirectUri) return NextResponse.json({ error: 'Facebook sign-in is not available on this host.' }, { status: 500 });
 
-  const state = await createFacebookState(viewer.userId, companyId);
+  const state = await createFacebookState(viewer.userId, companyId, /^[a-f0-9]{32}$/.test(request.nextUrl.searchParams.get("desktopFlow") ?? "") ? request.nextUrl.searchParams.get("desktopFlow")! : undefined);
   return NextResponse.redirect(buildFacebookAuthUrl({ appId, redirectUri, state }));
 }

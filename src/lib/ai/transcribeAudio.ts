@@ -20,6 +20,11 @@ async function transcribeAudioBuffer(
   return typeof result === 'string' ? result.trim() : String(result).trim();
 }
 
+/** A short voice command from the microphone (see api/voice/stt). */
+export function transcribeSpeech(buffer: Buffer, contentType: string, apiKey: string): Promise<string> {
+  return transcribeAudioBuffer(buffer, contentType.includes('mp4') ? 'speech.mp4' : 'speech.webm', apiKey);
+}
+
 export async function transcribeAudioFromUrl(
   audioUrl: string,
   apiKey: string

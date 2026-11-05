@@ -15,6 +15,12 @@ const mailboxSchema = new Schema(
     status: { type: String, enum: ['connected', 'needs_reauth'], default: 'connected' },
     lastError: { type: String, maxlength: 400 },
     connectedByUserId: { type: Schema.Types.ObjectId },
+    connectedAt: { type: Date },
+    /** Last daily use of the refresh token (lib/watches/mailboxHealth): keeps it alive and finds a lost connection early. */
+    lastTokenCheckAt: { type: Date },
+    disconnectedAt: { type: Date },
+    /** When the reconnect email went out for the current disconnection; absent means the daily check retries it. */
+    reauthNotifiedAt: { type: Date },
   },
   { timestamps: true }
 );

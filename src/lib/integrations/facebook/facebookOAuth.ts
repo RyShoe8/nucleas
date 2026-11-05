@@ -18,7 +18,7 @@ export function facebookRedirectUri(requestUrl: string): string | null {
   return `${protocol}//${url.host}${FACEBOOK_CALLBACK_PATH}`;
 }
 
-type StatePayload = { userId: string; companyId: string; purpose: 'integration-facebook'; nonce: string };
+type StatePayload = { userId: string; companyId: string; purpose: 'integration-facebook'; nonce: string; desktopFlow?: string };
 
 function stateKey(): Uint8Array {
   const secret = process.env.NEXTAUTH_SECRET;
@@ -26,8 +26,8 @@ function stateKey(): Uint8Array {
   return new TextEncoder().encode(`integration-facebook:${secret}`);
 }
 
-export async function createFacebookState(userId: string, companyId: string): Promise<string> {
-  return new SignJWT({ userId, companyId, purpose: 'integration-facebook', nonce: randomUUID() } satisfies StatePayload)
+export async function createFacebookState(userId: string, companyId: string, desktopFlow?: string): Promise<string> {
+  return new SignJWT({ userId, companyId, purpose: 'integration-facebook', nonce: randomUUID(), ...(desktopFlow ? { desktopFlow } : {}) } satisfies StatePayload)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('10m')

@@ -3,9 +3,10 @@ const { autoUpdater } = require('electron-updater');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { ORIGIN, trustedRemote, externalUrl, moduleRequest, visibleBounds } = require('./policy.cjs');
+const { ORIGIN, trustedRemote, externalUrl, appPage, moduleRequest, visibleBounds } = require('./policy.cjs');
 const catalog = require('./renderer/catalog.json');
 const { signIn, authFile, authUrl } = require('./auth.cjs');
+const { installDisplayCapture } = require('./capture.cjs');
 const targets = new Map();
 const launcherFile = path.join(__dirname, 'renderer/index.html');
 const launcherUrl = pathToFileURL(launcherFile).href;
@@ -25,9 +26,12 @@ function localSender(event) { return event.sender === launcher?.webContents && e
 function moduleSender(event) { return localSender(event) || ([...windows.values()].some(w => w.webContents === event.sender) && event.senderFrame === event.sender.mainFrame && trustedRemote(event.senderFrame.url)); }
 function secureWindow(win, local = false) {
   win.webContents.setWindowOpenHandler(({ url }) => {
+    // App windows have no back button, so a full Nucleas page gets its own window, signed in as the same person.
+    if (!local && appPage(url)) return { action: 'allow', overrideBrowserWindowOptions: { width: 1120, height: 780, minWidth: 400, minHeight: 300, autoHideMenuBar: true, backgroundColor: '#0e121c' } };
     if (externalUrl(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
+  win.webContents.on('did-create-window', child => secureWindow(child));
   win.webContents.on('will-navigate', (event, url) => {
     if (!local && trustedRemote(url) && new URL(url).pathname === '/login') { event.preventDefault(); void win.loadFile(authFile); return; }
     if (local || !trustedRemote(url)) { event.preventDefault(); if (!local && externalUrl(url)) void shell.openExternal(url); }
@@ -35,7 +39,8 @@ function secureWindow(win, local = false) {
   win.webContents.on('will-redirect', (event, url, _inPlace, mainFrame) => {
     if (!mainFrame) return;
     if (!local && trustedRemote(url) && new URL(url).pathname === '/login') { event.preventDefault(); void win.loadFile(authFile); return; }
-    if (!local && !trustedRemote(url)) event.preventDefault();
+    // A page redirecting off Nucleas (usually to a sign-in) continues in the browser, never silently nowhere.
+    if (!local && !trustedRemote(url)) { event.preventDefault(); if (externalUrl(url)) void shell.openExternal(url); }
   });
   win.webContents.on('will-attach-webview', event => event.preventDefault());
 }
@@ -132,10 +137,15 @@ else {
     app.setAppUserModelId('app.nucleas.desktop');
     try { const value = JSON.parse(fs.readFileSync(settingsPath(), 'utf8')); saved = value && typeof value === 'object' && !Array.isArray(value) ? value : {}; } catch { saved = {}; }
     const profile = session.fromPartition('persist:nucleas');
+    installDisplayCapture(profile);
+    const allowedThisRun = new Set();
     profile.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => trustedRemote(requestingOrigin) && ['media', 'notifications', 'clipboard-sanitized-write'].includes(permission));
     profile.setPermissionRequestHandler(async (webContents, permission, callback, details) => {
       if (!trustedRemote(webContents.getURL()) || !trustedRemote(details.requestingUrl) || !['media', 'notifications', 'clipboard-sanitized-write'].includes(permission)) return callback(false);
+      // Asked once per run: voice and recording need this every time, and a dialog each time makes them unusable.
+      if (allowedThisRun.has(permission)) return callback(true);
       const choice = await dialog.showMessageBox(BrowserWindow.fromWebContents(webContents), { type: 'question', buttons: ['Not now', 'Allow'], defaultId: 0, cancelId: 0, message: `Allow Nucleas to use ${permission === 'media' ? 'your microphone or camera' : permission}?` });
+      if (choice.response === 1) allowedThisRun.add(permission);
       callback(choice.response === 1);
     });
     createLauncher();

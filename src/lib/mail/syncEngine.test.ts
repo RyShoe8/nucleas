@@ -76,6 +76,15 @@ describe('Google tokens', () => {
     expect(await refreshAccessToken('r', { clientId: 'c', clientSecret: 's' }, ok)).toEqual({ accessToken: 'a', expiresInSeconds: 3599 });
   });
 
+  it('does not ask anyone to reconnect for a problem on our side or at Google', async () => {
+    for (const [status, error] of [[401, 'invalid_client'], [400, 'invalid_request'], [503, 'internal_failure']] as const) {
+      const fetchImpl: typeof fetch = async () => Response.json({ error }, { status });
+      const failure = await refreshAccessToken('r', { clientId: 'c', clientSecret: 's' }, fetchImpl).catch((e: unknown) => e);
+      expect(failure).toBeInstanceOf(Error);
+      expect(failure).not.toBeInstanceOf(GmailAuthError);
+    }
+  });
+
   it('turns a 401 from Gmail into the same re-connect signal', async () => {
     const api = new GmailApi('t', async () => new Response('{}', { status: 401 }));
     await expect(api.profile()).rejects.toBeInstanceOf(GmailAuthError);

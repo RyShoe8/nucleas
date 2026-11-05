@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:">
+  <title>Choose what to share</title>
+  <link rel="stylesheet" href="capture-picker.css">
+</head>
+<body>
+  <header><h1>Choose what to share</h1><p>Nucleas will see only what you pick, until you stop.</p></header>
+  <main id="sources" aria-label="Screens and windows"><p class="note">Looking for screens and windows…</p></main>
+  <footer>
+    <button id="cancel" type="button">Cancel</button>
+    <button id="share" type="button" class="primary" disabled>Share</button>
+  </footer>
+  <script src="capture-picker.js"></script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { loginFirstForConnection } from '@/lib/auth/connectionStart';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { getCompanyProfile } from '@/lib/companies/companyProfile';
 import { canUseMail, MAIL_FORBIDDEN } from '@/lib/mail/accounts';
@@ -8,6 +9,8 @@ export const dynamic = 'force-dynamic';
 
 /** Starts Google sign-in for one Gmail mailbox. Optional ?companyId= files it under a company. */
 export async function GET(request: NextRequest) {
+  const login = await loginFirstForConnection(request);
+  if (login) return login;
   const viewer = await requireCompanyViewer(request);
   if (viewer instanceof NextResponse) return viewer;
   if (!canUseMail(viewer)) return NextResponse.json({ error: MAIL_FORBIDDEN }, { status: 403 });

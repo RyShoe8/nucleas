@@ -31,6 +31,8 @@
       "auth.cjs",
       "preload.cjs",
       "policy.cjs",
+      "capture.cjs",
+      "capture-preload.cjs",
       "renderer/**"
     ],
     "asar": true,

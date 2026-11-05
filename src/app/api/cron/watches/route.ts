@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/db/mongodb';
 import { scanDueWatches } from '@/lib/watches/runWatch';
+import { checkMailboxConnections } from '@/lib/watches/mailboxHealth';
 import { draftPostsForNewlyFlagged } from '@/lib/watches/posts';
 
 export const dynamic = 'force-dynamic';
@@ -16,8 +17,13 @@ export async function GET(request: NextRequest) {
   if (!secret || actual.length !== expected.length || !timingSafeEqual(actual, expected)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try {
     await connectDB();
+    // First, so a failed scan or a long run never starves the check that keeps mailboxes connected.
+    const mailboxes = await checkMailboxConnections().catch((error: unknown) => {
+      console.error('[cron/watches] mailbox check failed', error instanceof Error ? error.message : 'unknown');
+      return null;
+    });
     const scanned = await scanDueWatches({ limit: 3, budgetMs: 220_000, afterScan: (watchId, since) => draftPostsForNewlyFlagged(watchId, since) });
-    return NextResponse.json(scanned, { headers: { 'Cache-Control': 'no-store' } });
+    return NextResponse.json({ ...scanned, mailboxes }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error('[cron/watches] failed', error instanceof Error ? error.message : 'unknown');
     return NextResponse.json({ error: 'Watch scan unavailable.' }, { status: 503 });

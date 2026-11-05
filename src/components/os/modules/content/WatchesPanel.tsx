@@ -22,6 +22,12 @@ export default function WatchesPanel({ initialWatchId, companyId, newWatchBrief 
     const [reload, setReload] = useState(0);
     const refresh = useCallback(() => setReload((n) => n + 1), []);
 
+    // Google sign-in happens in the browser: show the result when the person comes back.
+    useEffect(() => {
+        window.addEventListener('focus', refresh);
+        return () => window.removeEventListener('focus', refresh);
+    }, [refresh]);
+
     useEffect(() => {
         let cancelled = false;
         void (async () => {
@@ -64,7 +70,8 @@ export default function WatchesPanel({ initialWatchId, companyId, newWatchBrief 
             <section className="space-y-2">
                 <div className="flex items-center gap-2">
                     <h3 className="ui-kicker flex-1">Mailboxes</h3>
-                    <a href="/api/os/content/gmail/start" className="ui-button">Connect Gmail</a>
+                    {/* In a new browser window: the desktop app cannot show Google's sign-in, and this panel refreshes on return. */}
+                    <a href="/api/os/content/gmail/start" target="_blank" rel="noopener noreferrer" title="Sign in with Google in your browser, then come back here" className="ui-button">Connect Gmail</a>
                 </div>
                 {mailboxes.length === 0 ? (
                     <p className="text-sm text-text-secondary">Connect a Gmail address to watch. Nucleas only gets read access, and the sign-in is separate from your Mail window.</p>
@@ -74,8 +81,9 @@ export default function WatchesPanel({ initialWatchId, companyId, newWatchBrief 
                             <li key={m.id} className="flex flex-wrap items-center gap-x-2 text-sm">
                                 <span className={`h-2 w-2 rounded-full ${m.status === 'connected' ? 'bg-emerald-400' : 'bg-red-400'}`} aria-hidden />
                                 <span className="min-w-0 flex-1 break-all">{m.emailAddress}</span>
-                                {m.status === 'needs_reauth' ? <a className="touch-link text-xs text-primary" href={`/api/os/content/gmail/start?email=${encodeURIComponent(m.emailAddress)}`}>Reconnect</a> : null}
+                                {m.status === 'needs_reauth' ? <a className="touch-link text-xs text-primary" target="_blank" rel="noopener noreferrer" title="Sign in with Google in your browser, then come back here" href={`/api/os/content/gmail/start?email=${encodeURIComponent(m.emailAddress)}`}>Reconnect</a> : null}
                                 <span className="text-[11px] text-text-secondary">{m.watchCount} watch{m.watchCount === 1 ? '' : 'es'}</span>
+                                {m.status === 'needs_reauth' && m.lastError ? <p className="w-full text-[11px] text-amber-400">{m.lastError}</p> : null}
                                 <button type="button" className="touch-link text-[11px] text-text-secondary disabled:no-underline disabled:opacity-40" disabled={m.watchCount > 0} title={m.watchCount > 0 ? 'Remove its watches first' : 'Remove this mailbox'} onClick={() => window.confirm(`Remove ${m.emailAddress} and the emails stored from it?`) && void act(`/api/os/content/mailboxes/${m.id}`, { method: 'DELETE' })}>Remove</button>
                             </li>
                         ))}

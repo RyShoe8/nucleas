@@ -31,14 +31,14 @@ export interface Notice {
   action: string;
 }
 
-export function noticeEmail(notice: Notice, name: string | null, link: string): { html: string; text: string } {
+export function noticeEmail(notice: Notice, name: string | null, link: string, footer = "You get these because you are on this job's notify list in Nucleas."): { html: string; text: string } {
   const greeting = name ? `Hi ${name.split(/\s+/)[0]},` : 'Hi,';
   const html = `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#111">
 <p>${escape(greeting)}</p>
 <p>${escape(notice.intro)}</p>
 ${notice.lines.length ? `<ul>${notice.lines.map((l) => `<li>${escape(l)}</li>`).join('')}</ul>` : ''}
 <p><a href="${escape(link)}" style="display:inline-block;background:#347AF6;color:#fff;text-decoration:none;padding:8px 14px;border-radius:6px">${escape(notice.action)}</a></p>
-<p style="color:#666;font-size:12px">You get these because you are on this job's notify list in Nucleas.</p>
+<p style="color:#666;font-size:12px">${escape(footer)}</p>
 </div>`;
   const text = [greeting, '', notice.intro, ...notice.lines.map((l) => `- ${l}`), '', `${notice.action}: ${link}`].join('\n');
   return { html, text };

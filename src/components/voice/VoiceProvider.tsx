@@ -2,7 +2,8 @@
 
 import { createContext, useContext, useState, useCallback, useRef, ReactNode, useEffect, useMemo } from 'react';
 import { parseIntent, ParsedIntent } from '@/lib/voice/IntentParser';
-import { isWebSpeechAvailable, getVoiceConfig } from '@/lib/voice/voiceConfig';
+import { isWebSpeechAvailable, getVoiceConfig, usesServerSpeech } from '@/lib/voice/voiceConfig';
+import { startSpeechCapture, type SpeechCapture } from '@/lib/voice/serverSpeech';
 import { detectWakeWord } from '@/lib/voice/wakeWordMatcher';
 import {
     getSpeechRecognitionConstructor,
@@ -40,6 +41,8 @@ export interface VoiceContextValue {
     wakeLastAlias: string | null;
     wakeLastScore: number;
     toggleWakeWord: () => void;
+    /** False where listening for the wake word would mean streaming the microphone to a paid service all day. */
+    wakeWordSupported: boolean;
     enabled: boolean;
     pendingActionDescription: string | null;
 }
@@ -68,6 +71,7 @@ export function useVoice(): VoiceContextValue {
             wakeLastAlias: null,
             wakeLastScore: 0,
             toggleWakeWord: () => {},
+            wakeWordSupported: false,
             enabled: false,
             pendingActionDescription: null,
         };
@@ -93,6 +97,15 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
     const [resultMessage, setResultMessage] = useState<string | null>(null);
     const [pendingActionDescription, setPendingActionDescription] = useState<string | null>(null);
     const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+    const speechCaptureRef = useRef<SpeechCapture | null>(null);
+    const [wakeWordSupported, setWakeWordSupported] = useState(true);
+    useEffect(() => {
+        const timer = setTimeout(() => setWakeWordSupported(!usesServerSpeech()), 0);
+        return () => {
+            clearTimeout(timer);
+            speechCaptureRef.current?.cancel();
+        };
+    }, []);
     const wakeRecognitionRef = useRef<SpeechRecognitionInstance | null>(null);
     const wakeCooldownUntilRef = useRef<number>(0);
     const accumulatedTranscriptRef = useRef<string>('');
@@ -278,6 +291,34 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
             endOfUtteranceTimerRef.current = null;
         }
 
+        if (usesServerSpeech()) {
+            const config = getVoiceConfig();
+            setState('listening');
+            const capture = startSpeechCapture({
+                endpoint: config.serverSttEndpoint,
+                silenceMs: config.endOfUtteranceMs,
+                maxMs: config.maxRecordingDuration * 1000,
+                onTranscribing: () => setState('processing'),
+            });
+            speechCaptureRef.current = capture;
+            capture.done.then(
+                (text) => {
+                    if (speechCaptureRef.current !== capture) return;
+                    speechCaptureRef.current = null;
+                    accumulatedTranscriptRef.current = text;
+                    flushAndProcess();
+                },
+                (failure: unknown) => {
+                    if (speechCaptureRef.current !== capture) return;
+                    speechCaptureRef.current = null;
+                    setError(failure instanceof Error ? failure.message : 'Voice failed. Try again.');
+                    setState('idle');
+                    clearMessages();
+                }
+            );
+            return;
+        }
+
         if (isWebSpeechAvailable()) {
             const SpeechRecognition = getSpeechRecognitionConstructor();
             if (!SpeechRecognition) {
@@ -368,6 +409,11 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
     }, [startListening]);
 
     const stopListening = useCallback(() => {
+        // Recorded speech has not been read yet, so stopping means "that is all I said", not "throw it away".
+        if (speechCaptureRef.current) {
+            speechCaptureRef.current.finish();
+            return;
+        }
         if (endOfUtteranceTimerRef.current) {
             clearTimeout(endOfUtteranceTimerRef.current);
             endOfUtteranceTimerRef.current = null;
@@ -391,7 +437,7 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
             !wakeWordEnabled ||
             state !== 'idle' ||
             !pageActivity.isActive ||
-            !isWebSpeechAvailable()
+            usesServerSpeech()
         ) {
             if (wakeRecognitionRef.current) {
                 try {
@@ -578,6 +624,7 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
             wakeLastAlias,
             wakeLastScore,
             toggleWakeWord,
+            wakeWordSupported,
             enabled,
             pendingActionDescription,
         }),
@@ -600,6 +647,7 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
             wakeLastAlias,
             wakeLastScore,
             toggleWakeWord,
+            wakeWordSupported,
             enabled,
             pendingActionDescription,
         ]

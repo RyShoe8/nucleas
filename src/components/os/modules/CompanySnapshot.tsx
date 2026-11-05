@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useOsAuth } from '@/hooks/os/useOsAuth';
 import { SOCIAL_PLATFORMS } from '@/lib/metrics/social';
+import { revenueMetricVisible } from '@/lib/metrics/revenueVisibility';
 import type { OsConnection } from './companyTypes';
 
 /** Mirrors the server InvocationView fields the UI needs. */
@@ -129,6 +130,8 @@ const METRIC_GROUPS: { title: string; metrics: MetricSlot[] }[] = [
     },
 ];
 
+const REVENUE_KEYS = new Set(METRIC_GROUPS.find(group => group.title === 'Revenue')!.metrics.map(slot => slot.key));
+
 function MetricCard({ m, slot }: { m?: OsMetric; slot: MetricSlot }) {
     return (
         <div className="rounded-md border border-border p-2.5 min-w-0">
@@ -138,7 +141,7 @@ function MetricCard({ m, slot }: { m?: OsMetric; slot: MetricSlot }) {
             </div>
             <div className="text-lg font-semibold tabular-nums leading-tight">{formatMetric(m?.unit ?? slot.unit, m?.current)}</div>
             <div className="text-[10px] text-text-secondary">
-                {!m ? 'Connect a data source' : m.kind === 'daily' ? `last 7 days${m.lastDay ? ` · ${formatMetric(m.unit, m.lastDay.value)} on ${m.lastDay.date.slice(5)}` : ''}` : 'current'}
+                {!m ? (REVENUE_KEYS.has(slot.key) ? 'Waiting for first sync' : 'Connect a data source') : m.kind === 'daily' ? `last 7 days${m.lastDay ? ` · ${formatMetric(m.unit, m.lastDay.value)} on ${m.lastDay.date.slice(5)}` : ''}` : 'current'}
             </div>
             {m?.series.length ? <Sparkline series={m.series} label={slot.label} /> : null}
         </div>
@@ -287,7 +290,10 @@ export default function CompanySnapshot({
                 </ul>
             ) : null}
 
-            {METRIC_GROUPS.map((group) => <MetricGroup key={group.title} title={group.title} slots={group.metrics} metrics={metrics} />)}
+            {METRIC_GROUPS.map((group) => {
+                const slots = group.title === 'Revenue' ? group.metrics.filter(slot => revenueMetricVisible(slot.key, connections)) : group.metrics;
+                return slots.length ? <MetricGroup key={group.title} title={group.title} slots={slots} metrics={metrics} /> : null;
+            })}
             <MetricGroup title="Social" slots={[...SOCIAL_PLATFORMS, { id: 'other', label: 'Other social' }].map(({ id, label }) => ({ key: `social_sessions_${id}`, label: `${label} visits`, unit: 'count', kind: 'daily' }))} metrics={metrics} />
             {hasPerformanceConnection && data === null ? <p className="text-xs text-text-secondary">Loading connected performance data…</p> : data && data.metrics.length === 0 && hasPerformanceConnection ? <p className="text-xs text-text-secondary">No connected performance history yet. The first sync backfills 90 days{auth.isManagerOrAdmin ? '; use Sync now to start it.' : '.'}</p> : null}
 

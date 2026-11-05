@@ -5,7 +5,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     setupFiles: ['./src/lib/workspace/itemSeenState.vitest.setup.ts'],
-    exclude: [...configDefaults.exclude, 'dist-worker/**'],
+    // desktop/ has its own tests on node:test (npm run desktop:test).
+    exclude: [...configDefaults.exclude, 'dist-worker/**', 'desktop/**'],
   },
   resolve: {
     alias: {

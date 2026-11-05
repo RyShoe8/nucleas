@@ -44,6 +44,8 @@ export default function SchedulingStatusBar({
               <span className="text-text-secondary">Google Calendar not connected.</span>
               <a
                 href="/api/scheduling/google/connect"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="text-primary font-medium hover:underline shrink-0"
               >
                 Connect Calendar

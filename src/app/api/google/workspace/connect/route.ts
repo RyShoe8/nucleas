@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth/middleware';
+import { loginFirstForConnection } from '@/lib/auth/connectionStart';
 import { getDriveOAuthRedirectUri } from '@/lib/google/driveConnection';
 import { DRIVE_FILE_SCOPE } from '@/lib/google/oauth';
 import { createDriveOAuthState } from '@/lib/google/oauthState';
@@ -17,6 +18,8 @@ function sanitizeReturnTo(raw: string | null, origin: string): string {
 
 export async function GET(request: NextRequest) {
   try {
+    const login = await loginFirstForConnection(request);
+    if (login) return login;
     const session = await requireAuth(request);
     if (session instanceof NextResponse) return session;
 

@@ -20,7 +20,7 @@ export function middleware(request: NextRequest) {
     response.cookies.delete('connection-login-return');
     return response;
   }
-  if (pathname === '/desktop/connect') {
+  if (pathname === '/desktop/connect' || pathname === '/desktop/connection-complete') {
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set('x-nucleas-shell', 'minimal');
     return NextResponse.next({ request: { headers: requestHeaders } });
@@ -152,7 +152,7 @@ export function middleware(request: NextRequest) {
 
   // Check for session cookie
   // These entry points handle browser login themselves and still enforce manager access.
-  if (pathname === '/api/os/integrations/google/start' || pathname === '/api/os/integrations/facebook/start') return NextResponse.next();
+  if (pathname === '/api/os/integrations/google/start' || pathname === '/api/os/integrations/facebook/start' || pathname === '/api/os/content/gmail/start' || pathname === '/api/os/mail/google/start' || pathname === '/api/scheduling/google/connect' || pathname === '/api/google/workspace/connect') return NextResponse.next();
   const session = request.cookies.get('session');
 
   // If no session and trying to access protected route, redirect to login

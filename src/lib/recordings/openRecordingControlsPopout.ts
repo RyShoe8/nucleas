@@ -33,6 +33,8 @@ export function openRecordingControlsPopout(): Window | null {
     'resizable=yes',
   ].join(',');
 
+  // The desktop app sends popups to the browser, away from the recording. Its inline controls are used instead.
+  if (window.nucleasDesktop) return null;
   const popup = window.open(url, RECORDING_CONTROLS_WINDOW_NAME, features);
   return popup;
 }

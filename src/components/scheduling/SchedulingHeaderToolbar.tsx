@@ -22,6 +22,8 @@ export default function SchedulingHeaderToolbar({
       {!calendar?.connected ? (
         <a
           href="/api/scheduling/google/connect"
+          target="_blank"
+          rel="noopener noreferrer"
           className="inline-flex shrink-0 items-center rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
         >
           Connect Calendar

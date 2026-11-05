@@ -21,7 +21,7 @@ export function googleIntegrationRedirectUri(requestUrl: string): string | null 
   return `${protocol}//${url.host}${GOOGLE_INTEGRATION_CALLBACK_PATH}`;
 }
 
-type StatePayload = { userId: string; companyId: string; purpose: 'integration-google'; nonce: string };
+type StatePayload = { userId: string; companyId: string; purpose: 'integration-google'; nonce: string; desktopFlow?: string };
 
 function stateKey(): Uint8Array {
   const secret = process.env.NEXTAUTH_SECRET;
@@ -29,8 +29,8 @@ function stateKey(): Uint8Array {
   return new TextEncoder().encode(`integration-google:${secret}`);
 }
 
-export async function createGoogleIntegrationState(userId: string, companyId: string): Promise<string> {
-  return new SignJWT({ userId, companyId, purpose: 'integration-google', nonce: randomUUID() } satisfies StatePayload)
+export async function createGoogleIntegrationState(userId: string, companyId: string, desktopFlow?: string): Promise<string> {
+  return new SignJWT({ userId, companyId, purpose: 'integration-google', nonce: randomUUID(), ...(desktopFlow ? { desktopFlow } : {}) } satisfies StatePayload)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('10m')

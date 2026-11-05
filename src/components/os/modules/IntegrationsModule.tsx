@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent, type MouseEvent } from 'react';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import { useOsAuth } from '@/hooks/os/useOsAuth';
 import type { ModuleRenderContext } from '@/lib/os/types';
@@ -108,7 +108,7 @@ function CompanyIntegrations({ companyId }: { companyId: string }) {
                 {detail.company.name} · {detail.company.domain ?? 'no production domain'}
             </p>
             <ConnectionsSection companyId={detail.company.id} connections={detail.connections} onChanged={reload} />
-            <CodeRepositories companyId={detail.company.id} />
+            {!detail.connections.some(connection => connection.provider === 'github') && <CodeRepositories companyId={detail.company.id} />}
             <AdminAccount companyId={detail.company.id} defaultDomain={detail.company.domain} />
         </div>
     );
@@ -205,10 +205,47 @@ function AddIntegration({ companyId, onAdded }: { companyId: string; onAdded: ()
 function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: string; connection: OsConnection; onChanged: () => void }) {
     const auth = useOsAuth();
     const [picking, setPicking] = useState(false);
+    const [repositoriesOpen, setRepositoriesOpen] = useState(false);
     const [editing, setEditing] = useState(false);
     const [credential, setCredential] = useState('');
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
+    const [desktopFlow, setDesktopFlow] = useState<string | null>(null);
+    function beginConnection(event: MouseEvent<HTMLAnchorElement>) {
+        if (!window.nucleasDesktop) return;
+        const flow = crypto.randomUUID().replaceAll('-', '');
+        const url = new URL(event.currentTarget.href);
+        url.searchParams.set('desktopFlow', flow);
+        event.currentTarget.href = url.href;
+        setDesktopFlow(flow);
+        setMessage('Complete the connection in your browser. This window will refresh automatically.');
+    }
+    useEffect(() => {
+        if (!desktopFlow) return;
+        let cancelled = false;
+        let timer: ReturnType<typeof setTimeout>;
+        const deadline = Date.now() + 600_000;
+        async function poll() {
+            try {
+                const res = await fetch(`/api/os/integrations/completion?flow=${desktopFlow}`, { signal: AbortSignal.timeout(10000) });
+                const result = await res.json();
+                if (cancelled) return;
+                if (res.ok && result.complete && result.companyId === companyId) {
+                    setMessage(result.message);
+                    setDesktopFlow(null);
+                    onChanged();
+                    return;
+                }
+            } catch { /* Transient network failures can be retried within the bounded window. */ }
+            if (cancelled) return;
+            if (Date.now() >= deadline) {
+                setDesktopFlow(null);
+                setMessage('Connection timed out. Try connecting again.');
+            } else timer = setTimeout(poll, 3000);
+        }
+        timer = setTimeout(poll, 3000);
+        return () => { cancelled = true; clearTimeout(timer); };
+    }, [desktopFlow, companyId, onChanged]);
 
     const submit = async (e: FormEvent) => {
         e.preventDefault();
@@ -265,7 +302,7 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                     <span className="text-[11px] px-1.5 py-0.5 rounded border text-amber-400 border-amber-400/40">Plan-limited</span>
                 ) : null}
                 <span className={`text-[11px] px-1.5 py-0.5 rounded border ${STATUS_STYLE[c.status] ?? STATUS_STYLE.declared}`}>
-                    {STATUS_LABEL[c.status] ?? c.status}
+                    {c.provider === 'github' ? 'Managed per project' : STATUS_LABEL[c.status] ?? c.status}
                 </span>
                 {canConnect && !editing ? (
                     <button
@@ -276,9 +313,15 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                         {c.status === 'connected' ? 'Replace key' : 'Connect'}
                     </button>
                 ) : null}
+                {c.provider === 'github' && auth.isManagerOrAdmin ? (
+                    <button type="button" className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-background-card" aria-expanded={repositoriesOpen} onClick={() => setRepositoriesOpen(open => !open)}>
+                        {repositoriesOpen ? 'Hide repositories' : 'Connect repository'}
+                    </button>
+                ) : null}
                 {c.signIn === 'google' && auth.isManagerOrAdmin && c.companyId ? (
                     <a
                         href={`/api/os/integrations/google/start?companyId=${encodeURIComponent(c.companyId)}&provider=${encodeURIComponent(c.provider)}`}
+                        onClick={beginConnection}
                         target="_blank"
                         rel="noopener noreferrer"
                         title="Connect in your browser, then return here to see the updated status"
@@ -290,6 +333,7 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                 {c.signIn === 'facebook' && auth.isManagerOrAdmin && c.companyId ? (
                     <a
                         href={`/api/os/integrations/facebook/start?companyId=${encodeURIComponent(c.companyId)}`}
+                        onClick={beginConnection}
                         target="_blank"
                         rel="noopener noreferrer"
                         title="Connect in your browser, then return here to see the updated status"
@@ -328,6 +372,7 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                 ) : null}
             </div>
             {detail.length ? <p className="mt-0.5 ml-[5.5rem] text-[11px] text-text-secondary truncate">{detail.join(' · ')}</p> : null}
+            {repositoriesOpen && c.provider === 'github' ? <div className="mt-3 rounded-lg border border-border p-3"><CodeRepositories companyId={companyId} compact /></div> : null}
             {c.lastError ? <p className="mt-0.5 ml-[5.5rem] text-[11px] text-red-400">{c.lastError}</p> : null}
             {editing ? (
                 <form onSubmit={submit} className="mt-2 ml-[5.5rem] flex items-center gap-2">

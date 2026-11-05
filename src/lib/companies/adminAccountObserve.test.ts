@@ -28,12 +28,13 @@ describe('observePageForRequest says why the live page was not checked', () => {
     expect(await observePageForRequest(viewer, companyId, ask)).toBeNull();
   });
 
-  it('names the missing piece: no session, unconfigured worker, expired session', async () => {
+  it('names the missing piece: no session, unconfigured worker, unreadable session', async () => {
     expect(await observePageForRequest(viewer, companyId, ask)).toEqual({ failure: expect.stringContaining('no admin account session is connected') });
     state.workerConfigured = false;
     expect(await observePageForRequest(viewer, companyId, ask)).toEqual({ failure: expect.stringContaining('browser worker is not configured') });
     state.workerConfigured = true;
-    state.row = { baseUrl: 'https://playbound.club', sessionSealed: sealSecret(`company-admin-session:${companyId}`, '[]'), expiresAt: new Date(Date.now() - 1000) };
+    // The site decides whether a login is still valid; here the saved session cannot be opened at all (a rotated secret).
+    state.row = { baseUrl: 'https://playbound.club', sessionSealed: sealSecret('some-other-purpose', '[]') };
     expect(await observePageForRequest(viewer, companyId, ask)).toEqual({ failure: expect.stringContaining('expired') });
   });
 

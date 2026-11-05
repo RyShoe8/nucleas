@@ -1,9 +1,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { trustedRemote, externalUrl, moduleRequest, visibleBounds } = require('./policy.cjs');
+const { trustedRemote, externalUrl, appPage, moduleRequest, visibleBounds } = require('./policy.cjs');
 test('native bridge trusts only the exact Nucleas origin', () => {
   assert.equal(trustedRemote('https://nucleas.app/os/desktop'), true);
   for (const url of ['http://nucleas.app', 'https://nucleas.app.evil.example', 'file:///C:/secret', 'javascript:alert(1)']) assert.equal(trustedRemote(url), false);
+});
+test('only Nucleas pages open in their own app window', () => {
+  for (const url of ['https://nucleas.app/recordings/abc', 'https://nucleas.app/assets?projectId=p1']) assert.equal(appPage(url), true, url);
+  for (const url of ['https://nucleas.app/api/os/content/gmail/start', 'https://nucleas.app/login', 'https://nucleas.app/', 'https://nucleas.app/desktop/download', 'https://example.com/recordings/abc', 'http://nucleas.app/assets', 'javascript:alert(1)']) assert.equal(appPage(url), false, url);
 });
 test('external links cannot execute native protocols', () => {
   for (const url of ['file:///C:/Windows', 'javascript:alert(1)', 'ms-excel:test', 'https://user:pass@example.com']) assert.equal(externalUrl(url), false);

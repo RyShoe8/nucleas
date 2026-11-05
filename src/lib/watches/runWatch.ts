@@ -3,7 +3,8 @@ import { recipientOnlyItem } from './offerEligibility';
 import { Types } from 'mongoose';
 import { ContentWatch, WatchItem, WatchMailbox, type ContentWatchDoc } from '@/lib/models/Watch';
 import { openSecret } from '@/lib/security/secretBox';
-import { GmailApi, GmailAuthError, refreshAccessToken } from '@/lib/mail/gmailClient';
+import { GmailAccessTokenRejected, GmailApi, GmailAuthError, refreshAccessToken } from '@/lib/mail/gmailClient';
+import { markMailboxDisconnected, watchGoogleCredentials, watchMailboxPurpose } from './mailboxHealth';
 import { parseGmailMessage, type ParsedMessage } from '@/lib/mail/gmailParse';
 import { extractDealMetricsRegex, extractDealsFoundRegex, mergeDealExtractions, pickBestDeal } from './dealMetrics';
 import { extractAnchorHrefs, pickDealLink } from './dealLink';
@@ -16,7 +17,7 @@ import type { DealMetrics } from './types';
 
 /** Scans one watch: lists new mail in its mailbox, scores each email against the rule, and stores the results. */
 
-export const watchMailboxPurpose = (email: string) => `watch-mailbox:${email.toLowerCase()}`;
+export { watchMailboxPurpose };
 /** Longer than any request may run (300 s), so a scan cut off by the platform frees itself soon after. */
 const LEASE_MS = 5.5 * 60_000;
 const RETENTION_DAYS = 90;
@@ -71,6 +72,8 @@ export type ScanOutcome = { ok: true; stats: ScanStats } | { ok: false; error: s
 
 export interface ScanDeps {
   api?: GmailApi;
+  /** The Google token call (tests). */
+  refresh?: typeof refreshAccessToken;
   analyze?: AnalyzeFn;
   now?: () => number;
   maxNew?: number;
@@ -95,20 +98,13 @@ export function ruleOf(watch: Pick<ContentWatchDoc, 'mode' | 'description' | 'ke
   };
 }
 
-function credentials() {
-  const clientId = process.env.GOOGLE_MAIL_CLIENT_ID?.trim() || process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_MAIL_CLIENT_SECRET?.trim() || process.env.GOOGLE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) throw new Error('Google sign-in is not configured.');
-  return { clientId, clientSecret };
-}
-
 const tokenCache = new Map<string, { token: string; expires: number }>();
 
-async function apiForMailbox(mailbox: { _id: Types.ObjectId; emailAddress: string; refreshTokenSealed: string }): Promise<GmailApi> {
+async function apiForMailbox(mailbox: { _id: Types.ObjectId; emailAddress: string; refreshTokenSealed: string }, refresh?: typeof refreshAccessToken): Promise<GmailApi> {
   const key = String(mailbox._id);
   const cached = tokenCache.get(key);
   if (cached && cached.expires > Date.now()) return new GmailApi(cached.token);
-  const { accessToken, expiresInSeconds } = await refreshAccessToken(openSecret(watchMailboxPurpose(mailbox.emailAddress), mailbox.refreshTokenSealed), credentials());
+  const { accessToken, expiresInSeconds } = await (refresh ?? refreshAccessToken)(openSecret(watchMailboxPurpose(mailbox.emailAddress), mailbox.refreshTokenSealed), watchGoogleCredentials());
   tokenCache.set(key, { token: accessToken, expires: Date.now() + Math.max(60, expiresInSeconds - 300) * 1000 });
   return new GmailApi(accessToken);
 }
@@ -251,6 +247,18 @@ async function processMessage(watch: WatchRow, m: ParsedMessage, deps: Required<
   log.add(flagged ? 'flagged' : 'scored', `${subjectOf(m)}: ${settings.rank === 'discount' ? `${score}% offer` : `fit ${score}`}${fit != null && settings.rank === 'discount' ? `, fit ${fit}` : ''} (${scoreBasis})${analysisError ? ', scored without a model' : ''}`);
 }
 
+/** True only when Google itself says the refresh token no longer works. An outage or a config problem is not proof. */
+async function grantIsGone(mailboxId: Types.ObjectId, refresh?: typeof refreshAccessToken): Promise<boolean> {
+  const mailbox = await WatchMailbox.findById(mailboxId).select('+refreshTokenSealed emailAddress').lean<{ emailAddress: string; refreshTokenSealed: string }>();
+  if (!mailbox) return false;
+  try {
+    await (refresh ?? refreshAccessToken)(openSecret(watchMailboxPurpose(mailbox.emailAddress), mailbox.refreshTokenSealed), watchGoogleCredentials());
+    return false;
+  } catch (error) {
+    return error instanceof GmailAuthError;
+  }
+}
+
 /** Scans one watch now. A lease keeps overlapping runs (button, cron) from scanning the same watch twice. */
 export async function scanWatch(watchId: Types.ObjectId | string, deps: ScanDeps = {}): Promise<ScanOutcome> {
   const id = new Types.ObjectId(String(watchId));
@@ -271,7 +279,7 @@ export async function scanWatch(watchId: Types.ObjectId | string, deps: ScanDeps
     const mailbox = await WatchMailbox.findOne({ _id: watch.mailboxId, organizationId: watch.organizationId }).select('+refreshTokenSealed emailAddress status').lean<{ _id: Types.ObjectId; emailAddress: string; refreshTokenSealed: string; status: string }>();
     if (!mailbox) throw new Error('The mailbox for this watch was removed. Connect it again.');
     if (mailbox.status === 'needs_reauth') throw new GmailAuthError('This mailbox needs to be connected again.');
-    const api = deps.api ?? (await apiForMailbox(mailbox));
+    const api = deps.api ?? (await apiForMailbox(mailbox, deps.refresh));
     const rule = ruleOf(watch);
     const lookback = effectiveLookbackHours(rule.lookbackHours, watch.lastScanAt ?? null, 2, started);
     const query = gmailQueryFor(rule, lookback, started);
@@ -310,12 +318,15 @@ export async function scanWatch(watchId: Types.ObjectId | string, deps: ScanDeps
     await ContentWatch.updateOne({ _id: id }, { $set: { lastScanAt: new Date(started), lastScanOk: true, lastScanStats: stats, lastScanLog: log.stored }, $unset: { lastScanError: '', scanLeaseUntil: '', scanProgress: '' } });
     return { ok: true, stats };
   } catch (error) {
-    const reauth = error instanceof GmailAuthError;
+    let reauth = error instanceof GmailAuthError;
     const message = error instanceof Error ? error.message.slice(0, 300) : 'The scan failed.';
-    if (reauth) {
-      tokenCache.delete(String(watch.mailboxId));
-      await WatchMailbox.updateOne({ _id: watch.mailboxId }, { $set: { status: 'needs_reauth', lastError: message } });
+    if (reauth) tokenCache.delete(String(watch.mailboxId));
+    // Gmail turning down one access token does not prove the grant is gone: ask Google for a fresh one before disconnecting.
+    if (error instanceof GmailAccessTokenRejected && !(await grantIsGone(watch.mailboxId, deps.refresh))) {
+      reauth = false;
+      log.add('note', 'Gmail rejected the access token, but Google issued a new one: the mailbox stays connected and the next scan retries.');
     }
+    if (reauth) await markMailboxDisconnected(watch.mailboxId, message).catch((failure: unknown) => log.add('error', `Could not record the disconnection: ${failure instanceof Error ? failure.message : 'unknown error'}`));
     stats.durationMs = nowFn() - started;
     log.add('error', `Scan failed after ${Math.round(stats.durationMs / 1000)}s: ${message}`);
     await ContentWatch.updateOne({ _id: id }, { $set: { lastScanAt: new Date(started), lastScanOk: false, lastScanError: message, lastScanStats: stats, lastScanLog: log.stored }, $unset: { scanLeaseUntil: '', scanProgress: '' } });

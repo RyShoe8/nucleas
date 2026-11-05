@@ -15,6 +15,7 @@ export default function OrganizationSetupCheck({ children }: { children: React.R
       if (
         pathname === '/' ||
         pathname === '/desktop/connect' ||
+        pathname === '/desktop/connection-complete' ||
         pathname?.startsWith('/login') ||
         pathname?.startsWith('/register') ||
         pathname === '/setup-organization' ||

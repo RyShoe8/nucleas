@@ -1,5 +1,6 @@
 'use client';
 
+import { desktopPayload } from '@/lib/os/desktopWindows';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, type ReactNode } from 'react';
 import { initialLayout, windowReducer } from '@/lib/os/windowManager';
 import { loadOsState, saveOsState } from '@/lib/os/persistence';
@@ -108,7 +109,10 @@ export default function WindowManagerProvider({ children, userId }: WindowManage
         }
 
         if (window.nucleasDesktop) {
-            void window.nucleasDesktop.openModule(moduleId, options?.payload).catch(error => console.error('[Desktop] Could not open app', error));
+            void window.nucleasDesktop.openModule(moduleId, desktopPayload(options?.payload)).catch(error => {
+                console.error('[Desktop] Could not open app', error);
+                window.alert(`Nucleas could not open ${mod.title}. ${error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : ''}`.trim());
+            });
             return null;
         }
 
@@ -140,6 +144,11 @@ export default function WindowManagerProvider({ children, userId }: WindowManage
     }, []);
 
     const close = useCallback((windowId: string) => {
+        // On desktop each app is its own native window, not an entry in this layout.
+        if (window.nucleasDesktop) {
+            window.close();
+            return;
+        }
         popoutRefs.current.get(windowId)?.close();
         popoutRefs.current.delete(windowId);
         dispatch({ type: 'CLOSE', windowId });

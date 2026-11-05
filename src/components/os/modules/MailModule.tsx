@@ -61,6 +61,15 @@ export default function MailModule() {
         setHasMore(res.data.threads.length >= PAGE);
     };
 
+    // Google sign-in happens in the browser: show the result when the person comes back. Only while there is
+    // a mailbox to connect, so returning to the window never disturbs mail being read.
+    const awaitingSignIn = !accounts?.length || accounts.some((a) => a.needsReauth);
+    useEffect(() => {
+        if (!awaitingSignIn) return;
+        window.addEventListener('focus', refresh);
+        return () => window.removeEventListener('focus', refresh);
+    }, [awaitingSignIn, refresh]);
+
     // Accounts and counts, and the conversation list: fetched inside the effects, refetched when `tick` changes.
     useEffect(() => {
         let cancelled = false;
@@ -141,7 +150,7 @@ export default function MailModule() {
                 {!accounts.length ? (
                     <div className="p-4 text-sm text-text-secondary space-y-2">
                         <p>No mailboxes are connected yet.</p>
-                        {googleConfigured ? <a href="/api/os/mail/google/start" className="inline-block h-8 leading-8 px-3 rounded bg-primary text-white text-[13px]">Connect a Gmail mailbox</a> : <p className="text-amber-400">Google sign-in is not configured on the server.</p>}
+                        {googleConfigured ? <a href="/api/os/mail/google/start" target="_blank" rel="noopener noreferrer" title="Sign in with Google in your browser, then come back here" className="inline-block h-8 leading-8 px-3 rounded bg-primary text-white text-[13px]">Connect a Gmail mailbox</a> : <p className="text-amber-400">Google sign-in is not configured on the server.</p>}
                     </div>
                 ) : (
                     <div className="flex-1 overflow-y-auto">

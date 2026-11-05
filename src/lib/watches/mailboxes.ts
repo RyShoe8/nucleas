@@ -7,7 +7,7 @@ import { sealSecret } from '@/lib/security/secretBox';
 import { GmailApi } from '@/lib/mail/gmailClient';
 import { ALLOWED_CALLBACK_HOSTS } from '@/lib/integrations/google/googleOAuth';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
-import { watchMailboxPurpose } from './runWatch';
+import { watchGoogleCredentials, watchMailboxPurpose } from './mailboxHealth';
 import { canUseWatches, WATCHES_FORBIDDEN } from './access';
 
 /**
@@ -50,12 +50,7 @@ export async function verifyWatchState(token: string): Promise<{ userId: string 
   }
 }
 
-export function googleCredentials() {
-  const clientId = process.env.GOOGLE_MAIL_CLIENT_ID?.trim() || process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_MAIL_CLIENT_SECRET?.trim() || process.env.GOOGLE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) throw new Error('Google sign-in is not configured.');
-  return { clientId, clientSecret };
-}
+export const googleCredentials = watchGoogleCredentials;
 
 export function buildWatchAuthUrl(options: { clientId: string; redirectUri: string; state: string; loginHint?: string }): string {
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
@@ -101,7 +96,7 @@ export async function completeWatchMailbox(viewer: CompanyViewer, input: { code:
   if (!emailAddress) return { ok: false, error: `Could not read the mailbox address from Google${reason ? ` (${reason})` : ''}.` };
   await WatchMailbox.updateOne(
     { organizationId: viewer.organizationId, emailAddress },
-    { $set: { refreshTokenSealed: sealSecret(watchMailboxPurpose(emailAddress), tokens.refresh_token), status: 'connected', connectedByUserId: new Types.ObjectId(viewer.userId) }, $unset: { lastError: '' } },
+    { $set: { refreshTokenSealed: sealSecret(watchMailboxPurpose(emailAddress), tokens.refresh_token), status: 'connected', connectedByUserId: new Types.ObjectId(viewer.userId), connectedAt: new Date(), lastTokenCheckAt: new Date() }, $unset: { lastError: '', disconnectedAt: '', reauthNotifiedAt: '' } },
     { upsert: true }
   );
   return { ok: true, emailAddress };

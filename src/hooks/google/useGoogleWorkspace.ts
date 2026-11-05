@@ -84,7 +84,9 @@ export function useGoogleWorkspace(
       const connected = status.connected || (await refreshStatus());
       if (connected) return true;
       saveGoogleWorkspacePendingAction(pending);
-      window.location.href = buildGoogleConnectUrl(window.location.href);
+      // The desktop app cannot show Google's sign-in, so it continues in the browser.
+      if (window.nucleasDesktop) window.open(buildGoogleConnectUrl(), '_blank');
+      else window.location.href = buildGoogleConnectUrl(window.location.href);
       return false;
     },
     [refreshStatus, status.connected]

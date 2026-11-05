@@ -1,3 +1,4 @@
+import { completeDesktopConnection } from '@/lib/integrations/desktopConnection';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { googleIntegrationRedirectUri, verifyGoogleIntegrationState } from '@/lib/integrations/google/googleOAuth';
@@ -17,22 +18,23 @@ export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const state = await verifyGoogleIntegrationState(params.get('state') ?? '');
   if (!state || state.userId !== viewer.userId) return backToOs(request, { integration_error: 'Sign-in expired. Please try again.' });
-  if (params.get('error')) return backToOs(request, { integration_error: 'Google sign-in was cancelled.', company: state.companyId });
+  const finish = (params: Record<string, string>) => state.desktopFlow ? completeDesktopConnection(request, state, params) : backToOs(request, params);
+  if (params.get('error')) return finish( { integration_error: 'Google sign-in was cancelled.', company: state.companyId });
 
   const code = params.get('code');
   const redirectUri = googleIntegrationRedirectUri(request.url);
-  if (!code || !redirectUri) return backToOs(request, { integration_error: 'Missing sign-in code.', company: state.companyId });
+  if (!code || !redirectUri) return finish( { integration_error: 'Missing sign-in code.', company: state.companyId });
 
   try {
     const result = await completeGoogleConnection(viewer, { code, redirectUri });
-    if (!result.ok) return backToOs(request, { integration_error: result.error, company: state.companyId });
+    if (!result.ok) return finish( { integration_error: result.error, company: state.companyId });
     const s = result.summary;
-    return backToOs(request, {
+    return finish( {
       company: state.companyId,
       integration_notice: `Google (${s.accountEmail}): Analytics connected for ${s.analytics.connected.length}, Search Console for ${s.searchConsole.connected.length}, AdSense for ${s.adsense.connected.length} companies, Ad Manager for ${s.admanager.connected.length} companies.${s.admanager.error ? ' Ad Manager: ' + s.admanager.error : ''}${s.adsense.error ? ' AdSense: ' + s.adsense.error : ''}`,
     });
   } catch (error) {
     console.error('[os/integrations/google] callback failed', error instanceof Error ? error.message : 'unknown');
-    return backToOs(request, { integration_error: 'Connecting Google failed. Please try again.', company: state.companyId });
+    return finish( { integration_error: 'Connecting Google failed. Please try again.', company: state.companyId });
   }
 }

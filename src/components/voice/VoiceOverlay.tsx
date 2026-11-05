@@ -70,7 +70,7 @@ export default function VoiceOverlay() {
                 onPatchSlots={intentCtx.patchPendingSlots}
             />
             <VoiceButton />
-            {voice.enabled && (
+            {voice.enabled && voice.wakeWordSupported && (
                 <button
                     type="button"
                     onClick={voice.toggleWakeWord}

@@ -47,6 +47,8 @@ function openSizedPopout(
   ].join(',');
 
   const popup = window.open(url, windowName, features);
+  // The desktop app opens this in the browser and hands back no window: that is success, not a blocked popup.
+  if (window.nucleasDesktop) return { opened: true, blocked: false };
   if (!popup) {
     return { opened: false, blocked: true };
   }

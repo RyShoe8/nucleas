@@ -1,6 +1,7 @@
 'use client';
 
 import { visibleInterval } from '@/lib/os/visibleInterval';
+import { askText } from '@/lib/os/askText';
 import { useEffect, useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import MarketingPlanEditor from './MarketingPlanEditor';
@@ -631,13 +632,13 @@ function OpportunityTracker({ job, onChange }: { job: JobView; onChange: (j: Job
     const update = async (opportunity: LinkOpportunityView, status: LinkOpportunityStatus) => {
         let liveLinkUrl: string | undefined;
         if ((status === 'submitted' || status === 'live') && !opportunity.liveLinkUrl) {
-            const entered = window.prompt(status === 'submitted' ? 'Page URL (optional). Leave blank to mark submitted without link verification:' : 'Paste the live page URL so Nucleas can verify the link:');
+            const entered = await askText(status === 'submitted' ? 'Page URL (optional). Leave blank to mark submitted without link verification:' : 'Paste the live page URL so Nucleas can verify the link:');
             if (entered === null || (status === 'live' && !entered.trim())) return;
             liveLinkUrl = entered.trim() || undefined;
         }
         let note: string | undefined;
         if (status === 'rejected' || status === 'saved' || status === 'submission_rejected') {
-            const entered = window.prompt(status === 'submission_rejected'
+            const entered = await askText(status === 'submission_rejected'
                 ? 'Only mark this rejected if the destination declined your submission. Optional note (Cancel keeps it submitted):'
                 : 'Optional note — Nucleas will use this feedback in future recommendations:');
             if (entered === null) return;

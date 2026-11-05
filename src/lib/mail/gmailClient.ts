@@ -4,6 +4,8 @@ type FetchLike = typeof fetch;
 
 /** The Google grant was revoked or has expired: the mailbox must be connected again. */
 export class GmailAuthError extends Error {}
+/** Gmail rejected this access token. Usually the grant is gone, but a fresh token can settle it (see runWatch). */
+export class GmailAccessTokenRejected extends GmailAuthError {}
 /** Gmail no longer has history that far back: start over with a fresh sync. */
 export class GmailHistoryExpired extends Error {}
 
@@ -11,7 +13,7 @@ const API = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const TIMEOUT_MS = 20_000;
 
 /** A refresh token → a short-lived access token. `invalid_grant` means the person revoked access or it expired. */
-export async function refreshAccessToken(refreshToken: string, credentials: { clientId: string; clientSecret: string }, fetchImpl: FetchLike = fetch): Promise<{ accessToken: string; expiresInSeconds: number }> {
+export async function refreshAccessToken(refreshToken: string, credentials: { clientId: string; clientSecret: string }, fetchImpl: FetchLike = fetch): Promise<{ accessToken: string; expiresInSeconds: number; refreshToken?: string }> {
   const res = await fetchImpl('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -19,13 +21,17 @@ export async function refreshAccessToken(refreshToken: string, credentials: { cl
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    if (res.status === 400 || res.status === 401) throw new GmailAuthError(body.error === 'invalid_grant' ? 'Google access was revoked or expired.' : `Google refused the sign-in (${body.error ?? res.status}).`);
-    throw new Error(`Google token endpoint returned ${res.status}`);
+    const body = (await res.json().catch(() => ({}))) as { error?: string; error_description?: string };
+    const detail = body.error_description ? ` (${body.error_description.slice(0, 160)})` : '';
+    // Only these mean the person's grant is gone, so only these ask them to reconnect. Anything else, such as a
+    // rotated client secret (invalid_client), is ours to fix and must not disconnect a working mailbox.
+    if (body.error === 'invalid_grant') throw new GmailAuthError(`Google access was revoked or expired${detail}.`);
+    if (body.error === 'unauthorized_client' || body.error === 'admin_policy_enforced') throw new GmailAuthError(`Google refused access (${body.error})${detail}.`);
+    throw new Error(`Google token endpoint returned ${res.status}${body.error ? ` (${body.error})` : ''}${detail}`);
   }
-  const body = (await res.json()) as { access_token?: string; expires_in?: number };
-  if (!body.access_token) throw new GmailAuthError('Google returned no access token.');
-  return { accessToken: body.access_token, expiresInSeconds: body.expires_in ?? 3000 };
+  const body = (await res.json()) as { access_token?: string; expires_in?: number; refresh_token?: string };
+  if (!body.access_token) throw new Error('Google returned no access token.');
+  return { accessToken: body.access_token, expiresInSeconds: body.expires_in ?? 3000, ...(body.refresh_token ? { refreshToken: body.refresh_token } : {}) };
 }
 
 export interface HistoryRecord {
@@ -51,7 +57,7 @@ export class GmailApi {
       ...(init.body ? { body: JSON.stringify(init.body) } : {}),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-    if (res.status === 401) throw new GmailAuthError('Google access was revoked or expired.');
+    if (res.status === 401) throw new GmailAccessTokenRejected('Google access was revoked or expired.');
     if (res.status === 404 && path.startsWith('/history')) throw new GmailHistoryExpired('Gmail history is too old.');
     if (!res.ok) {
       const detail = (await res.json().catch(() => ({}))) as { error?: { message?: string; status?: string } };
