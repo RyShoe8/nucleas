@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
 export const researchStrategy = z.object({
-  family: z.enum(['launch_platform', 'industry_directory', 'social_network', 'association', 'first_party', 'partner_network', 'public_index', 'other']).optional(),
+  family: z.enum(['launch_platform', 'industry_directory', 'social_network', 'association', 'first_party', 'partner_network', 'public_index', 'other']).optional().catch('other'),
   source: z.string().trim().min(1).max(500),
-  rationale: z.string().trim().min(1).max(500),
+  rationale: z.string().trim().max(500).optional().catch(undefined),
   discovery: z.string().trim().min(1).max(800),
   verification: z.string().trim().min(1).max(800),
   pivot: z.string().trim().min(1).max(500),
@@ -19,7 +19,7 @@ export const strategyInstructions = [
 ].join('\n');
 
 export function strategyBrief(strategy: ResearchStrategy) {
-  return [`Start at ${strategy.source}. ${strategy.rationale}`, strategy.discovery, strategy.verification, `If blocked: ${strategy.pivot}`].join('\n');
+  return [`Start at ${strategy.source}.${strategy.rationale ? ' ' + strategy.rationale : ''}`, strategy.discovery, strategy.verification, `If blocked: ${strategy.pivot}`].join('\n');
 }
 
 export async function planResearch(
