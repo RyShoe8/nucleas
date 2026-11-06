@@ -1,3 +1,4 @@
+import { editorialContext } from '@/lib/brandVoice/editorialExamples';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import mongoose, { Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
@@ -558,6 +559,8 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
       expect(card.link).toMatch(/^https:\/\/tailnote\.io\/signature-example\/[a-f0-9]{32}$/);
       const edited = '@brightleaf.example Edited: how did the launch go?';
       expect(await editDelivery(current, card.id, { body: edited })).toMatchObject({ ok: true });
+      expect(await editorialContext(org, companyId)).toContain(edited);
+      expect(await editorialContext(org, new Types.ObjectId())).toBe('');
       const posted: PostInput[] = [];
       const result = await postDeliveryNow(current, card.id, String(userId), { ...deps(), publish: { bluesky: async (_c: string, input: PostInput) => { posted.push(input); return { url: 'https://bsky.app/p/1' }; } } });
       expect(result).toMatchObject({ ok: true });

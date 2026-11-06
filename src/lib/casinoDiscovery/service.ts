@@ -6,7 +6,7 @@ import type { JobRunOutput } from '@/lib/jobs/schema';
 import { casinoResearchSchema, canonicalCasinoDomain, readiness } from './schema';
 import { casinoIntake } from './intake';
 import { PublishDelivery, PublishItem } from '@/lib/models/Publishing';
-import { BrandVoice } from '@/lib/models/BrandVoice';
+import { brandVoiceContext } from '@/lib/brandVoice/service';
 import { askEngine } from '@/lib/ai/engine/ask';
 import { composePost, manualPostText } from '@/lib/publishing/compose';
 import { getCompanyProfile, loadCompanyViewer } from '@/lib/companies/companyProfile';
@@ -45,9 +45,9 @@ async function queueReddit(candidate: {_id:Types.ObjectId;organizationId:Types.O
  if(!parsed.payload.about)throw new Error('The approved listing has no description.');
  const item=await PublishItem.findOneAndUpdate({jobId:candidate.jobId,key:`casino:${candidate.domain ?? String(candidate._id)}`},{$setOnInsert:{organizationId:candidate.organizationId,companyId:candidate.companyId,status:'processed',title:candidate.name,url:siteUrl,facts:{title:candidate.name,description:parsed.payload.about}}},{upsert:true,new:true});
  if(await PublishDelivery.exists({itemId:item!._id,platform:'reddit'}))return;
- const voice=await BrandVoice.findOne({organizationId:candidate.organizationId,companyId:candidate.companyId,status:'approved'}).select('persona').lean();
+ const voice=await brandVoiceContext(candidate.organizationId,candidate.companyId);
  const viewer=await loadCompanyViewer(userId);const profile=viewer?await getCompanyProfile(viewer,String(candidate.companyId)):null;
- const draft=voice?.persona ? await composePost({platform:'reddit',companyName:profile?.name??'The team',persona:voice.persona,strategy:await upstreamContext(candidate.organizationId,candidate.companyId).catch(()=>''),example:'',brief:'Introduce this newly added casino or sports betting site with useful verified features, rewards, eligibility and relevant limitations. Never imply guaranteed winnings or that everyone is eligible. Do not publish; this is manual review copy.',noun:'site',facts:{title:candidate.name,description:parsed.payload.about,extra:[`Type: ${parsed.site_type}`,`Eligibility: ${parsed.eligibility_evidence}`,`Rewards: ${parsed.bonus_terms}`,`Redemption: ${parsed.redemption_terms}`]},link:siteUrl},async({system,user})=>(await askEngine({organizationId:String(candidate.organizationId),userId,need:'write',system,user,maxTokens:1600}))?.text??null).catch(()=>null):null;
+ const draft=voice ? await composePost({platform:'reddit',companyName:profile?.name??'The team',persona:voice,strategy:await upstreamContext(candidate.organizationId,candidate.companyId).catch(()=>''),example:'',brief:'Introduce this newly added casino or sports betting site with useful verified features, rewards, eligibility and relevant limitations. Never imply guaranteed winnings or that everyone is eligible. Do not publish; this is manual review copy.',noun:'site',facts:{title:candidate.name,description:parsed.payload.about,extra:[`Type: ${parsed.site_type}`,`Eligibility: ${parsed.eligibility_evidence}`,`Rewards: ${parsed.bonus_terms}`,`Redemption: ${parsed.redemption_terms}`]},link:siteUrl},async({system,user})=>(await askEngine({organizationId:String(candidate.organizationId),userId,need:'write',system,user,maxTokens:1600}))?.text??null).catch(()=>null):null;
  await PublishDelivery.updateOne({itemId:item!._id,platform:'reddit'},{$setOnInsert:{organizationId:candidate.organizationId,companyId:candidate.companyId,jobId:candidate.jobId,mode:'manual',status:'ready',title:draft?.title??`New on ${profile?.name??'our site'}: ${candidate.name}`,body:draft?.body??`${parsed.payload.about}\n\n${siteUrl}`,link:siteUrl}},{upsert:true});
 }
 export async function decideCandidate(job:{_id:Types.ObjectId;organizationId:Types.ObjectId;companyId:Types.ObjectId},id:string,userId:string,action:'add'|'reject',note:string) {

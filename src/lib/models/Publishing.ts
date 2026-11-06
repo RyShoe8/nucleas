@@ -78,6 +78,7 @@ const deliverySchema = new Schema(
     assets: { type: [assetSchema], default: [] },
     /** Admin records: the form values (field key → value) and the filled form or saved page as a JPEG (base64). */
     values: { type: Schema.Types.Mixed },
+    voiceExample: { before: String, after: String, editedAt: Date },
     valuesReviewed: { type: Boolean, default: false },
     screenshot: { type: String, maxlength: 1_200_000, select: false },
     postedUrl: { type: String, maxlength: 2000 },
@@ -87,6 +88,7 @@ const deliverySchema = new Schema(
   },
   { timestamps: true }
 );
+deliverySchema.index({ organizationId: 1, companyId: 1, 'voiceExample.editedAt': -1 }, { partialFilterExpression: { 'voiceExample.editedAt': { $exists: true } } });
 deliverySchema.index({ itemId: 1, platform: 1 }, { unique: true });
 deliverySchema.index({ jobId: 1, createdAt: -1 });
 deliverySchema.index({ organizationId: 1, status: 1, createdAt: -1 });

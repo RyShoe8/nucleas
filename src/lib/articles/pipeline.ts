@@ -1,6 +1,7 @@
 import 'server-only';
 import { Types } from 'mongoose';
 import { ArticleDraft } from '@/lib/models/ArticleDraft';
+import { editorialContext } from '@/lib/brandVoice/editorialExamples';
 import { BrandVoice } from '@/lib/models/BrandVoice';
 import { upstreamContext } from '@/lib/companies/upstreamContext';
 import { analyzeGenericity, enforceTaboos, extractStyleKit, fidelityRetryIssues, findAiPhrases, measureStyle, plainText, scoreFidelity, styleRulesFromProfile, AI_PHRASES, type StyleProfile } from './style';
@@ -294,7 +295,8 @@ export async function advanceArticle(articleId: string | Types.ObjectId, deps: A
     await doc.save();
     return 'failed';
   }
-  const voice = { ...buildVoiceInputs(voiceDoc), strategy: await upstreamContext(doc.organizationId, doc.companyId).catch(() => '') };
+  const feedback = await editorialContext(doc.organizationId, doc.companyId);
+  const voice = { ...buildVoiceInputs({ ...voiceDoc, persona: [voiceDoc.persona, feedback].filter(Boolean).join('\n\n') }), strategy: await upstreamContext(doc.organizationId, doc.companyId).catch(() => '') };
   doc.voiceRevision = voice.revision;
   const ctx: Ctx = {
     who: { organizationId: String(doc.organizationId), userId: String(doc.createdByUserId) },

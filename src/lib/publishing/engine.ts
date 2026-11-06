@@ -10,7 +10,8 @@ import 'server-only';
 import { Types } from 'mongoose';
 import { Job, JobRun, type JobRunProgressStage } from '@/lib/models/Job';
 import { PublishDelivery, PublishItem } from '@/lib/models/Publishing';
-import { BrandVoice } from '@/lib/models/BrandVoice';
+import { brandVoiceContext } from '@/lib/brandVoice/service';
+import { editorialExample } from '@/lib/brandVoice/editorialExamples';
 import { ContentWatch, WatchItem } from '@/lib/models/Watch';
 import { upstreamContext } from '@/lib/companies/upstreamContext';
 import { valueLines as watchValueLines, watchSettings } from '@/lib/watches/settings';
@@ -207,8 +208,7 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
 // ---------- Drafting ----------
 
 async function approvedPersona(job: JobLike): Promise<string | null> {
-  const voice = await BrandVoice.findOne({ organizationId: job.organizationId, companyId: job.companyId, status: 'approved' }).select('persona').lean<{ persona?: string }>();
-  return voice?.persona?.trim() || null;
+  return (await brandVoiceContext(job.organizationId, job.companyId)) || null;
 }
 
 /** failures: each model that gave no answer and why, so a card can say why it could not be filled. */
@@ -866,7 +866,9 @@ export async function editDelivery(job: { _id: Types.ObjectId; organizationId: T
       if (delivery.values?.[field.key] !== undefined) values[field.key] = delivery.values[field.key];
     }
     for (const field of config.admin.fields) if (field.required && field.type !== 'checkbox' && field.type !== 'file' && !String(values[field.key] ?? '').trim()) return { ok: false, status: 400, error: `${field.label}: this field is required.` };
-    const saved = await PublishDelivery.updateOne({ ...filter, status: 'ready', updatedAt: delivery.updatedAt }, { $set: { values, valuesReviewed: true }, $unset: { screenshot: '', error: '' } });
+    const copy = config.admin.fields.filter(field => /^(title|headline|body|description|caption|notes|summary|copy)$/i.test(field.key) && typeof values[field.key] === 'string');
+    const example = editorialExample(copy.map(field => delivery.values?.[field.key] ?? '').join('\n'), copy.map(field => values[field.key]).join('\n'));
+    const saved = await PublishDelivery.updateOne({ ...filter, status: 'ready', updatedAt: delivery.updatedAt }, { $set: { values, valuesReviewed: true, ...(example ? { voiceExample: example } : {}) }, $unset: { screenshot: '', error: '' } });
     return saved.modifiedCount ? { ok: true } : { ok: false, status: 409, error: 'This card changed. Refresh before editing it again.' };
   }
   const body = change.body?.trim();
@@ -875,8 +877,13 @@ export async function editDelivery(job: { _id: Types.ObjectId; organizationId: T
   if (body !== undefined) set.body = body.slice(0, 40000);
   if (change.title !== undefined) set.title = change.title.trim().slice(0, 300);
   if (!Object.keys(set).length) return { ok: false, status: 400, error: 'Nothing to change.' };
-  const done = await PublishDelivery.updateOne({ ...filter, status: 'ready' }, { $set: set });
-  return done.modifiedCount ? { ok: true } : { ok: false, status: 409, error: 'This post was already handled.' };
+  const delivery = await PublishDelivery.findOne({ ...filter, status: 'ready' }).select('title body updatedAt').lean();
+  if (!delivery) return { ok: false, status: 409, error: 'This post was already handled.' };
+  const before = [delivery.title, delivery.body].filter(Boolean).join('\n');
+  const after = [set.title ?? delivery.title, set.body ?? delivery.body].filter(Boolean).join('\n');
+  const example = editorialExample(before, after);
+  const done = await PublishDelivery.updateOne({ ...filter, status: 'ready', updatedAt: delivery.updatedAt }, { $set: { ...set, ...(example ? { voiceExample: example } : {}) } });
+  return done.matchedCount ? { ok: true } : { ok: false, status: 409, error: 'This post changed. Refresh before editing again.' };
 }
 
 /** Post a ready card through the platform's API now (after an account is fixed, or instead of copying by hand). */
