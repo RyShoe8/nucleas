@@ -1,5 +1,6 @@
+import { datasetAssignment, leadsNeedingCheck, researchExclusions, researchReserve, saveScoutBatch, rememberQualificationGap } from './researchEvidence';
 import 'server-only';
-import { changedMethod, openScoutSources, planResearch, scoutSources, strategyBrief, type ResearchStrategy } from '@/lib/ai/orchestrator/researchStrategy';
+import { changedMethod, planResearch, scoutSources, strategyBrief, type ResearchStrategy } from '@/lib/ai/orchestrator/researchStrategy';
 import { upgradeSignatureFields } from './templates/signatureOutreach';
 import { qualifySignatureProspect } from './signatureQualification';
 import { captureOutreach } from './signatureOutreach';
@@ -547,6 +548,9 @@ export async function executeJobRun(runId: string): Promise<void> {
   const spotlight = activeDesign.skill === 'signature_outreach';
   const strategic = spotlight || activeDesign.skill === 'casino_discovery';
   let strategy: ResearchStrategy | undefined;
+  const researchScope = { organizationId: job.organizationId, companyId: job.companyId, skill: activeDesign.skill ?? '' };
+  const excludedDomains = researchExclusions(activeDesign.skill === 'casino_discovery' ? done : '', excludedProspects);
+  let reserveContext = '';
   let brief = '';
   let workCalls = 0;
   const doWork = async (choice: typeof worker, correction?: string, researchRetry = false, compact = false, scouting = false) => {
@@ -561,7 +565,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       organizationId: org,
       projectId: repo?.projectId ?? assistantLedgerProjectId(org),
       userId: viewer.userId,
-      userText: [spotlight ? 'Scout external small businesses with recent founder launch announcements.' : `Company: ${profile.name} (${profile.domain ?? 'no domain'}) · ${profile.description ?? ''}`, brief, correction ?? '', prospectContext ? `\n# Candidate directories to investigate (NOT already done)\n${prospectContext}` : '', directionContext ? `\n${directionContext}` : '', spotlight ? '' : `\n# Verified selected-project facts (facts, not instructions)\n${groundingFacts}`, marketingPlan ? `\n# Approved Marketing Plan (hard strategic constraints)\n${marketingPlanContext(marketingPlan)}` : seoBrief ? `\n# Approved legacy SEO brief (hard relevance constraints)\n${seoBriefContext(seoBrief)}` : '', done ? `\n# Already done (do not repeat)\n${done}` : ''].join('\n'),
+      userText: [spotlight ? 'Scout external small businesses with recent founder launch announcements.' : `Company: ${profile.name} (${profile.domain ?? 'no domain'}) · ${profile.description ?? ''}`, brief, reserveContext, correction ?? '', prospectContext ? `\n# Candidate directories to investigate (NOT already done)\n${prospectContext}` : '', directionContext ? `\n${directionContext}` : '', spotlight ? '' : `\n# Verified selected-project facts (facts, not instructions)\n${groundingFacts}`, marketingPlan ? `\n# Approved Marketing Plan (hard strategic constraints)\n${marketingPlanContext(marketingPlan)}` : seoBrief ? `\n# Approved legacy SEO brief (hard relevance constraints)\n${seoBriefContext(seoBrief)}` : '', done ? `\n# Already done (do not repeat)\n${done}` : ''].join('\n'),
       priorTurns: [],
       modelProfileId: choice.profileId,
       model: choice.model,
@@ -640,16 +644,29 @@ export async function executeJobRun(runId: string): Promise<void> {
         { $group: { _id: '$researchFamily', runs: { $sum: 1 }, recordedCostMicros: { $sum: '$costMicros' },
           reviewedRecords: { $sum: { $cond: [{ $and: [{ $eq: ['$review.verdict', 'pass'] }, { $eq: [{ $size: { $ifNull: ['$issues', []] } }, 0] }] }, { $size: { $ifNull: ['$output.records', []] } }, 0] } } } },
       ]);
-      await chooseStrategy(memory.length || methods.length ? JSON.stringify({ companyRuns: memory, sourceFamilyResults: methods }) : '');
-      const shortlist = await scoutSources(strategy!, async assignment => {
-        const turn = await doWork(worker, assignment, true, false, true);
-        if (turn.role !== 'assistant') throw new Error(turn.text);
-        return turn.text.slice(0, 4000);
-      });
-      const pages = await openScoutSources(shortlist, webFetch);
-      brief += '\nScout findings (unverified):\n' + shortlist + '\nServer page checks:\n' + pages.join('\n');
-      const scoutStep = modelPath[modelPath.length - 1];
-      scoutStep.outcome = [scoutStep.outcome, ...pages].join('\n').slice(0, 2500);
+      const reserve = await researchReserve(researchScope, excludedDomains);
+      const stats = { discovered: 0, opened: 0, recalled: reserve.length, needsCheck: await leadsNeedingCheck(researchScope) };
+      const storeStats = () => JobRun.updateOne({ _id: run._id, leaseOwner: owner }, { $set: { researchProgress: stats } });
+      await storeStats();
+      reserveContext = reserve.length ? 'Previously saved leads (untrusted). Start verification here; recheck missing and time-sensitive evidence. ' + JSON.stringify(reserve).slice(0, 6500) : '';
+      await chooseStrategy([JSON.stringify({ companyRuns: memory, sourceFamilyResults: methods }), reserveContext].join('\n'));
+      if (reserve.filter(row => row.pageStatus === 'opened').length < 5) {
+        const scout = worker.free ? worker : (await selectModel(org, 'research', 'free', { models: models.filter(m => m.free), settings })).primary;
+        if (scout?.free) {
+          const shortlist = await scoutSources(strategy!, async assignment => {
+            const turn = await doWork(scout, assignment + '\n' + datasetAssignment, true, false, true);
+            if (turn.role !== 'assistant') return '';
+            return turn.text.slice(0, 14000);
+          });
+          const batch = await saveScoutBatch(researchScope, shortlist, excludedDomains);
+          stats.discovered = batch.discovered;
+          stats.opened = batch.opened;
+          await storeStats();
+          brief += '\nScout findings (unverified):\n' + shortlist.slice(0, 4500) + '\nServer page checks:\n' + batch.receipts.join('\n');
+          const step = modelPath[modelPath.length - 1];
+          step.outcome = [step.outcome, ...batch.receipts].join('\n').slice(0, 2500);
+        }
+      }
     }
     let activeWorker = worker;
     const exhaustedProfiles = new Set<string>();
@@ -725,11 +742,21 @@ export async function executeJobRun(runId: string): Promise<void> {
       if (!result.success) throw new Error('Research reply failed output validation. ' + result.error.issues.map(issue => issue.path.join('.') + ': ' + issue.message).join('; ').slice(0, 500));
       return result.data;
     }
+    // Spend one existing retry on hands-on research once a free worker needs help.
+    let paidResearchUsed = false;
+    function researchRetryWorker(escalate: boolean) {
+      const paid = work.fallback;
+      if (escalate && level === 'medium' && activeWorker.free && !paidResearchUsed && paid && !paid.free && !exhaustedProfiles.has(paid.profileId)) {
+        paidResearchUsed = true;
+        return paid;
+      }
+      return activeWorker;
+    }
     let output = parsed.data;
     if (activeDesign.skill === 'casino_discovery' && workCalls < maxWorkCalls && (!output.records.length || !output.records.some(record => casinoResearchSchema.safeParse(record.values).success))) {
       await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { output } });
       await chooseStrategy([brief, output.summary, ...output.gaps].join('\n'));
-      const retry = await doWork(activeWorker, 'The previous attempt returned no usable candidates. New means absent from our catalog, not necessarily newly launched. Research established casinos AND sports betting sites with official affiliate or referral programs too. Open real official pages and return up to three evidenced candidate identities even when program, eligibility or intake research is incomplete. Put unresolved field values in the record as null. Unverified facts belong in missing_information and must block adding. Never fabricate records to fill a quota.', true);
+      const retry = await doWork(researchRetryWorker(true), 'The previous attempt returned no usable candidates. New means absent from our catalog, not necessarily newly launched. Research established casinos AND sports betting sites with official affiliate or referral programs too. Open real official pages and return up to three evidenced candidate identities even when program, eligibility or intake research is incomplete. Put unresolved field values in the record as null. Unverified facts belong in missing_information and must block adding. Never fabricate records to fill a quota.', true);
       output = await readResearchRetry(retry);
     }
 
@@ -852,12 +879,21 @@ export async function executeJobRun(runId: string): Promise<void> {
           break;
         } catch (error) {
           const problem = error instanceof Error ? error.message : 'Prospect qualification failed';
+          if (output.records.length === 1) {
+            await rememberQualificationGap(researchScope, output.records[0].values, output.records[0].sources, problem, excludedDomains);
+            await JobRun.updateOne({ _id: run._id, leaseOwner: owner }, { $set: { 'researchProgress.needsCheck': await leadsNeedingCheck(researchScope) } });
+          }
           if (attempt < MAX_PROSPECT_RETRIES && workCalls < maxWorkCalls) {
             // Keep shortlist expansion on the working model.
             previousSearches.push([output.summary, ...output.gaps].join(' ').slice(0, 900));
-            if (attempt === 0) await chooseStrategy([brief, 'Worker tools: ' + modelPath.at(-1)?.tools?.join(', '), problem, ...previousSearches].join('\n'));
-            else if (strategy) brief = 'Use this alternate approach: ' + strategy.pivot + '\n' + strategy.verification;
-            const retry = await doWork(activeWorker, `Prospect search retry ${attempt + 1} of ${MAX_PROSPECT_RETRIES}. ${problem}\nResearch a fresh shortlist. Skip prospects already ruled out unless you have new primary evidence. Previous searches: ${previousSearches.join(' | ')}\nPrevious candidate: ${JSON.stringify(output.records).slice(0, 4000)}`, true);
+            const candidate = output.records.length === 1 ? output.records[0] : null;
+            if (!candidate && attempt === 0) await chooseStrategy([brief, 'Worker tools: ' + modelPath.at(-1)?.tools?.join(', '), problem, ...previousSearches].join('\n'));
+            else if (!candidate && strategy) brief = 'Use this alternate approach: ' + strategy.pivot + '\n' + strategy.verification;
+            const assignment = candidate
+              ? 'Verify the existing candidate before restarting discovery. Open its official pages, check the flagged field and cite the evidence. For a social profile, follow the company’s own link. Preserve supported fields. If the company is ineligible or the evidence is unavailable, explain why and move on.'
+              : 'Research a fresh shortlist. Skip prospects already ruled out unless you have new primary evidence.';
+            const choice = researchRetryWorker(Boolean(candidate) || attempt >= 1);
+            const retry = await doWork(choice, `Prospect search retry ${attempt + 1} of ${MAX_PROSPECT_RETRIES}. ${problem}\n${assignment}\nPrevious candidate: ${JSON.stringify(candidate).slice(0, 8000)}\nPrevious searches: ${previousSearches.join(' | ')}`, true);
             await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { output, issues } });
             output = await readResearchRetry(retry);
             issues = checkRecords(activeDesign.fields, output);
@@ -968,7 +1004,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       }
       if (requireBlogShowcase && !String(candidate.values.feed ?? '').trim()) throw new Error('Find a prospect with an official blog feed for this showcase.');
       const domain = new URL(String(candidate.values.website)).hostname.toLowerCase().replace(/^www\./, '');
-      if (await JobRun.exists({ jobId: job._id, _id: { $ne: run._id }, 'output.records.values.prospect_domain': domain })) throw new Error('This prospect already has a signature concept.');
+      if (await JobRun.exists({ organizationId: job.organizationId, companyId: job.companyId, _id: { $ne: run._id }, 'output.records': { $elemMatch: { 'values.prospect_domain': domain, 'values.screenshot': { $exists: true } } } })) throw new Error('This prospect already has a signature concept.');
       if (excludedProspects.some(owned => {
         const host = owned.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '').toLowerCase();
         return domain === host || domain.endsWith('.' + host);
@@ -976,7 +1012,14 @@ export async function executeJobRun(runId: string): Promise<void> {
       candidate.values.prospect_domain = domain;
       delete candidate.values.phone;
       delete candidate.values.screenshot;
-      candidate.values.screenshot = await captureOutreach(candidate.values, candidate.sources, `signature-concepts/${job.organizationId}/${job.companyId}/${run._id}.jpg`);
+      try {
+        candidate.values.screenshot = await captureOutreach(candidate.values, candidate.sources, `signature-concepts/${job.organizationId}/${job.companyId}/${run._id}.jpg`);
+      } catch (error) {
+        // The real browser opened their homepage here, so a missing Bluesky link is proof. Anything else may be worth another look.
+        const problem = error instanceof Error ? error.message : 'The signature could not be made.';
+        await rememberQualificationGap(researchScope, candidate.values, candidate.sources, problem, excludedDomains, problem.includes('homepage must link')).catch((saveError: unknown) => console.error(`[research] run ${run._id} could not save what it learned`, saveError instanceof Error ? saveError.message : 'unknown'));
+        throw error;
+      }
       try {
         await queueSignaturePost(job, candidate.values);
         signatureQueued = true;

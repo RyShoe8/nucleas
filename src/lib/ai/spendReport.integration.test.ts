@@ -80,7 +80,7 @@ describe('organization AI spend', () => {
       { date: '2026-09-12', costMicros: 0, runs: 1 },
     ]);
     expect(spend.bySource.map((s) => [s.label, s.costMicros, s.runs])).toEqual([
-      ['Ask Nucleas', 3_000_000, 2],
+      ['Nucleas', 3_000_000, 2],
       ['Free Chat', 500_000, 1],
       ['Tailnote', 250_000, 2],
     ]);

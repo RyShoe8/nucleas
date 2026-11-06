@@ -101,6 +101,7 @@ const runSchema = new Schema(
     review: { verdict: { type: String, enum: ['pass', 'fail'] }, notes: String, model: String },
     models: { type: [String], default: [] },
     /** Every model call in order with why it was chosen and what it cost (null cost = unknown price). */
+    researchProgress: { type: new Schema({ discovered: Number, opened: Number, recalled: Number, needsCheck: Number }, { _id: false }) },
     researchSkill: String,
     researchFamily: String,
     modelPath: { type: Schema.Types.Mixed, default: [] },

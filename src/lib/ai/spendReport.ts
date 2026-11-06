@@ -116,7 +116,7 @@ export async function getOrgAiSpend(organizationId: string, period: string, now 
   const usage = (g: Group) => ({ costMicros: g.costMicros, runs: g.runs, inputTokens: g.inputTokens, outputTokens: g.outputTokens, unknownTokenRuns: g.unknownTokenRuns });
   const bySource: SpendRow[] = sources.map((s) => {
     const id = String(s._id);
-    if (id === assistant) return { key: id, label: 'Ask Nucleas', detail: 'Portfolio assistant', ...usage(s) };
+    if (id === assistant) return { key: id, label: 'Nucleas', ...usage(s) };
     if (id === freeChat) return { key: id, label: 'Free Chat', detail: 'IDE', ...usage(s) };
     const p = projectById.get(id);
     const company = p?.clientId ? clientName.get(String(p.clientId)) : undefined;

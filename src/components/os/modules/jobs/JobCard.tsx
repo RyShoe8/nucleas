@@ -84,6 +84,7 @@ export interface JobRunView {
     issues: { record: number; field?: string; problem: string }[];
     review: { verdict: 'pass' | 'fail'; notes: string; model: string } | null;
     costMicros: number;
+    researchProgress?: { discovered?: number; opened?: number; recalled?: number; needsCheck?: number };
     modelPath?: ModelStep[];
     costUnknown?: boolean;
     error: string | null;
@@ -556,6 +557,9 @@ function Results({ job, run }: { job: JobView; run: JobRunView }) {
                 <section className={`rounded-lg border p-4 ${run.review.verdict === 'pass' ? 'border-emerald-400/40 bg-emerald-400/5 text-emerald-300' : 'border-amber-400/40 bg-amber-400/5 text-amber-300'}`}><h3 className="mb-2 text-xs font-semibold uppercase tracking-wider">Reviewer · {run.review.model.split('/').pop()}</h3><p className="leading-6">{run.review.notes}</p></section>
             ) : null}
             {run.output?.gaps.length ? <p className="text-text-secondary">Could not find: {run.output.gaps.join('; ')}</p> : null}
+            {run.researchProgress && <section className="rounded-lg border border-border p-4"><h3 className="mb-2 text-xs font-semibold uppercase text-text-secondary">Research dataset</h3>
+                <p>{run.researchProgress.discovered ?? 0} new leads saved · {run.researchProgress.opened ?? 0} readable sites checked · {run.researchProgress.recalled ?? 0} saved leads supplied · {run.researchProgress.needsCheck ?? 0} need one more check</p>
+            </section>}
             <ModelPath run={run} />
 
         </div>

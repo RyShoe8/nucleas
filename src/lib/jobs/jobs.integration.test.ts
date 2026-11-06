@@ -429,6 +429,27 @@ describe('approving and the dry run', () => {
     expect(mocks.chat.mock.calls.some(([input]) => input.forceToolLoop && input.userText.includes('Partner announcements'))).toBe(true);
   });
 
+  it('uses one Medium paid research retry on the existing Spotlight candidate', async () => {
+    const job = await proposed({ ...DESIGN, skill: 'signature_outreach' });
+    await Job.updateOne({ _id: job.id }, { $set: { level: 'medium' } });
+    const free = { model: 'local', profileId: 'a'.repeat(24), free: true };
+    const paid = { model: 'paid-research', profileId: 'b'.repeat(24), free: false };
+    mocks.select.mockResolvedValue({ primary: free, fallback: paid });
+    mocks.chat.mockImplementation(async ({ systemPrompt, userText }) => {
+      let text = GOOD;
+      if (systemPrompt.startsWith('Choose a concrete')) text = JSON.stringify({ source: 'Founders', discovery: 'Find dated launches', rationale: 'Current prospects' });
+      else if (systemPrompt.startsWith('Scout public')) text = 'Scouted founder listings.';
+      else if (userText.includes('Prospect search retry')) text = JSON.stringify({ records: [], summary: 'Unavailable', gaps: [] });
+      return { requestId: 'test', role: 'assistant', text, costMicros: 0 };
+    });
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    const calls = mocks.chat.mock.calls.filter(([input]) => input.model === paid.model);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toMatchObject({ forceToolLoop: true, userText: expect.stringContaining('Verify the existing candidate') });
+    expect(calls[0][0].userText).toContain('Deadlock');
+  });
+
   it('bounds failed discovery and waits for the next scheduled check without delivering dead pages', async () => {
     const job = await proposed({ ...DESIGN, skill: 'link_building', schedule: { kind: 'daily', time: '09:00', timezone: 'UTC' } });
     await Job.updateOne({ _id: job.id }, { $set: { status: 'active', nextRunAt: new Date(Date.now() + 86400000) } });
