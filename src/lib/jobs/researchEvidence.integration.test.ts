@@ -9,7 +9,7 @@ import { homepageFacts, leadRank, leadsNeedingCheck, rememberQualificationGap, R
 
 const scope = { organizationId: new Types.ObjectId(), companyId: new Types.ObjectId(), skill: 'signature_outreach' };
 const report = (...sites: string[]) => JSON.stringify({ candidates: sites.map((site) => ({ name: site, website: `https://${site}/`, source: 'https://listing.com/launches' })) });
-const page = (links: string[], thin = false) => ({ url: 'https://x', title: 'x', thin, links, text: 'x' });
+const page = (links: string[], thin = false, rendered = false) => ({ thin, links, rendered });
 const opener = (pages: Record<string, ReturnType<typeof page> | null>) => async (url: string) => {
   const found = pages[new URL(url).hostname];
   if (!found) throw new Error('blocked');
@@ -60,6 +60,39 @@ describe('saving a research batch', () => {
     await ResearchEvidence.updateOne({ domain: 'leaf.com' }, { $set: { checkedAt: new Date(Date.now() - 2 * 86400000) } });
     await saveScoutBatch(scope, report('leaf.com'), new Set(), opener({}) as never);
     expect(await ResearchEvidence.findOne({ domain: 'leaf.com' }).lean()).toMatchObject({ pageStatus: 'inaccessible', facts: [expect.objectContaining({ field: 'bluesky' })] });
+  });
+
+  it('treats a missing required link as proof only when a real browser looked', async () => {
+    await saveScoutBatch(scope, report('browser.com', 'blocked.com', 'plain.com', 'found.com', 'empty.com'), new Set(), opener({
+      'browser.com': page(['https://site.com/pricing', 'https://site.com/docs', 'https://site.com/login'], false, true),
+      'blocked.com': page(['https://site.com/help'], false, true),
+      'plain.com': page(['https://site.com/pricing', 'https://site.com/docs', 'https://site.com/login'], false, false),
+      'found.com': page(['https://bsky.app/profile/found.com'], false, true),
+      'empty.com': page([], true, true),
+    }) as never);
+    const saved = Object.fromEntries((await ResearchEvidence.find(scope).lean()).map((row) => [row.domain, row]));
+    expect(saved['browser.com']).toMatchObject({ ineligibleReason: 'No Bluesky profile is linked from the official homepage.' });
+    expect(saved['plain.com']?.ineligibleAt).toBeFalsy();
+    expect(saved['blocked.com']?.ineligibleAt).toBeFalsy();
+    expect(saved['empty.com']?.ineligibleAt).toBeFalsy();
+    expect(saved['found.com']?.ineligibleAt).toBeFalsy();
+    expect(saved['found.com']?.facts?.[0]?.method).toContain('real browser');
+  });
+
+  it('clears a finding of ineligible once the link appears, and does not apply it to other jobs', async () => {
+    await saveScoutBatch(scope, report('later.com'), new Set(), opener({ 'later.com': page(['https://site.com/pricing', 'https://site.com/docs', 'https://site.com/login'], false, true) }) as never);
+    await ResearchEvidence.updateOne({ domain: 'later.com' }, { $set: { checkedAt: new Date(Date.now() - 2 * 86400000) } });
+    await saveScoutBatch(scope, report('later.com'), new Set(), opener({ 'later.com': page(['https://bsky.app/profile/later.com'], false, true) }) as never);
+    expect((await ResearchEvidence.findOne({ domain: 'later.com' }).lean())?.ineligibleAt).toBeFalsy();
+    const casinos = { ...scope, skill: 'casino_discovery' };
+    await saveScoutBatch(casinos, report('casino.com'), new Set(), opener({ 'casino.com': page(['https://site.com/pricing', 'https://site.com/docs', 'https://site.com/login'], false, true) }) as never);
+    expect((await ResearchEvidence.findOne({ ...casinos, domain: 'casino.com' }).lean())?.ineligibleAt).toBeFalsy();
+  });
+
+  it('checks every lead in a batch', async () => {
+    const sites = Array.from({ length: 10 }, (_, index) => `s${index}.com`);
+    const pages = Object.fromEntries(sites.map((site) => [site, page(['https://bsky.app/profile/x.com'])]));
+    expect((await saveScoutBatch(scope, report(...sites), new Set(), opener(pages) as never)).opened).toBe(10);
   });
 
   it('skips excluded companies and malformed leads', async () => {

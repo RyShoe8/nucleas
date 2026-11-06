@@ -2,6 +2,8 @@ import { Schema, model, models, type Model, type InferSchemaType, type Types } f
 import { z } from 'zod';
 import { extractJson } from '@/lib/ai/json';
 import { isSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
+import { browserNavigate } from '@/lib/ai/tools/browserClient';
+import { isBrowserWorkerConfigured } from '@/lib/ai/tools/browseRouter';
 import { webFetch } from '@/lib/ai/tools/webFetch';
 import { JobRun } from '@/lib/models/Job';
 
@@ -49,12 +51,12 @@ const FACT_LINKS: { field: string; pattern: RegExp; ownSite?: boolean }[] = [
 ];
 
 /** What a company's own homepage links to, as checked facts. */
-export function homepageFacts(website: string, links: string[], now = new Date()) {
+export function homepageFacts(website: string, links: string[], now = new Date(), method = 'Link found on the official homepage') {
   const own = host(website);
   const onOwnSite = (link: string) => { try { return host(link) === own; } catch { return false; } };
   return FACT_LINKS.flatMap(({ field, pattern, ownSite }) => {
     const value = links.find(link => pattern.test(link) && (!ownSite || onOwnSite(link)));
-    return value ? [{ field, value, source: website, method: 'Link found on the official homepage', checkedAt: now }] : [];
+    return value ? [{ field, value, source: website, method, checkedAt: now }] : [];
   });
 }
 
@@ -88,7 +90,33 @@ export async function researchReserve(scope: Scope, excluded: Set<string>) {
 
 export const datasetAssignment = 'Return only JSON {"candidates":[{"name":"company name","website":"exact public company website","source":"exact discovery page URL"}]}. Supply up to ten distinct candidates, fewer if necessary. Omit unknown websites. A listing URL is not a candidate website.';
 
-export async function saveScoutBatch(scope: Scope, report: string, excluded: Set<string>, open = webFetch) {
+const MIN_LINKS_FOR_PROOF = 3;
+
+export type OpenedLead = { thin: boolean; links: string[]; rendered: boolean };
+
+/** Opens a lead in the real browser, which sees links drawn by JavaScript. Without it, a plain fetch still gives partial evidence. */
+export async function openLead(url: string): Promise<OpenedLead> {
+  if (isBrowserWorkerConfigured()) {
+    // Accuracy matters more than speed here: a slow site gets the browser's full time and a second try.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const page = await browserNavigate(url);
+        return { thin: page.text.trim().length < 200, links: page.links, rendered: true };
+      } catch (error) {
+        console.warn(`[research] browser attempt ${attempt} could not open ${url}`, error instanceof Error ? error.message : 'unknown');
+      }
+    }
+  }
+  const page = await webFetch(url);
+  return { thin: page.thin, links: page.links, rendered: false };
+}
+
+/** A homepage link a job cannot work without, so a real browser not finding it settles the question. */
+const REQUIRED_HOMEPAGE_LINK: Record<string, { field: string; reason: string }> = {
+  signature_outreach: { field: 'bluesky', reason: 'No Bluesky profile is linked from the official homepage.' },
+};
+
+export async function saveScoutBatch(scope: Scope, report: string, excluded: Set<string>, open: (url: string) => Promise<OpenedLead> = openLead) {
   const raw = extractJson(report) as { candidates?: unknown[] } | null;
   const batch = new Map<string, z.infer<typeof lead>>();
   for (const item of Array.isArray(raw?.candidates) ? raw.candidates.slice(0, 20) : []) {
@@ -105,16 +133,23 @@ export async function saveScoutBatch(scope: Scope, report: string, excluded: Set
     const filter = { ...scope, domain };
     const result = await ResearchEvidence.updateOne(filter, { $setOnInsert: { ...filter, ...candidate } }, { upsert: true });
     discovered += result.upsertedCount;
-    if (receipts.length >= 5) continue;
     const fresh = await ResearchEvidence.exists({ ...filter, pageStatus: 'opened', checkedAt: { $gt: new Date(Date.now() - 86400000) } });
     if (fresh) continue;
     const page = await open(candidate.website).catch(() => null);
     const pageStatus = !page ? 'inaccessible' : page.thin ? 'limited' : 'opened';
     const links = (page?.links ?? []).filter(link => /feed|rss|atom|about|team|contact|bsky|affiliate|partner/i.test(link)).slice(0, 10);
     // Only what the page itself showed replaces earlier facts. A page that failed to open says nothing about them.
-    const facts = page ? homepageFacts(candidate.website, page.links ?? []) : [];
-    await ResearchEvidence.updateOne(filter, { $set: { pageStatus, checkedAt: new Date(), website: candidate.website, source: candidate.source,
-      ...(page ? { observedLinks: links, facts } : {}) } });
+    const facts = page ? homepageFacts(candidate.website, page.links ?? [], new Date(), page.rendered ? 'Link found on the official homepage in a real browser' : 'Link found in the official homepage HTML') : [];
+    const required = REQUIRED_HOMEPAGE_LINK[scope.skill];
+    const hasRequired = Boolean(required && facts.some(fact => fact.field === required.field));
+    // A challenge or error page can have text but hardly any links, and says nothing about the real site.
+    const proven = Boolean(required && page?.rendered && pageStatus === 'opened' && !hasRequired && page.links.length >= MIN_LINKS_FOR_PROOF);
+    await ResearchEvidence.updateOne(filter, {
+      $set: { pageStatus, checkedAt: new Date(), website: candidate.website, source: candidate.source,
+        ...(page ? { observedLinks: links, facts } : {}),
+        ...(proven ? { ineligibleReason: required!.reason, ineligibleAt: new Date() } : {}) },
+      ...(hasRequired ? { $unset: { ineligibleReason: '', ineligibleAt: '' } } : {}),
+    });
     if (pageStatus === 'opened') opened++;
     receipts.push(JSON.stringify({ domain, checked: candidate.website, pageStatus, links, facts: facts.map(fact => fact.field) }));
   }
