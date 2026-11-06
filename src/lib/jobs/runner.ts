@@ -1,4 +1,4 @@
-import { datasetAssignment, leadsNeedingCheck, leadsToFinish, openedPages, researchExclusions, researchReserve, saveScoutBatch, saveScreened, rememberQualificationGap } from './researchEvidence';
+import { datasetAssignment, leadBrief, leadsNeedingCheck, leadsToFinish, openedPages, researchExclusions, researchReserve, saveScoutBatch, saveScreened, rememberQualificationGap } from './researchEvidence';
 import 'server-only';
 import { changedMethod, planResearch, scoutSources, strategyBrief, type ResearchStrategy } from '@/lib/ai/orchestrator/researchStrategy';
 import { upgradeSignatureFields } from './templates/signatureOutreach';
@@ -766,6 +766,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     }
     // Spend one existing retry on hands-on research once a free worker needs help.
     let paidResearchUsed = false;
+    let paidRecord = false;
     function researchRetryWorker(escalate: boolean) {
       const paid = work.fallback;
       if (escalate && level === 'medium' && activeWorker.free && !paidResearchUsed && paid && !paid.free && !exhaustedProfiles.has(paid.profileId)) {
@@ -915,7 +916,7 @@ export async function executeJobRun(runId: string): Promise<void> {
             else if (!candidate && strategy) brief = 'Use this alternate approach: ' + strategy.pivot + '\n' + strategy.verification;
             const finish = candidate ? [] : leadsToFinish(researchScope, await researchReserve(researchScope, excludedDomains));
             const assignment = finish.length
-              ? 'Finish verifying these saved leads before looking for new companies, starting with the most complete, and submit the strongest with everything you can verify. Their homepage links were checked by Nucleas; the rest is unverified: ' + JSON.stringify(finish).slice(0, 4000)
+              ? 'Finish verifying these saved leads before looking for new companies, starting with the most complete, and submit the strongest with everything you can verify. Their homepage links were checked by Nucleas; the rest is unverified: ' + JSON.stringify(finish.map(leadBrief)).slice(0, 4000)
               : candidate
               ? 'Verify the existing candidate before restarting discovery. Open its official pages, check the flagged field and cite the evidence. For a social profile, follow the company’s own link. Preserve supported fields. If the company is ineligible or the evidence is unavailable, explain why and move on.'
               : 'Research a fresh shortlist. Skip prospects already ruled out unless you have new primary evidence.';
@@ -925,9 +926,15 @@ export async function executeJobRun(runId: string): Promise<void> {
             await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { output, issues } });
             const reread = await readResearchRetry(retry);
             // An attempt that opened nothing has no evidence, so it cannot replace what an earlier one really found.
-            if (openedPages(retry.toolsUsed)) output = reread;
-            // With the paid retry spent, more attempts that open nothing cannot help, so run the checks once more and stop.
-            else if (paidResearchUsed) attempt = MAX_PROSPECT_RETRIES - 1;
+            // Nor can an empty result replace a candidate, or a free attempt replace what the paid researcher submitted.
+            const opened = openedPages(retry.toolsUsed);
+            if (opened && !(paidRecord && choice.free) && (reread.records.length || !output.records.length)) {
+              output = reread;
+              paidRecord = !choice.free && reread.records.length > 0;
+            }
+            // Once the paid retry is spent and has a record, or free attempts stop opening pages, more of them cannot help.
+            // Run the checks once more and stop. The next run picks the lead up with the exact problem saved.
+            if (paidResearchUsed && (paidRecord || !opened)) attempt = MAX_PROSPECT_RETRIES - 1;
             issues = checkRecords(activeDesign.fields, output);
             continue;
           }

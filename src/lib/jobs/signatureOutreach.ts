@@ -17,11 +17,11 @@ export async function captureOutreach(values: Record<string, unknown>, sources: 
     return pages.get(url)!;
   };
   const [contactPage, homepage, teamPage] = await Promise.all([open(contact.href), open(website.href), open(person.href)]);
-  const teamText = teamPage.text.toLowerCase();
+  const teamText = (teamPage.plainText || teamPage.text).toLowerCase();
   if (host(new URL(teamPage.url)) !== host(website) || ![read('first_name'), read('last_name'), read('role')].every(v => v && teamText.includes(v.toLowerCase()))) throw new Error('The name and role must be visible on the official team page.');
   const feed = read('feed');
   if (feed && host(assertSafePublicHttpsUrl(feed)) !== host(website) && !homepage.links.includes(feed) && !(await officialPublishingHosts(website.href)).has(host(new URL(feed)))) throw new Error('Choose a first-party feed or one linked from the official site.');
-  if (host(new URL(contactPage.url)) !== host(website) || !contactPage.text.toLowerCase().includes(read('email').toLowerCase())) throw new Error('Work email must be publicly listed on the contact page.');
+  if (host(new URL(contactPage.url)) !== host(website) || !(contactPage.plainText || contactPage.text).toLowerCase().includes(read('email').toLowerCase())) throw new Error('Work email must be publicly listed on the contact page.');
   const destination = assertSafePublicHttpsUrl(read('cta_url'));
   if (!sources.some(s => s.replace(/\/$/, '') === destination.href.replace(/\/$/, ''))) throw new Error('Cite the working destination for the secondary CTA.');
   const social = assertSafePublicHttpsUrl(read('social'));

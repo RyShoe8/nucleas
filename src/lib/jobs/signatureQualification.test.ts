@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 const worker = vi.hoisted(() => ({ navigate: vi.fn(), fetch: vi.fn() }));
 vi.mock('@/lib/ai/tools/browserClient', () => ({ browserNavigate: worker.navigate, browserFetch: worker.fetch }));
-import { officialPublishingHosts, prospectQualification, publishingHostsIn, qualifySignatureProspect, teamEvidenceProblem } from './signatureQualification';
+import { officialPublishingHosts, prospectQualification, publishingHostsIn, qualifySignatureProspect, quoteOnPage, teamEvidenceProblem } from './signatureQualification';
 describe('signature prospect qualification', () => {
   const candidate = {
     website: 'https://smallcompany.com', social: 'https://bsky.app/profile/smallcompany.com', team_size: 10,
@@ -65,6 +65,34 @@ describe('signature prospect qualification', () => {
       worker.fetch.mockResolvedValueOnce({ body: '<a href="https://techcrunch.com/story">press</a>' });
       await expect(qualifySignatureProspect({ ...values, growth_source: 'https://techcrunch.com/story' }, sources, [], false)).rejects.toThrow('official site');
     });
+  });
+
+  describe('finding a quote on a page', () => {
+    it('ignores quote marks, dashes, case and spacing', () => {
+      expect(quoteOnPage('We’re a team of 11 — “bootstrapped”  and independent.', "we're a team of 11 - \"bootstrapped\" and independent")).toBe(true);
+    });
+    it('still requires the same words in the same order', () => {
+      expect(quoteOnPage('We are a team of 11 people.', 'We are a team of 12 people.')).toBe(false);
+      expect(quoteOnPage('Launched our new product.', 'Our new product launched.')).toBe(false);
+    });
+    it('matches whole words only', () => {
+      expect(quoteOnPage('a team of 110 people', 'team of 11')).toBe(false);
+    });
+    it('never matches an empty quote', () => {
+      expect(quoteOnPage('anything', '— —')).toBe(false);
+    });
+  });
+
+  it('says which quote failed and where', async () => {
+    worker.navigate.mockImplementation(async (url: string) => ({ url, text: 'markdown', plainText: candidate.growth_quote }));
+    const values = { ...candidate, growth_date: new Date().toISOString().slice(0, 10), person_source: candidate.team_source, contact_source: candidate.team_source, cta_url: 'https://smallcompany.com/buy' };
+    await expect(qualifySignatureProspect(values, [candidate.team_source, candidate.growth_source, 'https://smallcompany.com/buy'], [], false)).rejects.toThrow('The team quote was not found on https://smallcompany.com/team');
+  });
+
+  it('checks quotes against the whole page, not the shortened copy', async () => {
+    worker.navigate.mockImplementation(async (url: string) => ({ url, text: 'shortened', plainText: `${candidate.team_quote} ${candidate.growth_quote}` }));
+    const values = { ...candidate, growth_date: new Date().toISOString().slice(0, 10), person_source: candidate.team_source, contact_source: candidate.team_source, cta_url: 'https://smallcompany.com/buy' };
+    await expect(qualifySignatureProspect(values, [candidate.team_source, candidate.growth_source, 'https://smallcompany.com/buy'], [], false)).resolves.toContain('Opened primary source');
   });
 
   it('names the missing field instead of saying a URL is invalid', async () => {

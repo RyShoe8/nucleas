@@ -37,6 +37,13 @@ export async function officialPublishingHosts(website: string): Promise<Set<stri
     }
 }
 
+/** Whether a page really contains a quote. Words must match in order; quote marks, dashes and formatting differences do not matter. */
+export function quoteOnPage(pageText: string, quote: string): boolean {
+    const words = (text: string) => ` ${text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `;
+    const wanted = words(quote);
+    return wanted.trim().length > 0 && words(pageText).includes(wanted);
+}
+
 /** Code decides this, so a model cannot apply a stricter rule than the job's: anything goes unless the quote itself states more than 25. */
 export function teamEvidenceProblem(quote: string): string | null {
     const stated = [...quote.matchAll(/(?:team of|staff of)\s+(\d[\d,]*)|(\d[\d,]*)\s*\+?\s*(?:-\s*person|person|people team|employees|staff|team members|teammates|people on)\b/gi)]
@@ -84,11 +91,10 @@ export async function qualifySignatureProspect(values: Record<string, unknown>, 
     const pages = await Promise.all(urls.map(async url => {
         const page = await browserNavigate(url);
         if (!isOfficial(page.url)) throw new Error('Primary evidence redirected outside the prospect website.');
-        return { url, text: page.text };
+        return { url, text: page.text, whole: page.plainText || page.text };
     }));
-    const normalize = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim();
-    for (const [url, quote] of [[candidate.team_source, candidate.team_quote], [candidate.growth_source, candidate.growth_quote]]) {
-        if (!normalize(pages.find(page => page.url === url)?.text ?? '').includes(normalize(quote))) throw new Error('The quoted primary evidence was not found on the cited page. Research another candidate.');
+    for (const [label, url, quote] of [['team', candidate.team_source, candidate.team_quote], ['growth', candidate.growth_source, candidate.growth_quote]]) {
+        if (!quoteOnPage(pages.find(page => page.url === url)?.whole ?? '', quote)) throw new Error(`The ${label} quote was not found on ${url}. Copy it exactly as the page shows it, or cite the page it is on. Quote given: "${quote.slice(0, 200)}"`);
     }
     return pages.map(page => `Opened primary source: ${page.url}\n${page.text.slice(0, 6500)}`).join('\n\n');
 }

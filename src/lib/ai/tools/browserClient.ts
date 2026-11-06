@@ -11,7 +11,19 @@ export type BrowserNavigateResult = {
   images: string[];
   /** Public HTTPS links found in rendered anchors. */
   links: string[];
+  /** The page's whole text with no markdown or length cap, for checking what a page really says. Not for sending to a model. */
+  plainText: string;
 };
+
+/** A page's readable text from its HTML, keeping email addresses that only appear in mailto links. */
+export function plainPageText(html: string): string {
+  const mail = [...html.matchAll(/href=["']mailto:([^"'?]+)/gi)].map((match) => match[1]);
+  const text = html
+    .replace(/<(script|style|noscript|template)\b[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&#0?39;|&apos;|&rsquo;|&lsquo;/gi, "'").replace(/&quot;|&ldquo;|&rdquo;/gi, '"').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>');
+  return [text, ...mail].join(' ').replace(/\s+/g, ' ').trim();
+}
 
 function sanitizeHttpsList(raw: unknown, limit: number): string[] {
   if (!Array.isArray(raw)) return [];
@@ -59,7 +71,7 @@ export async function browserNavigate(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${secret}`,
       },
-      body: JSON.stringify({ url: target.toString(), maxChars: 12000 }),
+      body: JSON.stringify({ url: target.toString(), maxChars: 20000 }),
     });
     if (!response.ok) {
       await response.body?.cancel();
@@ -89,6 +101,7 @@ export async function browserNavigate(
       note: 'Rendered via Playwright browser worker.',
       images: sanitizeHttpsList(body.images, 12),
       links: sanitizeHttpsList(body.links, 500),
+      plainText: [typeof body.text === 'string' ? body.text : '', typeof body.html === 'string' ? plainPageText(body.html) : ''].join(' ').trim(),
     };
   } finally {
     clearTimeout(timeout);

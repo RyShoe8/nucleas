@@ -5,7 +5,7 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/ai/tools/webFetch', () => ({ webFetch: vi.fn() }));
 
-import { homepageFacts, leadRank, leadsNeedingCheck, leadsToFinish, openedPages, rememberQualificationGap, ResearchEvidence, researchExclusions, researchReserve, saveScoutBatch, saveScreened } from './researchEvidence';
+import { homepageFacts, leadBrief, leadRank, leadsNeedingCheck, leadsToFinish, openedPages, rememberQualificationGap, ResearchEvidence, researchExclusions, researchReserve, saveScoutBatch, saveScreened } from './researchEvidence';
 
 const scope = { organizationId: new Types.ObjectId(), companyId: new Types.ObjectId(), skill: 'signature_outreach' };
 const report = (...sites: string[]) => JSON.stringify({ candidates: sites.map((site) => ({ name: site, website: `https://${site}/`, source: 'https://listing.com/launches' })) });
@@ -35,6 +35,12 @@ describe('checked facts', () => {
       { field: 'feed', value: 'https://leaf.com/blog/feed/', source: 'https://leaf.com/', method: 'Link found on the official homepage', checkedAt: now },
       { field: 'contact', value: 'https://leaf.com/contact', source: 'https://leaf.com/', method: 'Link found on the official homepage', checkedAt: now },
     ]);
+  });
+
+  it('does not take a marketing page about feeds for a feed', () => {
+    expect(homepageFacts('https://b.com/', ['https://b.com/features/rss', 'https://b.com/docs/feed'])).toEqual([]);
+    expect(homepageFacts('https://b.com/', ['https://b.com/blog/feed/']).map((fact) => fact.field)).toEqual(['feed']);
+    expect(homepageFacts('https://b.com/', ['https://b.com/newsletter.rss']).map((fact) => fact.field)).toEqual(['feed']);
   });
 
   it('does not mistake a post about feeds, or another Bluesky page, for the real thing', () => {
@@ -181,6 +187,10 @@ describe('companies a worker screened', () => {
     expect(await researchReserve(scope, new Set())).toEqual([]);
     await ResearchEvidence.updateOne({ domain: 'deadend.com' }, { $set: { lastTried: new Date(Date.now() - 31 * 86400000) } });
     expect((await researchReserve(scope, new Set())).map((row) => row.domain)).toEqual(['deadend.com']);
+  });
+
+  it('briefs a worker on a lead without the bulk', () => {
+    expect(leadBrief({ name: 'Gila', website: 'https://gila.com/', qualificationGap: 'No feed', facts: [{ field: 'bluesky', value: 'https://bsky.app/profile/gila.com' }] })).toEqual({ name: 'Gila', website: 'https://gila.com/', verifiedLinks: { bluesky: 'https://bsky.app/profile/gila.com' }, lastProblem: 'No feed' });
   });
 
   it('only offers to finish leads that hold the required link', () => {

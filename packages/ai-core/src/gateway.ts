@@ -409,7 +409,7 @@ function parseOrInvalidResponse<T>(parse: () => T): T {
 
 /** Strip common thinking wrappers; keep remaining visible text. */
 export function stripThinkTags(text: string): string {
-  return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  return text.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<\|channel>[\s\S]*?<channel\|>/gi, '').trim();
 }
 
 /** Prefer message content; fall back to reasoning_content for Qwen-style hosts. */

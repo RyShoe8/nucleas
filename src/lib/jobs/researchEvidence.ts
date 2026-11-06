@@ -46,7 +46,7 @@ function allowed(domain: string, exclusions: Set<string>) {
 
 const FACT_LINKS: { field: string; pattern: RegExp; ownSite?: boolean }[] = [
   { field: 'bluesky', pattern: /^https:\/\/bsky\.app\/profile\/[\w.-]+\/?$/i },
-  { field: 'feed', pattern: /(?:\/(?:feed|rss|atom)(?:\.xml)?\/?(?:[?#].*)?$)|(?:\.(?:rss|atom)(?:[?#].*)?$)/i },
+  { field: 'feed', pattern: /^(?!.*\/(?:features?|docs?|help|guides?|blog\/[^/]+-)\/?)(?:.*\/(?:feed|rss|atom)(?:\.xml)?\/?(?:[?#].*)?$|.*\.(?:rss|atom)(?:[?#].*)?$)/i },
   { field: 'contact', pattern: /\/contact(?:-us)?\/?(?:[?#].*)?$/i, ownSite: true },
   { field: 'about', pattern: /\/(?:about(?:-us)?|team)\/?(?:[?#].*)?$/i, ownSite: true },
   { field: 'affiliate', pattern: /affiliate|partners?(?:hip)?(?:\/|$)/i, ownSite: true },
@@ -82,6 +82,11 @@ function countRun(filter: Record<string, unknown>, runId: string) {
 export function leadsToFinish(scope: Pick<Scope, 'skill'>, reserve: { name?: string | null; website?: string | null; qualificationGap?: string | null; facts?: { field?: string | null }[] | null }[]) {
   const required = REQUIRED_HOMEPAGE_LINK[scope.skill];
   return reserve.filter(row => !required || row.facts?.some(fact => fact.field === required.field));
+}
+
+/** What a worker needs to pick up a saved lead, short enough that every lead fits. */
+export function leadBrief(lead: { name?: string | null; website?: string | null; qualificationGap?: string | null; facts?: { field?: string | null; value?: string | null }[] | null }) {
+  return { name: lead.name, website: lead.website, verifiedLinks: Object.fromEntries((lead.facts ?? []).map(fact => [fact.field, fact.value])), lastProblem: lead.qualificationGap ?? undefined };
 }
 
 export async function researchReserve(scope: Scope, excluded: Set<string>) {
