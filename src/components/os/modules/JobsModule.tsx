@@ -1,5 +1,6 @@
 'use client';
 
+import type { ActivityItem } from '@/lib/activity/types-client';
 import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useOsCompanies } from './CompaniesModule';
@@ -29,6 +30,79 @@ const GROUPS: Group[] = [
     { key: 'done', label: 'Done', test: (j) => j.status === 'done' },
     { key: 'failed', label: 'Failed', test: (j) => j.status === 'failed' },
 ];
+
+function attentionKey(job: JobView) {
+    const reasons = [
+        ...(['needs_answers', 'proposed', 'failed'].includes(job.status) ? [job.status] : []),
+        ...job.runs.filter(r => r.status === 'needs_review').map(r => r.id),
+        ...(job.publishing?.ready ?? []).map(item => item.id),
+        ...job.opportunities.filter(o => linkNeedsAction(o.status)).map(o => o.id),
+    ];
+    return reasons.sort().join('|');
+}
+
+function CompanyWork({ jobs, items, names, selected, createdId, onChange }: {
+    jobs: JobView[]; items: ActivityItem[]; names: Map<string, string>; selected: string;
+    createdId: string | null; onChange: (job: JobView) => void;
+}) {
+    // A manual collapse lasts through polling until the company's outstanding actions change.
+    const [choices, setChoices] = useState<Record<string, { signal: string; expanded: boolean }>>({});
+    function expanded(key: string, signal: string, defaultOpen: boolean) {
+        return choices[key]?.signal === signal ? choices[key].expanded : defaultOpen;
+    }
+    function toggle(key: string, signal: string, current: boolean) {
+        setChoices(previous => ({ ...previous, [key]: { signal, expanded: !current } }));
+    }
+    const groups = new Map<string, { name: string; jobs: JobView[]; activity: ActivityItem[] }>();
+    function group(id: string, fallback?: string | null) {
+        const existing = groups.get(id);
+        if (existing) return existing;
+        const next = { name: names.get(id) || fallback || 'Organization', jobs: [] as JobView[], activity: [] as ActivityItem[] };
+        groups.set(id, next);
+        return next;
+    }
+    for (const job of jobs) group(job.companyId, job.companyName).jobs.push(job);
+    for (const item of items) {
+        if (selected === 'all' || selected === item.companyId) group(item.companyId || 'organization', item.companyName).activity.push(item);
+    }
+    if (selected !== 'all') group(selected);
+    const rows = [...groups].map(([id, company]) => {
+        const ordered = company.jobs.map(job => ({ job, signal: attentionKey(job) })).sort((a, b) => Number(Boolean(b.signal)) - Number(Boolean(a.signal)));
+        const attention = ordered.filter(row => row.signal);
+        const activity = company.activity.filter(item => item.group === 'you' || item.group === 'failed');
+        const count = attention.length + activity.length;
+        const signal = [...attention.map(row => row.job.id + row.signal), ...activity.map(item => item.id), ...(ordered.some(row => row.job.id === createdId) ? [createdId] : [])].sort().join('|');
+        return { id, company, ordered, count, signal };
+    }).sort((a, b) => Number(Boolean(b.count)) - Number(Boolean(a.count)) || a.company.name.localeCompare(b.company.name));
+    return <div className="space-y-2">{rows.map(({ id, company, ordered, count, signal }, index) => {
+        const key = 'company-' + id;
+        const isOpen = expanded(key, signal, Boolean(signal) || selected === id);
+        const active = ordered.filter(({ job }) => job.status === 'active' || jobIsBusy(job)).length;
+        return <section key={id}>
+            {count && index === 0 ? <h3 className="ui-kicker mb-2">Needs your attention</h3> : null}
+            {!count && (index === 0 || rows[index - 1].count > 0) ? <h3 className="ui-kicker mb-2">Companies</h3> : null}
+            <button type="button" aria-expanded={isOpen} onClick={() => toggle(key, signal, isOpen)} className="ui-card-interactive flex w-full items-center gap-3 px-3 py-3 text-left">
+                <span aria-hidden="true">{isOpen ? '▾' : '▸'}</span><strong className="min-w-0 flex-1 truncate text-sm">{company.name}</strong>
+                {count > 0 && <span className="text-xs text-amber-300">{count} need attention</span>}
+                <span className="text-xs tabular-nums text-text-secondary">{active} active {active === 1 ? 'job' : 'jobs'}</span>
+            </button>
+            {isOpen && <ul className="ml-3 mt-2 space-y-2 border-l border-border pl-3">
+                {ordered.map(({ job, signal: reason }) => {
+                    const jobKey = 'job-' + job.id;
+                    const jobOpen = expanded(jobKey, reason, Boolean(reason) || job.id === createdId);
+                    return <li key={job.id}>
+                        <button type="button" aria-expanded={jobOpen} onClick={() => toggle(jobKey, reason, jobOpen)} className="ui-card-interactive flex w-full items-center gap-2 px-3 py-2 text-left">
+                            <span aria-hidden="true">{jobOpen ? '▾' : '▸'}</span><span className="min-w-0 flex-1 text-sm">{job.design?.title ?? job.request}</span><JobStatusBadge status={job.status} />
+                        </button>
+                        {jobOpen && <JobCard job={job} onChange={onChange} />}
+                    </li>;
+                })}
+                <ActivityRows items={company.activity} showCompany={false} />
+                {!ordered.length && !company.activity.length && <li className="text-sm text-text-secondary">No jobs yet.</li>}
+            </ul>}
+        </section>;
+    })}</div>;
+}
 
 function NewJob({ onCreated, onCancel, placeholder, initialCompanyId, initialKind, companyLocked = false, onMarketingPlan, onInboxWatch }: {
     onCreated: (j: JobView) => void;
@@ -374,7 +448,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                         No {title === 'Jobs' ? '' : `${title.toLowerCase()} `}jobs yet. Describe work with New job, or ask Nucleas (&ldquo;every day, …&rdquo;, &ldquo;research … and add it to …&rdquo;).
                     </p>
                 ) : null}
-                {GROUPS.map((g) => {
+                {!categories && title === 'Jobs' ? <CompanyWork jobs={inView} items={activity?.items ?? []} names={new Map(companies)} selected={company} createdId={open} onChange={replace} /> : GROUPS.map((g) => {
                     const items = inView.filter((j) => g.test(j) && !GROUPS.slice(0, GROUPS.indexOf(g)).some((earlier) => earlier.test(j)));
                     const activityGroup = g.key === 'you' || g.key === 'working' || g.key === 'set' || g.key === 'failed' ? g.key : null;
                     const others = activityGroup ? activityFor(activity, activityGroup, company, categories) : [];
