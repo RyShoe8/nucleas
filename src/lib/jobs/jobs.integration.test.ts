@@ -8,7 +8,15 @@ vi.mock('./linkProspects', () => ({ linkProspectContext: async () => 'UNVERIFIED
 const mocks = vi.hoisted(() => ({ design: vi.fn(), chat: vi.fn(), browser: vi.fn(), models: vi.fn(), select: vi.fn(), verify: vi.fn() }));
 vi.mock('@/lib/casinoDiscovery/intake', () => ({ casinoIntake: async () => ({ inventory: async () => ({ casinos: [] }) }) }));
 vi.mock('./designer', () => ({ designJob: (...args: unknown[]) => mocks.design(...args) }));
-vi.mock('@/lib/ai/companyChat', () => ({ attemptCompanyCredentialChat: (input: unknown) => mocks.chat(input) }));
+// The gap check has its own mock, so a test about something else sees only the calls it is about.
+const research = vi.hoisted(() => ({ gaps: vi.fn(), pages: vi.fn() }));
+vi.mock('@/lib/ai/companyChat', () => ({
+  attemptCompanyCredentialChat: (input: { systemPrompt?: string }) => (input.systemPrompt?.startsWith('You check research') ? research.gaps(input) : mocks.chat(input)),
+}));
+vi.mock('@/lib/ai/research/pageChecks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/ai/research/pageChecks')>()),
+  checkPages: (...args: unknown[]) => research.pages(...args),
+}));
 vi.mock('@/lib/ai/engine/catalog', () => ({ listAvailableModels: (...args: unknown[]) => mocks.models(...args) }));
 vi.mock('@/lib/ai/engine/select', () => ({
   readEngineSettings: async () => ({ defaultCostLevel: 'low', priceCeilings: { low: 1.5, medium: 5, high: null }, overrides: {} }),
@@ -250,6 +258,82 @@ describe('designing', () => {
   });
 });
 
+beforeEach(() => {
+  research.gaps.mockReset();
+  research.gaps.mockResolvedValue({ requestId: 'gaps', role: 'assistant', text: '{"complete":true}', costMicros: 0 });
+  research.pages.mockReset();
+  research.pages.mockImplementation(async (urls: string[]) => urls.map((url) => ({ url, status: 'opened', title: 'Page', text: 'Page text' })));
+});
+
+describe('the research standard in a run', () => {
+  const run = async () => {
+    const job = await proposed();
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    return JobRun.findById(approved.dryRunId).lean();
+  };
+  const reviewOrWork = (work: () => unknown, reviews: { userText: string }[] = []) => async (input: { systemPrompt: string; userText: string }) => {
+    if (input.systemPrompt.startsWith('You check one run')) {
+      reviews.push(input);
+      return { requestId: 'review', role: 'assistant', text: '{"verdict":"pass","notes":"Sourced."}', costMicros: 0 };
+    }
+    return work();
+  };
+
+  it('opens every link, tells the reviewer what it found, and drops sources that do not exist', async () => {
+    const reviews: { userText: string }[] = [];
+    research.pages.mockImplementation(async (urls: string[]) => urls.map((url) => ({ url, status: url.includes('gone') ? 'gone' : 'opened', title: 'Page', text: 'Excerpt of the page' })));
+    const parsed = JSON.parse(GOOD) as { records: { sources: string[] }[] };
+    parsed.records[0]!.sources.push('https://gone-page.com/review');
+    mocks.chat.mockImplementation(reviewOrWork(() => ({ requestId: 'work', role: 'assistant', text: JSON.stringify(parsed), costMicros: 0, toolsUsed: ['web_fetch'] }), reviews));
+    const saved = await run();
+    expect(saved?.output?.records[0]?.sources).not.toContain('https://gone-page.com/review');
+    expect(saved?.output?.gaps.join(' ')).toContain('https://gone-page.com/review');
+    expect(reviews.at(-1)?.userText).toContain('# Pages Nucleas opened itself');
+    expect(reviews.at(-1)?.userText).toContain('GONE https://gone-page.com/review');
+    expect(saved?.modelPath?.some((step: { note?: string }) => step.note === 'Opened the pages in code')).toBe(true);
+  });
+
+  it('follows up on what is missing, and keeps a better result', async () => {
+    const better = JSON.parse(GOOD) as { summary: string };
+    better.summary = 'Followed up and found more';
+    research.gaps.mockResolvedValueOnce({ requestId: 'gaps', role: 'assistant', text: '{"complete":false,"note":"more evidence","missing":[{"task":"Open the release notes page"}]}', costMicros: 0 });
+    const prompts: string[] = [];
+    mocks.chat.mockImplementation(async (input: { systemPrompt: string; userText: string }) => {
+      if (input.systemPrompt.startsWith('You check one run')) return { requestId: 'review', role: 'assistant', text: '{"verdict":"pass","notes":"Sourced."}', costMicros: 0 };
+      prompts.push(input.userText);
+      return { requestId: 'work', role: 'assistant', text: input.userText.includes('Follow up on this gap') ? JSON.stringify(better) : GOOD, costMicros: 0, toolsUsed: ['web_fetch'] };
+    });
+    const saved = await run();
+    expect(prompts.some((prompt) => prompt.includes('Open the release notes page'))).toBe(true);
+    expect(saved?.output?.summary).toBe('Followed up and found more');
+    expect(research.gaps).toHaveBeenCalledTimes(2);
+    expect(saved?.modelPath?.some((step: { note?: string; outcome?: string }) => step.note === 'Check what is still missing' && step.outcome?.includes('more evidence'))).toBe(true);
+    expect(saved?.modelPath?.some((step: { note?: string }) => step.note === 'Follow up on a gap')).toBe(true);
+  });
+
+  it('keeps what it has when a follow-up opened nothing', async () => {
+    const worse = JSON.parse(GOOD) as { summary: string };
+    worse.summary = 'A guess from memory';
+    research.gaps.mockResolvedValueOnce({ requestId: 'gaps', role: 'assistant', text: '{"complete":false,"missing":[{"task":"Open the release notes page"}]}', costMicros: 0 });
+    mocks.chat.mockImplementation(async (input: { systemPrompt: string; userText: string }) => {
+      if (input.systemPrompt.startsWith('You check one run')) return { requestId: 'review', role: 'assistant', text: '{"verdict":"pass","notes":"Sourced."}', costMicros: 0 };
+      const following = input.userText.includes('Follow up on this gap');
+      return { requestId: 'work', role: 'assistant', text: following ? JSON.stringify(worse) : GOOD, costMicros: 0, toolsUsed: following ? [] : ['web_fetch'] };
+    });
+    const saved = await run();
+    expect(saved?.output?.summary).not.toBe('A guess from memory');
+  });
+
+  it('goes ahead when a gap check cannot be read', async () => {
+    research.gaps.mockResolvedValue({ requestId: 'gaps', role: 'assistant', text: 'not json', costMicros: 0 });
+    mocks.chat.mockImplementation(reviewOrWork(() => ({ requestId: 'work', role: 'assistant', text: GOOD, costMicros: 0, toolsUsed: ['web_fetch'] })));
+    const saved = await run();
+    expect(saved?.status).toBe('needs_review');
+    expect(research.gaps).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('approving and the dry run', () => {
   it('reroutes a timed-out free dry run to another eligible free model', async () => {
     const qwen = { profileId: 'w'.repeat(24), model: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', free: true, label: 'Rogly' };
@@ -273,7 +357,7 @@ describe('approving and the dry run', () => {
     await executeJobRun(approved.dryRunId!);
 
     const run = await JobRun.findById(approved.dryRunId).lean();
-    expect(run).toMatchObject({ status: 'needs_review', models: [qwen.model, gemma.model, 'gpt-6-sol'] });
+    expect(run).toMatchObject({ status: 'needs_review', models: [qwen.model, gemma.model, qwen.model, 'gpt-6-sol'] });
     expect(mocks.models).toHaveBeenLastCalledWith({ force: true });
   });
 
@@ -291,7 +375,7 @@ describe('approving and the dry run', () => {
     const job = await proposed();
     const approved = await approveJob(admin, job.id, { completion: 'review' });
     await executeJobRun(approved.dryRunId!);
-    expect(await JobRun.findById(approved.dryRunId).lean()).toMatchObject({ status: 'needs_review', models: [router.model, openai.model, openai.model] });
+    expect(await JobRun.findById(approved.dryRunId).lean()).toMatchObject({ status: 'needs_review', models: [router.model, openai.model, openai.model, openai.model] });
     expect(mocks.chat.mock.calls.some(([input]) => input.model === sibling.model)).toBe(false);
   });
 
@@ -309,7 +393,7 @@ describe('approving and the dry run', () => {
     const job = await proposed();
     const approved = await approveJob(admin, job.id, { completion: 'review' });
     await executeJobRun(approved.dryRunId!);
-    expect(await JobRun.findById(approved.dryRunId).lean()).toMatchObject({ status: 'needs_review', models: [google.model, emptyOpenai.model, working.model, reviewer.model, working.model], review: { verdict: 'pass' } });
+    expect(await JobRun.findById(approved.dryRunId).lean()).toMatchObject({ status: 'needs_review', models: [google.model, emptyOpenai.model, working.model, working.model, reviewer.model, working.model], review: { verdict: 'pass' } });
   });
 
   it('caps failing review calls and keeps the missing review visible', async () => {
@@ -680,6 +764,44 @@ describe('approving and the dry run', () => {
       delete process.env.NUCLEAS_BROWSER_WORKER_SECRET;
       await ResearchEvidence.deleteMany({});
     }
+  });
+
+  it('lets a paid model rescue link building when the free attempts end with nothing, but never at the Free level', async () => {
+    const free = { profileId: 'f'.repeat(24), model: 'free-worker', free: true, label: 'Rogly' };
+    const paid = { profileId: 'p'.repeat(24), model: 'paid-reviewer', free: false, label: 'OpenAI', blendedPricePer1M: 0.1 };
+    mocks.models.mockResolvedValue([free, paid]);
+    mocks.select.mockImplementation(async (_org: string, need: string, level: string) => ({ primary: need === 'review' && level !== 'free' ? paid : free, fallback: null }));
+    const values = { ...JSON.parse(GOOD).records[0].values, opportunity_url: 'https://directory.example/page', relevance_score: 90,
+      relevance_evidence: 'A directly relevant gaming directory with a visible free submission flow and exact evidence on the page.',
+      strategy_evidence: 'The approved strategy prioritizes games directories that reach this same audience and match the target page.' };
+    const models: string[] = [];
+    mocks.chat.mockImplementation(async (input: { systemPrompt: string; model: string }) => {
+      if (input.systemPrompt.startsWith('You check one run')) return { requestId: 'review', role: 'assistant', text: '{"verdict":"pass","notes":"Sourced."}', costMicros: 0 };
+      models.push(input.model);
+      // The free model keeps naming a dead page; the paid one finds a real one.
+      const found = { ...values, opportunity_url: input.model === paid.model ? 'https://directory.example/real' : 'https://directory.example/dead' };
+      return { requestId: 'work', role: 'assistant', costMicros: 0, toolsUsed: ['web_fetch'], text: JSON.stringify({ records: [{ values: found, sources: [found.opportunity_url] }], summary: `From ${input.model}`, gaps: [] }) };
+    });
+    mocks.verify.mockImplementation(async (input: { url: string }) => (input.url.endsWith('/real') ? { hard: [], soft: [] } : { hard: ['HTTP 404'], soft: [], missing: true }));
+
+    const job = await proposed({ ...DESIGN, skill: 'link_building' });
+    await Job.updateOne({ _id: job.id }, { $set: { level: 'low' } });
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    const run = await JobRun.findById(approved.dryRunId).lean();
+    expect(models[0]).toBe(free.model);
+    expect(models).toContain(paid.model);
+    expect(run?.status).toBe('needs_review');
+    expect(run?.output?.summary).toBe(`From ${paid.model}`);
+
+    models.length = 0;
+    mocks.verify.mockImplementation(async () => ({ hard: ['HTTP 404'], soft: [], missing: true }));
+    const freeJob = await proposed({ ...DESIGN, skill: 'link_building' });
+    await Job.updateOne({ _id: freeJob.id }, { $set: { level: 'free' } });
+    const freeRun = await approveJob(admin, freeJob.id, { completion: 'review' });
+    await executeJobRun(freeRun.dryRunId!);
+    expect(models).not.toContain(paid.model);
+    expect((await JobRun.findById(freeRun.dryRunId).lean())?.status).toBe('failed');
   });
 
   it('bounds failed discovery and waits for the next scheduled check without delivering dead pages', async () => {

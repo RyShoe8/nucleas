@@ -2,6 +2,7 @@ import 'server-only';
 import type { Types } from 'mongoose';
 import { attemptCompanyCredentialChat } from '@/lib/ai/companyChat';
 import { selectModel, type CostLevel } from '@/lib/ai/engine/select';
+import { WHAT_COUNTS_GUIDANCE } from '@/lib/ai/research/standard';
 import { listAvailableModels } from '@/lib/ai/engine/catalog';
 import { buildAssistantTools } from '@/lib/ai/company/companyTools';
 import { extractJson } from '@/lib/ai/json';
@@ -44,6 +45,9 @@ export function designerPrompt(today: string): string {
     '1. Investigate before asking. Use the tools: repo_search / repo_read / repo_history to learn how the company stores and serves the data the job touches (database models, admin routes, data files) and how it is written; company tools for metrics and recent changes; web_search / web_fetch to learn how this kind of work is done well today and what the rules are (platform terms, search-engine guidelines).',
     '2. Ask the person only what you cannot determine or must not decide for them: an ambiguous term, a business choice, which account to use, a trade-off. Every question explains why you ask, offers concrete options, and names the one you recommend. Never ask what the investigation answered.',
     '3. Return a complete design. Instructions must stand alone: each run should know exactly what to produce, how many records, how to avoid repeating earlier work, and what to do when something cannot be verified.',
+    '',
+    '# What counts',
+    `Set whatCounts when the job finds or lists things: ${WHAT_COUNTS_GUIDANCE}`,
     '',
     '# Delivering results — choose the LOWEST that works, in this order',
     '- nucleas: results kept in Nucleas (briefs, tables). Needs no access. Use whenever a person only needs the information.',

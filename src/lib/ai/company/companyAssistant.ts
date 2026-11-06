@@ -16,7 +16,8 @@ import { renderAttachments } from '@/lib/ai/attachments/extract';
 import { withActionTools } from './actionTools';
 import { isFreeProfile, routeDirectRequest, type RouteDecision } from './directRouter';
 import { requestNeedsJob } from '@/lib/ai/orchestrator/responseRouting';
-import { emptyEvidence, finishEvidence, mergeEvidence, type AnswerEvidence } from '@/lib/ai/evidence';
+import { emptyEvidence, finishEvidence, linksInText, mergeEvidence, type AnswerEvidence } from '@/lib/ai/evidence';
+import { addChecksToEvidence, checkAnswerLinks } from '@/lib/ai/research/pageChecks';
 import type { ExtraToolSet } from '@/lib/ai/tools/runToolLoop';
 import { readEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
 
@@ -191,6 +192,15 @@ export async function askAssistant(
   const role = turn.role === 'status' ? 'status' : 'assistant';
   const gathered = emptyEvidence();
   mergeEvidence(gathered, (turn as { evidence?: AnswerEvidence }).evidence);
+  // Direct mode runs one chosen model, but what it links to is checked just the same.
+  if (role === 'assistant' && linksInText(turn.text ?? '').length) {
+    const opened = gathered.sources.filter((source) => source.read).map((source) => source.url);
+    const cleaned = await checkAnswerLinks(turn.text ?? '', opened, [], { signal: input.signal, limit: 15, timeoutMs: 45_000 }).catch(() => null);
+    if (cleaned) {
+      addChecksToEvidence(gathered, cleaned.checks);
+      turn.text = cleaned.text;
+    }
+  }
   const answerEvidence = role === 'assistant' ? finishEvidence(gathered, turn.text ?? '') : undefined;
   const saved = await CompanyAssistantTurn.create({
     organizationId: viewer.organizationId,

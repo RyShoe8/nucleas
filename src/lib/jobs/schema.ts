@@ -84,6 +84,8 @@ export const jobDesignSchema = z.object({
   fields: z.array(jobFieldSchema).min(1).max(30),
   /** What counts as a trustworthy source for this work. */
   sourcePolicy: z.string().max(1500).default('Use reputable, primary sources and cite each one.'),
+  /** What makes a result count, and what only looks like it does. Workers, the gap check and the reviewer all get it. */
+  whatCounts: z.string().transform((text) => text.slice(0, 800)).optional(),
   delivery: z.object({
     method: z.enum(DELIVERY_METHODS).catch('nucleas'),
     /** Where exactly results go and how, in plain words. */

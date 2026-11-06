@@ -8,7 +8,7 @@ vi.mock('@/lib/ai/tools/browserClient', () => ({
   plainPageText: (html: string) => html.replace(/<[^>]+>/g, ' ').trim(),
 }));
 
-import { checkPage, checkPages, describeChecks, describeSizes, linksToCheck, removeLinksTo, siteSizes, sitesIn } from './pageChecks';
+import { addChecksToEvidence, checkAnswerLinks, checkPage, checkPages, describeChecks, describeSizes, linksToCheck, removeLinksTo, siteSizes, sitesIn } from './pageChecks';
 
 const words = 'A full review of the game with plenty to read on the page. '.repeat(6);
 const url = 'https://site.com/review';
@@ -76,6 +76,30 @@ describe('what comes of the checks', () => {
   it('removes links to pages that do not exist and keeps their words', () => {
     const answer = '| [Gamefa](https://gamefa.com/) | [Review](https://gamefa.com/reviews/x) |\n[IGN](https://ign.com/a)';
     expect(removeLinksTo(answer, ['https://gamefa.com/reviews/x/'])).toEqual({ text: '| [Gamefa](https://gamefa.com/) | Review |\n[IGN](https://ign.com/a)', removed: 1 });
+  });
+});
+
+describe('checking the links in a finished answer', () => {
+  it('opens what has not been opened, and removes links to missing pages', async () => {
+    webFetch.mockImplementation(async (address: string) => (address.includes('invented') ? { url: address, title: 'Page not found', text: words, thin: false } : { url: address, title: 'Real', text: words, thin: false }));
+    const answer = 'See [Real](https://real.com/a), [Made up](https://invented.com/a) and [Known](https://known.com/a).';
+    const result = await checkAnswerLinks(answer, ['https://known.com/a'], []);
+    expect(result.text).toBe('See [Real](https://real.com/a), Made up and [Known](https://known.com/a).');
+    expect(result.removed).toBe(1);
+    expect(result.checks.map((check) => check.url).sort()).toEqual(['https://invented.com/a', 'https://real.com/a']);
+    expect(webFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('removes links already known to be missing without opening them again', async () => {
+    const result = await checkAnswerLinks('[Gone](https://gone.com/a)', ['https://gone.com/a'], ['https://gone.com/a']);
+    expect(result).toEqual({ text: 'Gone', removed: 1, checks: [] });
+    expect(webFetch).not.toHaveBeenCalled();
+  });
+
+  it('records the results where the details can show them', () => {
+    const evidence = { sources: [], images: [], data: [] };
+    addChecksToEvidence(evidence, [{ url: 'https://a.com/', status: 'opened', title: 'A', text: 'Body' }, { url: 'https://b.com/', status: 'gone' }, { url: 'https://c.com/', status: 'blocked' }]);
+    expect(evidence.sources).toMatchObject([{ title: 'A', read: true }, { gone: true }, { blocked: true }]);
   });
 });
 

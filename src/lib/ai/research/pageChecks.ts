@@ -1,4 +1,4 @@
-import { linksInText } from '@/lib/ai/evidence';
+import { addSource, linksInText, type AnswerEvidence } from '@/lib/ai/evidence';
 import { sameUrl } from '@/lib/ai/evidenceUrl';
 import { browserFetch, plainPageText } from '@/lib/ai/tools/browserClient';
 import { isSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
@@ -98,6 +98,25 @@ export function removeLinksTo(answer: string, gone: Iterable<string>): { text: s
     return label;
   });
   return { text, removed };
+}
+
+/** Records what was found in an answer's evidence, so its details can show it. */
+export function addChecksToEvidence(evidence: AnswerEvidence, checks: PageCheck[]): void {
+  for (const check of checks) {
+    addSource(evidence, { url: check.url, title: check.title, snippet: check.text, read: check.status === 'opened', gone: check.status === 'gone', blocked: check.status === 'blocked' });
+  }
+}
+
+/**
+ * Opens every link an answer gives that has not been opened yet, and removes links to pages that do not exist. Bounded by
+ * time: an answer is never lost to a slow site, and a link not reached simply stays unchecked.
+ */
+export async function checkAnswerLinks(answer: string, checked: Iterable<string>, gone: Iterable<string>, options: { signal?: AbortSignal; limit?: number; timeoutMs?: number } = {}): Promise<{ text: string; removed: number; checks: PageCheck[] }> {
+  const urls = linksToCheck(answer, checked, options.limit ?? 40);
+  const timeout = AbortSignal.timeout(options.timeoutMs ?? 90_000);
+  const checks = urls.length ? await checkPages(urls, { signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout }) : [];
+  const { text, removed } = removeLinksTo(answer, [...gone, ...checks.filter((check) => check.status === 'gone').map((check) => check.url)]);
+  return { text, removed, checks };
 }
 
 export type SiteSize = { host: string; rank: number | null };
