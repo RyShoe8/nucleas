@@ -5,7 +5,7 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/ai/tools/webFetch', () => ({ webFetch: vi.fn() }));
 
-import { homepageFacts, leadRank, leadsNeedingCheck, openedPages, rememberQualificationGap, ResearchEvidence, researchExclusions, researchReserve, saveScoutBatch, saveScreened } from './researchEvidence';
+import { homepageFacts, leadRank, leadsNeedingCheck, leadsToFinish, openedPages, rememberQualificationGap, ResearchEvidence, researchExclusions, researchReserve, saveScoutBatch, saveScreened } from './researchEvidence';
 
 const scope = { organizationId: new Types.ObjectId(), companyId: new Types.ObjectId(), skill: 'signature_outreach' };
 const report = (...sites: string[]) => JSON.stringify({ candidates: sites.map((site) => ({ name: site, website: `https://${site}/`, source: 'https://listing.com/launches' })) });
@@ -119,6 +119,12 @@ describe('directory links', () => {
     expect(saved[0]?.facts?.map((fact) => fact.field)).toEqual(['bluesky', 'contact', 'about']);
   });
 
+  it('keeps a company that cites its own homepage as the source', async () => {
+    const self = JSON.stringify({ candidates: [{ name: 'Bright Themes', website: 'https://brightthemes.com/', source: 'https://brightthemes.com/' }] });
+    await saveScoutBatch(scope, self, new Set(), (async () => page(['https://bsky.app/profile/brightthemes.com'], false, true)) as never);
+    expect((await ResearchEvidence.find(scope).lean()).map((row) => row.domain)).toEqual(['brightthemes.com']);
+  });
+
   it('drops a link that stays on the directory', async () => {
     await saveScoutBatch(scope, batch('https://go.openalternative.co/postiz'), new Set(), (async () => page(['https://a.com/1', 'https://a.com/2', 'https://a.com/3'], false, true)) as never);
     await saveScoutBatch(scope, batch('https://go.openalternative.co/gone'), new Set(), (async () => { throw new Error('blocked'); }) as never);
@@ -157,9 +163,23 @@ describe('companies a worker screened', () => {
 
   it('can be picked up again by a later run the same day', async () => {
     await saveScreened(scope, [{ name: 'Buttondown', website: 'https://buttondown.com/', checked: [], gap: 'gap' }], new Set(), (async () => found) as never);
-    expect(await researchReserve(scope, new Set())).toEqual([]);
-    await ResearchEvidence.updateOne({ domain: 'buttondown.com' }, { $set: { lastTried: new Date(Date.now() - 2 * 3600000) } });
     expect((await researchReserve(scope, new Set())).map((row) => row.domain)).toEqual(['buttondown.com']);
+  });
+
+  it('rests a lead after three tries, then lets it back after a month', async () => {
+    const values = { company: 'Dead End', website: 'https://deadend.com/' };
+    for (let tries = 0; tries < 3; tries++) await rememberQualificationGap(scope, values, ['https://deadend.com/'], 'Still no feed', new Set());
+    await ResearchEvidence.updateOne({ domain: 'deadend.com' }, { $set: { checkedAt: new Date() } });
+    expect(await researchReserve(scope, new Set())).toEqual([]);
+    await ResearchEvidence.updateOne({ domain: 'deadend.com' }, { $set: { lastTried: new Date(Date.now() - 31 * 86400000) } });
+    expect((await researchReserve(scope, new Set())).map((row) => row.domain)).toEqual(['deadend.com']);
+  });
+
+  it('only offers to finish leads that hold the required link', () => {
+    const withLink = { name: 'Gila', facts: [{ field: 'bluesky' }] };
+    const without = { name: 'Bear', facts: [{ field: 'contact' }] };
+    expect(leadsToFinish(scope, [without, withLink])).toEqual([withLink]);
+    expect(leadsToFinish({ skill: 'casino_discovery' }, [without])).toEqual([without]);
   });
 
   it('only counts a call that really opened pages', () => {

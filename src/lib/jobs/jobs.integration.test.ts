@@ -479,6 +479,8 @@ describe('approving and the dry run', () => {
       expect(saved[0]).toMatchObject({ qualificationGap: 'No growth evidence', pageStatus: 'opened', facts: expect.arrayContaining([expect.objectContaining({ field: 'bluesky' })]) });
       const retry = mocks.chat.mock.calls.map(([input]) => input.userText as string).find((text) => text.includes('Prospect search retry'));
       expect(retry).toContain('Already screened this run and saved, so find others: Buttondown');
+      expect(retry).toContain('Finish verifying these saved leads');
+      expect(retry).toContain('buttondown.com');
       const run = await JobRun.findById(approved.dryRunId).lean();
       expect(run?.researchProgress).toMatchObject({ discovered: 1, opened: 1, needsCheck: 1 });
     } finally {

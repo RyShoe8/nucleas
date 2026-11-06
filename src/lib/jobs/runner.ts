@@ -1,4 +1,4 @@
-import { datasetAssignment, leadsNeedingCheck, openedPages, researchExclusions, researchReserve, saveScoutBatch, saveScreened, rememberQualificationGap } from './researchEvidence';
+import { datasetAssignment, leadsNeedingCheck, leadsToFinish, openedPages, researchExclusions, researchReserve, saveScoutBatch, saveScreened, rememberQualificationGap } from './researchEvidence';
 import 'server-only';
 import { changedMethod, planResearch, scoutSources, strategyBrief, type ResearchStrategy } from '@/lib/ai/orchestrator/researchStrategy';
 import { upgradeSignatureFields } from './templates/signatureOutreach';
@@ -56,6 +56,7 @@ import { runPublishing } from '@/lib/publishing/engine';
 const RUN_MAX_TOKENS = 3000;
 const MAX_WORK_CALLS = 5;
 const MAX_PROSPECT_RETRIES = 3;
+const SUBMIT_STRONGEST = 'Return your strongest candidate with every field you could verify, leaving the rest empty, as long as it has a Bluesky profile linked from its site and a dated growth announcement. Nucleas checks it before anything is made. Never invent a value to fill a field.';
 const MAX_REVIEW_CALLS = 3;
 const COMPACT_RUN_MAX_TOKENS = 1800;
 /** Earlier records shown to a run so repeating jobs do not redo work. */
@@ -412,9 +413,9 @@ export async function executeJobRun(runId: string): Promise<void> {
   if (activeDesign.skill === 'signature_outreach') {
     activeDesign.fields = activeDesign.fields.filter(field => field.key !== 'phone');
     // Jobs saved before posts stopped linking to Tailnote still carry this in their instructions.
-    activeDesign.instructions = activeDesign.instructions.replace(' and inviting them to try https://tailnote.io', '').replace('company Bluesky or Facebook profile', 'company Bluesky profile').replace('Prefer fewer than 15 people, allow slightly larger teams with strong evidence.', 'Any size from a solo founder up to 25 people qualifies.');
+    activeDesign.instructions = activeDesign.instructions.replace(' and inviting them to try https://tailnote.io', '').replace('company Bluesky or Facebook profile', 'company Bluesky profile').replace('Prefer fewer than 15 people, allow slightly larger teams with strong evidence.', 'Any size from a solo founder up to 25 people qualifies.').replace('Return one record only if all evidence exists.', SUBMIT_STRONGEST);
     activeDesign.instructions += '\nScout an external business. Tailnote is the sender, never the prospect. Exclude these owned properties and their subdomains: ' + excludedProspects.join(', ') +
-      '. Do not reuse names, emails, phone numbers or sample logos from Tailnote marketing examples. Research multiple candidates and skip any with evidence gaps. Exclude phone numbers from the signature, even if public or requested by an older saved job. Return no records if none qualifies. Cite exact team, contact, feed and CTA URLs, plus a dated growth announcement. The CTA promotes the prospect. We never email prospects: the only outreach is a public post from Tailnote with the rendered signature attached, tagging the company so they notice it and reply. Write the post to start a conversation about their business: open with something specific and true from their own site, such as the growth announcement, and ask a genuine question they would want to answer. Say plainly that this is a signature concept we made for them unprompted, not something they asked for or use. For a blog showcase, mention that it features their latest article. Leave out tailnote.io and every other link: the post comes from the Tailnote account, and the link can wait until they reply. The only picture is the rendered signature. No hard sell. Because this is public, never state their team size or anything you have not verified.';
+      '. Do not reuse names, emails, phone numbers or sample logos from Tailnote marketing examples. Research multiple candidates and skip any with evidence gaps. Exclude phone numbers from the signature, even if public or requested by an older saved job. Return no records only if no company has both a Bluesky profile linked from its site and a dated growth announcement. Cite exact team, contact, feed and CTA URLs, plus a dated growth announcement. The CTA promotes the prospect. We never email prospects: the only outreach is a public post from Tailnote with the rendered signature attached, tagging the company so they notice it and reply. Write the post to start a conversation about their business: open with something specific and true from their own site, such as the growth announcement, and ask a genuine question they would want to answer. Say plainly that this is a signature concept we made for them unprompted, not something they asked for or use. For a blog showcase, mention that it features their latest article. Leave out tailnote.io and every other link: the post comes from the Tailnote account, and the link can wait until they reply. The only picture is the rendered signature. No hard sell. Because this is public, never state their team size or anything you have not verified.';
   }
 
   const usesMarketingPlan = activeDesign.skill === 'link_building' || activeDesign.skill === 'social_media' || activeDesign.skill === 'ai_citations';
@@ -523,7 +524,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       : '\nThis is a blog showcase. A verified RSS or Atom feed is required.';
   }
   if (activeDesign.skill === 'signature_outreach') {
-    activeDesign.instructions += '\nQUALIFY BEFORE DESIGN: screen a broad pool of external small businesses, then choose only a qualified prospect. Any size from a solo founder or one-person business up to 25 people qualifies. Return numeric team_size (the count the evidence indicates), exact team_source, a verbatim team_quote showing the company is that small, such as a founder saying they run it alone, a stated size like "a small team of 12", or a team page listing, growth_source, growth_quote and growth_date (YYYY-MM-DD within the last year). Growth means hiring, funding, expansion or launch, not routine posts. A solo founder launching a new product or service counts. Only a Bluesky profile linked from the company site qualifies, so skip any company without one. Outreach is on Bluesky only. Start from the rarest requirement, a company Bluesky profile: find companies through their Bluesky profiles or through company sites that link to Bluesky, confirm the site links back, and only then check team and growth. Do not begin from a general software directory. Never reject a company for lacking an exact headcount: give your best count from the evidence and submit it, because Nucleas checks the quote on the page and judges it. Include these exact URLs in sources plus person_source, contact_source, feed and cta_url. Use all required fields in values. If evidence is missing, investigate another candidate. No invented examples or placeholder data.';
+    activeDesign.instructions += '\nQUALIFY BEFORE DESIGN: screen a broad pool of external small businesses, then choose only a qualified prospect. Any size from a solo founder or one-person business up to 25 people qualifies. Return numeric team_size (the count the evidence indicates), exact team_source, a verbatim team_quote showing the company is that small, such as a founder saying they run it alone, a stated size like "a small team of 12", or a team page listing, growth_source, growth_quote and growth_date (YYYY-MM-DD within the last year). Growth means hiring, funding, expansion or launch, not routine posts. A solo founder launching a new product or service counts. Only a Bluesky profile linked from the company site qualifies, so skip any company without one. Outreach is on Bluesky only. Start from the rarest requirement, a company Bluesky profile: find companies through their Bluesky profiles or through company sites that link to Bluesky, confirm the site links back, and only then check team and growth. Do not begin from a general software directory. Never reject a company for lacking an exact headcount: give your best count from the evidence and submit it, because Nucleas checks the quote on the page and judges it. ' + SUBMIT_STRONGEST + ' Do not reject a company yourself over where a feed link sits or how large a logo is: Nucleas tests both. Include these exact URLs in sources plus person_source, contact_source, feed and cta_url. Use all required fields in values. If evidence is missing, investigate another candidate. No invented examples or placeholder data.';
   }
   const tools = await buildAssistantTools(viewer, [profile]);
   const today = new Date().toISOString().slice(0, 10);
@@ -595,6 +596,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     else if (turn.role === 'assistant') {
       const parsed = parseJobOutput(turn.text, activeDesign.skill);
       step.outcome = parsed.success ? stepText(parsed.data.records.length + ' records. ' + parsed.data.summary) : 'Returned a reply that failed format validation.';
+      if (strategic && !openedPages(turn.toolsUsed)) step.outcome = stepText('Opened no pages, so this attempt adds no evidence. ' + step.outcome);
       // What this call found is kept whether or not the run returns a record. A call that opened nothing is only repeating what it was told.
       if (strategic && parsed.success && parsed.data.screened?.length && openedPages(turn.toolsUsed)) {
         try {
@@ -667,7 +669,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       researchStats.recalled = reserve.length;
       researchStats.needsCheck = await leadsNeedingCheck(researchScope);
       await storeResearchStats();
-      reserveContext = reserve.length ? 'Previously saved leads (untrusted). Start verification here; recheck missing and time-sensitive evidence. ' + JSON.stringify(reserve).slice(0, 6500) : '';
+      reserveContext = reserve.length ? 'Previously saved leads (untrusted). Finish the most complete of these before looking for new companies, and recheck missing and time-sensitive evidence. ' + JSON.stringify(reserve).slice(0, 6500) : '';
       await chooseStrategy([JSON.stringify({ companyRuns: memory, sourceFamilyResults: methods }), reserveContext].join('\n'));
       if (reserve.filter(row => row.pageStatus === 'opened').length < 5) {
         const scout = worker.free ? worker : (await selectModel(org, 'research', 'free', { models: models.filter(m => m.free), settings })).primary;
@@ -908,13 +910,19 @@ export async function executeJobRun(runId: string): Promise<void> {
             const candidate = output.records.length === 1 ? output.records[0] : null;
             if (!candidate && attempt === 0) await chooseStrategy([brief, 'Worker tools: ' + modelPath.at(-1)?.tools?.join(', '), problem, ...previousSearches].join('\n'));
             else if (!candidate && strategy) brief = 'Use this alternate approach: ' + strategy.pivot + '\n' + strategy.verification;
-            const assignment = candidate
+            const finish = candidate ? [] : leadsToFinish(researchScope, await researchReserve(researchScope, excludedDomains));
+            const assignment = finish.length
+              ? 'Finish verifying these saved leads before looking for new companies, starting with the most complete, and submit the strongest with everything you can verify. Their homepage links were checked by Nucleas; the rest is unverified: ' + JSON.stringify(finish).slice(0, 4000)
+              : candidate
               ? 'Verify the existing candidate before restarting discovery. Open its official pages, check the flagged field and cite the evidence. For a social profile, follow the company’s own link. Preserve supported fields. If the company is ineligible or the evidence is unavailable, explain why and move on.'
               : 'Research a fresh shortlist. Skip prospects already ruled out unless you have new primary evidence.';
-            const choice = researchRetryWorker(Boolean(candidate) || attempt >= 1);
+            // The one paid retry goes where it can finish something, as soon as there is something to finish.
+            const choice = researchRetryWorker(Boolean(candidate) || finish.length > 0 || attempt >= 1);
             const retry = await doWork(choice, `Prospect search retry ${attempt + 1} of ${MAX_PROSPECT_RETRIES}. ${problem}\n${assignment}\nPrevious candidate: ${JSON.stringify(candidate).slice(0, 8000)}\nPrevious searches: ${previousSearches.join(' | ')}${screenedThisRun.size ? `\nAlready screened this run and saved, so find others: ${[...screenedThisRun].join(', ')}` : ''}`, true);
             await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { output, issues } });
-            output = await readResearchRetry(retry);
+            const reread = await readResearchRetry(retry);
+            // An attempt that opened nothing has no evidence, so it cannot replace what an earlier one really found.
+            if (reread.records.length || openedPages(retry.toolsUsed)) output = reread;
             issues = checkRecords(activeDesign.fields, output);
             continue;
           }

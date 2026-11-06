@@ -15,6 +15,8 @@ const schema = new Schema({
   name: String, website: String, source: String,
   checkedAt: Date, pageStatus: String, observedLinks: [String],
   qualificationGap: String, lastTried: Date,
+  /** How many times a worker has tried this lead, so a dead end is not paid for over and over. */
+  attempts: Number,
   /** Checked facts: what was found, where, when and how. A model's claim is not a fact until code has seen it. */
   facts: [new Schema({ field: String, value: String, source: String, method: String, checkedAt: Date }, { _id: false })],
   /** Set only when a check proved this lead cannot qualify, unlike a page we could not open or have not checked. */
@@ -70,6 +72,14 @@ export function leadsNeedingCheck(scope: Scope) {
   return ResearchEvidence.countDocuments({ ...scope, qualificationGap: { $type: 'string' }, ineligibleAt: null });
 }
 
+const MAX_LEAD_ATTEMPTS = 3;
+
+/** The saved leads worth finishing: those already holding the link the job cannot work without. */
+export function leadsToFinish(scope: Pick<Scope, 'skill'>, reserve: { name?: string | null; website?: string | null; qualificationGap?: string | null; facts?: { field?: string | null }[] | null }[]) {
+  const required = REQUIRED_HOMEPAGE_LINK[scope.skill];
+  return reserve.filter(row => !required || row.facts?.some(fact => fact.field === required.field));
+}
+
 export async function researchReserve(scope: Scope, excluded: Set<string>) {
   if (scope.skill === 'signature_outreach') {
     const used = await JobRun.distinct('output.records.values.prospect_domain', {
@@ -83,7 +93,8 @@ export async function researchReserve(scope: Scope, excluded: Set<string>) {
       { lastTried: { $gte: new Date(Date.now() - 30 * 86400000) } },
       { checkedAt: null, createdAt: { $gte: new Date(Date.now() - 30 * 86400000) } },
     ] }, { $or: [{ ineligibleAt: null }, { ineligibleAt: { $lt: new Date(Date.now() - 30 * 86400000) } }] }],
-    $or: [{ lastTried: null }, { lastTried: { $lt: new Date(Date.now() - 3600000) } }],
+    // A later run, even the same day, picks up saved work. After three tries a lead rests for a month.
+    $or: [{ attempts: null }, { attempts: { $lt: MAX_LEAD_ATTEMPTS } }, { lastTried: { $lt: new Date(Date.now() - 30 * 86400000) } }],
   }).sort({ pageStatus: -1, lastTried: 1, checkedAt: -1 }).limit(30).select('pageStatus name domain website source checkedAt observedLinks qualificationGap facts -_id').lean()
     .then(rows => rows.filter(row => allowed(row.domain, excluded)).sort((a, b) => leadRank(b) - leadRank(a)).slice(0, 5));
 }
@@ -140,7 +151,9 @@ async function checkLead(scope: Scope, candidate: z.infer<typeof lead>, excluded
     page = await open(website).catch(() => null);
   }
   const domain = host(website);
-  if (!allowed(domain, excluded) || (listing && sameSite(domain, host(listing)))) return null;
+  // A company often cites its own homepage as the source. Only a deeper page or another host on the listing's site is the listing itself.
+  const isListing = Boolean(listing && sameSite(domain, host(listing)) && (new URL(website).pathname !== '/' || domain !== host(listing)));
+  if (!allowed(domain, excluded) || isListing) return null;
   const filter = { ...scope, domain };
   const result = await ResearchEvidence.updateOne(filter, { $setOnInsert: { ...filter, name: candidate.name, website, source: candidate.source } }, { upsert: true });
   const pageStatus = !page ? 'inaccessible' : page.thin ? 'limited' : 'opened';
@@ -206,7 +219,7 @@ export async function saveScreened(scope: Scope, screened: { name: string; websi
     if (checked.status === 'opened') opened++;
     if (checked.receipt) receipts.push(checked.receipt);
     names.push(parsed.data.name);
-    await ResearchEvidence.updateOne({ ...scope, domain: checked.domain }, { $set: { lastTried: new Date(), ...(item.gap ? { qualificationGap: item.gap.slice(0, 700) } : {}) } });
+    await ResearchEvidence.updateOne({ ...scope, domain: checked.domain }, { $set: { lastTried: new Date(), ...(item.gap ? { qualificationGap: item.gap.slice(0, 700) } : {}) }, $inc: { attempts: 1 } });
   }
   return { discovered, opened, names, receipts };
 }
@@ -216,5 +229,5 @@ export async function rememberQualificationGap(scope: Scope, values: Record<stri
   if (!parsed.success || !allowed(host(parsed.data.website), excluded)) return;
   const filter = { ...scope, domain: host(parsed.data.website) };
   await ResearchEvidence.updateOne(filter, { $setOnInsert: { ...filter, ...parsed.data },
-    $set: { qualificationGap: gap.slice(0, 700), lastTried: new Date(), ...(ineligible ? { ineligibleReason: gap.slice(0, 700), ineligibleAt: new Date() } : {}) } }, { upsert: true });
+    $set: { qualificationGap: gap.slice(0, 700), lastTried: new Date(), ...(ineligible ? { ineligibleReason: gap.slice(0, 700), ineligibleAt: new Date() } : {}) }, $inc: { attempts: 1 } }, { upsert: true });
 }
