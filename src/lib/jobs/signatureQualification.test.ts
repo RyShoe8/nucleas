@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 const worker = vi.hoisted(() => ({ navigate: vi.fn(), fetch: vi.fn() }));
 vi.mock('@/lib/ai/tools/browserClient', () => ({ browserNavigate: worker.navigate, browserFetch: worker.fetch }));
-import { conceptProblem, dateOnPage, looksLikeLogo, officialPublishingHosts, prospectQualification, publishingHostsIn, qualifySignatureProspect, quoteOnPage, teamEvidenceProblem, tidyPost } from './signatureQualification';
+import { feedEntries, withoutColorGaps, conceptProblem, dateOnPage, looksLikeLogo, officialPublishingHosts, prospectQualification, publishingHostsIn, qualifySignatureProspect, quoteOnPage, teamEvidenceProblem, tidyPost } from './signatureQualification';
 describe('signature prospect qualification', () => {
   const candidate = {
     website: 'https://smallcompany.com', social: 'https://bsky.app/profile/smallcompany.com', team_size: 10,
@@ -175,5 +175,20 @@ describe('signature prospect qualification', () => {
   it('rejects owned companies and missing citations before opening any pages', async () => {
     await expect(qualifySignatureProspect(candidate, [], ['smallcompany.com'], true)).rejects.toThrow('Owned properties');
     await expect(qualifySignatureProspect(candidate, [], [], true)).rejects.toThrow('Cite the exact');
+  });
+});
+
+describe('what Nucleas settles itself', () => {
+  it('drops a note saying colors are missing once they are filled', () => {
+    const gaps = ['Officially stated brand hex colors were not found; both color fields are intentionally empty.', 'The feed has no autodiscovery tag.'];
+    expect(withoutColorGaps(gaps, true)).toEqual(['The feed has no autodiscovery tag.']);
+    expect(withoutColorGaps(gaps, false)).toEqual(gaps);
+  });
+
+  it('counts the articles in a feed, and knows a page is not one', () => {
+    expect(feedEntries('<rss><channel><item></item><item></item></channel></rss>')).toBe(2);
+    expect(feedEntries('<feed xmlns="x"><entry></entry></feed>')).toBe(1);
+    expect(feedEntries('<rss><channel></channel></rss>')).toBe(0);
+    expect(feedEntries('<html><body>Our blog</body></html>')).toBeNull();
   });
 });

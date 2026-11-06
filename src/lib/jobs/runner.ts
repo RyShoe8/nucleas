@@ -2,7 +2,7 @@ import { datasetAssignment, leadBrief, leadsNeedingCheck, leadsToFinish, openedP
 import 'server-only';
 import { changedMethod, planResearch, scoutSources, strategyBrief, type ResearchStrategy } from '@/lib/ai/orchestrator/researchStrategy';
 import { upgradeSignatureFields } from './templates/signatureOutreach';
-import { qualifySignatureProspect, tidyPost } from './signatureQualification';
+import { qualifySignatureProspect, tidyPost, withoutColorGaps } from './signatureQualification';
 import { captureOutreach } from './signatureOutreach';
 import { fillBrandColors } from './brandColors';
 import { leadCheckAssignment, missingEvidence, verifyLeadClaims } from './leadVerification';
@@ -62,7 +62,7 @@ const MAX_WORK_CALLS = 5;
 const SPOTLIGHT_WORK_CALLS = 14;
 const LEADS_CHECKED_PER_RUN = 3;
 /** The reviewer judges the company in front of it. Process and wording are not evidence problems, and a person reviews the post on its card. */
-const SPOTLIGHT_REVIEW_RULES = 'Judge this one candidate: do its evidence and fields hold up? Do not fail it because of how many other companies were screened, or over the wording or punctuation of the post, which a person reviews and edits before anything goes out. Mention any concerns about the post in your notes.';
+const SPOTLIGHT_REVIEW_RULES = 'Judge this one candidate: do its evidence and fields hold up? Do not fail it because of how many other companies were screened, or over the wording or punctuation of the post, which a person reviews and edits before anything goes out. Mention any concerns about the post in your notes. Nucleas has already checked these on the live pages in code, so do not fail the candidate over them: the team and growth quotes, the person, role and email, the homepage link to the Bluesky profile, and that the feed is the company\'s own and holds articles. Whether the blog page itself links to its feed does not matter. Nucleas also sets the brand colors in code, from the official logo, from the colors the company website names when the logo has none, or as quiet neutrals, and colors_source says which. Filled colors are correct even though the worker was told to leave them empty.';
 const MAX_PROSPECT_RETRIES = 3;
 const SUBMIT_STRONGEST = 'Return your strongest candidate with every field you could verify, leaving the rest empty, as long as it has a Bluesky profile linked from its site and a dated growth announcement. Nucleas checks it before anything is made. Never invent a value to fill a field.';
 const MAX_REVIEW_CALLS = 3;
@@ -101,6 +101,14 @@ export function runnerPrompt(design: JobDesign, today: string): string {
     '',
     'Reply with ONLY a JSON object: {"records": [{"values": {"<field key>": value}, "sources": ["https://..."]}], "summary": "what you did and found", "gaps": ["anything you could not find or verify"]}',
   ].join('\n');
+}
+
+/** What Nucleas settles in code before a spotlight is judged: colors from the logo, and punctuation in the post. */
+async function readySpotlightRecord(output: { records: { values: Record<string, unknown> }[]; gaps: string[] }): Promise<void> {
+  const values = output.records[0]!.values;
+  await fillBrandColors(values);
+  output.gaps = withoutColorGaps(output.gaps, Boolean(values.colors_source));
+  if (typeof values.post === 'string') values.post = tidyPost(values.post);
 }
 
 function reviewerPrompt(): string {
@@ -539,7 +547,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       : '\nThis is a blog showcase. A verified RSS or Atom feed is required.';
   }
   if (activeDesign.skill === 'signature_outreach') {
-    activeDesign.instructions += '\nQUALIFY BEFORE DESIGN: screen a broad pool of external small businesses, then choose only a qualified prospect. Any size from a solo founder or one-person business up to 25 people qualifies. Return numeric team_size (the count the evidence indicates), exact team_source, a verbatim team_quote showing the company is that small, such as a founder saying they run it alone, a stated size like "a small team of 12", or a team page listing, growth_source, growth_quote and growth_date (YYYY-MM-DD within the last year). Growth means hiring, funding, expansion or launch, not routine posts. A solo founder launching a new product or service counts. Only a Bluesky profile linked from the company site qualifies, so skip any company without one. Outreach is on Bluesky only. Start from the rarest requirement, a company Bluesky profile: find companies through their Bluesky profiles or through company sites that link to Bluesky, confirm the site links back, and only then check team and growth. Do not begin from a general software directory. Never reject a company for lacking an exact headcount: give your best count from the evidence and submit it, because Nucleas checks the quote on the page and judges it. A hosted blog of the company itself, such as its Substack, counts as its site. Leave brand colors empty unless the site states them: Nucleas reads them from the logo. Write the post as finished text with no brackets or labels. ' + SUBMIT_STRONGEST + ' Do not reject a company yourself over where a feed link sits or how large a logo is: Nucleas tests both. Include these exact URLs in sources plus person_source, contact_source, feed and cta_url. Use all required fields in values. If evidence is missing, investigate another candidate. No invented examples or placeholder data.';
+    activeDesign.instructions += '\nQUALIFY BEFORE DESIGN: screen a broad pool of external small businesses, then choose only a qualified prospect. Any size from a solo founder or one-person business up to 25 people qualifies. Return numeric team_size (the count the evidence indicates), exact team_source, a verbatim team_quote showing the company is that small, such as a founder saying they run it alone, a stated size like "a small team of 12", or a team page listing, growth_source, growth_quote and growth_date (YYYY-MM-DD within the last year). Growth means hiring, funding, expansion or launch, not routine posts. A solo founder launching a new product or service counts. Only a Bluesky profile linked from the company site qualifies, so skip any company without one. Outreach is on Bluesky only. Start from the rarest requirement, a company Bluesky profile: find companies through their Bluesky profiles or through company sites that link to Bluesky, confirm the site links back, and only then check team and growth. Do not begin from a general software directory. Never reject a company for lacking an exact headcount: give your best count from the evidence and submit it, because Nucleas checks the quote on the page and judges it. A hosted blog of the company itself, such as its Substack, counts as its site. Leave brand colors empty unless the site states them: Nucleas reads them from the logo and the website. Write the post as finished text with no brackets or labels. ' + SUBMIT_STRONGEST + ' Do not reject a company yourself over where a feed link sits or how large a logo is: Nucleas tests both. Include these exact URLs in sources plus person_source, contact_source, feed and cta_url. Use all required fields in values. If evidence is missing, investigate another candidate. No invented examples or placeholder data.';
   }
   const tools = await buildAssistantTools(viewer, [profile]);
   const today = new Date().toISOString().slice(0, 10);
@@ -957,7 +965,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       for (let attempt = 0; attempt <= MAX_PROSPECT_RETRIES; attempt++) {
         try {
           if (output.records.length !== 1) throw new Error('Research one qualified prospect from a shortlist of small businesses.');
-          await fillBrandColors(output.records[0].values);
+          await readySpotlightRecord(output);
           issues = checkRecords(activeDesign.fields, output);
           prospectEvidence = await qualifySignatureProspect(output.records[0].values, output.records[0].sources, excludedProspects, requireBlogShowcase);
           break;
@@ -1106,6 +1114,8 @@ export async function executeJobRun(runId: string): Promise<void> {
           issues = checkRecords(activeDesign.fields, output);
           try {
             if (output.records.length !== 1) throw new Error('Exactly one qualified prospect is required.');
+            await readySpotlightRecord(output);
+            issues = checkRecords(activeDesign.fields, output);
             prospectEvidence = await qualifySignatureProspect(output.records[0].values, output.records[0].sources, excludedProspects, requireBlogShowcase);
           } catch (error) {
             issues.push({ record: 0, field: 'qualification', problem: error instanceof Error ? error.message : 'Qualification failed.' });

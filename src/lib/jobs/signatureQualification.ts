@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { browserFetch, browserNavigate } from '@/lib/ai/tools/browserClient';
+import { fetchPublicText } from '@/lib/publishing/fetchPublic';
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 
 export const prospectQualification = z.object({
@@ -76,6 +77,31 @@ export function dateOnPage(pageText: string, iso: string): boolean {
 /** A post's dashes read as machine-written, and most company Voices rule them out. */
 export function tidyPost(post: string): string {
     return post.replace(/\s*[\u2014\u2013]\s*/g, ', ');
+}
+
+/** A worker can no longer say colors are missing once Nucleas has read them from the logo, or the record contradicts itself. */
+export function withoutColorGaps(gaps: string[], colorsFilled: boolean): string[] {
+    return colorsFilled ? gaps.filter(gap => !/\b(?:colou?rs?|hex)\b/i.test(gap)) : gaps;
+}
+
+/** How many articles a feed holds, or null when what came back is not a feed at all. */
+export function feedEntries(text: string): number | null {
+    if (!/<(?:rss|feed|rdf:RDF)[\s>]/i.test(text)) return null;
+    return (text.match(/<(?:item|entry)[\s>]/gi) ?? []).length;
+}
+
+async function feedText(feed: string): Promise<string | null> {
+    try {
+        return (await fetchPublicText(feed, { accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*' })).text;
+    } catch {
+        // Sites often turn away plain requests. The real browser decides before anything counts against the feed.
+    }
+    try {
+        const page = await browserFetch(feed);
+        return page.status >= 200 && page.status < 300 ? page.body : null;
+    } catch {
+        return null;
+    }
 }
 
 type ConceptPage = { links?: string[]; whole: string };
@@ -165,5 +191,11 @@ export async function qualifySignatureProspect(values: Record<string, unknown>, 
         const hosted = official.size ? official : await officialPublishingHosts(candidate.website);
         if (!hosted.has(host(feed))) throw new Error(`The feed ${feed} is not the company's own. Choose a feed on its site, or one its homepage links to.`);
     }
-    return pages.map(page => `Opened primary source: ${page.url}\n${page.text.slice(0, 6500)}`).join('\n\n');
+    const opened = pages.map(page => `Opened primary source: ${page.url}\n${page.text.slice(0, 6500)}`).join('\n\n');
+    if (!feed) return opened;
+    const text = await feedText(feed);
+    if (text === null) return `${opened}\n\nThe feed ${feed} could not be opened just now, which says nothing either way.`;
+    const entries = feedEntries(text);
+    if (!entries) throw new Error(`${feed} is not an RSS or Atom feed with articles in it. Find the address of the blog's real feed.`);
+    return `${opened}\n\nNucleas opened the feed ${feed}: it belongs to the company and holds ${entries} articles.`;
 }
