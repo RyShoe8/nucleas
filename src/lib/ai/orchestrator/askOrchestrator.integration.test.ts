@@ -83,7 +83,8 @@ function reply(text: string, costMicros = 0) {
   return { role: 'assistant', text, costMicros, runId: String(new Types.ObjectId()), requestId: 'r' };
 }
 
-function stageOf(input: ChatInput): 'plan' | 'research' | 'work' | 'review' {
+function stageOf(input: ChatInput): 'plan' | 'research' | 'gaps' | 'work' | 'review' {
+  if (input.systemPrompt.startsWith('You check research')) return 'gaps';
   if (input.systemPrompt.startsWith('You plan answers')) return 'plan';
   if (input.systemPrompt.startsWith('You are a research agent')) return 'research';
   if (input.systemPrompt.startsWith('You review')) return 'review';
@@ -290,10 +291,77 @@ describe('general questions', () => {
 describe('deep research', () => {
   const plan = '{"kind":"answer","scope":"general","deepResearch":{"question":"What bonus offers are top casino affiliates promoting this month?"},"outline":[],"review":false}';
 
+  it('sends workers after what is still missing, and has a stronger model write up the result', async () => {
+    let checks = 0;
+    const followUps: string[] = [];
+    let writerModel = '';
+    chat.mockImplementation(async (input) => {
+      const stage = stageOf(input);
+      if (stage === 'plan') return reply(plan, 1500);
+      if (stage === 'gaps') {
+        checks += 1;
+        if (checks === 1) {
+          expect(input.userText).toContain('Only half the list');
+          return reply('{"complete":false,"note":"the full list","missing":[{"task":"Open the sitemap and list every site"}]}');
+        }
+        expect(input.userText).toContain('Open the sitemap and list every site');
+        expect(input.userText).toContain('The rest of the list');
+        return reply('{"complete":true}');
+      }
+      if (stage === 'research') {
+        expect((input as ChatInput & { maxToolRoundsOverride?: number }).maxToolRoundsOverride).toBeGreaterThan(6);
+        if (input.userText.startsWith('Open the sitemap')) {
+          followUps.push(input.userText);
+          return { ...reply('The rest of the list ([B](https://site-b.com))'), toolsUsed: ['web_fetch'] };
+        }
+        return { ...reply('Only half the list ([A](https://a.example))'), toolsUsed: ['web_search'] };
+      }
+      if (stage === 'work') {
+        writerModel = input.model ?? '';
+        expect(input.userText).toContain('The rest of the list');
+        return reply('Sites: [A](https://site-a.com) and [B](https://site-b.com).');
+      }
+      return reply('{"verdict":"accept"}');
+    });
+    const out = await ask('List the casino affiliates worth watching');
+    expect(followUps).toHaveLength(1);
+    expect(checks).toBe(2);
+    expect(writerModel).not.toBe(ROGLY_MODELS.general);
+    expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'research', 'gaps', 'research', 'gaps', 'work', 'check']);
+    expect(out.stages[3]?.note).toBe('Still missing: the full list');
+    expect(out.stages[4]?.note).toContain('Follow-up: Open the sitemap');
+    expect(out.evidence?.sources.find((source) => source.url.includes('site-b.com'))?.usedFor).toEqual(['Sites: A and B.']);
+  });
+
+  it('accepts a long research question instead of throwing the plan away', async () => {
+    const long = '{"kind":"answer","scope":"general","deepResearch":{"question":"' + 'Find the sites. '.repeat(100) + '"},"outline":[],"review":false}';
+    chat.mockImplementation(async (input) => {
+      const stage = stageOf(input);
+      if (stage === 'plan') return reply(long, 1500);
+      if (stage === 'gaps') return reply('{"complete":true}');
+      return reply('Findings');
+    });
+    const out = await ask('List sites');
+    expect(out.stages.filter((s) => s.stage === 'plan')).toHaveLength(1);
+  });
+
+  it('writes up what it has when a gap check fails', async () => {
+    chat.mockImplementation(async (input) => {
+      const stage = stageOf(input);
+      if (stage === 'plan') return reply(plan, 1500);
+      if (stage === 'gaps') return reply('not json at all');
+      return reply('Findings');
+    });
+    const out = await ask('List sites');
+    expect(out.role).toBe('assistant');
+    expect(out.stages.find((s) => s.stage === 'gaps')?.note).toBe('could not read the check; going ahead');
+  });
+
   it('hands multi-step research to Rogly in the tool loop and gives its findings to the writer', async () => {
     chat.mockImplementation(async (input) => {
       const stage = stageOf(input);
       if (stage === 'plan') return reply(plan, 1500);
+      if (stage === 'gaps') return reply('{"complete":true}');
       if (stage === 'research') {
         expect(input.model).toBe(ROGLY_MODELS.general);
         expect(input.toolProfile).toBe('full');
@@ -307,8 +375,8 @@ describe('deep research', () => {
       throw new Error('review should not run');
     });
     const out = await ask('What are casino affiliates promoting this month?');
-    expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'research', 'work', 'check']);
-    expect(out.stages.find((s) => s.stage === 'research')).toMatchObject({ free: true, note: 'tools: web_search, web_fetch' });
+    expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'research', 'gaps', 'work', 'check']);
+    expect(out.stages.find((s) => s.stage === 'research')).toMatchObject({ free: true, note: '2 web searches, 1 page opened' });
     expect(out.stages.find((s) => s.stage === 'check')?.note).toBe('all numbers traced to data');
   });
 
@@ -526,7 +594,7 @@ describe('jobs from Ask', () => {
     expect(prompts.some((prompt) => prompt.includes('research agent'))).toBe(true);
     expect(steps.some((step) => step.startsWith('Researching with'))).toBe(true);
     expect(answer.stages?.some((stage) => stage.note?.includes('answering in the chat'))).toBe(true);
-    expect(answer.evidence?.sources).toEqual([{ url: 'https://www.ign.com/', title: 'IGN', snippet: 'Reviews', cited: true }, { url: 'https://other.com/', title: 'Other' }]);
+    expect(answer.evidence?.sources).toMatchObject([{ url: 'https://www.ign.com/', title: 'IGN', snippet: 'Reviews', cited: true, usedFor: ['IGN · ign.com'], found: ['Findings: IGN reviews Factorio.'] }, { url: 'https://other.com/', title: 'Other' }]);
     expect(answer.evidence?.images).toEqual([{ imageUrl: 'https://cdn.com/cover.png', title: 'Cover', pageUrl: 'https://www.ign.com/' }]);
   });
 

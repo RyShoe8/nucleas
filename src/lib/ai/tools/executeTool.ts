@@ -344,7 +344,7 @@ export async function executeIdeTool(input: {
     return {
       content: JSON.stringify({ pages }).slice(0, 12000),
       artifacts,
-      evidence: { sources: settled.flatMap((outcome) => (outcome.status === 'fulfilled' ? [{ url: outcome.value.url, title: outcome.value.title ?? outcome.value.url, snippet: outcome.value.text.slice(0, 240) }] : [])) },
+      evidence: { sources: settled.flatMap((outcome) => (outcome.status === 'fulfilled' ? [{ url: outcome.value.url, title: outcome.value.title ?? outcome.value.url, snippet: outcome.value.text.slice(0, 600), read: true }] : [])) },
     };
   }
 
@@ -365,7 +365,7 @@ export async function executeIdeTool(input: {
         suggestReason: routing.reason,
       }).slice(0, 12000),
       artifacts,
-      evidence: { sources: [{ url: result.url, title: result.title ?? result.url, snippet: result.text.slice(0, 240) }] },
+      evidence: { sources: [{ url: result.url, title: result.title ?? result.url, snippet: result.text.slice(0, 600), read: true }] },
     };
   }
 
@@ -387,7 +387,7 @@ export async function executeIdeTool(input: {
       content: JSON.stringify(forModel).slice(0, 12000),
       artifacts,
       evidence: {
-        sources: [{ url: result.url, title: result.title ?? result.url, snippet: result.text.slice(0, 240) }],
+        sources: [{ url: result.url, title: result.title ?? result.url, snippet: result.text.slice(0, 600), read: true }],
         images: result.images.map((imageUrl) => ({ imageUrl, title: result.title ?? 'Image', pageUrl: result.url })),
       },
     };
