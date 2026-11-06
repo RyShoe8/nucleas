@@ -10,8 +10,8 @@ vi.mock('@/lib/ai/companyChat', () => ({ attemptCompanyCredentialChat: (input: C
 const search = vi.fn();
 const checkPages = vi.fn();
 const siteSizes = vi.fn();
-vi.mock('./pageChecks', async (original) => ({
-  ...(await original<typeof import('./pageChecks')>()),
+vi.mock('@/lib/ai/research/pageChecks', async (original) => ({
+  ...(await original<typeof import('@/lib/ai/research/pageChecks')>()),
   checkPages: (...args: unknown[]) => checkPages(...args),
   siteSizes: (...args: unknown[]) => siteSizes(...args),
 }));
