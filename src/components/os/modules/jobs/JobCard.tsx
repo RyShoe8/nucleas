@@ -767,7 +767,7 @@ function SeoBriefEditor({ job }: { job: JobView }) {
  * One job in whatever state it is: questions to answer, a design to approve, a dry run to check,
  * results to review. Refreshes itself while Nucleas is working on it.
  */
-export default function JobCard({ job: initial, compact = false, onChange, onOpenJobs, readyShownAbove = false }: { job: JobView; compact?: boolean; onChange?: (j: JobView) => void; onOpenJobs?: () => void; readyShownAbove?: boolean }) {
+export default function JobCard({ job: initial, compact = false, onChange, onOpenJobs, readyShownAbove = false, headerShownAbove = false }: { job: JobView; compact?: boolean; onChange?: (j: JobView) => void; onOpenJobs?: () => void; readyShownAbove?: boolean; /** The row that opens this card already shows the job's name and status. */ headerShownAbove?: boolean }) {
     const [job, setJob] = useState(initial);
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -809,6 +809,12 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
     const canArchive = ['proposed', 'ready', 'active', 'paused', 'done', 'failed', 'needs_answers'].includes(job.status)
         || (job.status === 'testing' && !job.runs.some((r) => r.status === 'running'));
 
+    const renameButton = d && job.canManage && !compact ? (
+        <button type="button" aria-label="Rename job" title="Rename" className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-background-elevated hover:text-text-primary" onClick={() => setRenaming(d.title)}>
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+        </button>
+    ) : null;
+
     return (
         <div className="ui-card p-4 space-y-4 text-sm">
             <div className="flex items-start justify-between gap-2">
@@ -837,12 +843,13 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                             <button type="button" className={BUTTON} onClick={() => setRenaming(null)}>Cancel</button>
                         </form>
                     ) : (
-                        <p className="flex items-start gap-1 font-medium leading-snug">
+                        headerShownAbove ? null : <div className="flex items-center gap-1 font-medium leading-snug">
                             <span className="min-w-0 break-words">{d?.title ?? 'New job'}</span>
-                            {d && job.canManage && !compact ? <button type="button" aria-label="Rename job" title="Rename" className="shrink-0 px-1 text-text-secondary hover:text-text-primary" onClick={() => setRenaming(d.title)}>✎</button> : null}
-                        </p>
+                            {renameButton}
+                        </div>
                     )}
-                    <p className="text-[11px] text-text-secondary truncate">
+                    <div className="flex min-w-0 items-center gap-1">
+                    <p className="min-w-0 truncate text-[11px] text-text-secondary">
                         {job.companyName}
                         {d ? ` · ${scheduleLabel(d.schedule)}` : ''}
                         <JobLastChecked job={job} />
@@ -850,8 +857,11 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                         {/* Publishing jobs spend little and per post; their budget line would only be noise. */}
                         {d?.skill === 'social_publish' ? '' : manualArtifact(job.design?.skill) ? (job.spentThisMonthMicros ? ` · ${usd(job.spentThisMonthMicros)} spent` : '') : job.monthlyBudgetMicros ? ` · ${usd(job.spentThisMonthMicros)} of ${usd(job.monthlyBudgetMicros)} this month` : ''}
                     </p>
+                    {headerShownAbove && renaming === null ? renameButton : null}
+                    </div>
                 </div>
-                <JobStatusBadge status={job.status} label={job.status === 'proposed' && failedAttempt ? 'Dry run failed' : undefined} />
+                {/* A failed dry run says more than the plain status on the row above, so it still shows. */}
+                {!headerShownAbove || (job.status === 'proposed' && failedAttempt) ? <JobStatusBadge status={job.status} label={job.status === 'proposed' && failedAttempt ? 'Dry run failed' : undefined} /> : null}
             </div>
 
             {d?.skill === 'social_media' ? <p className="text-xs text-text-secondary">Evergreen ideas from existing content. This job does not watch new publications. For new items with separate Facebook, Bluesky and Reddit drafts, create a new-item publishing job in Marketing.</p> : null}

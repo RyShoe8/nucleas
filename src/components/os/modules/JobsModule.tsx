@@ -94,7 +94,7 @@ function CompanyWork({ jobs, items, names, selected, createdId, onChange }: {
                         <button type="button" aria-expanded={jobOpen} onClick={() => toggle(jobKey, reason, jobOpen)} className="ui-card-interactive flex w-full items-center gap-2 px-3 py-2 text-left">
                             <span aria-hidden="true">{jobOpen ? '▾' : '▸'}</span><span className="min-w-0 flex-1 text-sm">{job.design?.title ?? job.request}</span><JobStatusBadge status={job.status} />
                         </button>
-                        {jobOpen && <JobCard job={job} onChange={onChange} />}
+                        {jobOpen && <JobCard job={job} onChange={onChange} headerShownAbove />}
                     </li>;
                 })}
                 <ActivityRows items={company.activity} showCompany={false} />
