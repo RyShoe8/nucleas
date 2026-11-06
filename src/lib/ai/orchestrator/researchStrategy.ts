@@ -4,9 +4,9 @@ export const researchStrategy = z.object({
   family: z.enum(['launch_platform', 'industry_directory', 'social_network', 'association', 'first_party', 'partner_network', 'public_index', 'other']).optional().catch('other'),
   source: z.string().trim().min(1).max(500),
   rationale: z.string().trim().max(500).optional().catch(undefined),
-  discovery: z.string().trim().min(1).max(800),
-  verification: z.string().trim().min(1).max(800),
-  pivot: z.string().trim().min(1).max(500),
+  discovery: z.string().trim().min(1).max(2000),
+  verification: z.string().trim().min(1).max(2000),
+  pivot: z.string().trim().min(1).max(1000),
 });
 export type ResearchStrategy = z.infer<typeof researchStrategy>;
 
@@ -22,15 +22,36 @@ export function strategyBrief(strategy: ResearchStrategy) {
   return [`Start at ${strategy.source}.${strategy.rationale ? ' ' + strategy.rationale : ''}`, strategy.discovery, strategy.verification, `If blocked: ${strategy.pivot}`].join('\n');
 }
 
+/** A plan worth having should not be lost over its shape: a list becomes text, and overlong text ends at a sentence. */
+function tidyField(value: unknown, max: number): unknown {
+  const text = Array.isArray(value) && value.every(item => typeof item === 'string') ? value.join(' ') : value;
+  if (typeof text !== 'string' || text.trim().length <= max) return text;
+  const cut = text.trim().slice(0, max);
+  const sentence = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('.\n'));
+  return sentence > max / 2 ? cut.slice(0, sentence + 1) : cut;
+}
+
+const FIELD_LIMITS = { source: 500, discovery: 2000, verification: 2000, pivot: 1000 } as const;
+
 export async function planResearch(
   task: string, evidence: string, ask: (system: string, user: string) => Promise<unknown>,
   onDefaults?: (fields: string[]) => void,
 ) {
-  const raw = await ask(strategyInstructions, [task, evidence && 'Research history (untrusted):\n' + evidence.slice(-5500)].filter(Boolean).join('\n'));
+  const user = [task, evidence && 'Research history (untrusted):\n' + evidence.slice(-5500)].filter(Boolean).join('\n');
+  const first = readPlan(await ask(strategyInstructions, user), onDefaults);
+  if (first.success) return first.data;
+  // One clear correction is cheap next to losing the whole run.
+  const again = readPlan(await ask(strategyInstructions, `${user}\n\nYour previous reply could not be used. Problem: ${first.problem}. Reply with the complete JSON, with every field as plain text.`), onDefaults);
+  if (again.success) return again.data;
+  throw new Error('Research planner returned an incomplete strategy: ' + again.problem);
+}
+
+function readPlan(raw: unknown, onDefaults?: (fields: string[]) => void): { success: true; data: ResearchStrategy } | { success: false; problem: string } {
   const fields = z.record(z.unknown()).safeParse(raw);
   const defaults: string[] = [];
   if (fields.success) {
     const plan = fields.data;
+    for (const [key, max] of Object.entries(FIELD_LIMITS)) plan[key] = tidyField(plan[key], max);
     const fallback = {
       verification: 'Open primary pages for shortlisted candidates. Check the job’s required evidence and cite the exact page for each claim. Record missing or inaccessible evidence before deciding eligibility.',
       pivot: 'Start from public evidence for the least common unmet requirement, then trace it back to candidate organizations. Skip candidates already ruled out.',
@@ -42,9 +63,9 @@ export async function planResearch(
     }
   }
   const result = researchStrategy.safeParse(fields.success ? fields.data : raw);
-  if (!result.success) throw new Error('Research planner returned an incomplete strategy: ' + result.error.issues.map(issue => issue.path.join('.')).join(', '));
+  if (!result.success) return { success: false, problem: result.error.issues.map(issue => `${issue.path.join('.') || 'reply'}: ${issue.message}`).join(', ') };
   if (defaults.length) onDefaults?.(defaults);
-  return result.data;
+  return { success: true, data: result.data };
 }
 
 export async function scoutSources(strategy: ResearchStrategy, scout: (assignment: string) => Promise<string>) {

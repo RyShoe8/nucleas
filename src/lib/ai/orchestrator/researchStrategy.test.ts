@@ -1,6 +1,34 @@
 import { expect, it, vi } from 'vitest';
 import { changedMethod, openScoutSources, planResearch, strategyBrief } from './researchStrategy';
 
+const usable = { source: 'Bluesky profiles', discovery: 'Find company profiles', verification: 'Open their sites', pivot: 'Try company sites' };
+
+it('keeps a plan whose text runs long, ending at a sentence', async () => {
+  const ask = vi.fn().mockResolvedValue({ ...usable, discovery: 'Find company profiles on Bluesky. '.repeat(100) });
+  const plan = await planResearch('Scout', '', ask);
+  expect(ask).toHaveBeenCalledTimes(1);
+  expect(plan.discovery.length).toBeLessThanOrEqual(2000);
+  expect(plan.discovery.endsWith('.')).toBe(true);
+});
+
+it('accepts a plan written as a list of steps', async () => {
+  const plan = await planResearch('Scout', '', vi.fn().mockResolvedValue({ ...usable, discovery: ['Find profiles.', 'Open their sites.'] }));
+  expect(plan.discovery).toBe('Find profiles. Open their sites.');
+});
+
+it('asks once more, saying what was wrong, before giving up', async () => {
+  const ask = vi.fn().mockResolvedValueOnce({ source: 'Bluesky profiles' }).mockResolvedValueOnce(usable);
+  expect((await planResearch('Scout', '', ask)).discovery).toBe(usable.discovery);
+  expect(ask).toHaveBeenCalledTimes(2);
+  expect(ask.mock.calls[1]?.[1]).toContain('Problem: discovery');
+});
+
+it('reports which field failed and why after the second try', async () => {
+  const ask = vi.fn().mockResolvedValue({ source: 'Bluesky profiles', discovery: { steps: 1 } });
+  await expect(planResearch('Scout', '', ask)).rejects.toThrow('incomplete strategy: discovery:');
+  expect(ask).toHaveBeenCalledTimes(2);
+});
+
 it('uses the declared pivot if the replan repeats the stalled search', () => {
   const method = { source: 'Launch listings', rationale: 'Find recent launches', discovery: 'Find founders', verification: 'Check company pages', pivot: 'Start with founder announcements on social' };
   expect(changedMethod(method, method).source).toBe(method.pivot);

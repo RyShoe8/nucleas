@@ -635,6 +635,8 @@ export async function executeJobRun(runId: string): Promise<void> {
         ? 'Use the worker’s evidence gaps to choose a different source or search method.'
         : 'Choose where to scout for ' + activeDesign.title + ', how to verify candidates, and when to switch methods.';
       if (turn.role !== 'assistant') throw new Error(turn.text);
+      // Saved first, so a plan that cannot be used can still be read in the run.
+      step.outcome = stepText('Planner reply: ' + turn.text);
       return extractJson(turn.text);
     }, fields => { defaultFields = fields; });
     strategy = strategy ? changedMethod(strategy, next) : next;
