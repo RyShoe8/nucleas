@@ -8,6 +8,13 @@ type ChatInput = { systemPrompt: string; userText: string; model: string; modelP
 const chat = vi.fn<(input: ChatInput) => Promise<{ role: string; text: string; costMicros?: number; runId?: string; requestId: string }>>();
 vi.mock('@/lib/ai/companyChat', () => ({ attemptCompanyCredentialChat: (input: ChatInput) => chat(input) }));
 const search = vi.fn();
+const checkPages = vi.fn();
+const siteSizes = vi.fn();
+vi.mock('./pageChecks', async (original) => ({
+  ...(await original<typeof import('./pageChecks')>()),
+  checkPages: (...args: unknown[]) => checkPages(...args),
+  siteSizes: (...args: unknown[]) => siteSizes(...args),
+}));
 vi.mock('@/lib/ai/tools/webSearch', () => ({ webSearch: (q: string) => search(q) }));
 vi.mock('@/lib/ai/tools/serverBrowseAssist', () => ({
   formatResearchResultContext: (r: { query: string; hits: { title: string; url: string; snippet: string }[] }) =>
@@ -288,8 +295,84 @@ describe('general questions', () => {
   });
 });
 
+beforeEach(() => {
+  checkPages.mockReset();
+  checkPages.mockImplementation(async (urls: string[]) => urls.map((url) => ({ url, status: 'opened', title: 'Page', text: 'Page text' })));
+  siteSizes.mockReset();
+  siteSizes.mockResolvedValue([]);
+});
+
 describe('deep research', () => {
   const plan = '{"kind":"answer","scope":"general","deepResearch":{"question":"What bonus offers are top casino affiliates promoting this month?"},"outline":[],"review":false}';
+
+  it('opens the pages workers name, drops ones that do not exist, and sorts by real site size', async () => {
+    const planned = '{"kind":"answer","scope":"general","deepResearch":{"question":"Which big sites reviewed our games?"},"qualifies":"Publications that review many games, not a fan site named after one game.","compareSiteSize":true,"outline":[],"review":false}';
+    checkPages.mockImplementation(async (urls: string[]) => urls.map((url) => (url.includes('invented') ? { url, status: 'gone' } : url.includes('walled') ? { url, status: 'blocked' } : { url, status: 'opened', title: 'A real review', text: 'Factorio review text' })));
+    siteSizes.mockResolvedValue([{ host: 'realsite.com', rank: 2098 }]);
+    let writerInput = '';
+    let workerInput = '';
+    let gapInput = '';
+    chat.mockImplementation(async (input) => {
+      const stage = stageOf(input);
+      if (stage === 'plan') return reply(planned, 1500);
+      if (stage === 'gaps') {
+        gapInput = input.userText;
+        return reply('{"complete":true}');
+      }
+      if (stage === 'research') {
+        workerInput = input.userText;
+        return { ...reply('- [Real](https://realsite.com/review)\n- [Made up](https://invented.com/review)\n- [Walled](https://walled.com/review)'), toolsUsed: ['web_search'] };
+      }
+      if (stage === 'work') {
+        writerInput = input.userText;
+        return reply('| Site | Review |\n|---|---|\n| Real | [Real](https://realsite.com/review) |\n| Made up | [Made up](https://invented.com/review) |\n| Walled | [Walled](https://walled.com/review) |');
+      }
+      return reply('{"verdict":"accept"}');
+    });
+    const out = await ask('Which big sites reviewed our games?');
+    expect(workerInput).toContain('What counts: Publications that review many games');
+    for (const text of [gapInput, writerInput]) {
+      expect(text).toContain('OPENED https://realsite.com/review');
+      expect(text).toContain('GONE https://invented.com/review');
+      expect(text).toContain('BLOCKED https://walled.com/review');
+    }
+    expect(writerInput).toContain('# What counts');
+    expect(writerInput).toContain('realsite.com: #2,098');
+    expect(out.text).toContain('[Real](https://realsite.com/review)');
+    expect(out.text).toContain('[Walled](https://walled.com/review)');
+    expect(out.text).not.toContain('invented.com');
+    const sources = out.evidence!.sources;
+    expect(sources.find((source) => source.url.includes('realsite'))).toMatchObject({ cited: true, read: true });
+    expect(sources.find((source) => source.url.includes('walled'))).toMatchObject({ cited: true, blocked: true });
+    expect(sources.find((source) => source.url.includes('invented'))).toMatchObject({ gone: true });
+    expect(sources.find((source) => source.url.includes('invented'))?.cited).toBeUndefined();
+    expect(out.evidence!.data.map((row) => row.label)).toContain('Site size, from Tranco');
+    expect(out.stages.map((stage) => stage.stage)).toEqual(expect.arrayContaining(['verify', 'size']));
+    expect(out.stages.at(-1)).toMatchObject({ stage: 'verify', note: 'Removed 1 link to pages that do not exist' });
+  });
+
+  it('has a stronger model do the follow-ups, and stops at the spending limit', async () => {
+    let followUps = 0;
+    const models: string[] = [];
+    checkPages.mockResolvedValue([]);
+    chat.mockImplementation(async (input) => {
+      const stage = stageOf(input);
+      if (stage === 'plan') return reply(plan, 1500);
+      if (stage === 'gaps') return reply('{"complete":false,"note":"more","missing":[{"task":"Do follow-up one"},{"task":"Do follow-up two"}]}');
+      if (stage === 'research') {
+        if (input.userText.startsWith('Do follow-up')) {
+          followUps += 1;
+          models.push(input.model ?? '');
+          return { ...reply('Found more'), costMicros: 2_000_000 };
+        }
+        return reply('Findings');
+      }
+      return reply('Answer.');
+    });
+    await ask('List sites');
+    expect(followUps).toBe(1);
+    expect(models[0]).not.toBe(ROGLY_MODELS.general);
+  });
 
   it('sends workers after what is still missing, and has a stronger model write up the result', async () => {
     let checks = 0;
@@ -327,7 +410,7 @@ describe('deep research', () => {
     expect(followUps).toHaveLength(1);
     expect(checks).toBe(2);
     expect(writerModel).not.toBe(ROGLY_MODELS.general);
-    expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'research', 'gaps', 'research', 'gaps', 'work', 'check']);
+    expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'research', 'gaps', 'research', 'verify', 'gaps', 'work', 'check', 'verify']);
     expect(out.stages[3]?.note).toBe('Still missing: the full list');
     expect(out.stages[4]?.note).toContain('Follow-up: Open the sitemap');
     expect(out.evidence?.sources.find((source) => source.url.includes('site-b.com'))?.usedFor).toEqual(['Sites: A and B.']);

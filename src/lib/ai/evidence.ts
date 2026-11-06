@@ -10,6 +10,10 @@ export interface EvidenceSource {
   cited?: boolean;
   /** A worker opened this page. Without it, the page was only seen in search results. */
   read?: boolean;
+  /** Nucleas tried this page and it does not exist. */
+  gone?: boolean;
+  /** Nucleas tried this page and could not read it, which proves nothing either way. */
+  blocked?: boolean;
   /** What the answer says on the strength of this page: its sentences and table rows that link here. */
   usedFor?: string[];
   /** What the research notes recorded from this page. */
@@ -36,6 +40,7 @@ const MAX_IMAGES = 24;
 const MAX_IMAGES_PER_PAGE = 6;
 const MAX_CLAIMS = 5;
 const MAX_CLAIM_LENGTH = 280;
+const MIN_CLAIM_LENGTH = 12;
 const MAX_DATA = 12;
 const clip = (text: unknown, max: number) => (typeof text === 'string' ? text.replace(/\s+/g, ' ').trim().slice(0, max) : '');
 const withoutMarkdownLinks = (text: string) => text.replace(/!?\[([^\]\n]*)\]\([^)\s]*\)/g, '$1');
@@ -47,7 +52,7 @@ export function emptyEvidence(): AnswerEvidence {
   return { sources: [], images: [], data: [] };
 }
 
-export function addSource(evidence: AnswerEvidence, source: { url?: unknown; title?: unknown; snippet?: unknown; cited?: boolean; read?: boolean }): void {
+export function addSource(evidence: AnswerEvidence, source: { url?: unknown; title?: unknown; snippet?: unknown; cited?: boolean; read?: boolean; gone?: boolean; blocked?: boolean }): void {
   const url = clip(source.url, 2000);
   if (!url || !isSafePublicHttpsUrl(url)) return;
   const existing = evidence.sources.find((row) => sameUrl(row.url) === sameUrl(url));
@@ -58,10 +63,15 @@ export function addSource(evidence: AnswerEvidence, source: { url?: unknown; tit
     if (title && (!existing.title || existing.title === existing.url)) existing.title = title;
     if (snippet && !existing.snippet) existing.snippet = snippet;
     if (source.cited) existing.cited = true;
-    if (source.read) existing.read = true;
+    if (source.read) {
+      existing.read = true;
+      delete existing.blocked;
+    }
+    if (source.gone) existing.gone = true;
+    if (source.blocked && !existing.read) existing.blocked = true;
     return;
   }
-  evidence.sources.push({ url, title: title || url, ...(snippet ? { snippet } : {}), ...(source.cited ? { cited: true } : {}), ...(source.read ? { read: true } : {}) });
+  evidence.sources.push({ url, title: title || url, ...(snippet ? { snippet } : {}), ...(source.cited ? { cited: true } : {}), ...(source.read ? { read: true } : {}), ...(source.gone ? { gone: true } : {}), ...(source.blocked ? { blocked: true } : {}) });
 }
 
 export function addImage(evidence: AnswerEvidence, image: { imageUrl?: unknown; title?: unknown; pageUrl?: unknown }): void {
@@ -98,14 +108,15 @@ export function statementsIn(text: string): string[] {
 
 /** A statement as a person reads it: its links become their labels. */
 function readable(statement: string): string {
-  return clip(withoutMarkdownLinks(statement).replace(/https:\/\/\S+/g, '').replace(/\*\*|__|`/g, ''), MAX_CLAIM_LENGTH);
+  return clip(withoutMarkdownLinks(statement).replace(/https:\/\/\S+/g, '').replace(/\*+|__|`/g, ''), MAX_CLAIM_LENGTH);
 }
 
 /** Ties statements to the pages they link to, in code, so "what came from this page" is what the text actually cites. */
 function attachStatements(evidence: AnswerEvidence, text: string, field: 'usedFor' | 'found'): void {
   for (const statement of statementsIn(text)) {
     const claim = readable(statement);
-    if (!claim) continue;
+    // "Review URL:" followed by a link names a field; it says nothing about the page.
+    if (claim.length < MIN_CLAIM_LENGTH || /:\s*$/.test(statement.replace(/\[[^\]\n]*\]\([^)\s]*\)|https:\/\/\S+/g, ''))) continue;
     for (const link of linksInText(statement)) {
       const source = evidence.sources.find((row) => sameUrl(row.url) === sameUrl(link.url));
       if (!source) continue;

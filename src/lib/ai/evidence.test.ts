@@ -74,6 +74,23 @@ describe('keeping what an answer is based on', () => {
     expect(finished.sources.find((source) => source.url.includes('other.com'))?.found).toEqual(['Other says this about Ruiner.']);
   });
 
+  it('leaves out labels that say nothing about the page, and markdown marks', () => {
+    const evidence = emptyEvidence();
+    addSource(evidence, { url: 'https://site.com/a', title: 'A' });
+    const finished = finishEvidence(evidence, '- Review URL: [A](https://site.com/a)\n- *Factorio* is reviewed at [A](https://site.com/a)')!;
+    expect(finished.sources[0]?.usedFor).toEqual(['Factorio is reviewed at A']);
+  });
+
+  it('records what happened when a page was tried, and a later read wins over blocked', () => {
+    const evidence = emptyEvidence();
+    addSource(evidence, { url: 'https://site.com/a', blocked: true });
+    addSource(evidence, { url: 'https://site.com/b', gone: true });
+    expect(evidence.sources).toMatchObject([{ blocked: true }, { gone: true }]);
+    addSource(evidence, { url: 'https://site.com/a', read: true });
+    expect(evidence.sources[0]).toMatchObject({ read: true });
+    expect(evidence.sources[0]?.blocked).toBeUndefined();
+  });
+
   it('lists used pages first, then pages read, then search results', () => {
     const evidence = emptyEvidence();
     addSource(evidence, { url: 'https://seen.com/', title: 'Seen' });

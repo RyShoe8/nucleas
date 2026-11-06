@@ -63,12 +63,19 @@ describe('how an answer was made, in plain words', () => {
     expect(named('gaps', 'Still missing: the full catalog')).toMatchObject({ name: 'Checked what was still missing', detail: 'Still missing: the full catalog' });
   });
 
+  it('shows the steps that take no model as such', () => {
+    expect(describeStages([{ stage: 'verify', note: 'Opened 3 pages: 2 readable, 1 missing, 0 blocked' }, { stage: 'size', note: 'Found a rank for 5 of 5 sites (Tranco)' }])).toMatchObject([
+      { name: 'Opened the pages itself', cost: 'No model' },
+      { name: 'Looked up site sizes', cost: 'No model' },
+    ]);
+  });
+
   it('formats costs', () => {
     expect([formatCost(0), formatCost(4000), formatCost(370_000)]).toEqual(['$0.00', '<$0.01', '$0.37']);
   });
 
   it('summarizes what is inside, with correct singulars', () => {
-    expect(detailsSummary({ evidence, steps: describeStages(stages), costMicros: 4000 })).toBe('2 sources used · 1 more page read · 2 images · 1 data lookup · 4 steps · <$0.01');
+    expect(detailsSummary({ evidence, steps: describeStages(stages), costMicros: 4000 })).toBe('2 sites used · 1 more page read · 2 images · 1 data lookup · 4 steps · <$0.01');
   });
 });
 
@@ -80,6 +87,25 @@ describe('organizing what an answer drew on', () => {
     expect(organized.seen.map((source) => source.title)).toEqual(['Search only page']);
     expect(organized.imagesFor(organized.used[0]!).map((image) => image.title)).toEqual(['Cover']);
     expect(organized.otherImages.map((image) => image.title)).toEqual(['Lost']);
+  });
+
+  it('gathers pages of the same site into one card, without repeating what they say', () => {
+    const { sites, gone, seen } = organizeEvidence({
+      sources: [
+        { url: 'https://www.ign.com/', title: 'IGN', cited: true, usedFor: ['IGN · Ruiner'] },
+        { url: 'https://www.ign.com/review', title: 'Review', cited: true, read: true, usedFor: ['IGN · Ruiner'], found: ['IGN scored it 8', 'IGN · Ruiner'] },
+        { url: 'https://other.com/', title: 'Other', cited: true },
+        { url: 'https://invented.com/', title: 'Made up', gone: true },
+      ],
+      images: [{ imageUrl: 'https://cdn.com/a.png', title: 'A', pageUrl: 'https://www.ign.com/review' }],
+      data: [],
+    });
+    expect(sites.map((site) => site.host)).toEqual(['ign.com', 'other.com']);
+    expect(sites[0]).toMatchObject({ usedFor: ['IGN · Ruiner'], found: ['IGN scored it 8'] });
+    expect(sites[0]?.pages).toHaveLength(2);
+    expect(sites[0]?.images).toHaveLength(1);
+    expect(gone.map((source) => source.title)).toEqual(['Made up']);
+    expect(seen).toEqual([]);
   });
 });
 
@@ -103,7 +129,7 @@ describe('the details under an answer', () => {
 
   it('starts as one quiet line, with nothing below it loaded', () => {
     const html = render({ stages, evidence, costMicros: 4000 });
-    expect(html).toContain('2 sources used');
+    expect(html).toContain('2 sites used');
     expect(html).toContain('Show details');
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain('<img');
@@ -112,15 +138,16 @@ describe('the details under an answer', () => {
 
   it('opens into organized sections', () => {
     const html = render({ stages, evidence, costMicros: 4000, contextSources: ['company profile'], defaultOpen: true });
-    for (const heading of ['How this was answered', 'Where this answer came from · 2', 'Company data used · 1', 'Also read, not used in the answer · 1', 'Came up in search, never opened · 1', 'Other images · 1', 'Company context it could see · 1']) expect(html).toContain(heading);
+    for (const heading of ['How this was answered', 'Where this answer came from · 2 sites', 'Data used · 1', 'Also read, not used in the answer · 1', 'Came up in search, never opened · 1', 'Other images · 1', 'Company context it could see · 1']) expect(html).toContain(heading);
     expect(html).toContain('Planned the approach');
     expect(html).toContain('href="https://www.ign.com/review"');
     expect(html).toContain('target="_blank"');
-    expect(html).toContain('ign.com · Page opened');
+    expect(html).toContain('ign.com');
+    expect(html).toContain(' · Opened');
     expect(html).toContain('Used in the answer for');
     expect(html).toContain('IGN reviewed Ruiner');
-    expect(html).toContain('1 image from this page');
-    expect(html).toContain('Link only: this page was never opened');
+    expect(html).toContain('1 image from this site');
+    expect(html).toContain(' · Not opened');
     expect(html).toContain('https://cdn.com/cover.png');
     expect(html).toContain('no-referrer');
     expect(html).toContain('Visitors: 1,200');

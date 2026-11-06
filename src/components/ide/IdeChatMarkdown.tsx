@@ -18,7 +18,7 @@ const components: Components = {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-blue-600 underline underline-offset-2 break-all dark:text-blue-400"
+      className="text-blue-600 underline underline-offset-2 [overflow-wrap:anywhere] dark:text-blue-400"
     >
       {children}
     </a>
@@ -48,6 +48,15 @@ const components: Components = {
   // Inline markdown images are stripped; keep a no-op so any residual never shows a broken icon.
   img: () => null,
   hr: () => <hr className="my-3 border-border" />,
+  table: ({ children }) => (
+    <div className="mb-3 overflow-x-auto rounded-lg border border-border last:mb-0">
+      <table className="w-full border-collapse text-left text-[13px]">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => <thead className="bg-black/5 dark:bg-white/5">{children}</thead>,
+  tr: ({ children }) => <tr className="border-t border-border first:border-t-0">{children}</tr>,
+  th: ({ children }) => <th className="whitespace-nowrap px-3 py-2 text-xs font-semibold text-text-secondary">{children}</th>,
+  td: ({ children }) => <td className="px-3 py-2 align-top">{children}</td>,
 };
 
 /** Compact GFM markdown for IDE chat turns (clickable links, no raw ** symbols). */

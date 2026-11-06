@@ -55,6 +55,8 @@ export async function runIdeToolLoop(input: {
   toolProfile?: IdeToolProfile;
   /** Cap concurrent tool-loop iterations (batching), not total analysis ambition. */
   maxRounds?: number;
+  /** After this time no more tools run: the model writes up what it has rather than losing the work. */
+  deadlineAt?: number;
   /** Prompt characters this model can take (its context window, minus room for the answer). */
   contextChars?: number;
   /** Called before each tool runs (for live progress). */
@@ -111,6 +113,7 @@ export async function runIdeToolLoop(input: {
   try {
     for (let round = 0; round < maxRounds; round += 1) {
       if (input.signal?.aborted) throw new GatewayError('cancelled');
+      if (input.deadlineAt && Date.now() >= input.deadlineAt) break;
       if (maxRounds >= 6 && round === maxRounds - 3) {
         messages.push({ role: 'user', content: 'Only 3 tool rounds remain. Finish gathering evidence and write your final answer.' });
       }

@@ -11,6 +11,14 @@ describe('stripMarkdownImages', () => {
 });
 
 describe('IdeChatMarkdown', () => {
+  it('draws tables with borders and room to scroll, and keeps their links clickable', () => {
+    const html = renderToStaticMarkup(<IdeChatMarkdown text={'| Site | Review |\n|---|---|\n| IGN | [Ruiner](https://ign.com/a) |'} />);
+    expect(html).toContain('overflow-x-auto');
+    expect(html).toContain('<th class=');
+    expect(html).toContain('<td class=');
+    expect(html).toContain('href="https://ign.com/a"');
+  });
+
   it('renders bold and clickable links without raw markdown markers', () => {
     const html = renderToStaticMarkup(
       <IdeChatMarkdown text={'See **Castlevania ReVamped** at [InvertedDungeon](https://www.inverteddungeon.com/page).'} />
