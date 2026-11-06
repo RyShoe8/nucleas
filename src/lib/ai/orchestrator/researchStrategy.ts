@@ -24,10 +24,26 @@ export function strategyBrief(strategy: ResearchStrategy) {
 
 export async function planResearch(
   task: string, evidence: string, ask: (system: string, user: string) => Promise<unknown>,
+  onDefaults?: (fields: string[]) => void,
 ) {
   const raw = await ask(strategyInstructions, [task, evidence && 'Research history (untrusted):\n' + evidence.slice(-5500)].filter(Boolean).join('\n'));
-  const result = researchStrategy.safeParse(raw);
+  const fields = z.record(z.unknown()).safeParse(raw);
+  const defaults: string[] = [];
+  if (fields.success) {
+    const plan = fields.data;
+    const fallback = {
+      verification: 'Open primary pages for shortlisted candidates. Check the job’s required evidence and cite the exact page for each claim. Record missing or inaccessible evidence before deciding eligibility.',
+      pivot: 'Start from public evidence for the least common unmet requirement, then trace it back to candidate organizations. Skip candidates already ruled out.',
+    };
+    for (const key of ['verification', 'pivot'] as const) {
+      if (researchStrategy.shape[key].safeParse(plan[key]).success) continue;
+      plan[key] = fallback[key];
+      defaults.push(key);
+    }
+  }
+  const result = researchStrategy.safeParse(fields.success ? fields.data : raw);
   if (!result.success) throw new Error('Research planner returned an incomplete strategy: ' + result.error.issues.map(issue => issue.path.join('.')).join(', '));
+  if (defaults.length) onDefaults?.(defaults);
   return result.data;
 }
 

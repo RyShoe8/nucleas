@@ -597,6 +597,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     const plan = await selectModel(org, 'plan', level, { models, settings });
     const planner = plan.primary;
     if (!planner) throw new Error('No research planner is available.');
+    let defaultFields: string[] = [];
     const next = await planResearch(activeDesign.instructions, history, async (systemPrompt, userText) => {
       const turn = await attemptCompanyCredentialChat({
         organizationId: org, projectId: assistantLedgerProjectId(org), userId: viewer.userId,
@@ -609,14 +610,16 @@ export async function executeJobRun(runId: string): Promise<void> {
       usedModels.push(planner.model);
       recordStep('plan', strategy ? 'Revise search method' : 'Choose search method', planner, plan.source === 'pinned' ? 'pinned' : 'auto', false, turn.costMicros ?? null, turn.role === 'assistant' ? undefined : turn.text);
       const step = modelPath[modelPath.length - 1];
-      step.assignment = history ? history.slice(-650) : 'Choose discovery sources, verification steps and a fallback method.';
+      step.assignment = strategy
+        ? 'Use the worker’s evidence gaps to choose a different source or search method.'
+        : 'Choose where to scout for ' + activeDesign.title + ', how to verify candidates, and when to switch methods.';
       if (turn.role !== 'assistant') throw new Error(turn.text);
       return extractJson(turn.text);
-    });
+    }, fields => { defaultFields = fields; });
     strategy = strategy ? changedMethod(strategy, next) : next;
     await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { researchSkill: activeDesign.skill, researchFamily: strategy.family ?? 'other' } });
     brief = strategyBrief(strategy);
-    modelPath[modelPath.length - 1].outcome = brief;
+    modelPath[modelPath.length - 1].outcome = defaultFields.length ? 'Nucleas supplied standard ' + defaultFields.join(' and ') + ' instructions.\n' + brief : brief;
   };
 
   try {

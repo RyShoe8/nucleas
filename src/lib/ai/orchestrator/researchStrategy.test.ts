@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { changedMethod, openScoutSources } from './researchStrategy';
+import { changedMethod, openScoutSources, planResearch } from './researchStrategy';
 
 it('uses the declared pivot if the replan repeats the stalled search', () => {
   const method = { source: 'Launch listings', rationale: 'Find recent launches', discovery: 'Find founders', verification: 'Check company pages', pivot: 'Start with founder announcements on social' };
@@ -16,4 +16,17 @@ it('deduplicates and bounds opened sources, retaining failures as unknown', asyn
   expect(open).toHaveBeenCalledTimes(4);
   expect(receipts[0]).toContain('/contact');
   expect(receipts[1]).toContain('evidence unknown');
+});
+
+it('completes a partial planner reply without another model call', async () => {
+  const partial = { source: 'Launch directories', discovery: 'Collect founder announcements', rationale: 'Dated launches' };
+  const ask = vi.fn().mockResolvedValue(partial);
+  const defaults = vi.fn();
+  const plan = await planResearch('Scout prospects', '', ask, defaults);
+  expect(ask).toHaveBeenCalledTimes(1);
+  expect(plan).toMatchObject(partial);
+  expect(plan.verification).toContain('primary pages');
+  expect(plan.pivot).toContain('unmet requirement');
+  expect(defaults).toHaveBeenCalledWith(['verification', 'pivot']);
+  await expect(planResearch('Scout prospects', '', async () => ({}))).rejects.toThrow('source');
 });
