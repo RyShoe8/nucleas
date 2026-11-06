@@ -312,6 +312,29 @@ describe('deep research', () => {
     expect(out.stages.find((s) => s.stage === 'check')?.note).toBe('all numbers traced to data');
   });
 
+  it('delegates a scout and switches discovery sources when verification stalls', async () => {
+    const strategy = { source: 'Industry listings', rationale: 'Lists current members', discovery: 'Find member websites', verification: 'Check the official terms', pivot: 'Start with partner releases' };
+    const structured = JSON.parse(plan);
+    structured.deepResearch.strategy = strategy;
+    chat.mockImplementation(async input => {
+      if (stageOf(input) === 'plan') return reply(JSON.stringify(structured));
+      if (input.systemPrompt.startsWith('Choose a concrete research method')) {
+        expect(input.userText).toContain('BLOCKED');
+        return reply(JSON.stringify({ ...strategy, source: 'Partner releases' }));
+      }
+      if (stageOf(input) === 'research') {
+        if (input.userText.includes('Do not produce the final deliverable')) return reply('Lead A in directory');
+        if (input.userText.includes('Start at Partner releases')) return { ...reply('Verified partner release.'), toolsUsed: ['web_fetch'] };
+        return { ...reply('BLOCKED: terms unavailable'), toolsUsed: ['web_search'] };
+      }
+      expect(input.userText).toContain('Verified partner release.');
+      return reply('Verified partner release.');
+    });
+    const out = await ask('What are casino affiliates promoting this month?');
+    expect(out.stages.filter(stage => stage.stage === 'research')).toHaveLength(3);
+    expect(out.stages.filter(stage => stage.stage === 'plan')).toHaveLength(2);
+  });
+
   it('continues honestly when research fails, without paying unless allowed', async () => {
     chat.mockImplementation(async (input) => {
       const stage = stageOf(input);

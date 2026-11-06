@@ -101,6 +101,8 @@ const runSchema = new Schema(
     review: { verdict: { type: String, enum: ['pass', 'fail'] }, notes: String, model: String },
     models: { type: [String], default: [] },
     /** Every model call in order with why it was chosen and what it cost (null cost = unknown price). */
+    researchSkill: String,
+    researchFamily: String,
     modelPath: { type: Schema.Types.Mixed, default: [] },
     costUnknown: { type: Boolean, default: false },
     costMicros: { type: Number, default: 0 },
@@ -110,6 +112,7 @@ const runSchema = new Schema(
   },
   { timestamps: true }
 );
+runSchema.index({ organizationId: 1, researchSkill: 1, finishedAt: -1 }, { partialFilterExpression: { researchSkill: { $exists: true } } });
 runSchema.index({ jobId: 1, createdAt: -1 });
 runSchema.index({ organizationId: 1, status: 1, updatedAt: -1 });
 runSchema.index({ status: 1, leaseExpiresAt: 1 });

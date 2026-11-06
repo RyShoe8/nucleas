@@ -6,6 +6,7 @@ vi.mock('server-only', () => ({}));
 vi.mock('./linkProspects', () => ({ linkProspectContext: async () => 'UNVERIFIED_DIRECTORY_QUEUE_MARKER', priorPlacementProblems: async () => [], rememberProspectOutcome: async () => undefined }));
 
 const mocks = vi.hoisted(() => ({ design: vi.fn(), chat: vi.fn(), browser: vi.fn(), models: vi.fn(), select: vi.fn(), verify: vi.fn() }));
+vi.mock('@/lib/casinoDiscovery/intake', () => ({ casinoIntake: async () => ({ inventory: async () => ({ casinos: [] }) }) }));
 vi.mock('./designer', () => ({ designJob: (...args: unknown[]) => mocks.design(...args) }));
 vi.mock('@/lib/ai/companyChat', () => ({ attemptCompanyCredentialChat: (input: unknown) => mocks.chat(input) }));
 vi.mock('@/lib/ai/engine/catalog', () => ({ listAvailableModels: (...args: unknown[]) => mocks.models(...args) }));
@@ -388,6 +389,44 @@ describe('approving and the dry run', () => {
     await executeJobRun(approved.dryRunId!);
     expect(mocks.chat.mock.calls.map(([input]) => input.model)).toEqual(['free-researcher', 'free-researcher']);
     expect(await JobRun.findById(approved.dryRunId).lean()).toMatchObject({ status: 'failed', costMicros: 0 });
+  });
+
+  it.each(['signature_outreach', 'casino_discovery'] as const)('replans %s from observed gaps without delivering an empty result', async skill => {
+    const job = await proposed({ ...DESIGN, skill });
+    await JobRun.create({ organizationId: org, companyId: new Types.ObjectId(), jobId: new Types.ObjectId(),
+      researchSkill: skill, researchFamily: 'association', startedAt: new Date(), finishedAt: new Date(),
+      status: 'completed', costMicros: 123, review: { verdict: 'pass', notes: 'Other company private notes' },
+      output: { records: [{ sources: ['https://other-company.invalid/private'] }], summary: 'Private candidate', gaps: [] } });
+    let plans = 0;
+    const empty = JSON.stringify({ records: [], summary: 'Screened prospects', gaps: ['Official page inaccessible'] });
+    mocks.chat.mockImplementation(async ({ systemPrompt, userText }) => {
+      let text = empty;
+      if (systemPrompt.startsWith('Choose a concrete research method')) {
+        plans++;
+        if (plans === 1) {
+          expect(userText).toContain('association');
+          expect(userText).toContain('"reviewedRecords":1');
+          expect(userText).not.toMatch(/other-company|Private candidate|private notes/);
+        }
+        if (plans === 2) expect(userText).toContain('Official page inaccessible');
+        text = JSON.stringify({ source: plans === 1 ? 'Industry directory' : 'Partner announcements', rationale: 'Public launch evidence', discovery: 'Find new entries', verification: 'Open the official page', pivot: 'Start from partners' });
+      } else if (skill === 'signature_outreach' && userText.includes('Prospect search retry 1 of 3') && !userText.includes('Format the previous reply')) {
+        text = 'Found a report but could not format the record.';
+      } else if (systemPrompt.startsWith('Scout public sources')) {
+        text = 'Discovery source was inaccessible.';
+      } else if (systemPrompt.startsWith('You check one run')) {
+        text = '{"verdict":"fail","notes":"No evidence"}';
+      }
+      return { requestId: 'test', role: 'assistant', text, costMicros: 100 };
+    });
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    const run = await JobRun.findById(approved.dryRunId).lean();
+    expect(run?.status).toBe('failed');
+    expect(plans).toBe(2);
+    if (skill === 'signature_outreach') expect(run?.modelPath).toEqual(expect.arrayContaining([expect.objectContaining({ note: 'Format retry' })]));
+    expect(run?.modelPath.map((step: { note: string }) => step.note)).toContain('Scout candidate sources');
+    expect(mocks.chat.mock.calls.some(([input]) => input.forceToolLoop && input.userText.includes('Partner announcements'))).toBe(true);
   });
 
   it('bounds failed discovery and waits for the next scheduled check without delivering dead pages', async () => {
