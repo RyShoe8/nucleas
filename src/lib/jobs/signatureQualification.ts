@@ -40,7 +40,8 @@ export async function officialPublishingHosts(website: string): Promise<Set<stri
 /** Whether a page really contains a quote. Words must match in order; quote marks, dashes and formatting differences do not matter. */
 export function quoteOnPage(pageText: string, quote: string): boolean {
     const words = (text: string) => ` ${text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `;
-    const wanted = words(quote);
+    // Fetch tools show pages as markdown, so a quote can carry a link's address, which is not on the page as text.
+    const wanted = words(quote.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1'));
     return wanted.trim().length > 0 && words(pageText).includes(wanted);
 }
 

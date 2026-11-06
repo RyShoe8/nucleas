@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import mongoose, { Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 
@@ -16,6 +16,8 @@ vi.mock('@/lib/ai/engine/select', () => ({
   isCostLevel: (v: unknown) => v === 'low' || v === 'medium' || v === 'high',
 }));
 vi.mock('@/lib/building/companyCode', () => ({ resolveCompanyRepository: async () => null }));
+const search = vi.hoisted(() => ({ hits: [{ provider: 'searxng' }] as { provider: string }[] }));
+vi.mock('@/lib/ai/tools/webSearch', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/ai/tools/webSearch')>()), researchSearch: async () => ({ hits: search.hits, note: 'No hits from: searxng.' }) }));
 // Page verification opens real pages; it has its own tests (opportunityPages.test.ts).
 vi.mock('./opportunityPages', async (importOriginal) => ({ ...(await importOriginal<typeof import('./opportunityPages')>()), verifyOpportunity: (...args: unknown[]) => mocks.verify(...args) }));
 vi.mock('@/lib/ai/tools/browserClient', () => ({ browserNavigate: (...args: unknown[]) => mocks.browser(...args) }));
@@ -451,6 +453,70 @@ describe('approving and the dry run', () => {
     expect(calls[0][0].userText).toContain('Deadlock');
     const planner = mocks.chat.mock.calls.find(([input]) => input.systemPrompt.startsWith('Choose a concrete'));
     expect(planner?.[0].userText).toContain('Start from the rarest requirement, a company Bluesky profile');
+  });
+
+  describe('free model legwork on a Spotlight run', () => {
+    const free = { model: 'local', profileId: 'a'.repeat(24), free: true };
+    const bare = JSON.stringify({ records: [], summary: 'Nobody', gaps: [] });
+    const planner = JSON.stringify({ source: 'Bluesky', discovery: 'Find profiles', rationale: 'Rarest first' });
+    const answer = (text: string, toolsUsed: string[] = []) => ({ requestId: 'test', role: 'assistant', text, costMicros: 0, toolsUsed });
+    const saved = () => ResearchEvidence.create({ organizationId: admin.organizationId, companyId, skill: 'signature_outreach', domain: 'transistor.com', name: 'Transistor', website: 'https://transistor.com/', pageStatus: 'opened', checkedAt: new Date(), facts: [{ field: 'bluesky', value: 'https://bsky.app/profile/transistor.com', source: 'https://transistor.com/', method: 'Link found on the official homepage in a real browser' }] });
+
+    beforeEach(() => { process.env.NUCLEAS_BROWSER_WORKER_URL = 'https://worker.test'; process.env.NUCLEAS_BROWSER_WORKER_SECRET = 'test-secret'; });
+    afterEach(async () => {
+      delete process.env.NUCLEAS_BROWSER_WORKER_URL;
+      delete process.env.NUCLEAS_BROWSER_WORKER_SECRET;
+      search.hits = [{ provider: 'searxng' }];
+      await ResearchEvidence.deleteMany({});
+    });
+
+    it('gives each saved lead a small job, saves what checks out, and passes it on', async () => {
+      await saved();
+      const job = await proposed({ ...DESIGN, skill: 'signature_outreach' });
+      mocks.select.mockResolvedValue({ primary: free, fallback: null });
+      mocks.browser.mockImplementation(async (url: string) => ({ url, text: 'x', plainText: 'Email hello@transistor.com any time', links: [] }));
+      const prompts: string[] = [];
+      mocks.chat.mockImplementation(async ({ systemPrompt, userText }) => {
+        prompts.push(userText);
+        if (systemPrompt.startsWith('Choose a concrete')) return answer(planner);
+        if (systemPrompt.startsWith('Scout public') && userText.includes('Check one company')) return answer(JSON.stringify({ contact_source: 'https://transistor.com/contact', email: 'hello@transistor.com', team_source: 'https://transistor.com/about', team_quote: 'A made up quote' }), ['web_fetch']);
+        return answer(bare, ['web_fetch']);
+      });
+      const approved = await approveJob(admin, job.id, { completion: 'review' });
+      await executeJobRun(approved.dryRunId!);
+      const lead = await ResearchEvidence.findOne({ domain: 'transistor.com' }).lean();
+      expect(lead?.facts?.map((fact) => fact.field)).toEqual(['bluesky', 'email']);
+      const run = await JobRun.findById(approved.dryRunId).lean();
+      expect(run?.researchProgress).toMatchObject({ verified: 1, recalled: 1, searchDown: false });
+      expect(prompts.find((text) => text.includes('Check one company'))?.length).toBeLessThan(1500);
+      expect(prompts.some((text) => text.includes('Anything under verified was confirmed') && text.includes('hello@transistor.com'))).toBe(true);
+      const step = (run?.modelPath as { outcome?: string }[]).find((entry) => entry.outcome?.includes('Confirmed by Nucleas'));
+      expect(step?.outcome).toContain('Not confirmed, team: the quote is not on that page');
+    });
+
+    it('tells a free model that opened nothing, and gives it one more try', async () => {
+      const job = await proposed({ ...DESIGN, skill: 'signature_outreach' });
+      mocks.select.mockResolvedValue({ primary: free, fallback: null });
+      const pushes: string[] = [];
+      mocks.chat.mockImplementation(async ({ systemPrompt, userText }) => {
+        if (systemPrompt.startsWith('Choose a concrete')) return answer(planner);
+        if (userText.includes('You answered without opening any page')) { pushes.push(userText); return answer(bare, ['web_fetch']); }
+        return answer(bare, ['web_search']);
+      });
+      const approved = await approveJob(admin, job.id, { completion: 'review' });
+      await executeJobRun(approved.dryRunId!);
+      expect(pushes.length).toBeGreaterThan(0);
+    });
+
+    it('says when search is down', async () => {
+      search.hits = [{ provider: 'wikipedia' }];
+      const job = await proposed({ ...DESIGN, skill: 'signature_outreach' });
+      mocks.select.mockResolvedValue({ primary: free, fallback: null });
+      mocks.chat.mockImplementation(async ({ systemPrompt }) => answer(systemPrompt.startsWith('Choose a concrete') ? planner : bare, ['web_fetch']));
+      const approved = await approveJob(admin, job.id, { completion: 'review' });
+      await executeJobRun(approved.dryRunId!);
+      expect((await JobRun.findById(approved.dryRunId).lean())?.researchProgress).toMatchObject({ searchDown: true });
+    });
   });
 
   it('keeps what workers screened when a Spotlight run finds nobody, but only from calls that opened pages', async () => {

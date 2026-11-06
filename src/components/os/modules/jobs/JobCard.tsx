@@ -84,7 +84,7 @@ export interface JobRunView {
     issues: { record: number; field?: string; problem: string }[];
     review: { verdict: 'pass' | 'fail'; notes: string; model: string } | null;
     costMicros: number;
-    researchProgress?: { discovered?: number; opened?: number; recalled?: number; needsCheck?: number };
+    researchProgress?: { discovered?: number; opened?: number; recalled?: number; needsCheck?: number; verified?: number; searchDown?: boolean };
     modelPath?: ModelStep[];
     costUnknown?: boolean;
     error: string | null;
@@ -606,7 +606,8 @@ function Results({ job, run }: { job: JobView; run: JobRunView }) {
             ) : null}
             {run.output?.gaps.length ? <p className="text-text-secondary">Could not find: {run.output.gaps.join('; ')}</p> : null}
             {run.researchProgress && <section className="rounded-lg border border-border p-4"><h3 className="mb-2 text-xs font-semibold uppercase text-text-secondary">Research dataset</h3>
-                <p>{run.researchProgress.discovered ?? 0} new leads saved · {run.researchProgress.opened ?? 0} readable sites checked · {run.researchProgress.recalled ?? 0} saved leads supplied · {run.researchProgress.needsCheck ?? 0} need one more check</p>
+                <p>{run.researchProgress.discovered ?? 0} new leads saved · {run.researchProgress.opened ?? 0} readable sites checked · {run.researchProgress.recalled ?? 0} saved leads supplied · {run.researchProgress.verified ?? 0} facts confirmed · {run.researchProgress.needsCheck ?? 0} need one more check</p>
+                {run.researchProgress.searchDown ? <p className="mt-1 text-amber-400">Web search returned nothing when this run started, so its results may be thin. This points to a search problem, not a lack of companies.</p> : null}
             </section>}
             <ModelPath run={run} />
 

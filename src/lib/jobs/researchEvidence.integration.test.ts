@@ -190,7 +190,7 @@ describe('companies a worker screened', () => {
   });
 
   it('briefs a worker on a lead without the bulk', () => {
-    expect(leadBrief({ name: 'Gila', website: 'https://gila.com/', qualificationGap: 'No feed', facts: [{ field: 'bluesky', value: 'https://bsky.app/profile/gila.com' }] })).toEqual({ name: 'Gila', website: 'https://gila.com/', verifiedLinks: { bluesky: 'https://bsky.app/profile/gila.com' }, lastProblem: 'No feed' });
+    expect(leadBrief({ name: 'Gila', website: 'https://gila.com/', qualificationGap: 'No feed', facts: [{ field: 'bluesky', value: 'https://bsky.app/profile/gila.com' }] })).toEqual({ name: 'Gila', website: 'https://gila.com/', verified: [{ fact: 'bluesky', value: 'https://bsky.app/profile/gila.com', page: undefined }], lastProblem: 'No feed' });
   });
 
   it('only offers to finish leads that hold the required link', () => {

@@ -56,7 +56,7 @@ export interface JobRunView {
   issues: RecordIssue[];
   review: { verdict: 'pass' | 'fail'; notes: string; model: string } | null;
   costMicros: number;
-  researchProgress?: { discovered?: number; opened?: number; recalled?: number; needsCheck?: number };
+  researchProgress?: { discovered?: number; opened?: number; recalled?: number; needsCheck?: number; verified?: number; searchDown?: boolean };
   modelPath: ModelStep[];
   costUnknown: boolean;
   error: string | null;

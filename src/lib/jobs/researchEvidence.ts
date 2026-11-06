@@ -25,7 +25,7 @@ const schema = new Schema({
 schema.index({ organizationId: 1, companyId: 1, skill: 1, domain: 1 }, { unique: true });
 type Entry = InferSchemaType<typeof schema>;
 export const ResearchEvidence: Model<Entry> = models.ResearchEvidence ?? model('ResearchEvidence', schema);
-type Scope = { organizationId: Types.ObjectId; companyId: Types.ObjectId; skill: string };
+export type Scope = { organizationId: Types.ObjectId; companyId: Types.ObjectId; skill: string };
 const url = z.string().max(1500).refine(isSafePublicHttpsUrl);
 const lead = z.object({ name: z.string().trim().min(1).max(180), website: url, source: url });
 const host = (value: string) => new URL(value).hostname.toLowerCase().replace(/^www\./, '');
@@ -79,14 +79,14 @@ function countRun(filter: Record<string, unknown>, runId: string) {
 }
 
 /** The saved leads worth finishing: those already holding the link the job cannot work without. */
-export function leadsToFinish(scope: Pick<Scope, 'skill'>, reserve: { name?: string | null; website?: string | null; qualificationGap?: string | null; facts?: { field?: string | null }[] | null }[]) {
+export function leadsToFinish<Lead extends { facts?: { field?: string | null }[] | null }>(scope: Pick<Scope, 'skill'>, reserve: Lead[]): Lead[] {
   const required = REQUIRED_HOMEPAGE_LINK[scope.skill];
   return reserve.filter(row => !required || row.facts?.some(fact => fact.field === required.field));
 }
 
 /** What a worker needs to pick up a saved lead, short enough that every lead fits. */
-export function leadBrief(lead: { name?: string | null; website?: string | null; qualificationGap?: string | null; facts?: { field?: string | null; value?: string | null }[] | null }) {
-  return { name: lead.name, website: lead.website, verifiedLinks: Object.fromEntries((lead.facts ?? []).map(fact => [fact.field, fact.value])), lastProblem: lead.qualificationGap ?? undefined };
+export function leadBrief(lead: { name?: string | null; website?: string | null; qualificationGap?: string | null; facts?: { field?: string | null; value?: string | null; source?: string | null }[] | null }) {
+  return { name: lead.name, website: lead.website, verified: (lead.facts ?? []).map(fact => ({ fact: fact.field, value: fact.value, page: fact.source })), lastProblem: lead.qualificationGap ?? undefined };
 }
 
 export async function researchReserve(scope: Scope, excluded: Set<string>) {

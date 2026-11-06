@@ -71,6 +71,11 @@ describe('signature prospect qualification', () => {
     it('ignores quote marks, dashes, case and spacing', () => {
       expect(quoteOnPage('We’re a team of 11 — “bootstrapped”  and independent.', "we're a team of 11 - \"bootstrapped\" and independent")).toBe(true);
     });
+    it('reads a quote copied from a page shown as markdown', () => {
+      const page = "Here's our team: Jon Buda, Co-founder, President Justin Jackson, Co-founder, CEO Helen Ryles, Customer Success";
+      const quote = "Here's our team: - **Jon Buda**, Co-founder, President - **Justin Jackson**, Co-founder, CEO - [Helen Ryles](https://transistor.fm/helen/), Customer Success";
+      expect(quoteOnPage(page, quote)).toBe(true);
+    });
     it('still requires the same words in the same order', () => {
       expect(quoteOnPage('We are a team of 11 people.', 'We are a team of 12 people.')).toBe(false);
       expect(quoteOnPage('Launched our new product.', 'Our new product launched.')).toBe(false);
