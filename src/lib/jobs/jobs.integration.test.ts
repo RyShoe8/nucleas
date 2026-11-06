@@ -41,6 +41,7 @@ import { processPropertyOverviewQueue } from '@/lib/propertyOverview/crawler';
 import { replaceCompanyOverview } from '@/lib/propertyOverview/storage';
 import { claimJobRunExecution, heartbeatJobRun, initialRunLease } from './runLifecycle';
 import { updateMarketingPlan } from './marketingPlans';
+import { ResearchEvidence } from './researchEvidence';
 
 let replica: MongoMemoryReplSet;
 const org = new Types.ObjectId();
@@ -448,6 +449,43 @@ describe('approving and the dry run', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0][0]).toMatchObject({ forceToolLoop: true, userText: expect.stringContaining('Verify the existing candidate') });
     expect(calls[0][0].userText).toContain('Deadlock');
+    const planner = mocks.chat.mock.calls.find(([input]) => input.systemPrompt.startsWith('Choose a concrete'));
+    expect(planner?.[0].userText).toContain('Start from the rarest requirement, a company Bluesky profile');
+  });
+
+  it('keeps what workers screened when a Spotlight run finds nobody, but only from calls that opened pages', async () => {
+    process.env.NUCLEAS_BROWSER_WORKER_URL = 'https://worker.test';
+    process.env.NUCLEAS_BROWSER_WORKER_SECRET = 'test-secret';
+    try {
+      const job = await proposed({ ...DESIGN, skill: 'signature_outreach' });
+      const free = { model: 'local', profileId: 'a'.repeat(24), free: true };
+      mocks.select.mockResolvedValue({ primary: free, fallback: null });
+      mocks.browser.mockImplementation(async (url: string) => ({ url, title: 'Site', text: 'x'.repeat(400), note: '', images: [], links: [`${url}about`, 'https://bsky.app/profile/company.com', `${url}pricing`] }));
+      const screened = (name: string, website: string) => JSON.stringify({ records: [], summary: 'Nobody qualified', gaps: [], screened: [{ name, website, checked: [website], gap: 'No growth evidence' }] });
+      let attempts = 0;
+      mocks.chat.mockImplementation(async ({ systemPrompt }) => {
+        if (systemPrompt.startsWith('Choose a concrete')) return { requestId: 'test', role: 'assistant', text: JSON.stringify({ source: 'Bluesky', discovery: 'Find profiles', rationale: 'Rarest first' }), costMicros: 0 };
+        if (systemPrompt.startsWith('Scout public')) return { requestId: 'test', role: 'assistant', text: 'No candidates yet.', costMicros: 0, toolsUsed: ['web_search'] };
+        attempts += 1;
+        // The first call opened pages. The next only searched, so what it claims is repeating what it was told.
+        return attempts === 1
+          ? { requestId: 'test', role: 'assistant', text: screened('Buttondown', 'https://buttondown.com/'), costMicros: 0, toolsUsed: ['web_search', 'web_fetch'] }
+          : { requestId: 'test', role: 'assistant', text: screened('Plausible', 'https://plausible.io/'), costMicros: 0, toolsUsed: ['web_search'] };
+      });
+      const approved = await approveJob(admin, job.id, { completion: 'review' });
+      await executeJobRun(approved.dryRunId!);
+      const saved = await ResearchEvidence.find({ skill: 'signature_outreach' }).lean();
+      expect(saved.map((row) => row.domain)).toEqual(['buttondown.com']);
+      expect(saved[0]).toMatchObject({ qualificationGap: 'No growth evidence', pageStatus: 'opened', facts: expect.arrayContaining([expect.objectContaining({ field: 'bluesky' })]) });
+      const retry = mocks.chat.mock.calls.map(([input]) => input.userText as string).find((text) => text.includes('Prospect search retry'));
+      expect(retry).toContain('Already screened this run and saved, so find others: Buttondown');
+      const run = await JobRun.findById(approved.dryRunId).lean();
+      expect(run?.researchProgress).toMatchObject({ discovered: 1, opened: 1, needsCheck: 1 });
+    } finally {
+      delete process.env.NUCLEAS_BROWSER_WORKER_URL;
+      delete process.env.NUCLEAS_BROWSER_WORKER_SECRET;
+      await ResearchEvidence.deleteMany({});
+    }
   });
 
   it('bounds failed discovery and waits for the next scheduled check without delivering dead pages', async () => {

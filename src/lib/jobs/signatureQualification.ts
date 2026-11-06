@@ -13,6 +13,14 @@ export const prospectQualification = z.object({
     social: z.string().regex(/^https:\/\/bsky\.app\/profile\/[\w.-]+\/?$/, 'Use the company Bluesky profile.'),
 });
 
+/** Code decides this, so a model cannot apply a stricter rule than the job's: anything goes unless the quote itself states more than 25. */
+export function teamEvidenceProblem(quote: string): string | null {
+    const stated = [...quote.matchAll(/(?:team of|staff of)\s+(\d[\d,]*)|(\d[\d,]*)\s*\+?\s*(?:-\s*person|person|people team|employees|staff|team members|teammates|people on)\b/gi)]
+        .map(match => Number((match[1] ?? match[2]).replace(/,/g, '')));
+    const largest = stated.length ? Math.max(...stated) : 0;
+    return largest > 25 ? `The team evidence says ${largest} people, over the limit of 25.` : null;
+}
+
 /** Open primary evidence before a reviewer decides whether its meaning supports the claims. */
 export async function qualifySignatureProspect(values: Record<string, unknown>, sources: string[], excluded: string[], needsBlog: boolean) {
     const parsed = prospectQualification.safeParse(values);
@@ -24,6 +32,8 @@ export async function qualifySignatureProspect(values: Record<string, unknown>, 
     // Checked here, before the pages are opened, so a post with a link gets the retry.
     if (/https?:\/\/|\bwww\.|(?<!@)\btailnote\.io\b/i.test(String(values.post ?? ''))) throw new Error('Leave every link out of the social post. It starts a conversation, and the link can wait until they reply.');
     const candidate = parsed.data;
+    const teamProblem = teamEvidenceProblem(candidate.team_quote);
+    if (teamProblem) throw new Error(teamProblem);
     const host = (raw: string) => assertSafePublicHttpsUrl(raw).hostname.toLowerCase().replace(/^www\./, '');
     const domain = host(candidate.website);
     if (excluded.some(raw => {

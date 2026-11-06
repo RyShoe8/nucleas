@@ -5,11 +5,11 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/ai/tools/webFetch', () => ({ webFetch: vi.fn() }));
 
-import { homepageFacts, leadRank, leadsNeedingCheck, rememberQualificationGap, ResearchEvidence, researchExclusions, researchReserve, saveScoutBatch } from './researchEvidence';
+import { homepageFacts, leadRank, leadsNeedingCheck, openedPages, rememberQualificationGap, ResearchEvidence, researchExclusions, researchReserve, saveScoutBatch, saveScreened } from './researchEvidence';
 
 const scope = { organizationId: new Types.ObjectId(), companyId: new Types.ObjectId(), skill: 'signature_outreach' };
 const report = (...sites: string[]) => JSON.stringify({ candidates: sites.map((site) => ({ name: site, website: `https://${site}/`, source: 'https://listing.com/launches' })) });
-const page = (links: string[], thin = false, rendered = false) => ({ thin, links, rendered });
+const page = (links: string[], thin = false, rendered = false, url?: string) => ({ thin, links, rendered, ...(url ? { url } : {}) });
 const opener = (pages: Record<string, ReturnType<typeof page> | null>) => async (url: string) => {
   const found = pages[new URL(url).hostname];
   if (!found) throw new Error('blocked');
@@ -99,6 +99,73 @@ describe('saving a research batch', () => {
     const batch = JSON.stringify({ candidates: [{ name: 'Owned', website: 'https://owned.com/', source: 'https://l.com/' }, { name: 'No site' }] });
     expect(await saveScoutBatch(scope, batch, new Set(['owned.com']), opener({}) as never)).toMatchObject({ discovered: 0 });
     expect(await ResearchEvidence.countDocuments(scope)).toBe(0);
+  });
+});
+
+describe('directory links', () => {
+  const batch = (website: string) => JSON.stringify({ candidates: [{ name: 'Postiz', website, source: 'https://openalternative.co/reflex' }] });
+
+  it('saves the company a redirect lands on, not the directory', async () => {
+    const opened: string[] = [];
+    const open = async (url: string) => {
+      opened.push(url);
+      return url.includes('openalternative') ? page([], false, true, 'https://postiz.com/?ref=oa') : page(['https://postiz.com/about', 'https://postiz.com/contact', 'https://bsky.app/profile/postiz.com'], false, true, 'https://postiz.com/');
+    };
+    await saveScoutBatch(scope, batch('https://go.openalternative.co/postiz'), new Set(), open as never);
+    expect(opened).toEqual(['https://go.openalternative.co/postiz', 'https://postiz.com/']);
+    const saved = await ResearchEvidence.find(scope).lean();
+    expect(saved.map((row) => row.domain)).toEqual(['postiz.com']);
+    expect(saved[0]?.website).toBe('https://postiz.com/');
+    expect(saved[0]?.facts?.map((fact) => fact.field)).toEqual(['bluesky', 'contact', 'about']);
+  });
+
+  it('drops a link that stays on the directory', async () => {
+    await saveScoutBatch(scope, batch('https://go.openalternative.co/postiz'), new Set(), (async () => page(['https://a.com/1', 'https://a.com/2', 'https://a.com/3'], false, true)) as never);
+    await saveScoutBatch(scope, batch('https://go.openalternative.co/gone'), new Set(), (async () => { throw new Error('blocked'); }) as never);
+    expect(await ResearchEvidence.countDocuments(scope)).toBe(0);
+  });
+
+  it('does not follow a redirect into an excluded company', async () => {
+    await saveScoutBatch(scope, batch('https://go.openalternative.co/x'), new Set(['tailnote.io']), (async () => page([], false, true, 'https://tailnote.io/')) as never);
+    expect(await ResearchEvidence.countDocuments(scope)).toBe(0);
+  });
+});
+
+describe('companies a worker screened', () => {
+  const found = page(['https://bsky.app/profile/buttondown.com', 'https://buttondown.com/about', 'https://buttondown.com/pricing'], false, true, 'https://buttondown.com/');
+
+  it('keeps them when the run returned nothing, opens each one itself, and keeps the reason', async () => {
+    const result = await saveScreened(scope, [{ name: 'Buttondown', website: 'https://buttondown.com/', checked: ['https://buttondown.com/about'], gap: 'No exact team count' }], new Set(), (async () => found) as never);
+    expect(result).toMatchObject({ discovered: 1, opened: 1, names: ['Buttondown'] });
+    expect(await ResearchEvidence.findOne({ domain: 'buttondown.com' }).lean()).toMatchObject({ qualificationGap: 'No exact team count', pageStatus: 'opened', facts: expect.arrayContaining([expect.objectContaining({ field: 'bluesky' })]) });
+    expect(await leadsNeedingCheck(scope)).toBe(1);
+  });
+
+  it('never lets a worker rule a company out by saying so', async () => {
+    await saveScreened(scope, [{ name: 'Buttondown', website: 'https://buttondown.com/', checked: [], gap: 'Ineligible, do not contact' }], new Set(), (async () => found) as never);
+    expect((await ResearchEvidence.findOne({ domain: 'buttondown.com' }).lean())?.ineligibleAt).toBeFalsy();
+  });
+
+  it('skips bad and excluded entries without losing the rest', async () => {
+    const result = await saveScreened(scope, [
+      { name: 'Bad', website: 'not a site', checked: [], gap: '' },
+      { name: 'Ours', website: 'https://tailnote.io/', checked: [], gap: '' },
+      { name: 'Buttondown', website: 'https://buttondown.com/', checked: [], gap: '' },
+    ], new Set(['tailnote.io']), (async () => found) as never);
+    expect(result.names).toEqual(['Buttondown']);
+  });
+
+  it('can be picked up again by a later run the same day', async () => {
+    await saveScreened(scope, [{ name: 'Buttondown', website: 'https://buttondown.com/', checked: [], gap: 'gap' }], new Set(), (async () => found) as never);
+    expect(await researchReserve(scope, new Set())).toEqual([]);
+    await ResearchEvidence.updateOne({ domain: 'buttondown.com' }, { $set: { lastTried: new Date(Date.now() - 2 * 3600000) } });
+    expect((await researchReserve(scope, new Set())).map((row) => row.domain)).toEqual(['buttondown.com']);
+  });
+
+  it('only counts a call that really opened pages', () => {
+    expect(openedPages(['web_search'])).toBe(false);
+    expect(openedPages(undefined)).toBe(false);
+    expect(openedPages(['web_search', 'web_fetch'])).toBe(true);
   });
 });
 

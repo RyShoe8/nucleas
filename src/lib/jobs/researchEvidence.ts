@@ -83,7 +83,7 @@ export async function researchReserve(scope: Scope, excluded: Set<string>) {
       { lastTried: { $gte: new Date(Date.now() - 30 * 86400000) } },
       { checkedAt: null, createdAt: { $gte: new Date(Date.now() - 30 * 86400000) } },
     ] }, { $or: [{ ineligibleAt: null }, { ineligibleAt: { $lt: new Date(Date.now() - 30 * 86400000) } }] }],
-    $or: [{ lastTried: null }, { lastTried: { $lt: new Date(Date.now() - 86400000) } }],
+    $or: [{ lastTried: null }, { lastTried: { $lt: new Date(Date.now() - 3600000) } }],
   }).sort({ pageStatus: -1, lastTried: 1, checkedAt: -1 }).limit(30).select('pageStatus name domain website source checkedAt observedLinks qualificationGap facts -_id').lean()
     .then(rows => rows.filter(row => allowed(row.domain, excluded)).sort((a, b) => leadRank(b) - leadRank(a)).slice(0, 5));
 }
@@ -92,7 +92,7 @@ export const datasetAssignment = 'Return only JSON {"candidates":[{"name":"compa
 
 const MIN_LINKS_FOR_PROOF = 3;
 
-export type OpenedLead = { thin: boolean; links: string[]; rendered: boolean };
+export type OpenedLead = { thin: boolean; links: string[]; rendered: boolean; url?: string };
 
 /** Opens a lead in the real browser, which sees links drawn by JavaScript. Without it, a plain fetch still gives partial evidence. */
 export async function openLead(url: string): Promise<OpenedLead> {
@@ -101,20 +101,64 @@ export async function openLead(url: string): Promise<OpenedLead> {
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const page = await browserNavigate(url);
-        return { thin: page.text.trim().length < 200, links: page.links, rendered: true };
+        return { thin: page.text.trim().length < 200, links: page.links, rendered: true, url: page.url };
       } catch (error) {
         console.warn(`[research] browser attempt ${attempt} could not open ${url}`, error instanceof Error ? error.message : 'unknown');
       }
     }
   }
   const page = await webFetch(url);
-  return { thin: page.thin, links: page.links, rendered: false };
+  return { thin: page.thin, links: page.links, rendered: false, url: page.url };
 }
 
 /** A homepage link a job cannot work without, so a real browser not finding it settles the question. */
 const REQUIRED_HOMEPAGE_LINK: Record<string, { field: string; reason: string }> = {
   signature_outreach: { field: 'bluesky', reason: 'No Bluesky profile is linked from the official homepage.' },
 };
+
+/** Two hosts on the same site, so a listing and its own redirect links count as one. */
+function sameSite(a: string, b: string) {
+  const root = (value: string) => {
+    const parts = value.split('.');
+    const countryCode = parts.length > 2 && parts[parts.length - 1].length === 2 && parts[parts.length - 2].length <= 3;
+    return parts.slice(countryCode ? -3 : -2).join('.');
+  };
+  return root(a) === root(b);
+}
+
+/**
+ * Opens a lead and saves what its page shows. A redirect counts as the company it lands on. Returns null when the lead
+ * turns out to be excluded, or to be the listing that named it rather than a company of its own.
+ */
+async function checkLead(scope: Scope, candidate: z.infer<typeof lead>, excluded: Set<string>, open: (url: string) => Promise<OpenedLead>, listing?: string) {
+  const named = { ...scope, domain: host(candidate.website) };
+  if (await ResearchEvidence.exists({ ...named, pageStatus: 'opened', checkedAt: { $gt: new Date(Date.now() - 86400000) } })) return { domain: named.domain, inserted: 0, status: null, receipt: null };
+  let website = candidate.website;
+  let page = await open(website).catch(() => null);
+  if (page?.url && isSafePublicHttpsUrl(page.url) && host(page.url) !== host(website)) {
+    website = new URL(page.url).origin + '/';
+    page = await open(website).catch(() => null);
+  }
+  const domain = host(website);
+  if (!allowed(domain, excluded) || (listing && sameSite(domain, host(listing)))) return null;
+  const filter = { ...scope, domain };
+  const result = await ResearchEvidence.updateOne(filter, { $setOnInsert: { ...filter, name: candidate.name, website, source: candidate.source } }, { upsert: true });
+  const pageStatus = !page ? 'inaccessible' : page.thin ? 'limited' : 'opened';
+  const links = (page?.links ?? []).filter(link => /feed|rss|atom|about|team|contact|bsky|affiliate|partner/i.test(link)).slice(0, 10);
+  // Only what the page itself showed replaces earlier facts. A page that failed to open says nothing about them.
+  const facts = page ? homepageFacts(website, page.links ?? [], new Date(), page.rendered ? 'Link found on the official homepage in a real browser' : 'Link found in the official homepage HTML') : [];
+  const required = REQUIRED_HOMEPAGE_LINK[scope.skill];
+  const hasRequired = Boolean(required && facts.some(fact => fact.field === required.field));
+  // A challenge or error page can have text but hardly any links, and says nothing about the real site.
+  const proven = Boolean(required && page?.rendered && pageStatus === 'opened' && !hasRequired && page.links.length >= MIN_LINKS_FOR_PROOF);
+  await ResearchEvidence.updateOne(filter, {
+    $set: { pageStatus, checkedAt: new Date(), website, source: candidate.source,
+      ...(page ? { observedLinks: links, facts } : {}),
+      ...(proven ? { ineligibleReason: required!.reason, ineligibleAt: new Date() } : {}) },
+    ...(hasRequired ? { $unset: { ineligibleReason: '', ineligibleAt: '' } } : {}),
+  });
+  return { domain, inserted: result.upsertedCount, status: pageStatus, receipt: JSON.stringify({ domain, checked: website, pageStatus, links, facts: facts.map(fact => fact.field) }) };
+}
 
 export async function saveScoutBatch(scope: Scope, report: string, excluded: Set<string>, open: (url: string) => Promise<OpenedLead> = openLead) {
   const raw = extractJson(report) as { candidates?: unknown[] } | null;
@@ -129,31 +173,42 @@ export async function saveScoutBatch(scope: Scope, report: string, excluded: Set
   let discovered = 0;
   let opened = 0;
   const receipts: string[] = [];
-  for (const [domain, candidate] of batch) {
-    const filter = { ...scope, domain };
-    const result = await ResearchEvidence.updateOne(filter, { $setOnInsert: { ...filter, ...candidate } }, { upsert: true });
-    discovered += result.upsertedCount;
-    const fresh = await ResearchEvidence.exists({ ...filter, pageStatus: 'opened', checkedAt: { $gt: new Date(Date.now() - 86400000) } });
-    if (fresh) continue;
-    const page = await open(candidate.website).catch(() => null);
-    const pageStatus = !page ? 'inaccessible' : page.thin ? 'limited' : 'opened';
-    const links = (page?.links ?? []).filter(link => /feed|rss|atom|about|team|contact|bsky|affiliate|partner/i.test(link)).slice(0, 10);
-    // Only what the page itself showed replaces earlier facts. A page that failed to open says nothing about them.
-    const facts = page ? homepageFacts(candidate.website, page.links ?? [], new Date(), page.rendered ? 'Link found on the official homepage in a real browser' : 'Link found in the official homepage HTML') : [];
-    const required = REQUIRED_HOMEPAGE_LINK[scope.skill];
-    const hasRequired = Boolean(required && facts.some(fact => fact.field === required.field));
-    // A challenge or error page can have text but hardly any links, and says nothing about the real site.
-    const proven = Boolean(required && page?.rendered && pageStatus === 'opened' && !hasRequired && page.links.length >= MIN_LINKS_FOR_PROOF);
-    await ResearchEvidence.updateOne(filter, {
-      $set: { pageStatus, checkedAt: new Date(), website: candidate.website, source: candidate.source,
-        ...(page ? { observedLinks: links, facts } : {}),
-        ...(proven ? { ineligibleReason: required!.reason, ineligibleAt: new Date() } : {}) },
-      ...(hasRequired ? { $unset: { ineligibleReason: '', ineligibleAt: '' } } : {}),
-    });
-    if (pageStatus === 'opened') opened++;
-    receipts.push(JSON.stringify({ domain, checked: candidate.website, pageStatus, links, facts: facts.map(fact => fact.field) }));
+  for (const candidate of batch.values()) {
+    const checked = await checkLead(scope, candidate, excluded, open, candidate.source);
+    if (!checked) continue;
+    discovered += checked.inserted;
+    if (checked.status === 'opened') opened++;
+    if (checked.receipt) receipts.push(checked.receipt);
   }
   return { discovered, opened, receipts };
+}
+
+/** Whether a model call really opened pages, so what it says it screened can be taken as its own work. */
+export function openedPages(tools: readonly string[] | undefined) {
+  return (tools ?? []).some(tool => ['web_fetch', 'browser_navigate', 'site_map'].includes(tool));
+}
+
+/**
+ * Saves every company a worker says it looked at, even when the run returns nothing, so the work is not paid for twice.
+ * The browser opens each one itself. The worker's reason is kept as a note, and it can never rule a company out.
+ */
+export async function saveScreened(scope: Scope, screened: { name: string; website: string; checked: string[]; gap: string }[], excluded: Set<string>, open: (url: string) => Promise<OpenedLead> = openLead) {
+  let discovered = 0;
+  let opened = 0;
+  const names: string[] = [];
+  const receipts: string[] = [];
+  for (const item of screened.slice(0, 10)) {
+    const parsed = lead.safeParse({ name: item.name, website: item.website, source: item.checked.find(isSafePublicHttpsUrl) ?? item.website });
+    if (!parsed.success || !allowed(host(parsed.data.website), excluded)) continue;
+    const checked = await checkLead(scope, parsed.data, excluded, open);
+    if (!checked) continue;
+    discovered += checked.inserted;
+    if (checked.status === 'opened') opened++;
+    if (checked.receipt) receipts.push(checked.receipt);
+    names.push(parsed.data.name);
+    await ResearchEvidence.updateOne({ ...scope, domain: checked.domain }, { $set: { lastTried: new Date(), ...(item.gap ? { qualificationGap: item.gap.slice(0, 700) } : {}) } });
+  }
+  return { discovered, opened, names, receipts };
 }
 
 export async function rememberQualificationGap(scope: Scope, values: Record<string, unknown>, sources: string[], gap: string, excluded: Set<string>, ineligible = false) {

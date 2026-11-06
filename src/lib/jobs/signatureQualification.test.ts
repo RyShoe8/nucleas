@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('@/lib/ai/tools/browserClient', () => ({ browserNavigate: vi.fn() }));
-import { prospectQualification, qualifySignatureProspect } from './signatureQualification';
+import { prospectQualification, qualifySignatureProspect, teamEvidenceProblem } from './signatureQualification';
 describe('signature prospect qualification', () => {
   const candidate = {
     website: 'https://smallcompany.com', social: 'https://bsky.app/profile/smallcompany.com', team_size: 10,
@@ -23,6 +23,15 @@ describe('signature prospect qualification', () => {
       await expect(qualifySignatureProspect({ ...candidate, post }, [], [], true)).rejects.toThrow('Leave every link out');
     }
     await expect(qualifySignatureProspect({ ...candidate, post: '@smallcompany.com How did the launch go? cc @tailnote.io' }, [], [], true)).rejects.toThrow('Cite the exact');
+  });
+  it.each([
+    ['I run this solo.'], ['A small team of 12 building newsletters.'], ['Our team page lists Ana, Ben and Cy.'],
+    ['Trusted by 5,000 customers and 300 newsletters.'], ['We are a 25-person company.'],
+  ])('accepts small-company evidence without an exact count: %s', (quote) => {
+    expect(teamEvidenceProblem(quote)).toBeNull();
+  });
+  it.each([['We are a team of 40.', 40], ['Over 1,200 employees worldwide.', 1200], ['A 60-person company.', 60]])('refuses a quote that says too many: %s', (quote, size) => {
+    expect(teamEvidenceProblem(quote)).toContain(String(size));
   });
   it('rejects owned companies and missing citations before opening any pages', async () => {
     await expect(qualifySignatureProspect(candidate, [], ['smallcompany.com'], true)).rejects.toThrow('Owned properties');

@@ -110,11 +110,26 @@ export type JobDesign = z.infer<typeof jobDesignSchema>;
 const recordSourcesSchema = z.array(z.string().max(2000)).default([])
   .transform((sources) => [...new Set(sources.map((source) => source.trim()).filter(Boolean))].slice(0, 20));
 
+const screenedCompanySchema = z.object({
+  name: z.string().trim().min(1).max(180),
+  website: z.string().trim().max(1500),
+  checked: z.array(z.string().max(1500)).max(10).default([]),
+  gap: z.string().max(700).default(''),
+});
+
 export const jobRunOutputSchema = z.object({
   records: z.array(z.object({ values: z.record(z.string(), z.unknown()), sources: recordSourcesSchema })).max(100),
   summary: z.string().max(4000).default(''),
   /** Anything the run could not find or verify. */
   gaps: z.array(z.string().max(500)).max(20).default([]),
+  /** Companies the worker looked at, kept even when none qualified. A bad entry is dropped; it never loses the rest of the result. */
+  screened: z.unknown().optional().transform((value) => {
+    const rows = (Array.isArray(value) ? value : []).slice(0, 20).flatMap((row) => {
+      const parsed = screenedCompanySchema.safeParse(row);
+      return parsed.success ? [parsed.data] : [];
+    });
+    return rows.length ? rows : undefined;
+  }),
 });
 export type JobRunOutput = z.infer<typeof jobRunOutputSchema>;
 
