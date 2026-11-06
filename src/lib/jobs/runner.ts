@@ -17,7 +17,7 @@ import { manualArtifact, replyProblem, parseJobOutput } from './output';
 import { brandVoiceContext, generatedVoice } from '@/lib/brandVoice/service';
 import { collectSocialVoiceSamples } from '@/lib/social/voiceSamples';
 import { brandMediaPrompt, brandMediaSources } from '@/lib/brandAssets/brandAssets';
-import { modelStepReason, type ModelStep } from '@/lib/jobs/modelPath';
+import { modelStepReason, type ModelStep, stepText } from '@/lib/jobs/modelPath';
 import { Types } from 'mongoose';
 import { z } from 'zod';
 import { attemptCompanyCredentialChat } from '@/lib/ai/companyChat';
@@ -534,7 +534,7 @@ export async function executeJobRun(runId: string): Promise<void> {
   let cost = 0;
   const usedModels: string[] = [];
   const recordStep = (stage: ModelStep['stage'], note: string, choice: { model: string; free: boolean }, source: ModelStep['source'], fallback: boolean, costMicros: number | null, error?: string) => {
-    modelPath.push({ stage, note, model: choice.model, free: choice.free, source, level, fallback, costMicros, ...(error ? { error: error.slice(0, 600) } : {}), reason: modelStepReason({ stage, level, free: choice.free, source, fallback }) });
+    modelPath.push({ stage, note, model: choice.model, free: choice.free, source, level, fallback, costMicros, ...(error ? { error: stepText(error) } : {}), reason: modelStepReason({ stage, level, free: choice.free, source, fallback }) });
     if (costMicros === null && !choice.free) costUnknown = true;
   };
   let researchPercent = 28;
@@ -586,12 +586,12 @@ export async function executeJobRun(runId: string): Promise<void> {
     const pinned = work.source === 'pinned' && choice.profileId === work.primary?.profileId && choice.model === work.primary?.model;
     recordStep('work', scouting ? 'Scout candidate sources' : compact ? 'Compact retry' : correction ? (researchRetry ? 'Re-research' : 'Format retry') : 'First attempt', choice, pinned ? 'pinned' : 'auto', choice.profileId !== worker.profileId || choice.model !== worker.model, turn.costMicros ?? null, turn.role === 'assistant' ? undefined : turn.text);
     const step = modelPath[modelPath.length - 1];
-    step.assignment = (correction?.split(/Previous candidate:|Rejected result:/)[0] || brief || activeDesign.instructions).slice(0, 600);
+    step.assignment = stepText(correction?.split(/Previous candidate:|Rejected result:/)[0] || brief || activeDesign.instructions);
     step.tools = [...new Set(turn.toolsUsed ?? [])].slice(0, 20);
-    if (scouting && turn.role === 'assistant') step.outcome = turn.text.slice(0, 1000);
+    if (scouting && turn.role === 'assistant') step.outcome = stepText(turn.text);
     else if (turn.role === 'assistant') {
       const parsed = parseJobOutput(turn.text, activeDesign.skill);
-      step.outcome = parsed.success ? (parsed.data.records.length + ' records. ' + parsed.data.summary).slice(0, 600) : 'Returned a reply that failed format validation.';
+      step.outcome = parsed.success ? stepText(parsed.data.records.length + ' records. ' + parsed.data.summary) : 'Returned a reply that failed format validation.';
     }
     return turn;
   };
@@ -664,7 +664,7 @@ export async function executeJobRun(runId: string): Promise<void> {
           await storeStats();
           brief += '\nScout findings (unverified):\n' + shortlist.slice(0, 4500) + '\nServer page checks:\n' + batch.receipts.join('\n');
           const step = modelPath[modelPath.length - 1];
-          step.outcome = [step.outcome, ...batch.receipts].join('\n').slice(0, 2500);
+          step.outcome = stepText([step.outcome, ...batch.receipts].join('\n'));
         }
       }
     }
@@ -809,7 +809,7 @@ export async function executeJobRun(runId: string): Promise<void> {
         const verdict = answer.role === 'assistant' ? (extractJson(answer.text) as { verdict?: unknown; reason?: unknown } | null) : null;
         const step = modelPath[modelPath.length - 1];
         step.assignment = 'Check the proposed placement against the page evidence and eligibility requirements.';
-        if (verdict) step.outcome = [verdict.verdict, verdict.reason].filter(Boolean).join(' · ').slice(0, 600);
+        if (verdict) step.outcome = stepText([verdict.verdict, verdict.reason].filter(Boolean).join(' · '));
         return verdict && (verdict.verdict === 'pass' || verdict.verdict === 'fail' || verdict.verdict === 'unverified') ? { verdict: verdict.verdict, reason: String(verdict.reason ?? '').slice(0, 300) } : null;
       };
       const excluded = await missingLinkOpportunityUrls(job.organizationId, job.companyId, output.records.map((record) => String(record.values.opportunity_url ?? '')));
@@ -970,7 +970,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       const v = z.object({ verdict: z.enum(['pass', 'fail']), notes: z.string().max(2000).default('') }).safeParse(extractJson(reviewTurn.text));
       if (v.success) {
         verdict = { ...v.data, model: review.primary.model };
-        modelPath[modelPath.length - 1].outcome = (v.data.verdict + ' - ' + v.data.notes).slice(0, 600);
+        modelPath[modelPath.length - 1].outcome = stepText(v.data.verdict + ' - ' + v.data.notes);
       }
       if (activeDesign.skill === 'signature_outreach' && verdict?.verdict === 'fail' && !researchRepairUsed && workCalls < maxWorkCalls && reviewCalls < MAX_REVIEW_CALLS) {
         researchRepairUsed = true;

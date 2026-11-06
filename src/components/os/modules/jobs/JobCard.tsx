@@ -498,9 +498,9 @@ function ModelPath({ run }: { run: JobRunView }) {
                         <span className={`ml-2 rounded border px-1.5 py-0.5 text-[10px] ${step.free ? 'border-border text-text-secondary' : 'border-primary/40 text-primary'}`}>{step.free ? 'Free' : 'Paid'}</span>
                         <span className="ml-2 text-xs text-text-secondary">{step.costMicros === null ? (step.free ? '' : 'cost unknown') : usd(step.costMicros)}</span>
                         <p className="text-xs text-text-secondary">{step.reason}</p>
-                        {step.assignment && <p className="text-xs"><strong>Assignment</strong> · {step.assignment}</p>}
+                        {step.assignment && <p className="whitespace-pre-line break-words text-xs"><strong>Assignment</strong> · {step.assignment}</p>}
                         {step.tools?.length ? <p className="text-xs"><strong>Tools used</strong> · {step.tools.join(', ')}</p> : null}
-                        {step.outcome && <p className="whitespace-pre-line text-xs"><strong>{step.stage === 'plan' ? 'Instructions sent to worker' : 'Result'}</strong> · {step.outcome}</p>}
+                        {step.outcome && <p className="whitespace-pre-line break-words text-xs"><strong>{step.stage === 'plan' ? 'Instructions sent to worker' : 'Result'}</strong> · {step.outcome}</p>}
                         {step.error ? <p className="text-xs text-amber-300">Failed: {step.error}</p> : null}
                     </li>
                 ))}

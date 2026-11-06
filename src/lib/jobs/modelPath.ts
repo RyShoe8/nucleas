@@ -21,6 +21,13 @@ export interface ModelStep {
   tools?: string[];
 }
 
+/** A step's saved text is shown so a person can follow the run, so it keeps the whole thing. The limit only guards against a runaway reply. */
+const STEP_TEXT_MAX = 12_000;
+
+export function stepText(text: string): string {
+  return text.length > STEP_TEXT_MAX ? `${text.slice(0, STEP_TEXT_MAX)}\n… (shortened: over ${STEP_TEXT_MAX.toLocaleString('en-US')} characters)` : text;
+}
+
 const LEVEL_LABEL: Record<ModelPathLevel, string> = { free: 'Free', low: 'Low', medium: 'Medium', high: 'High' };
 
 /** Plain-language reason the engine picked this model, mirroring the rules in engine/select.ts. */
