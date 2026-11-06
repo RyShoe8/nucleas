@@ -78,6 +78,32 @@ export function tidyPost(post: string): string {
     return post.replace(/\s*[\u2014\u2013]\s*/g, ', ');
 }
 
+type ConceptPage = { links?: string[]; whole: string };
+
+/**
+ * The checks a record must pass before a signature can be made from it, with each failure naming what to fix and where.
+ * They run before review, while there is still a chance to fix them, and again just before the picture is made.
+ */
+export function conceptProblem(values: Record<string, unknown>, pages: { home: ConceptPage; person: ConceptPage; contact: ConceptPage }): string | null {
+    const read = (key: string) => String(values[key] ?? '').trim();
+    for (const key of ['first_name', 'last_name', 'role', 'email', 'social', 'post']) {
+        if (!read(key)) return `Missing ${key}.`;
+    }
+    const personPage = read('person_source');
+    for (const key of ['first_name', 'last_name']) {
+        if (!quoteOnPage(pages.person.whole, read(key))) return `The name "${read('first_name')} ${read('last_name')}" is not on ${personPage}. Cite the page that names this person.`;
+    }
+    if (!quoteOnPage(pages.person.whole, read('role'))) return `The role "${read('role')}" is not on ${personPage}. It appears in the signature, so use the words the page itself uses for this person's role.`;
+    if (!pages.contact.whole.toLowerCase().includes(read('email').toLowerCase())) return `${read('email')} is not listed on ${read('contact_source')}. Cite the page that lists it, because work email must be publicly listed.`;
+    const social = read('social').replace(/\/$/, '').toLowerCase();
+    if (!(pages.home.links ?? []).some(link => link.replace(/\/$/, '').toLowerCase() === social)) return `The official homepage must link to this social profile: ${read('social')}.`;
+    const handle = /^https:\/\/bsky\.app\/profile\/([\w.-]+)$/.exec(social)?.[1];
+    const mentions = read('post').match(/@[a-z0-9_.-]+/gi) ?? [];
+    if (!handle || !mentions.some(mention => mention.replace(/[.]$/, '').toLowerCase() === `@${handle}`)) return `The post must tag the verified company profile: @${handle ?? 'its Bluesky handle'}.`;
+    if (Array.from(read('post')).length > 300) return 'The Bluesky post is over 300 characters.';
+    return null;
+}
+
 /** Code decides this, so a model cannot apply a stricter rule than the job's: anything goes unless the quote itself states more than 25. */
 export function teamEvidenceProblem(quote: string): string | null {
     const stated = [...quote.matchAll(/(?:team of|staff of)\s+(\d[\d,]*)|(\d[\d,]*)\s*\+?\s*(?:-\s*person|person|people team|employees|staff|team members|teammates|people on)\b/gi)]
@@ -122,14 +148,22 @@ export async function qualifySignatureProspect(values: Record<string, unknown>, 
         try { assertSafePublicHttpsUrl(url); } catch { throw new Error(`${key} must be a public https address.`); }
         if (!sources.some(source => source.replace(/\/$/, '') === url.replace(/\/$/, ''))) throw new Error(`Cite the exact ${key} URL in sources.`);
     }
-    const urls = [...new Set([candidate.team_source, candidate.growth_source, String(values.person_source), String(values.contact_source)])];
+    const urls = [...new Set([candidate.team_source, candidate.growth_source, String(values.person_source), String(values.contact_source), candidate.website])];
     const pages = await Promise.all(urls.map(async url => {
         const page = await browserNavigate(url);
         if (!isOfficial(page.url)) throw new Error('Primary evidence redirected outside the prospect website.');
-        return { url, text: page.text, whole: page.plainText || page.text };
+        return { url, text: page.text, whole: page.plainText || page.text, links: (page.links ?? []) as string[] };
     }));
     for (const [label, url, quote] of [['team', candidate.team_source, candidate.team_quote], ['growth', candidate.growth_source, candidate.growth_quote]]) {
         if (!quoteOnPage(pages.find(page => page.url === url)?.whole ?? '', quote)) throw new Error(`The ${label} quote was not found on ${url}. Copy it exactly as the page shows it, or cite the page it is on. Quote given: "${quote.slice(0, 200)}"`);
+    }
+    const pageAt = (url: string) => pages.find(page => page.url === url) ?? { whole: '', links: [] as string[] };
+    const problem = conceptProblem(values, { home: pageAt(candidate.website), person: pageAt(String(values.person_source)), contact: pageAt(String(values.contact_source)) });
+    if (problem) throw new Error(problem);
+    const feed = String(values.feed ?? '').trim();
+    if (feed && !isOfficial(feed) && !pageAt(candidate.website).links.includes(feed)) {
+        const hosted = official.size ? official : await officialPublishingHosts(candidate.website);
+        if (!hosted.has(host(feed))) throw new Error(`The feed ${feed} is not the company's own. Choose a feed on its site, or one its homepage links to.`);
     }
     return pages.map(page => `Opened primary source: ${page.url}\n${page.text.slice(0, 6500)}`).join('\n\n');
 }

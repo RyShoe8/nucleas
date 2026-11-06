@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 const worker = vi.hoisted(() => ({ navigate: vi.fn(), fetch: vi.fn() }));
 vi.mock('@/lib/ai/tools/browserClient', () => ({ browserNavigate: worker.navigate, browserFetch: worker.fetch }));
-import { dateOnPage, looksLikeLogo, officialPublishingHosts, prospectQualification, publishingHostsIn, qualifySignatureProspect, quoteOnPage, teamEvidenceProblem, tidyPost } from './signatureQualification';
+import { conceptProblem, dateOnPage, looksLikeLogo, officialPublishingHosts, prospectQualification, publishingHostsIn, qualifySignatureProspect, quoteOnPage, teamEvidenceProblem, tidyPost } from './signatureQualification';
 describe('signature prospect qualification', () => {
   const candidate = {
     website: 'https://smallcompany.com', social: 'https://bsky.app/profile/smallcompany.com', team_size: 10,
@@ -46,9 +46,9 @@ describe('signature prospect qualification', () => {
 
   describe('growth evidence on a hosted blog', () => {
     const blog = 'https://smallco.substack.com/p/launch';
-    const values = { ...candidate, growth_source: blog, growth_date: new Date().toISOString().slice(0, 10), person_source: 'https://smallcompany.com/team', contact_source: 'https://smallcompany.com/team', cta_url: 'https://smallcompany.com/buy' };
+    const values = { ...candidate, first_name: 'Ana', last_name: 'Lee', role: 'Founder', email: 'ana@smallcompany.com', post: '@smallcompany.com How did the launch go?', growth_source: blog, growth_date: new Date().toISOString().slice(0, 10), person_source: 'https://smallcompany.com/team', contact_source: 'https://smallcompany.com/team', cta_url: 'https://smallcompany.com/buy' };
     const sources = [candidate.team_source, blog, 'https://smallcompany.com/buy'];
-    const opened = () => worker.navigate.mockImplementation(async (url: string) => ({ url, text: `${candidate.team_quote} ${candidate.growth_quote}` }));
+    const opened = () => worker.navigate.mockImplementation(async (url: string) => ({ url, links: [candidate.social], text: `${candidate.team_quote} ${candidate.growth_quote} Ana Lee, Founder ana@smallcompany.com` }));
 
     it('counts when the homepage points to that exact blog', async () => {
       opened();
@@ -131,9 +131,37 @@ describe('signature prospect qualification', () => {
   });
 
   it('checks quotes against the whole page, not the shortened copy', async () => {
-    worker.navigate.mockImplementation(async (url: string) => ({ url, text: 'shortened', plainText: `${candidate.team_quote} ${candidate.growth_quote}` }));
-    const values = { ...candidate, growth_date: new Date().toISOString().slice(0, 10), person_source: candidate.team_source, contact_source: candidate.team_source, cta_url: 'https://smallcompany.com/buy' };
+    worker.navigate.mockImplementation(async (url: string) => ({ url, links: [candidate.social], text: 'shortened', plainText: `${candidate.team_quote} ${candidate.growth_quote} Ana Lee, Founder ana@smallcompany.com` }));
+    const values = { ...candidate, first_name: 'Ana', last_name: 'Lee', role: 'Founder', email: 'ana@smallcompany.com', post: '@smallcompany.com How did the launch go?', growth_date: new Date().toISOString().slice(0, 10), person_source: candidate.team_source, contact_source: candidate.team_source, cta_url: 'https://smallcompany.com/buy' };
     await expect(qualifySignatureProspect(values, [candidate.team_source, candidate.growth_source, 'https://smallcompany.com/buy'], [], false)).resolves.toContain('Opened primary source');
+  });
+
+  describe('the final checks on a record', () => {
+    const page = { links: ['https://bsky.app/profile/co.com/'], whole: 'Justin Duke runs Buttondown. Write to support@co.com' };
+    const pages = { home: page, person: page, contact: page };
+    const record = { first_name: 'Justin', last_name: 'Duke', role: 'runs Buttondown', email: 'support@co.com', social: 'https://bsky.app/profile/co.com', post: 'Nice launch @co.com, how did it go?', person_source: 'https://co.com/brand', contact_source: 'https://co.com/support' };
+
+    it('passes a record the pages support', () => {
+      expect(conceptProblem(record, pages)).toBeNull();
+    });
+    it('names the role and page when a role is reworded', () => {
+      expect(conceptProblem({ ...record, role: 'CEO' }, pages)).toBe('The role "CEO" is not on https://co.com/brand. It appears in the signature, so use the words the page itself uses for this person\'s role.');
+    });
+    it('matches a name or role however the page punctuates it', () => {
+      expect(conceptProblem({ ...record, role: 'Runs, Buttondown' }, pages)).toBeNull();
+    });
+    it('does not match part of a word', () => {
+      expect(conceptProblem({ ...record, last_name: 'Duk' }, pages)).toContain('is not on');
+    });
+    it.each([
+      ['email', { email: 'ceo@co.com' }, 'is not listed on'],
+      ['social link', { social: 'https://bsky.app/profile/other.com', post: '@other.com hi' }, 'homepage must link'],
+      ['tag', { post: 'Nice launch, how did it go?' }, 'must tag the verified company profile: @co.com'],
+      ['length', { post: `@co.com ${'x'.repeat(300)}` }, 'over 300'],
+      ['missing role', { role: '' }, 'Missing role.'],
+    ])('names the problem with the %s', (_name, change, message) => {
+      expect(conceptProblem({ ...record, ...change }, pages)).toContain(message);
+    });
   });
 
   it('names the missing field instead of saying a URL is invalid', async () => {

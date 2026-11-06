@@ -817,6 +817,7 @@ export async function executeJobRun(runId: string): Promise<void> {
     // Spend one existing retry on hands-on research once a free worker needs help.
     let paidResearchUsed = false;
     let paidRecord = false;
+    let paidFixUsed = false;
     function researchRetryWorker(escalate: boolean) {
       const paid = work.fallback;
       if (escalate && level === 'medium' && activeWorker.free && !paidResearchUsed && paid && !paid.free && !exhaustedProfiles.has(paid.profileId)) {
@@ -957,6 +958,17 @@ export async function executeJobRun(runId: string): Promise<void> {
           if (output.records.length === 1) {
             await rememberQualificationGap(researchScope, output.records[0].values, output.records[0].sources, problem, excludedDomains, String(run._id));
             await JobRun.updateOne({ _id: run._id, leaseOwner: owner }, { $set: { 'researchProgress.needsCheck': await leadsNeedingCheck(researchScope) } });
+          }
+          // A paid record that fails a narrow check gets one targeted fix, which costs less than paying for all of it again on the next run.
+          const fixer = work.fallback;
+          if (paidRecord && !paidFixUsed && fixer && !fixer.free && output.records.length === 1 && workCalls < maxWorkCalls) {
+            paidFixUsed = true;
+            const fix = await workWithPages(fixer, `Fix only this problem and keep everything else in the record as it is: ${problem}\nOpen the page it names and use its exact words. Never invent a value.\nRecord: ${JSON.stringify(output.records[0]).slice(0, 8000)}`, true);
+            const fixed = await readResearchRetry(fix);
+            if (openedPages(fix.toolsUsed) && fixed.records.length === 1) output = fixed;
+            issues = checkRecords(activeDesign.fields, output);
+            attempt = MAX_PROSPECT_RETRIES - 1;
+            continue;
           }
           if (attempt < MAX_PROSPECT_RETRIES && workCalls < maxWorkCalls) {
             // Keep shortlist expansion on the working model.
@@ -1112,6 +1124,8 @@ export async function executeJobRun(runId: string): Promise<void> {
       } catch (error) {
         // The real browser opened their homepage here, so a missing Bluesky link is proof. Anything else may be worth another look.
         const problem = error instanceof Error ? error.message : 'The signature could not be made.';
+        // The run's result is the record that reached this point, not an earlier draft.
+        await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { output, issues, ...(verdict ? { review: verdict } : {}) } });
         await rememberQualificationGap(researchScope, candidate.values, candidate.sources, problem, excludedDomains, String(run._id), problem.includes('homepage must link')).catch((saveError: unknown) => console.error(`[research] run ${run._id} could not save what it learned`, saveError instanceof Error ? saveError.message : 'unknown'));
         throw error;
       }

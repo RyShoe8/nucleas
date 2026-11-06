@@ -13,8 +13,9 @@ const CHECKED_METHOD = 'Opened and confirmed by Nucleas';
 type Lead = { name?: string | null; domain: string; website?: string | null; facts?: { field?: string | null; value?: string | null; source?: string | null; method?: string | null; checkedAt?: Date | null }[] | null };
 
 /** Evidence this lead still needs. A link found on the homepage is not proof of the fact, so only confirmed facts count. */
-export function missingEvidence(lead: Pick<Lead, 'facts'>): string[] {
-  const confirmed = new Set((lead.facts ?? []).filter((fact) => fact.method === CHECKED_METHOD).map((fact) => fact.field));
+export function missingEvidence(lead: Pick<Lead, 'facts'> & { name?: string | null; domain?: string | null }): string[] {
+  // A logo saved before logos were checked properly does not count.
+  const confirmed = new Set((lead.facts ?? []).filter((fact) => fact.method === CHECKED_METHOD && (fact.field !== 'logo' || looksLikeLogo(fact.value ?? '', lead.name ?? lead.domain ?? ''))).map((fact) => fact.field));
   return EVIDENCE_FIELDS.filter((field) => !confirmed.has(field));
 }
 

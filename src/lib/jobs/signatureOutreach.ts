@@ -1,7 +1,7 @@
 import { put } from '@vercel/blob';
 import { browserNavigate, browserWorkerCall } from '@/lib/ai/tools/browserClient';
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
-import { officialPublishingHosts } from './signatureQualification';
+import { conceptProblem, officialPublishingHosts } from './signatureQualification';
 
 export async function captureOutreach(values: Record<string, unknown>, sources: string[], path: string) {
   const read = (key: string) => String(values[key] ?? '').trim();
@@ -17,19 +17,18 @@ export async function captureOutreach(values: Record<string, unknown>, sources: 
     return pages.get(url)!;
   };
   const [contactPage, homepage, teamPage] = await Promise.all([open(contact.href), open(website.href), open(person.href)]);
-  const teamText = (teamPage.plainText || teamPage.text).toLowerCase();
-  if (host(new URL(teamPage.url)) !== host(website) || ![read('first_name'), read('last_name'), read('role')].every(v => v && teamText.includes(v.toLowerCase()))) throw new Error('The name and role must be visible on the official team page.');
+  if (host(new URL(teamPage.url)) !== host(website)) throw new Error('The person needs a cited official team page.');
+  if (host(new URL(contactPage.url)) !== host(website)) throw new Error('Cite the official contact page.');
+  const problem = conceptProblem(values, {
+    home: { links: homepage.links, whole: homepage.plainText || homepage.text },
+    person: { whole: teamPage.plainText || teamPage.text },
+    contact: { whole: contactPage.plainText || contactPage.text },
+  });
+  if (problem) throw new Error(problem);
   const feed = read('feed');
   if (feed && host(assertSafePublicHttpsUrl(feed)) !== host(website) && !homepage.links.includes(feed) && !(await officialPublishingHosts(website.href)).has(host(new URL(feed)))) throw new Error('Choose a first-party feed or one linked from the official site.');
-  if (host(new URL(contactPage.url)) !== host(website) || !(contactPage.plainText || contactPage.text).toLowerCase().includes(read('email').toLowerCase())) throw new Error('Work email must be publicly listed on the contact page.');
   const destination = assertSafePublicHttpsUrl(read('cta_url'));
   if (!sources.some(s => s.replace(/\/$/, '') === destination.href.replace(/\/$/, ''))) throw new Error('Cite the working destination for the secondary CTA.');
-  const social = assertSafePublicHttpsUrl(read('social'));
-  if (!homepage.links.some(link => link.replace(/\/$/, '').toLowerCase() === social.href.replace(/\/$/, '').toLowerCase())) throw new Error('The official homepage must link to this social profile.');
-  const handle = social.hostname === 'bsky.app' ? social.pathname.match(/^\/profile\/([\w.-]+)\/?$/)?.[1] : undefined;
-  const mentions = read('post').match(/@[a-z0-9_.-]+/gi) ?? [];
-  if (!handle || !mentions.some(m => m.replace(/[.]$/, '').toLowerCase() === '@' + handle.toLowerCase())) throw new Error('The post must tag the verified company profile.');
-  if (Array.from(read('post')).length > 300) throw new Error('Bluesky post exceeds 300 characters.');
   const concept = Object.fromEntries(['company','website','first_name','last_name','role','email','feed','logo','primary_color','secondary_color','social','preset','cta_type','cta_label','cta_url'].map(key => [key, read(key)]));
   const { jpeg, headline } = await browserWorkerCall<{ jpeg: string; headline: string }>('/signature/capture', concept, { timeoutMs: 55000 });
   values.latest_article = headline;

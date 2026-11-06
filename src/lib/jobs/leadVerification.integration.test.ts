@@ -54,9 +54,14 @@ describe('a small job for a free model', () => {
     expect(prompt.length).toBeLessThan(800);
   });
 
+  it('does not count a logo saved before logos were checked properly', () => {
+    expect(missingEvidence({ name: 'Buttondown', facts: [{ field: 'logo', value: 'https://buttondown.com/hero-illustration.svg', method: 'Opened and confirmed by Nucleas' }] })).toContain('logo');
+    expect(missingEvidence({ name: 'Buttondown', facts: [{ field: 'logo', value: 'https://buttondown.com/logo.svg', method: 'Opened and confirmed by Nucleas' }] })).not.toContain('logo');
+  });
+
   it('does not count a homepage link as proof of the fact', () => {
     expect(missingEvidence({ facts: [{ field: 'feed', value: 'https://x.com/features/rss', method: 'Link found on the official homepage' }] })).toContain('feed');
-    expect(missingEvidence({ facts: EVIDENCE_FIELDS.map((field) => ({ field, method: 'Opened and confirmed by Nucleas' })) })).toEqual([]);
+    expect(missingEvidence({ facts: EVIDENCE_FIELDS.map((field) => ({ field, value: 'https://transistor.fm/logo.svg', method: 'Opened and confirmed by Nucleas' })) })).toEqual([]);
   });
 });
 
