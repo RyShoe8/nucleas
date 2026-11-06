@@ -11,15 +11,22 @@ function count(...values: unknown[]): number | null {
 
 export function readTokenUsage(body: unknown) {
   const root = fields(body);
-  const usage = fields(root.usage);
+  // Some hosts put usage on the first choice, or inside a wrapping response event.
+  const choice = fields(Array.isArray(root.choices) ? root.choices[0] : null);
+  const usage = fields(root.usage ?? choice.usage ?? fields(root.response).usage);
   const groq = fields(fields(root.x_groq).usage);
-  const google = fields(root.usageMetadata);
-  const input = count(usage.prompt_tokens, groq.prompt_tokens, google.promptTokenCount, root.prompt_eval_count);
-  const base = count(usage.input_tokens);
-  const output = count(usage.completion_tokens, usage.output_tokens, groq.completion_tokens, root.eval_count);
-  const candidates = count(google.candidatesTokenCount);
+  const google = fields(root.usageMetadata ?? root.usage_metadata);
+  const billed = fields(fields(root.meta).billed_units);
+  const input = count(usage.prompt_tokens, usage.promptTokens, groq.prompt_tokens, google.promptTokenCount, google.prompt_token_count, billed.input_tokens, root.prompt_eval_count);
+  const base = count(usage.input_tokens, usage.inputTokens);
+  const output = count(usage.completion_tokens, usage.completionTokens, usage.output_tokens, usage.outputTokens, groq.completion_tokens, billed.output_tokens, root.eval_count);
+  const candidates = count(google.candidatesTokenCount, google.candidates_token_count);
+  const inputTokens = input ?? (base === null ? null : base + (count(usage.cache_creation_input_tokens) ?? 0) + (count(usage.cache_read_input_tokens) ?? 0));
+  const outputTokens = output ?? (candidates === null ? null : candidates + (count(google.thoughtsTokenCount, google.thoughts_token_count) ?? 0));
+  // A total with one side known gives the other side. A total alone cannot be split, so it stays unknown.
+  const total = count(usage.total_tokens, usage.totalTokens, google.totalTokenCount, google.total_token_count);
   return {
-    inputTokens: input ?? (base === null ? null : base + (count(usage.cache_creation_input_tokens) ?? 0) + (count(usage.cache_read_input_tokens) ?? 0)),
-    outputTokens: output ?? (candidates === null ? null : candidates + (count(google.thoughtsTokenCount) ?? 0)),
+    inputTokens: inputTokens ?? (total !== null && outputTokens !== null && total >= outputTokens ? total - outputTokens : null),
+    outputTokens: outputTokens ?? (total !== null && inputTokens !== null && total >= inputTokens ? total - inputTokens : null),
   };
 }

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
+const recorded = vi.hoisted(() => ({ create: vi.fn(async (_run: Record<string, unknown>) => ({})) }));
+vi.mock('@/lib/models/AiControl', () => ({ AiRun: { create: recorded.create } }));
 const profile = vi.hoisted(() => ({ tier: 'local_remote', provider: 'custom' }));
 vi.mock('@/lib/ai/rolePipeline/profiles', () => ({
   gatewayFromModelProfile: async () => ({ gateway: { endpoint: 'https://llm.rogly.net/v1/chat/completions', bearerToken: 't', model: 'gemma', protocol: 'openai-chat' }, profile: { ...profile } }),
@@ -57,6 +59,16 @@ describe('Direct-mode router', () => {
     expect(request.responseFormat.type).toBe('json_object');
     expect(lock.wait).toHaveBeenCalled();
     expect(lock.release).toHaveBeenCalled();
+  });
+
+  it('counts its tokens on the Spend screen, and still answers if that fails', async () => {
+    const ledger = { organizationId: 'a'.repeat(24), projectId: 'b'.repeat(24), userId: 'c'.repeat(24) };
+    const invoke = vi.fn(async () => ({ content: 'not json', inputTokens: 40, outputTokens: 5 }));
+    recorded.create.mockClear();
+    await routeDirectRequest({ ...base, text: 'hello there', prior: [], invoke, ledger });
+    expect(recorded.create.mock.calls[0]?.[0]).toMatchObject({ status: 'completed', costMicros: 0, inputTokens: 40, outputTokens: 5 });
+    recorded.create.mockRejectedValueOnce(new Error('database down'));
+    await expect(routeDirectRequest({ ...base, text: 'hello there', prior: [], invoke, ledger })).resolves.toBeDefined();
   });
 
   it('leaves paid models alone and falls back when sorting fails', async () => {

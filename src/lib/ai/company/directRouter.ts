@@ -9,6 +9,7 @@ import { holdDispatchLock, releaseDispatchLock, waitForDispatchLock } from '@/li
 import { AiModelCheck } from '@/lib/ai/engine/checkResults';
 import { extractJson } from '@/lib/ai/json';
 import { AiModelProfile } from '@/lib/models/AiModelProfile';
+import { AiRun } from '@/lib/models/AiControl';
 
 /**
  * Direct mode with a free model: the model first sorts the request (forced JSON), then Nucleas
@@ -87,7 +88,9 @@ export async function routeDirectRequest(input: {
   companies: string[];
   codeCompanies: string[];
   signal?: AbortSignal;
-  invoke?: (gateway: GatewayConfiguration, request: ModelRequest) => Promise<{ content: string }>;
+  invoke?: (gateway: GatewayConfiguration, request: ModelRequest) => Promise<{ content: string; inputTokens?: number | null; outputTokens?: number | null }>;
+  /** Where this call is counted on the Spend screen. */
+  ledger?: { organizationId: string; projectId: Types.ObjectId | string; userId: string };
 }): Promise<RouteDecision | null> {
   let gateway: GatewayConfiguration;
   let tier: string;
@@ -111,6 +114,7 @@ export async function routeDirectRequest(input: {
     // The free model is shared: wait for it like any chat.
     await waitForDispatchLock({ signal: input.signal });
     await holdDispatchLock(token, 3 * 60 * 1000);
+    const started = new Date();
     const reply = await (input.invoke ?? ((g, r) => invokeModel(g, r, { signal: input.signal })))(gateway, {
       role: 'worker',
       messages: [
@@ -120,6 +124,24 @@ export async function routeDirectRequest(input: {
       maxOutputTokens: 2048,
       responseFormat,
     });
+    if (input.ledger) {
+      // This call only runs on free models, so it costs nothing, but its tokens are real usage.
+      await AiRun.create({
+        organizationId: input.ledger.organizationId,
+        projectId: input.ledger.projectId,
+        role: 'worker',
+        status: 'completed',
+        model: input.model,
+        inputDigest: `router:${token}`,
+        policyDigest: 'direct-router',
+        createdByUserId: new Types.ObjectId(input.ledger.userId),
+        startedAt: started,
+        completedAt: new Date(),
+        costMicros: 0,
+        ...(reply.inputTokens != null ? { inputTokens: reply.inputTokens } : {}),
+        ...(reply.outputTokens != null ? { outputTokens: reply.outputTokens } : {}),
+      }).catch((error: unknown) => console.error('[ai-usage] could not record a routing call', error instanceof Error ? error.message : 'unknown'));
+    }
     return parseDecision(reply.content, input.companies, input.text);
   } catch {
     return null;

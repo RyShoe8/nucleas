@@ -338,6 +338,9 @@ export async function attemptCompanyCredentialChat(input: {
     failureCode?: string;
     result?: { inputTokens?: number | null; outputTokens?: number | null; latencyMs?: number | null };
   }) {
+    if (args.status === 'completed' && args.result?.inputTokens == null && args.result?.outputTokens == null) {
+      console.warn(`[ai-usage] run ${runId}: the provider for ${input.model ?? 'this model'} reported no token usage`);
+    }
     try {
       await aiTransaction(async (session) => {
         await settleRunBudget(input.organizationId, runId, args.actualMicros, session);
@@ -710,7 +713,14 @@ export async function attemptCompanyCredentialChat(input: {
         onToolCall: input.onProgress ? (name, argsJson) => input.onProgress!(describeToolCall(name, argsJson)) : undefined,
         onModelResponse: () => { priorInference = true; },
       }); priorInference = true; return result; } catch (error) {
-        failedToolUsage = (error as { usage?: typeof failedToolUsage })?.usage;
+        // Each failed attempt used tokens of its own, so they add up rather than replace each other.
+        const failed = (error as { usage?: typeof failedToolUsage })?.usage;
+        if (failed?.inputTokens != null || failed?.outputTokens != null) {
+          failedToolUsage = {
+            inputTokens: (failedToolUsage?.inputTokens ?? 0) + (failed.inputTokens ?? 0),
+            outputTokens: (failedToolUsage?.outputTokens ?? 0) + (failed.outputTokens ?? 0),
+          };
+        }
         if (!rejectedBeforeInference(error)) uncertainInference = true;
         throw error;
       }

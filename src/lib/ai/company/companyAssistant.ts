@@ -157,6 +157,7 @@ export async function askAssistant(
     companies: context.companies.map((c) => c.name),
     codeCompanies: actionTools.codeCompanies,
     signal: input.signal,
+    ledger: { organizationId: String(viewer.organizationId), projectId: assistantLedgerProjectId(String(viewer.organizationId)), userId: viewer.userId },
   });
   // Attached files only reach the chat loop, so requests with files keep the model in charge of actions.
   const routedAction = decision && !files && decision.route !== 'answer' && decision.company ? await runRoutedAction(actionTools.toolSet, decision, input.onProgress) : null;
