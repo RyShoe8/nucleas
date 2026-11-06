@@ -14,7 +14,7 @@ const today = new Date().toISOString().slice(0, 10);
 const lead = { name: 'Transistor', domain: 'transistor.fm', website: 'https://transistor.fm/', facts: [{ field: 'bluesky', value: 'https://bsky.app/profile/transistor.fm', source: 'https://transistor.fm/', method: 'Link found on the official homepage in a real browser' }] };
 const pagesText: Record<string, string> = {
   'https://transistor.fm/about/': "Here's our team: Jon Buda, Co-founder, President Justin Jackson, Co-founder, CEO",
-  'https://transistor.fm/changelog/mcp/': 'We launched our MCP server for podcasters today.',
+  'https://transistor.fm/changelog/mcp/': `We launched our MCP server for podcasters today. Posted ${today}.`,
   'https://transistor.fm/contact/': 'Email support@transistor.fm any time.',
 };
 const deps: VerifyDeps = {
@@ -28,7 +28,7 @@ const good = {
   growth_source: 'https://transistor.fm/changelog/mcp/', growth_quote: 'We launched our MCP server', growth_date: today,
   person_source: 'https://transistor.fm/about/', first_name: 'Justin', last_name: 'Jackson', role: 'CEO',
   contact_source: 'https://transistor.fm/contact/', email: 'support@transistor.fm',
-  feed: 'https://transistor.fm/blog/feed.xml', logo: 'https://transistor.fm/mark.svg',
+  feed: 'https://transistor.fm/blog/feed.xml', logo: 'https://transistor.fm/transistor-mark.svg',
 };
 
 let replica: MongoMemoryReplSet;
@@ -95,9 +95,19 @@ describe('checking what it reports', () => {
     expect(old.rejected.join(' ')).toContain('not within the last year');
   });
 
+  it('refuses a growth date the page does not show, and an image that is not the logo', async () => {
+    const result = await verifyLeadClaims(scope, lead, JSON.stringify({
+      growth_source: good.growth_source, growth_quote: good.growth_quote, growth_date: new Date(Date.now() - 40 * 86400000).toISOString().slice(0, 10),
+      logo: 'https://transistor.fm/hero-illustration-desktop-left.svg',
+    }), deps);
+    expect(result.confirmed).toEqual([]);
+    expect(result.rejected.join(' ')).toContain('the date is not on that page');
+    expect(result.rejected.join(' ')).toContain('does not look like the logo');
+  });
+
   it('accepts the company\'s own hosted blog', async () => {
     const blog = 'https://transistor.substack.com/p/launch';
-    const result = await verifyLeadClaims(scope, lead, JSON.stringify({ growth_source: blog, growth_quote: 'We launched today', growth_date: today }), { ...deps, open: async (url) => ({ url, text: 'We launched today' }) });
+    const result = await verifyLeadClaims(scope, lead, JSON.stringify({ growth_source: blog, growth_quote: 'We launched today', growth_date: today }), { ...deps, open: async (url) => ({ url, text: `We launched today. ${today}` }) });
     expect(result.confirmed).toEqual(['growth']);
   });
 

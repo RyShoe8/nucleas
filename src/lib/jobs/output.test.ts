@@ -16,6 +16,10 @@ describe('job output recovery', () => {
     const parsed = parseJobOutput(JSON.stringify({ records: [{ values: record.values, sources: [sources[0], ...sources, ' '] }] }), 'brand_voice');
     expect(parsed).toMatchObject({ success: true, data: { records: [{ values: record.values, sources: sources.slice(0, 20) }] } });
   });
+  it('reads a source written as an object with a real address', () => {
+    const parsed = parseJobOutput(JSON.stringify({ records: [{ ...record, sources: [{ type: 'team_page', url: 'https://playbound.club/team', description: 'Team' }] }] }), 'brand_voice');
+    expect(parsed).toMatchObject({ success: true, data: { records: [{ sources: ['https://playbound.club/team'] }] } });
+  });
   it('still rejects malformed sources rather than hiding them past the cap', () => {
     expect(parseJobOutput(JSON.stringify({ records: [{ ...record, sources: [...Array(21).fill('https://playbound.club/'), { url: 'invalid shape' }] }] }), 'brand_voice').success).toBe(false);
   });

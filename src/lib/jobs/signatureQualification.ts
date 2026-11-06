@@ -45,6 +45,39 @@ export function quoteOnPage(pageText: string, quote: string): boolean {
     return wanted.trim().length > 0 && words(pageText).includes(wanted);
 }
 
+const NOT_A_LOGO = /hero|illustration|banner|background|screenshot|photo|avatar|cover|og[-_]?image|twitter|social|thumb/i;
+const LOGO_WORDS = /logo|brand|wordmark|symbol|mark\b|mark[-_.]|icon/i;
+
+/** Whether an image's address reads as this company's logo. Being an image is not enough: a hero illustration would make a wrong signature. */
+export function looksLikeLogo(url: string, company: string): boolean {
+    let file: string;
+    try { file = decodeURIComponent(new URL(url).pathname.split('/').pop() ?? ''); } catch { return false; }
+    if (NOT_A_LOGO.test(file)) return false;
+    const name = company.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter((word) => word.length > 2);
+    return LOGO_WORDS.test(file) || name.some((word) => file.toLowerCase().includes(word));
+}
+
+const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+
+/** Whether a page shows this date in a common form. */
+export function dateOnPage(pageText: string, iso: string): boolean {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    if (!match) return false;
+    const [, year, month, day] = match;
+    const text = pageText.toLowerCase();
+    if (text.includes(iso)) return true;
+    const long = MONTHS[Number(month) - 1];
+    if (!long) return false;
+    const d = String(Number(day));
+    const names = [long, long.slice(0, 3)].map((name) => `${name}\\.?`).join('|');
+    return new RegExp(`\\b(?:${names})\\s+0?${d}(?:st|nd|rd|th)?,?\\s+${year}\\b|\\b0?${d}(?:st|nd|rd|th)?\\s+(?:of\\s+)?(?:${names}),?\\s+${year}\\b|\\b0?${Number(month)}/0?${d}/${year}\\b`).test(text);
+}
+
+/** A post's dashes read as machine-written, and most company Voices rule them out. */
+export function tidyPost(post: string): string {
+    return post.replace(/\s*[\u2014\u2013]\s*/g, ', ');
+}
+
 /** Code decides this, so a model cannot apply a stricter rule than the job's: anything goes unless the quote itself states more than 25. */
 export function teamEvidenceProblem(quote: string): string | null {
     const stated = [...quote.matchAll(/(?:team of|staff of)\s+(\d[\d,]*)|(\d[\d,]*)\s*\+?\s*(?:-\s*person|person|people team|employees|staff|team members|teammates|people on)\b/gi)]
@@ -67,6 +100,7 @@ export async function qualifySignatureProspect(values: Record<string, unknown>, 
     const teamProblem = teamEvidenceProblem(candidate.team_quote);
     if (teamProblem) throw new Error(teamProblem);
     if (/\[[^\]]*\]/.test(String(values.post ?? ''))) throw new Error('Write the social post as finished text, with no bracketed placeholders or labels.');
+    if (typeof values.logo === 'string' && values.logo && !looksLikeLogo(values.logo, String(values.company ?? values.name ?? ''))) throw new Error(`${values.logo} does not look like the company's logo. Use its actual logo image.`);
     const host = (raw: string) => assertSafePublicHttpsUrl(raw).hostname.toLowerCase().replace(/^www\./, '');
     const domain = host(candidate.website);
     if (excluded.some(raw => {

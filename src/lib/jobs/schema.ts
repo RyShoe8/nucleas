@@ -107,7 +107,7 @@ export type JobDesign = z.infer<typeof jobDesignSchema>;
 /** What a run must return. */
 // Validate every item before capping so malformed evidence still fails validation.
 // Citation overflow alone must not discard a generated artifact.
-const recordSourcesSchema = z.array(z.string().max(2000)).default([])
+const recordSourcesSchema = z.array(z.union([z.string().max(2000), z.object({ url: z.string().url().max(2000) }).passthrough().transform((source) => source.url)])).default([])
   .transform((sources) => [...new Set(sources.map((source) => source.trim()).filter(Boolean))].slice(0, 20));
 
 const screenedCompanySchema = z.object({

@@ -4,7 +4,7 @@ import { browserNavigate } from '@/lib/ai/tools/browserClient';
 import { isSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 import { fetchPublic, fetchPublicText } from '@/lib/publishing/fetchPublic';
 import { ResearchEvidence, type Scope } from './researchEvidence';
-import { officialPublishingHosts, quoteOnPage, teamEvidenceProblem } from './signatureQualification';
+import { dateOnPage, looksLikeLogo, officialPublishingHosts, quoteOnPage, teamEvidenceProblem } from './signatureQualification';
 
 /** What a signature concept needs from a company, beyond the Bluesky link already on its homepage. */
 export const EVIDENCE_FIELDS = ['team', 'growth', 'person', 'email', 'feed', 'logo'] as const;
@@ -104,7 +104,9 @@ export async function verifyLeadClaims(scope: Scope, lead: Lead, reply: string, 
     await fromCompany(claims.growth_source!);
     const dated = Date.parse(`${claims.growth_date}T12:00:00Z`);
     if (!Number.isFinite(dated) || dated > Date.now() + 86400000 || dated < Date.now() - 366 * 86400000) throw new Error('the date is not within the last year');
-    if (!quoteOnPage(await pageText(claims.growth_source!), claims.growth_quote!)) throw new Error('the quote is not on that page');
+    const growthPage = await pageText(claims.growth_source!);
+    if (!quoteOnPage(growthPage, claims.growth_quote!)) throw new Error('the quote is not on that page');
+    if (!dateOnPage(growthPage, claims.growth_date!)) throw new Error('the date is not on that page');
     confirm('growth', `${claims.growth_date}: ${claims.growth_quote}`, claims.growth_source!);
   });
   await attempt('person', Boolean(claims.person_source && claims.first_name && claims.last_name && claims.role), async () => {
@@ -124,6 +126,7 @@ export async function verifyLeadClaims(scope: Scope, lead: Lead, reply: string, 
     confirm('feed', claims.feed!, claims.feed!);
   });
   await attempt('logo', Boolean(claims.logo), async () => {
+    if (!looksLikeLogo(claims.logo!, lead.name ?? lead.domain)) throw new Error('that image does not look like the logo');
     if (!isSafePublicHttpsUrl(claims.logo!) || !(await isImage(claims.logo!))) throw new Error('that address is not an image');
     confirm('logo', claims.logo!, claims.logo!);
   });

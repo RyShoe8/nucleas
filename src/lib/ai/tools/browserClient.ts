@@ -18,11 +18,13 @@ export type BrowserNavigateResult = {
 /** A page's readable text from its HTML, keeping email addresses that only appear in mailto links. */
 export function plainPageText(html: string): string {
   const mail = [...html.matchAll(/href=["']mailto:([^"'?]+)/gi)].map((match) => match[1]);
+  // A page often shows "2 days ago" and keeps the real date in its time tag.
+  const dates = [...html.matchAll(/<time\b[^>]*\bdatetime=["']([^"']+)/gi)].map((match) => match[1]);
   const text = html
     .replace(/<(script|style|noscript|template)\b[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&#0?39;|&apos;|&rsquo;|&lsquo;/gi, "'").replace(/&quot;|&ldquo;|&rdquo;/gi, '"').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>');
-  return [text, ...mail].join(' ').replace(/\s+/g, ' ').trim();
+  return [text, ...mail, ...dates].join(' ').replace(/\s+/g, ' ').trim();
 }
 
 function sanitizeHttpsList(raw: unknown, limit: number): string[] {

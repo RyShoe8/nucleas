@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 const worker = vi.hoisted(() => ({ navigate: vi.fn(), fetch: vi.fn() }));
 vi.mock('@/lib/ai/tools/browserClient', () => ({ browserNavigate: worker.navigate, browserFetch: worker.fetch }));
-import { officialPublishingHosts, prospectQualification, publishingHostsIn, qualifySignatureProspect, quoteOnPage, teamEvidenceProblem } from './signatureQualification';
+import { dateOnPage, looksLikeLogo, officialPublishingHosts, prospectQualification, publishingHostsIn, qualifySignatureProspect, quoteOnPage, teamEvidenceProblem, tidyPost } from './signatureQualification';
 describe('signature prospect qualification', () => {
   const candidate = {
     website: 'https://smallcompany.com', social: 'https://bsky.app/profile/smallcompany.com', team_size: 10,
@@ -65,6 +65,42 @@ describe('signature prospect qualification', () => {
       worker.fetch.mockResolvedValueOnce({ body: '<a href="https://techcrunch.com/story">press</a>' });
       await expect(qualifySignatureProspect({ ...values, growth_source: 'https://techcrunch.com/story' }, sources, [], false)).rejects.toThrow('official site');
     });
+  });
+
+  describe('telling a logo from any other image', () => {
+    it.each([
+      ['https://buttondown.com/_next/static/media/hero-illustration-desktop-left.1av51urbta5tf.svg', 'Buttondown'],
+      ['https://philreichert.org/blob/index-twitter.jpg', 'Phil Reichert'],
+      ['https://gilarpgs.com/cdn/shop/files/UNDERGROWTH_copy.png?v=1', 'Gila RPGs'],
+      ['not a url', 'Gila RPGs'],
+    ])('refuses %s', (url, company) => { expect(looksLikeLogo(url, company)).toBe(false); });
+    it.each([
+      ['https://gilarpgs.com/cdn/shop/files/GilaLogo_Primary_900px.png?v=1', 'Gila RPGs'],
+      ['https://transistor.fm/transistor-mark.svg', 'Transistor'],
+      ['https://pandiongames.com/cdn/shop/files/Pandion_Games_e1e55b44.png', 'Pandion Games'],
+      ['https://site.com/assets/wordmark.svg', 'Acme'],
+    ])('accepts %s', (url, company) => { expect(looksLikeLogo(url, company)).toBe(true); });
+  });
+
+  describe('finding a date on a page', () => {
+    it.each(['Posted October 24, 2026', 'Oct 24th, 2026', '24 October 2026', 'Oct. 24 2026', 'on 10/24/2026', 'published 2026-10-24T09:00'])('finds it in: %s', (text) => {
+      expect(dateOnPage(text, '2026-10-24')).toBe(true);
+    });
+    it('does not accept a different date, or a bad one', () => {
+      expect(dateOnPage('Posted October 25, 2026', '2026-10-24')).toBe(false);
+      expect(dateOnPage('October 24, 2025', '2026-10-24')).toBe(false);
+      expect(dateOnPage('October 2, 2026', '2026-10-24')).toBe(false);
+      expect(dateOnPage('anything', 'soon')).toBe(false);
+    });
+  });
+
+  it('replaces dashes in a post', () => {
+    expect(tidyPost('We made you a concept—not requested — featuring your article.')).toBe('We made you a concept, not requested, featuring your article.');
+    expect(tidyPost('A well-made co-op game.')).toBe('A well-made co-op game.');
+  });
+
+  it('refuses an image that is not the logo, before opening any pages', async () => {
+    await expect(qualifySignatureProspect({ ...candidate, company: 'Small Company', logo: 'https://smallcompany.com/hero-illustration.svg' }, [], [], true)).rejects.toThrow('does not look like');
   });
 
   describe('finding a quote on a page', () => {
