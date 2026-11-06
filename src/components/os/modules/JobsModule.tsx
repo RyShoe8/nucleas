@@ -11,6 +11,7 @@ import BrandAssetsPanel from './jobs/BrandAssetsPanel';
 import WatchesPanel from './content/WatchesPanel';
 import MarketingComposer from './jobs/MarketingComposer';
 import JobComposer from './jobs/JobComposer';
+import RunningNow, { isRunningJob } from './jobs/RunningNow';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import { ActivityRows, activityFor, useActivity } from './jobs/ActivityList';
 import ActionMenu from '@/components/ui/ActionMenu';
@@ -342,6 +343,9 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
         () => (jobs ?? []).filter((j) => (!categories || (j.design ? categories.includes(j.design.category) : true)) && (company === 'all' || j.companyId === company)),
         [jobs, categories, company]
     );
+    // The Work view pins everything running to its bottom, whichever company is selected, so nothing running is ever out of sight.
+    const workView = !categories && title === 'Jobs';
+    const runningJobs = useMemo(() => (workView ? (jobs ?? []).filter(isRunningJob) : []), [workView, jobs]);
     const companies = useMemo(() => {
         const all = new Map((jobs ?? []).map((j) => [j.companyId, j.companyName]));
         for (const item of osCompanies ?? []) all.set(item.id, item.name);
@@ -448,7 +452,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                         No {title === 'Jobs' ? '' : `${title.toLowerCase()} `}jobs yet. Describe work with New job, or ask Nucleas (&ldquo;every day, …&rdquo;, &ldquo;research … and add it to …&rdquo;).
                     </p>
                 ) : null}
-                {!categories && title === 'Jobs' ? <CompanyWork jobs={inView} items={activity?.items ?? []} names={new Map(companies)} selected={company} createdId={open} onChange={replace} /> : GROUPS.map((g) => {
+                {workView ? <CompanyWork jobs={inView.filter((job) => !isRunningJob(job))} items={(activity?.items ?? []).filter((item) => item.group !== 'working')} names={new Map(companies)} selected={company} createdId={open} onChange={replace} /> : GROUPS.map((g) => {
                     const items = inView.filter((j) => g.test(j) && !GROUPS.slice(0, GROUPS.indexOf(g)).some((earlier) => earlier.test(j)));
                     const activityGroup = g.key === 'you' || g.key === 'working' || g.key === 'set' || g.key === 'failed' ? g.key : null;
                     const others = activityGroup ? activityFor(activity, activityGroup, company, categories) : [];
@@ -506,6 +510,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                         </section>
                     );
                 })}
+                {workView ? <RunningNow jobs={runningJobs} items={activityFor(activity, 'working', 'all')} onChange={replace} /> : null}
             </div>
         </div>
     );

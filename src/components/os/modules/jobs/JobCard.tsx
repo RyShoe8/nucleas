@@ -213,6 +213,54 @@ export function JobLastChecked({ job }: { job: JobView }) {
 }
 
 const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(micros < 100_000 ? 3 : 2)}`;
+
+export interface JobFact {
+    label: string;
+    value: string;
+    /** Share of the budget used, 0 to 1, when this fact is spending against a budget. */
+    used?: number;
+}
+
+/** A job's key details as labelled facts. The company is left out where the card already sits under its company. */
+export function jobFacts(job: JobView, options: { showCompany: boolean }): JobFact[] {
+    const d = job.design;
+    const facts: JobFact[] = [];
+    if (options.showCompany) facts.push({ label: 'Company', value: job.companyName });
+    if (d) facts.push({ label: 'Schedule', value: scheduleLabel(d.schedule) });
+    if (d && d.schedule.kind !== 'once') {
+        facts.push({ label: 'Last checked', value: job.lastRunAt ? new Date(job.lastRunAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Not yet' });
+    }
+    if (job.completion && d?.skill !== 'social_publish') facts.push({ label: 'Results', value: job.completion === 'automatic' ? 'Automatic' : 'You review' });
+    // Publishing jobs spend little and per post; a budget would only be noise.
+    if (d?.skill !== 'social_publish') {
+        if (manualArtifact(d?.skill)) {
+            if (job.spentThisMonthMicros) facts.push({ label: 'Spent', value: usd(job.spentThisMonthMicros) });
+        } else if (job.monthlyBudgetMicros) {
+            facts.push({ label: 'This month', value: `${usd(job.spentThisMonthMicros)} of ${usd(job.monthlyBudgetMicros)}`, used: Math.min(1, job.spentThisMonthMicros / job.monthlyBudgetMicros) });
+        }
+    }
+    return facts;
+}
+
+function JobFacts({ facts }: { facts: JobFact[] }) {
+    if (!facts.length) return null;
+    return (
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
+            {facts.map((fact) => (
+                <div key={fact.label} className="min-w-0">
+                    <dt className="text-[10px] uppercase tracking-wide text-text-secondary">{fact.label}</dt>
+                    <dd className="break-words text-xs text-text-primary">{fact.value}</dd>
+                    {fact.used !== undefined ? (
+                        <dd className="mt-1 h-1 overflow-hidden rounded-full bg-background-elevated" aria-hidden="true">
+                            <div className={`h-full rounded-full ${fact.used >= 0.9 ? 'bg-amber-400' : 'bg-primary'}`} style={{ width: `${Math.round(fact.used * 100)}%` }} />
+                        </dd>
+                    ) : null}
+                </div>
+            ))}
+        </dl>
+    );
+}
+
 const BUTTON = 'ui-button';
 const PRIMARY = 'ui-button-primary';
 
@@ -818,7 +866,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
     return (
         <div className="ui-card p-4 space-y-4 text-sm">
             <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1 space-y-2">
                     {renaming !== null ? (
                         <form
                             className="flex flex-wrap items-center gap-1"
@@ -848,18 +896,9 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                             {renameButton}
                         </div>
                     )}
-                    <div className="flex min-w-0 items-center gap-1">
-                    <p className="min-w-0 truncate text-[11px] text-text-secondary">
-                        {job.companyName}
-                        {d ? ` · ${scheduleLabel(d.schedule)}` : ''}
-                        <JobLastChecked job={job} />
-                        {job.completion && d?.skill !== 'social_publish' ? ` · ${job.completion === 'automatic' ? 'automatic' : 'reviewed'}` : ''}
-                        {/* Publishing jobs spend little and per post; their budget line would only be noise. */}
-                        {d?.skill === 'social_publish' ? '' : manualArtifact(job.design?.skill) ? (job.spentThisMonthMicros ? ` · ${usd(job.spentThisMonthMicros)} spent` : '') : job.monthlyBudgetMicros ? ` · ${usd(job.spentThisMonthMicros)} of ${usd(job.monthlyBudgetMicros)} this month` : ''}
-                    </p>
-                    {headerShownAbove && renaming === null ? renameButton : null}
-                    </div>
+                    <JobFacts facts={jobFacts(job, { showCompany: !headerShownAbove })} />
                 </div>
+                {headerShownAbove && renaming === null ? renameButton : null}
                 {/* A failed dry run says more than the plain status on the row above, so it still shows. */}
                 {!headerShownAbove || (job.status === 'proposed' && failedAttempt) ? <JobStatusBadge status={job.status} label={job.status === 'proposed' && failedAttempt ? 'Dry run failed' : undefined} /> : null}
             </div>
