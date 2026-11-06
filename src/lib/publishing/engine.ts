@@ -1,6 +1,6 @@
 import { readEventRoundup } from './eventRoundup';
 import { dealForKey, emailOffers, hasSeveralOffers, isBestOffer, sourceItemId, type EmailOffers } from './dealOffers';
-import { applyAdminFieldRules, paidOfferCalledFree, withDealAmounts, withDefaultEndDate, type DealAmounts } from './adminRules';
+import { applyAdminFieldRules, fillWithoutCallingFree, paidOfferCalledFree, withDealAmounts, withDefaultEndDate, type DealAmounts } from './adminRules';
 import { slugifyTitle } from '@/lib/blog/slugify';
 import { retryDatabaseRead } from '@/lib/db/retryRead';
 import { recipientOnlyItem } from '@/lib/watches/offerEligibility';
@@ -242,7 +242,12 @@ type DraftContext = { companyName: string; persona: string | null; subreddit: st
 
 async function prepareAdmin(target: AdminTarget, config: PublishingConfig, facts: ItemFacts, context: DraftContext, write: Writer, failures?: string[]): Promise<Prepared> {
   const before = failures?.length ?? 0;
-  const filled = await fillValues(target, { title: facts.title, description: facts.description, extra: facts.extra, link: facts.link }, { companyName: context.companyName, noun: config.source.noun, brief: config.brief, persona: context.persona, strategy: context.strategy }, write);
+  const withRules = (values: Record<string, string | boolean>) => withDealAmounts(target.fields, applyAdminFieldRules(config, values, facts.dealValuePct, facts.link, !facts.lesserOffer), facts.dealAmounts);
+  const filled = await fillWithoutCallingFree(
+    (notes) => fillValues(target, { title: facts.title, description: facts.description, extra: [...facts.extra, ...notes], link: facts.link }, { companyName: context.companyName, noun: config.source.noun, brief: config.brief, persona: context.persona, strategy: context.strategy }, write),
+    (answer) => paidOfferCalledFree(target.fields, withRules(answer.values), facts.dealAmounts),
+    facts.dealAmounts,
+  );
   if (!filled) {
     const why = failures && failures.length > before ? ` (${failures.slice(before).join(' · ')})` : ' (the model’s answer could not be read)';
     return {
@@ -252,7 +257,7 @@ async function prepareAdmin(target: AdminTarget, config: PublishingConfig, facts
       problem: `Nucleas could not fill in the form values${why}. Use “Fill it in again”, or Edit deal to enter them.`.slice(0, 1000),
     };
   }
-  filled.values = withDealAmounts(target.fields, applyAdminFieldRules(config, filled.values, facts.dealValuePct, facts.link, !facts.lesserOffer), facts.dealAmounts);
+  filled.values = withRules(filled.values);
   if (config.adminDefaultEndDays) filled.values = withDefaultEndDate(target.fields, filled.values, config.adminDefaultEndDays);
   filled.unfilled = target.fields.filter((f) => f.required && f.type !== 'file' && (filled.values[f.key] === undefined || filled.values[f.key] === '')).map((f) => f.label || f.key);
   const calledFree = paidOfferCalledFree(target.fields, filled.values, facts.dealAmounts);

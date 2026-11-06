@@ -60,6 +60,26 @@ export function paidOfferCalledFree(fields: FormField[], values: Record<string, 
   return fields.filter((f) => f.type === 'text' && HEADING_WORDS.test(fieldWords(f)) && typeof values[f.key] === 'string' && /\bfree\b/i.test(values[f.key] as string)).map((f) => f.label || f.key);
 }
 
+/** What the model filling in a form has to know about the price, or it copies "FREE" straight from a promotional email. */
+export function priceNotes(deal?: DealAmounts): string[] {
+  if (!deal?.pay) return [];
+  return [`Price: this offer costs $${deal.pay}. Do not use the word "free" in any title, name, headline or slug, even if the email does. Say what you pay and what you get.`];
+}
+
+const FREE_CORRECTION = 'Correction: your last answer used the word "free" in a title, name, headline or slug. This offer has a price, so rewrite those without that word.';
+
+/**
+ * Fills a form knowing the price, and asks once more if a heading still calls a paid offer free. A second answer is
+ * used only if it fixes that; otherwise the first stands and the existing check holds it for a person.
+ */
+export async function fillWithoutCallingFree<T>(fill: (notes: string[]) => Promise<T | null>, calledFree: (filled: T) => string[], deal?: DealAmounts): Promise<T | null> {
+  const notes = priceNotes(deal);
+  const first = await fill(notes);
+  if (!first || !calledFree(first).length) return first;
+  const second = await fill([...notes, FREE_CORRECTION]);
+  return second && !calledFree(second).length ? second : first;
+}
+
 /**
  * When the source gives no end date but the form has one (and a start date is filled in), the item ends one day
  * after it starts. An end date the source did give is never changed.

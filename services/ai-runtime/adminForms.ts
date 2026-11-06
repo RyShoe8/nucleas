@@ -81,7 +81,7 @@ type Page = {
   waitForLoadState: (state: string, o?: { timeout: number }) => Promise<void>;
   waitForTimeout: (ms: number) => Promise<void>;
   screenshot: (o: Record<string, unknown>) => Promise<Buffer>;
-  on: (event: 'dialog', handler: (dialog: { accept: () => Promise<void>; dismiss: () => Promise<void> }) => void) => void;
+  on: ((event: 'dialog', handler: (dialog: { accept: () => Promise<void>; dismiss: () => Promise<void> }) => void) => void) & ((event: 'domcontentloaded', listener: () => void) => unknown);
 };
 type Route = { request: () => { postDataJSON: () => unknown; method: () => string; url: () => string; headers: () => Record<string, string> }; abort: () => Promise<void>; continue: (o?: { headers: Record<string, string> }) => Promise<void> };
 
@@ -347,6 +347,9 @@ export function uniqueChoiceLabel(labels: string[], value: string, fieldLabel: s
   return aliases.length === 1 ? aliases[0] : undefined;
 }
 
+const FORM_SETTLE_MS = 3000;
+const MAX_FILL_RETRIES = 1;
+
 export async function fillAdminForm(
   input: AdminSession & { fields: FormField[]; values: Record<string, string | boolean>; submit: boolean; submitSelector?: string | null },
   options: Options = {}
@@ -354,11 +357,16 @@ export async function fillAdminForm(
   return openPage(input, options, input.submit, async (page) => {
     const title = (await page.title()).slice(0, 200);
     if (await signedOut(page)) return { url: page.url(), title, loggedIn: false, submitted: false, missing: [], errors: ['The admin session is no longer signed in.'], text: '', screenshot: null };
-    const missing: string[] = [];
-    const errors: string[] = [];
+    let missing: string[] = [];
+    let errors: string[] = [];
+    // A page that reloads partway through comes back empty, so what was typed is gone and every required field
+    // then reads as blank. Watching for a new document tells that apart from a form that really is incomplete.
+    let reloaded = false;
+    page.on('domcontentloaded', () => { reloaded = true; });
     // Search remote choices before filling other controls, so lookup requests
     // contain no pending form updates during a read-only preview.
     const ordered = [...input.fields.slice(0, 60)].sort((a, b) => Number(b.selector.includes('.fi-select-input')) - Number(a.selector.includes('.fi-select-input')));
+    const fillControls = async () => {
     for (const field of ordered) {
       const value = input.values[field.key];
       if (value === undefined || value === null || value === '') continue;
@@ -410,10 +418,24 @@ export async function fillAdminForm(
         errors.push(`${field.label}: could not be filled (${error instanceof Error ? error.message.split('\n')[0]!.slice(0, 120) : 'unknown'})`);
       }
     }
+    };
+    let invalid: string[] = [];
+    for (let attempt = 0; ; attempt += 1) {
+      missing = [];
+      errors = [];
+      reloaded = false;
+      await fillControls();
+      await page.waitForLoadState('networkidle', { timeout: FORM_SETTLE_MS }).catch(() => undefined);
+      if (input.submit && !reloaded && !missing.length && !errors.length) invalid = await readAfterNavigation(page, 'admin.validation', () => page.evaluate<string[]>(ERRORS_SCRIPT));
+      if (!reloaded) break;
+      console.warn('[admin/fill] the page reloaded while it was being filled', { attempt });
+      await page.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => undefined);
+      if (await signedOut(page)) return { url: page.url(), title, loggedIn: false, submitted: false, missing: [], errors: ['The admin session is no longer signed in.'], text: '', screenshot: await shot(page) };
+      if (attempt >= MAX_FILL_RETRIES) return { url: page.url(), title, loggedIn: true, submitted: false, missing: [], errors: ['The form page kept reloading while it was being filled, so nothing was saved'], text: '', screenshot: await shot(page) };
+    }
     if (!input.submit || missing.length || errors.length) {
       return { url: page.url(), title, loggedIn: true, submitted: false, missing, errors, text: '', screenshot: await shot(page) };
     }
-    const invalid = await readAfterNavigation(page, 'admin.validation', () => page.evaluate<string[]>(ERRORS_SCRIPT));
     if (invalid.length) return { url: page.url(), title, loggedIn: true, submitted: false, missing, errors: invalid, text: '', screenshot: await shot(page) };
     const button = input.submitSelector ? page.locator(input.submitSelector).first() : null;
     if (!button || !(await button.count())) return { url: page.url(), title, loggedIn: true, submitted: false, missing: ['submit'], errors: ['The save button was not found.'], text: '', screenshot: await shot(page) };

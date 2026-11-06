@@ -4,7 +4,7 @@ import fs from 'fs';
 import type { AddressInfo } from 'net';
 import { fillAdminForm, inspectAdminPage, postIntakeJson } from './adminForms';
 
-const chrome = ['/opt/pw-browsers/chromium/chrome-linux/chrome', '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'].find((p) => fs.existsSync(p));
+const chrome = [process.env.TEST_CHROME_PATH ?? '', '/opt/pw-browsers/chromium/chrome-linux/chrome', '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'].find((p) => p && fs.existsSync(p));
 let playwrightAvailable = true;
 try { await import(/* @vite-ignore */ 'playwright' as string); } catch { playwrightAvailable = false; }
 
@@ -41,6 +41,14 @@ function admin(otherOrigin: string) {
     if (req.method === 'GET' && req.url === '/admin/deals/new') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(FORM.replace('OTHER', otherOrigin));
+      return;
+    }
+    // A form that reloads itself once when typed in, and one that never stops.
+    if (req.method === 'GET' && (req.url === '/admin/deals/reloads-once' || req.url === '/admin/deals/keeps-reloading')) {
+      const once = req.url.endsWith('once');
+      const script = `<script>document.addEventListener('input', () => { ${once ? "if (sessionStorage.getItem('done')) return; sessionStorage.setItem('done', '1');" : ''} location.reload(); });</script>`;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(FORM.replace('OTHER', otherOrigin).replace('</body>', `${script}</body>`));
       return;
     }
     if (req.method === 'POST' && req.url === '/admin/deals') {
@@ -130,6 +138,32 @@ describe.skipIf(!chrome || !playwrightAvailable)('admin forms (real browser, loc
       expect(other.hits.filter((h) => !h.startsWith('GET'))).toEqual([]);
     });
   }, 60_000);
+
+  it('fills the form again when the page reloads partway through, and saves it complete', async () => {
+    await withSite('ok', async (base, site) => {
+      const snapshot = await inspectAdminPage({ baseUrl: base, url: `${base}/admin/deals/new`, cookies: cookies('ok') }, opts);
+      const result = await fillAdminForm({
+        baseUrl: base, url: `${base}/admin/deals/reloads-once`, cookies: cookies('ok'), fields: snapshot.fields, submit: true, submitSelector: snapshot.submit!.selector,
+        values: { casino: 'Golden Hearts', offer: '$20 → 40 SC', promo_code: 'HEART40', category: 'sweeps', expires: '2026-11-01', audience: 'new', featured: true },
+      }, opts);
+      expect(result).toMatchObject({ submitted: true, errors: [], missing: [] });
+      expect(site.deals).toHaveLength(1);
+      expect(site.deals[0]).toMatchObject({ casino: 'Golden Hearts', offer: '$20 → 40 SC', code: 'HEART40' });
+    });
+  }, 60_000);
+
+  it('saves nothing and says why when the page will not stop reloading', async () => {
+    await withSite('ok', async (base, site) => {
+      const snapshot = await inspectAdminPage({ baseUrl: base, url: `${base}/admin/deals/new`, cookies: cookies('ok') }, opts);
+      const result = await fillAdminForm({
+        baseUrl: base, url: `${base}/admin/deals/keeps-reloading`, cookies: cookies('ok'), fields: snapshot.fields, submit: true, submitSelector: snapshot.submit!.selector,
+        values: { casino: 'Golden Hearts', offer: '$20 → 40 SC', promo_code: 'HEART40', category: 'sweeps', expires: '2026-11-01', audience: 'new', featured: true },
+      }, opts);
+      expect(result.submitted).toBe(false);
+      expect(result.errors.join(' ')).toContain('kept reloading');
+      expect(site.deals).toEqual([]);
+    });
+  }, 90_000);
 
   it('reports the form’s own errors and browser validation instead of claiming success', async () => {
     await withSite('ok', async (base, site) => {

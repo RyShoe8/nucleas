@@ -1,5 +1,5 @@
-import { expect, it } from 'vitest';
-import { applyAdminFieldRules, paidOfferCalledFree, withDealAmounts, withDefaultEndDate } from './adminRules';
+import { describe, expect, it, vi } from 'vitest';
+import { applyAdminFieldRules, fillWithoutCallingFree, paidOfferCalledFree, priceNotes, withDealAmounts, withDefaultEndDate } from './adminRules';
 
 it('publishes records and opts into site sharing only above the verified threshold', () => {
   const config = { adminFieldRules: [
@@ -78,4 +78,33 @@ it('finds a paid offer called free in its title or slug, and nowhere else', () =
   expect(paidOfferCalledFree(dealForm, values, { credit: 63 })).toEqual([]);
   expect(paidOfferCalledFree(dealForm, values)).toEqual([]);
   expect(paidOfferCalledFree(dealForm, { title: '$50 gets 63 SC', slug: 'freedom-deal' }, { pay: 50 })).toEqual([]);
+});
+
+describe('keeping a paid offer from being called free', () => {
+  const called = (answer: string) => (/free/i.test(answer) ? ['Title'] : []);
+
+  it('tells the model the price, only when there is one', () => {
+    expect(priceNotes({ pay: 50, credit: 63 })[0]).toContain('costs $50');
+    expect(priceNotes({ credit: 63 })).toEqual([]);
+    expect(priceNotes()).toEqual([]);
+  });
+
+  it('does not ask twice when the first answer is fine', async () => {
+    const fill = vi.fn(async () => '$50 gets 63 SC');
+    expect(await fillWithoutCallingFree(fill, called, { pay: 50 })).toBe('$50 gets 63 SC');
+    expect(fill).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks once more, and uses the answer that fixes it', async () => {
+    const fill = vi.fn<(notes: string[]) => Promise<string | null>>().mockResolvedValueOnce('63 SC free').mockResolvedValueOnce('$50 gets 63 SC');
+    expect(await fillWithoutCallingFree(fill, called, { pay: 50 })).toBe('$50 gets 63 SC');
+    expect(fill.mock.calls[1]?.[0].join(' ')).toContain('Correction');
+  });
+
+  it('keeps the first answer for a person when asking again does not help', async () => {
+    const stillFree = vi.fn<(notes: string[]) => Promise<string | null>>().mockResolvedValueOnce('63 SC free').mockResolvedValueOnce('Free 63 SC');
+    expect(await fillWithoutCallingFree(stillFree, called, { pay: 50 })).toBe('63 SC free');
+    const failed = vi.fn<(notes: string[]) => Promise<string | null>>().mockResolvedValueOnce('63 SC free').mockResolvedValueOnce(null);
+    expect(await fillWithoutCallingFree(failed, called, { pay: 50 })).toBe('63 SC free');
+  });
 });
