@@ -58,6 +58,8 @@ const base: PublishingConfig = {
 let published: string[];
 const deps = (): PublishDeps => ({
   fetcher,
+  search: async () => [],
+  openPages: async () => [],
   write: async ({ system }) => (system.includes('{"title"') ? JSON.stringify({ title: 'New Add: A guide', body: 'Reddit body' }) : JSON.stringify({ body: 'An evergreen guide.' })),
   send: async () => undefined,
   publish: { facebook: async (_c, input) => { published.push(input.link ?? ''); return { url: `https://www.facebook.com/1_${published.length}` }; } },

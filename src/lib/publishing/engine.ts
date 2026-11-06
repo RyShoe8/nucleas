@@ -19,6 +19,11 @@ import { IntegrationConnection } from '@/lib/models/Integration';
 import { readConnectionCredential } from '@/lib/integrations/connections';
 import { getCompanyProfile, loadCompanyViewer, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { askEngine } from '@/lib/ai/engine/ask';
+import type { Need } from '@/lib/ai/engine/select';
+import { researchSearch } from '@/lib/ai/tools/webSearch';
+import { checkPages } from '@/lib/ai/research/pageChecks';
+import { POST_METHOD, postMethod } from '@/lib/ai/research/standard';
+import { gatherPostFacts, postReviewPrompt, readPostReview, type OpenFn, type ResearchedFact, type SearchFn } from './postResearch';
 import type { CostLevel } from '@/lib/ai/engine/select';
 import { buildDealKey, formatDealLine } from '@/lib/watches/dealFormat';
 import { adminSessionFor } from '@/lib/companies/adminAccount';
@@ -30,7 +35,7 @@ import { nextScheduledAt } from '@/lib/jobs/schedule';
 import { MANUAL_ONLY, PLATFORM_LABEL, SOCIAL_PLATFORMS, cadenceLabel, publishingConfigSchema, type AdminTarget, type PublishChannel, type PublishPlatform, type PublishingConfig } from './config';
 import { addRecord, fillValues, valueLines, type AdminBrowser, type AdminSession } from './admin';
 import { workerAdminBrowser } from './adminBrowser';
-import { composePost, fallbackSocialDraft, relabelNewItemTitle, type Draft, type Writer } from './compose';
+import { composePost, describeResearchedFacts, fallbackSocialDraft, relabelNewItemTitle, type Draft, type Writer } from './compose';
 import type { FetchLike } from './fetchPublic';
 import { readPageFacts, type PageFacts } from './pageFacts';
 import { listSitePages } from './siteSource';
@@ -60,6 +65,8 @@ export interface PublishDeps {
   admin?: AdminBrowser;
   /** The admin session to use instead of the saved one (tests). */
   adminSession?: AdminSession | null;
+  search?: SearchFn;
+  openPages?: OpenFn;
 }
 
 /** The same deal sent in several emails within this window is added once. */
@@ -212,10 +219,10 @@ async function approvedPersona(job: JobLike): Promise<string | null> {
 }
 
 /** failures: each model that gave no answer and why, so a card can say why it could not be filled. */
-function engineWriter(job: JobLike, failures?: string[], interactive = false): Writer {
+function engineWriter(job: JobLike, failures?: string[], interactive = false, choice: { need?: Need; level?: 'free'; timeoutMs?: number } = {}): Writer {
   return async ({ system, user, maxTokens }) =>
     (await askEngine({
-      organizationId: String(job.organizationId), userId: String(job.createdByUserId), need: 'write', level: job.level ?? undefined, system, user, maxTokens, attemptTimeoutMs: 45_000, interactive,
+      organizationId: String(job.organizationId), userId: String(job.createdByUserId), need: choice.need ?? 'write', level: choice.level ?? job.level ?? undefined, system, user, maxTokens, attemptTimeoutMs: choice.timeoutMs ?? 45_000, interactive,
       onFailure: (f) => {
         console.error(`[publishing] job ${job._id} model gave no answer: ${f.model}: ${f.reason}`);
         failures?.push(`${f.model}: ${f.reason}`.slice(0, 300));
@@ -236,6 +243,8 @@ interface Prepared {
   /** Admin records: the form values. */
   values?: Record<string, string | boolean>;
   problem?: string;
+  /** Facts from other sites the post was written with. */
+  researched?: ResearchedFact[];
 }
 
 type DraftContext = { companyName: string; persona: string | null; subreddit: string | null; strategy?: string; /** Why model calls gave no answer, for card messages. */ failures?: string[] };
@@ -270,15 +279,28 @@ async function prepareAdmin(target: AdminTarget, config: PublishingConfig, facts
   };
 }
 
-async function draftAll(job: JobLike, config: PublishingConfig, facts: ItemFacts, context: DraftContext, write: Writer): Promise<Map<PublishPlatform, Prepared>> {
+/** Facts from other sites, gathered by code and free models. Only when a post will be written from them. */
+async function researchFor(job: JobLike, config: PublishingConfig, facts: ItemFacts, deps: PublishDeps): Promise<ResearchedFact[]> {
+  if (!postMethod(config.source).research || !config.channels.some((channel) => channel.platform !== 'admin')) return [];
+  return gatherPostFacts({ title: facts.title, description: facts.description, link: facts.link, noun: config.source.noun }, {
+    search: deps.search ?? (async (query) => (await researchSearch(query, { limit: 6, depth: 'standard', organizationId: String(job.organizationId) })).hits),
+    open: deps.openPages ?? ((urls) => checkPages(urls)),
+    // A small job the page itself can check, which is what the free model is for. Never paid, whatever the job's level.
+    extract: deps.write ?? engineWriter(job, undefined, false, { need: 'utility', level: 'free', timeoutMs: 60_000 }),
+  });
+}
+
+async function draftAll(job: JobLike, config: PublishingConfig, facts: ItemFacts, context: DraftContext, write: Writer, deps: PublishDeps = {}): Promise<Map<PublishPlatform, Prepared>> {
   const out = new Map<PublishPlatform, Prepared>();
+  const method = postMethod(config.source);
+  const strong = method.strongWriting ? deps.write ?? engineWriter(job, context.failures, false, { need: POST_METHOD.writerNeed, timeoutMs: POST_METHOD.writerTimeoutMs }) : null;
+  const researched = await researchFor(job, config, facts, deps);
   for (const channel of config.channels) {
     if (channel.platform === 'admin') {
       if (config.admin) out.set('admin', await prepareAdmin(config.admin, config, facts, context, write, context.failures));
       continue;
     }
-    const draft = await composePost(
-      {
+    const composeInput = {
         platform: channel.platform,
         companyName: context.companyName,
         persona: context.persona ?? '',
@@ -286,20 +308,42 @@ async function draftAll(job: JobLike, config: PublishingConfig, facts: ItemFacts
         brief: config.brief,
         roundup: config.source.type === 'site' && Boolean(config.source.roundup),
         noun: config.source.noun,
-        facts: { title: facts.title, description: facts.description, text: facts.text, video: facts.video, extra: facts.extra, requiredLinks: facts.requiredLinks },
+        facts: { title: facts.title, description: facts.description, text: facts.text, video: facts.video, extra: facts.extra, requiredLinks: facts.requiredLinks, researched },
         link: facts.link,
         subreddit: context.subreddit,
         strategy: context.strategy,
-      },
-      write
-    ).catch(() => null);
+        roomToThink: Boolean(strong),
+    };
+    // The stronger writer first, and the usual one if it gives no answer, so a post is never lost to one model.
+    let draft = strong ? await composePost(composeInput, strong).catch(() => null) : null;
+    const usedStrong = Boolean(draft);
+    draft ??= await composePost({ ...composeInput, roomToThink: false }, write).catch(() => null);
+    let reviewProblem: string | undefined;
+    if (draft && strong && usedStrong) {
+      const facts_ = [`Name: ${facts.title}`, facts.description, facts.text.slice(0, 4000), ...describeResearchedFacts(researched)].filter(Boolean).join('\n');
+      const review = async (candidate: Draft) => readPostReview(await strong({
+        system: postReviewPrompt({ companyName: context.companyName, persona: context.persona ?? '', noun: config.source.noun, platform: PLATFORM_LABEL[channel.platform] }),
+        user: `# Facts\n${facts_}\n\n# Post\n${candidate.title ? `${candidate.title}\n` : ''}${candidate.body}`,
+        maxTokens: 1500,
+      }).catch(() => null));
+      let verdict = await review(draft);
+      for (let rewrite = 0; verdict && !verdict.pass && rewrite < POST_METHOD.maxRewrites; rewrite += 1) {
+        const revised = await composePost({ ...composeInput, correction: verdict.problems.join('\n') }, strong).catch(() => null);
+        if (!revised) break;
+        draft = revised;
+        verdict = await review(revised);
+      }
+      if (verdict && !verdict.pass) reviewProblem = `The reviewer had a concern, so this was not posted automatically. Check it before posting: ${verdict.problems.join(' ')}`.slice(0, 1000);
+    }
     if (draft && !(config.source.type === 'site' && config.source.roundup) && config.socialLinkTemplate && facts.link && channel.platform === 'reddit') {
       draft.body = draft.body.replace(/https?:\/\/[^\s<>\)\]]+/g, facts.link);
       if (!draft.body.includes(facts.link)) draft.body = `${draft.body}\n\n${facts.link}`;
     }
     // A "New …:" label copied from an example post becomes the source's noun ("New Game:").
     if (draft?.title && channel.platform === 'reddit' && config.source.type === 'site' && !config.source.roundup) draft.title = relabelNewItemTitle(draft.title, config.source.noun);
-    out.set(channel.platform, draft ? { draft, written: true } : { draft: fallbackDraft(channel.platform, facts, config.source.noun), written: false });
+    out.set(channel.platform, draft
+      ? { draft, written: !reviewProblem, ...(reviewProblem ? { problem: reviewProblem } : {}), ...(researched.length ? { researched } : {}) }
+      : { draft: fallbackDraft(channel.platform, facts, config.source.noun), written: false });
   }
   return out;
 }
@@ -573,7 +617,7 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
     } catch (error) {
       return fail(`Could not read ${newest.url ?? 'the newest item'}: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
-    const drafts = await draftAll(job, config, facts, context, write);
+    const drafts = await draftAll(job, config, facts, context, write, deps);
     const records: JobRunOutput['records'] = [];
     const gaps: string[] = [];
     for (const c of config.channels) {
@@ -716,7 +760,7 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
     }
     await PublishItem.updateOne({ _id: itemId }, { $set: { title: facts.title.slice(0, 500), facts: { title: facts.title, description: facts.description, text: facts.text, image: facts.image ?? undefined, images: facts.images, video: facts.video ?? undefined } } });
     const channels = isBestOffer(entry.key) ? config.channels : config.channels.filter((c) => c.platform === 'admin');
-    const drafts = await draftAll(job, { ...config, channels }, facts, context, write);
+    const drafts = await draftAll(job, { ...config, channels }, facts, context, write, deps);
     for (const channel of channels) {
       const prepared = drafts.get(channel.platform);
       if (!prepared) continue;
@@ -736,6 +780,7 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
         ...(facts.link ? { link: facts.link } : {}),
         assets: channel.platform === 'admin' ? [] : assetsOf(facts),
         ...(prepared.values ? { values: prepared.values } : {}),
+        ...(prepared.researched?.length ? { researched: prepared.researched } : {}),
         // The reason is kept for review cards too, so a card is never silently empty.
         ...(!written ? { error: prepared.problem ?? (channel.mode === 'auto' ? 'Nucleas could not write this post, so it was not posted automatically. Check it and post it by hand.' : 'No model wrote this, so it shows the plain facts. Check it before posting.') } : {}),
       });
@@ -973,13 +1018,15 @@ export interface DeliveryView {
   postedAt: string | null;
   error: string | null;
   createdAt: string;
+  /** Facts from other sites this post was written with. */
+  researched?: ResearchedFact[];
   /** Admin records: each field as the form shows it, and the filled form (or the page after saving) as a JPEG. */
   fields: { label: string; value: string }[] | null;
   editableFields?: { key: string; label: string; type: string; required: boolean; options?: { value: string; label: string }[]; value: string | boolean }[];
   screenshot: string | null;
 }
 
-type DeliveryLean = { _id: Types.ObjectId; itemId: Types.ObjectId; platform: string; status: DeliveryView['status']; title?: string; body: string; link?: string; assets?: { kind: 'image' | 'video'; url: string }[]; postedUrl?: string; postedAt?: Date; error?: string; createdAt: Date; values?: Record<string, string | boolean>; screenshot?: string };
+type DeliveryLean = { researched?: ResearchedFact[]; _id: Types.ObjectId; itemId: Types.ObjectId; platform: string; status: DeliveryView['status']; title?: string; body: string; link?: string; assets?: { kind: 'image' | 'video'; url: string }[]; postedUrl?: string; postedAt?: Date; error?: string; createdAt: Date; values?: Record<string, string | boolean>; screenshot?: string };
 
 export interface PublishingView {
   image?: PublishingConfig['image'];
@@ -1023,6 +1070,7 @@ export async function publishingView(job: { _id: Types.ObjectId; publishing?: un
     postedAt: d.postedAt?.toISOString() ?? null,
     error: d.error ?? null,
     createdAt: d.createdAt.toISOString(),
+    ...(d.researched?.length ? { researched: d.researched } : {}),
     fields: d.platform === 'admin' && config.admin ? valueLines(config.admin.fields, d.values ?? {}) : null,
     ...(d.platform === 'admin' && config.admin ? { editableFields: config.admin.fields.filter(field => field.type !== 'file' && !/\bcasino\b/i.test(`${field.key.replaceAll('_', ' ')} ${field.label}`) && !/^slug$/i.test(field.key) && !/^slug$/i.test(field.label.trim())).map(field => ({ key: field.key, label: /^(notes|description)$/i.test(field.label.trim()) ? `Body / ${field.label.toLowerCase()}` : field.label || field.key, type: field.type, required: field.required, options: field.options, value: d.values?.[field.key] ?? (field.type === 'checkbox' ? false : '') })) } : {}),
     screenshot: d.screenshot ?? null,

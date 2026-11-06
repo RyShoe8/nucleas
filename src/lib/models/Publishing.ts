@@ -85,6 +85,8 @@ const deliverySchema = new Schema(
     postedAt: { type: Date },
     postedByUserId: { type: Schema.Types.ObjectId },
     error: { type: String, maxlength: 1000 },
+    /** Facts from other sites this post was written with, so a person can check them. */
+    researched: { type: [{ _id: false, fact: String, quote: String, url: String, site: String }], default: undefined },
   },
   { timestamps: true }
 );

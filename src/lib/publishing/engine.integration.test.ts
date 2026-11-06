@@ -66,6 +66,8 @@ let sent: { to: string; subject: string }[];
 let published: { platform: string; text: string }[];
 let failFacebook: PublishError | null;
 const deps = (): PublishDeps => ({
+  search: async () => [],
+  openPages: async () => [],
   fetcher,
   write,
   send: async (to, subject) => {
@@ -140,6 +142,88 @@ describe('publishing jobs', () => {
     expect(output.summary).toContain('not a new-publication notification');
     expect(calls.some((system) => system.includes('Bluesky'))).toBe(true);
     expect(published).toEqual([]);
+  });
+
+  describe('researching and reviewing a post about a new item', () => {
+    const pageWords = 'Game factorio is a game about building and maintaining automated factories on an alien planet while defending them.';
+    const research = (): Partial<PublishDeps> => ({
+      search: async () => [{ url: 'https://www.pcgamer.com/factorio-review' }, { url: 'https://playbound.club/games/factorio' }],
+      openPages: async (urls) => urls.map((url) => ({ url, status: 'opened' as const, title: 'Review', text: pageWords })),
+    });
+    const extract = JSON.stringify({ sameItem: true, facts: [{ fact: 'You build automated factories on an alien planet.', quote: 'building and maintaining automated factories on an alien planet' }] });
+    const post = (body: string) => JSON.stringify({ title: 'New Game Release', body });
+    const runOne = async (writer: PublishDeps['write'], extra: Partial<PublishDeps> = research()) => {
+      const job = await newJob();
+      await takeBaseline(job.toObject(), deps());
+      pages.push('factorio');
+      await runPublishing(await newRun(job._id, false), 'owner', (await Job.findById(job._id).lean())!, { ...deps(), ...extra, write: writer });
+      return PublishDelivery.find().sort({ platform: 1 }).lean();
+    };
+
+    it('writes from checked facts, and shows them on the card', async () => {
+      const prompts: string[] = [];
+      const deliveries = await runOne(async ({ system, user }) => {
+        if (system.startsWith('You pull facts')) return extract;
+        if (system.startsWith('You check a')) return '{"verdict":"pass"}';
+        prompts.push(user);
+        return post('A specific post');
+      });
+      expect(prompts.every((user) => user.includes('You build automated factories') && user.includes('from pcgamer.com'))).toBe(true);
+      expect(deliveries[0]?.researched).toMatchObject([{ fact: 'You build automated factories on an alien planet.', site: 'pcgamer.com' }]);
+      expect(deliveries.map((d) => d.status)).toEqual(['posted', 'posted', 'ready']);
+    });
+
+    it('rewrites once after a failed review, and posts the fix', async () => {
+      const seen: string[] = [];
+      const deliveries = await runOne(async ({ system, user }) => {
+        if (system.startsWith('You pull facts')) return extract;
+        if (system.startsWith('You check a')) return user.includes('Generic post') ? '{"verdict":"fail","problems":["Could be any game"]}' : '{"verdict":"pass"}';
+        seen.push(user);
+        return post(user.includes('A reviewer rejected') ? 'Specific rewrite' : 'Generic post');
+      });
+      expect(seen.some((user) => user.includes('Could be any game'))).toBe(true);
+      expect(deliveries.map((d) => d.body)).toEqual(['Specific rewrite', 'Specific rewrite', 'Specific rewrite']);
+      expect(deliveries.map((d) => d.status)).toEqual(['posted', 'posted', 'ready']);
+    });
+
+    it('holds a post for a person when the reviewer still has a concern', async () => {
+      const deliveries = await runOne(async ({ system }) => {
+        if (system.startsWith('You pull facts')) return extract;
+        if (system.startsWith('You check a')) return '{"verdict":"fail","problems":["Sounds nothing like the brand"]}';
+        return post('Still wrong');
+      });
+      expect(published).toEqual([]);
+      expect(deliveries.map((d) => d.status)).toEqual(['ready', 'ready', 'ready']);
+      expect(deliveries[0]?.error).toContain('Sounds nothing like the brand');
+    });
+
+    it('still writes the post when research finds nothing and the review cannot be read', async () => {
+      const deliveries = await runOne(async ({ system }) => (system.startsWith('You check a') ? 'not json' : post('From our own page')), { search: async () => { throw new Error('search down'); } });
+      expect(deliveries.map((d) => [d.body, d.status])).toEqual([['From our own page', 'posted'], ['From our own page', 'posted'], ['From our own page', 'ready']]);
+      expect(deliveries[0]?.researched ?? []).toEqual([]);
+    });
+
+    it('asks a free model for facts whatever the job level, and the stronger model to write and review', async () => {
+      const { askEngine } = await import('@/lib/ai/engine/ask');
+      const ask = vi.mocked(askEngine);
+      ask.mockClear();
+      ask.mockImplementation(async (input) => {
+        const text = input.system.startsWith('You pull facts') ? extract : input.system.startsWith('You check a') ? '{"verdict":"pass"}' : post('A post');
+        return { text, model: 'm', usedFallback: false };
+      });
+      try {
+        await runOne(undefined);
+        const calls = ask.mock.calls.map(([input]) => input);
+        expect(calls.filter((input) => input.system.startsWith('You pull facts')).every((input) => input.level === 'free' && input.need === 'utility')).toBe(true);
+        expect(calls.some((input) => input.system.startsWith('You pull facts'))).toBe(true);
+        const paid = calls.filter((input) => !input.system.startsWith('You pull facts'));
+        expect(paid.length).toBeGreaterThan(0);
+        expect(paid.every((input) => input.need === 'review')).toBe(true);
+      } finally {
+        ask.mockReset();
+        ask.mockResolvedValue(null);
+      }
+    });
   });
 
   it('posts only what appears after the baseline: auto channels publish, manual ones become cards', async () => {

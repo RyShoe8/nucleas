@@ -1,3 +1,4 @@
+import type { ResearchedFact } from './postResearch';
 import { z } from 'zod';
 import { extractJson } from '@/lib/ai/json';
 import { PLATFORM_LABEL, type SocialPlatform } from './config';
@@ -33,15 +34,23 @@ export interface ComposeInput {
   example: string;
   brief: string;
   noun: string;
-  facts: { title: string; description?: string; text?: string; video?: string | null; extra?: string[]; requiredLinks?: string[] };
+  facts: { title: string; description?: string; text?: string; video?: string | null; researched?: ResearchedFact[]; extra?: string[]; requiredLinks?: string[] };
   link: string | null;
   subreddit?: string | null;
   /** The company's overview and approved marketing plan (upstream context): what to stress and what to avoid. */
   strategy?: string;
   roundup?: boolean;
+  /** A stronger writer, which reasons before it answers and needs more room. */
+  roomToThink?: boolean;
+  /** What a reviewer said was wrong with the last draft. */
+  correction?: string;
 }
 
-export const GAME_POST_GUIDANCE = 'Write like someone at the brand recommending this specific game to its community: use the approved Voice’s point of view, rhythm, vocabulary and humor naturally, rather than repeating a stock launch announcement. Lead with a concrete gameplay hook. Explain what the player actually does and what makes the experience interesting, using only details supported by the supplied game page: genre, core actions, setting, objectives, mechanics, pace or supported play modes. Facebook should usually include two concrete gameplay details; Reddit can add two to four details and who might enjoy it; Bluesky should keep one distinctive gameplay hook alongside the game name and link within 300 characters. When source details are sparse, say less rather than inventing mechanics. Do not claim personal playtime, memories, endorsements or firsthand experience unless explicitly supplied as a verified fact. Keep setup/install information secondary unless it is the game’s main verified selling point. Avoid repeating the same opening, catchphrases, rhetorical question or call to action across games.';
+export function describeResearchedFacts(facts: ResearchedFact[]): string[] {
+  return facts.map((row) => `- ${row.fact} (from ${row.site}: "${row.quote}")`);
+}
+
+export const GAME_POST_GUIDANCE = 'Write like someone at the brand recommending this specific game to its community: use the approved Voice’s point of view, rhythm, vocabulary and humor naturally, rather than repeating a stock launch announcement. Lead with a concrete gameplay hook. Explain what the player actually does and what makes the experience interesting, using only details supported by the supplied facts: genre, core actions, setting, objectives, mechanics, pace or supported play modes. Make it specific enough that it could only be about this game. Facebook should usually include three concrete gameplay details when the facts have them; Reddit can add three to five details and who might enjoy it; Bluesky should keep one distinctive gameplay hook alongside the game name and link within 300 characters. When source details are sparse, say less rather than inventing mechanics. Do not claim personal playtime, memories, endorsements or firsthand experience unless explicitly supplied as a verified fact. Keep setup/install information secondary unless it is the game’s main verified selling point. Avoid repeating the same opening, catchphrases, rhetorical question or call to action across games.';
 
 export function composeSystemPrompt(input: Pick<ComposeInput, 'platform' | 'companyName' | 'persona' | 'example' | 'brief' | 'noun' | 'subreddit' | 'strategy' | 'roundup'>): string {
   const rules = PLATFORM_RULES[input.platform];
@@ -80,6 +89,7 @@ export function composeUserPrompt(input: Pick<ComposeInput, 'facts' | 'link' | '
     facts.video ? `Trailer or video: ${facts.video}` : '',
     ...(facts.extra ?? []),
     ...(facts.requiredLinks ?? []).map(url => `Required link (Facebook/Reddit): ${url}`),
+    ...(facts.researched?.length ? ['', 'Facts from other sites, each checked against its page. Use them for detail, in your own words, and attribute an opinion to whoever said it. If one disagrees with our page, our page wins. Never link to these sites.', ...describeResearchedFacts(facts.researched)] : []),
     input.link ? `Link: ${input.link}` : '',
     facts.text ? `\nPage text (for facts only):\n${facts.text.slice(0, input.roundup ? 20000 : 4000)}` : '',
   ].filter(Boolean).join('\n');
@@ -167,8 +177,8 @@ export type Writer = (input: { system: string; user: string; maxTokens: number }
 export async function composePost(input: ComposeInput, write: Writer): Promise<Draft | null> {
   const system = composeSystemPrompt(input);
   const user = composeUserPrompt(input);
-  const maxTokens = input.roundup && input.platform !== 'bluesky' ? 4000 : input.platform === 'reddit' ? 1500 : 700;
-  const first = await write({ system, user, maxTokens });
+  const maxTokens = input.roundup && input.platform !== 'bluesky' ? 4000 : input.roomToThink ? 3000 : input.platform === 'reddit' ? 1500 : 700;
+  const first = await write({ system, user: input.correction ? `${user}\n\nA reviewer rejected your last draft for these reasons, so fix them:\n${input.correction}` : user, maxTokens });
   if (input.roundup) {
     const required = input.platform === 'bluesky' ? [input.link!] : input.facts.requiredLinks?.length ? [...new Set([...input.facts.requiredLinks, input.link!])] : [input.link!];
     const limit = input.platform === 'facebook' ? 6000 : PLATFORM_RULES[input.platform].maxChars;
@@ -188,7 +198,7 @@ export async function composePost(input: ComposeInput, write: Writer): Promise<D
   const limit = PLATFORM_RULES[input.platform].maxChars;
   const raw = first ? (draftSchema.safeParse(extractJson(first)).data?.body ?? first) : '';
   if (first && charCount(cleanCopy(raw, input.platform === 'reddit')) > limit) {
-    const shorter = await write({ system, user: `${user}\n\nYour last draft was too long. Keep it under ${limit} characters.`, maxTokens: 700 });
+    const shorter = await write({ system, user: `${user}\n\nYour last draft was too long. Keep it under ${limit} characters.`, maxTokens: input.roomToThink ? 3000 : 700 });
     const draft = parseDraft(input.platform, shorter);
     if (draft) return draft;
   }

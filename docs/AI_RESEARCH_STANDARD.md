@@ -40,11 +40,25 @@ where they can, and the Free cost level stays free throughout.
 | Link building | Free models first. A paid model steps in when they end with nothing, and for follow-ups |
 | Spotlight job | `own_pipeline`: per-lead checks confirmed by code, which go further than the standard |
 
+## Posts about new items
+
+`POST_METHOD` and `postMethod` in the same file. Built to spend little, because these run often:
+
+1. Code searches and opens the pages. No model.
+2. A free model pulls facts from one page at a time, each with the exact words it came from. Code keeps a fact only if
+   those words are on the page and the page is about the right item. This step is never paid, whatever the job's level.
+3. The paid model writes from the page and the checked facts, in the company's Voice.
+4. The paid model reviews it, with one rewrite. If it still has a concern, the post is not sent automatically and the
+   card says why.
+
+The facts are shown on the review card with links. If any research step fails, the post is written from its own page as
+before. Pages about the company's own output (news, events) skip the research, and email deals stay simple.
+
 ## Where it does not apply
 
-Extremely simple work that researches nothing: pulling facts out of an email (`social_publish`), writing a post from known
-facts, picking a form link, summarizing a mail, scanning watches. These stay on `askEngine`. Articles open their source
-pages in code and extract facts from them, so they already meet step 3.
+Extremely simple work that researches nothing: pulling facts out of an email into a deal, picking a form link, summarizing
+a mail, scanning watches. These stay on `askEngine`. Articles open their source pages in code and extract facts from them,
+so they already meet step 3.
 
 ## Showing the work
 

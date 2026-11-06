@@ -88,6 +88,18 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
                     <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">{companyName ? `${companyName} · ` : ''}{delivery.itemTitle}</span>
                 </header>
                 {delivery.error ? <p className="rounded border border-amber-400/40 bg-amber-400/5 p-2 text-xs text-amber-300">{delivery.error}</p> : null}
+                {delivery.researched?.length ? (
+                    <details className="text-xs text-text-secondary">
+                        <summary className="cursor-pointer">Facts from other sites · {delivery.researched.length}</summary>
+                        <ul className="mt-1 space-y-1">
+                            {delivery.researched.map((row) => (
+                                <li key={`${row.url}-${row.fact}`} className="break-words">
+                                    {row.fact} <a href={row.url} target="_blank" rel="noreferrer" className="text-primary hover:underline">{row.site}</a>
+                                </li>
+                            ))}
+                        </ul>
+                    </details>
+                ) : null}
                 {editing ? <form className="space-y-3" onSubmit={event => { event.preventDefault(); void run('edit', { action: 'edit_post', values: fieldValues }); }}>
                     <p className="text-xs text-text-secondary">Save your changes before opening the form or adding the deal. Saved values are shared with the team and used when Nucleas adds it.</p>
                     {delivery.fields?.filter(field => /\bcasino\b/i.test(field.label)).map(field => <p key={field.label} className="text-xs text-text-secondary">{field.label}: {field.value}</p>)}

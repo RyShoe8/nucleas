@@ -47,6 +47,37 @@ export function jobMethod(skill?: string | null): JobMethod {
   return (skill && JOB_METHODS[skill]) || 'full';
 }
 
+/**
+ * Posts about a new item. Email deals stay simple: their facts are already in the email. Everything else gets a paid
+ * model to write and review it, and items from outside the company get researched first, mostly by free models and code.
+ */
+export const POST_METHOD = {
+  /** Pages about the company's own output have nothing useful about them elsewhere. */
+  ownContentNouns: ['new', 'news', 'article', 'post', 'blog', 'event', 'update', 'guide'] as readonly string[],
+  searches: ['"{name}" {noun}', '"{name}" {noun} review'] as readonly string[],
+  skipSites: ['youtube.com', 'facebook.com', 'twitter.com', 'x.com', 'instagram.com', 'tiktok.com', 'pinterest.com', 'twitch.tv'] as readonly string[],
+  pagesOpened: 5,
+  pageCharsRead: 6000,
+  factsPerPage: 4,
+  factsKept: 10,
+  minQuoteWords: 6,
+  /** Time the free model gets to work through the pages. */
+  researchMs: 3 * 60_000,
+  /** The model that writes and reviews, by the engine's need. */
+  writerNeed: 'review',
+  writerTimeoutMs: 90_000,
+  /** Rewrites after a failed review, before the card is flagged for a person. */
+  maxRewrites: 1,
+} as const;
+
+export type PostMethod = { strongWriting: boolean; research: boolean };
+
+/** Which treatment a publishing source gets. Roundups and email sources are assembled from facts already in hand. */
+export function postMethod(source: { type: string; noun?: string; roundup?: unknown }): PostMethod {
+  if (source.type !== 'site' || source.roundup) return { strongWriting: false, research: false };
+  return { strongWriting: true, research: !POST_METHOD.ownContentNouns.includes((source.noun ?? '').trim().toLowerCase()) };
+}
+
 /** How the planner and the job designer are told to work out what counts. */
 export const WHAT_COUNTS_GUIDANCE = 'say what the person really means in one or two sentences: what makes a result count, and what only looks like it does. Think about the kind of thing they want, not just the words. Example for "sites with reviews of our games": publications that regularly review many games count; a fan site, wiki or store named after one game, a developer page, and user reviews on a store do not.';
 
