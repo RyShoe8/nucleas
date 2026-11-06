@@ -141,14 +141,14 @@ describe('companies a worker screened', () => {
   const found = page(['https://bsky.app/profile/buttondown.com', 'https://buttondown.com/about', 'https://buttondown.com/pricing'], false, true, 'https://buttondown.com/');
 
   it('keeps them when the run returned nothing, opens each one itself, and keeps the reason', async () => {
-    const result = await saveScreened(scope, [{ name: 'Buttondown', website: 'https://buttondown.com/', checked: ['https://buttondown.com/about'], gap: 'No exact team count' }], new Set(), (async () => found) as never);
+    const result = await saveScreened(scope, [{ name: 'Buttondown', website: 'https://buttondown.com/', checked: ['https://buttondown.com/about'], gap: 'No exact team count' }], new Set(), 'run-1', (async () => found) as never);
     expect(result).toMatchObject({ discovered: 1, opened: 1, names: ['Buttondown'] });
     expect(await ResearchEvidence.findOne({ domain: 'buttondown.com' }).lean()).toMatchObject({ qualificationGap: 'No exact team count', pageStatus: 'opened', facts: expect.arrayContaining([expect.objectContaining({ field: 'bluesky' })]) });
     expect(await leadsNeedingCheck(scope)).toBe(1);
   });
 
   it('never lets a worker rule a company out by saying so', async () => {
-    await saveScreened(scope, [{ name: 'Buttondown', website: 'https://buttondown.com/', checked: [], gap: 'Ineligible, do not contact' }], new Set(), (async () => found) as never);
+    await saveScreened(scope, [{ name: 'Buttondown', website: 'https://buttondown.com/', checked: [], gap: 'Ineligible, do not contact' }], new Set(), 'run-1', (async () => found) as never);
     expect((await ResearchEvidence.findOne({ domain: 'buttondown.com' }).lean())?.ineligibleAt).toBeFalsy();
   });
 
@@ -157,18 +157,26 @@ describe('companies a worker screened', () => {
       { name: 'Bad', website: 'not a site', checked: [], gap: '' },
       { name: 'Ours', website: 'https://tailnote.io/', checked: [], gap: '' },
       { name: 'Buttondown', website: 'https://buttondown.com/', checked: [], gap: '' },
-    ], new Set(['tailnote.io']), (async () => found) as never);
+    ], new Set(['tailnote.io']), 'run-1', (async () => found) as never);
     expect(result.names).toEqual(['Buttondown']);
   });
 
   it('can be picked up again by a later run the same day', async () => {
-    await saveScreened(scope, [{ name: 'Buttondown', website: 'https://buttondown.com/', checked: [], gap: 'gap' }], new Set(), (async () => found) as never);
+    await saveScreened(scope, [{ name: 'Buttondown', website: 'https://buttondown.com/', checked: [], gap: 'gap' }], new Set(), 'run-1', (async () => found) as never);
     expect((await researchReserve(scope, new Set())).map((row) => row.domain)).toEqual(['buttondown.com']);
   });
 
-  it('rests a lead after three tries, then lets it back after a month', async () => {
+  it('counts one run\'s retries once, however many times it fails', async () => {
+    const values = { company: 'Close', website: 'https://close.com/' };
+    for (let tries = 0; tries < 5; tries++) await rememberQualificationGap(scope, values, ['https://close.com/'], 'Feed missing', new Set(), 'run-1');
+    expect((await ResearchEvidence.findOne({ domain: 'close.com' }).lean())?.runsTried).toBe(1);
+    await ResearchEvidence.updateOne({ domain: 'close.com' }, { $set: { checkedAt: new Date() } });
+    expect((await researchReserve(scope, new Set())).map((row) => row.domain)).toEqual(['close.com']);
+  });
+
+  it('rests a lead after three runs, then lets it back after a month', async () => {
     const values = { company: 'Dead End', website: 'https://deadend.com/' };
-    for (let tries = 0; tries < 3; tries++) await rememberQualificationGap(scope, values, ['https://deadend.com/'], 'Still no feed', new Set());
+    for (const run of ['run-1', 'run-2', 'run-3']) await rememberQualificationGap(scope, values, ['https://deadend.com/'], 'Still no feed', new Set(), run);
     await ResearchEvidence.updateOne({ domain: 'deadend.com' }, { $set: { checkedAt: new Date() } });
     expect(await researchReserve(scope, new Set())).toEqual([]);
     await ResearchEvidence.updateOne({ domain: 'deadend.com' }, { $set: { lastTried: new Date(Date.now() - 31 * 86400000) } });
@@ -208,11 +216,11 @@ describe('starting the next run from saved work', () => {
 
   it('does not rule a lead out over a gap, and counts it as needing a check', async () => {
     const values = { company: 'Gap', website: 'https://gap.com/' };
-    await rememberQualificationGap(scope, values, ['https://l.com/'], 'Social field failed', new Set());
+    await rememberQualificationGap(scope, values, ['https://l.com/'], 'Social field failed', new Set(), 'run-1');
     expect(await leadsNeedingCheck(scope)).toBe(1);
     expect(await ResearchEvidence.findOne({ domain: 'gap.com' }).lean()).toMatchObject({ qualificationGap: 'Social field failed' });
     expect((await ResearchEvidence.findOne({ domain: 'gap.com' }).lean())?.ineligibleAt).toBeFalsy();
-    await rememberQualificationGap(scope, values, ['https://l.com/'], 'The official homepage must link to this social profile.', new Set(), true);
+    await rememberQualificationGap(scope, values, ['https://l.com/'], 'The official homepage must link to this social profile.', new Set(), 'run-1', true);
     expect(await leadsNeedingCheck(scope)).toBe(0);
   });
 

@@ -4,6 +4,7 @@ import { changedMethod, planResearch, scoutSources, strategyBrief, type Research
 import { upgradeSignatureFields } from './templates/signatureOutreach';
 import { qualifySignatureProspect } from './signatureQualification';
 import { captureOutreach } from './signatureOutreach';
+import { fillBrandColors } from './brandColors';
 import { queueSignaturePost } from '@/lib/publishing/signaturePost';
 import { upstreamContext } from '@/lib/companies/upstreamContext';
 import { discoveryMemory, saveCandidates } from '@/lib/casinoDiscovery/service';
@@ -524,7 +525,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       : '\nThis is a blog showcase. A verified RSS or Atom feed is required.';
   }
   if (activeDesign.skill === 'signature_outreach') {
-    activeDesign.instructions += '\nQUALIFY BEFORE DESIGN: screen a broad pool of external small businesses, then choose only a qualified prospect. Any size from a solo founder or one-person business up to 25 people qualifies. Return numeric team_size (the count the evidence indicates), exact team_source, a verbatim team_quote showing the company is that small, such as a founder saying they run it alone, a stated size like "a small team of 12", or a team page listing, growth_source, growth_quote and growth_date (YYYY-MM-DD within the last year). Growth means hiring, funding, expansion or launch, not routine posts. A solo founder launching a new product or service counts. Only a Bluesky profile linked from the company site qualifies, so skip any company without one. Outreach is on Bluesky only. Start from the rarest requirement, a company Bluesky profile: find companies through their Bluesky profiles or through company sites that link to Bluesky, confirm the site links back, and only then check team and growth. Do not begin from a general software directory. Never reject a company for lacking an exact headcount: give your best count from the evidence and submit it, because Nucleas checks the quote on the page and judges it. ' + SUBMIT_STRONGEST + ' Do not reject a company yourself over where a feed link sits or how large a logo is: Nucleas tests both. Include these exact URLs in sources plus person_source, contact_source, feed and cta_url. Use all required fields in values. If evidence is missing, investigate another candidate. No invented examples or placeholder data.';
+    activeDesign.instructions += '\nQUALIFY BEFORE DESIGN: screen a broad pool of external small businesses, then choose only a qualified prospect. Any size from a solo founder or one-person business up to 25 people qualifies. Return numeric team_size (the count the evidence indicates), exact team_source, a verbatim team_quote showing the company is that small, such as a founder saying they run it alone, a stated size like "a small team of 12", or a team page listing, growth_source, growth_quote and growth_date (YYYY-MM-DD within the last year). Growth means hiring, funding, expansion or launch, not routine posts. A solo founder launching a new product or service counts. Only a Bluesky profile linked from the company site qualifies, so skip any company without one. Outreach is on Bluesky only. Start from the rarest requirement, a company Bluesky profile: find companies through their Bluesky profiles or through company sites that link to Bluesky, confirm the site links back, and only then check team and growth. Do not begin from a general software directory. Never reject a company for lacking an exact headcount: give your best count from the evidence and submit it, because Nucleas checks the quote on the page and judges it. A hosted blog of the company itself, such as its Substack, counts as its site. Leave brand colors empty unless the site states them: Nucleas reads them from the logo. Write the post as finished text with no brackets or labels. ' + SUBMIT_STRONGEST + ' Do not reject a company yourself over where a feed link sits or how large a logo is: Nucleas tests both. Include these exact URLs in sources plus person_source, contact_source, feed and cta_url. Use all required fields in values. If evidence is missing, investigate another candidate. No invented examples or placeholder data.';
   }
   const tools = await buildAssistantTools(viewer, [profile]);
   const today = new Date().toISOString().slice(0, 10);
@@ -600,7 +601,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       // What this call found is kept whether or not the run returns a record. A call that opened nothing is only repeating what it was told.
       if (strategic && parsed.success && parsed.data.screened?.length && openedPages(turn.toolsUsed)) {
         try {
-          const saved = await saveScreened(researchScope, parsed.data.screened, excludedDomains);
+          const saved = await saveScreened(researchScope, parsed.data.screened, excludedDomains, String(run._id));
           researchStats.discovered += saved.discovered;
           researchStats.opened += saved.opened;
           researchStats.needsCheck = await leadsNeedingCheck(researchScope);
@@ -896,12 +897,14 @@ export async function executeJobRun(runId: string): Promise<void> {
       for (let attempt = 0; attempt <= MAX_PROSPECT_RETRIES; attempt++) {
         try {
           if (output.records.length !== 1) throw new Error('Research one qualified prospect from a shortlist of small businesses.');
+          await fillBrandColors(output.records[0].values);
+          issues = checkRecords(activeDesign.fields, output);
           prospectEvidence = await qualifySignatureProspect(output.records[0].values, output.records[0].sources, excludedProspects, requireBlogShowcase);
           break;
         } catch (error) {
           const problem = error instanceof Error ? error.message : 'Prospect qualification failed';
           if (output.records.length === 1) {
-            await rememberQualificationGap(researchScope, output.records[0].values, output.records[0].sources, problem, excludedDomains);
+            await rememberQualificationGap(researchScope, output.records[0].values, output.records[0].sources, problem, excludedDomains, String(run._id));
             await JobRun.updateOne({ _id: run._id, leaseOwner: owner }, { $set: { 'researchProgress.needsCheck': await leadsNeedingCheck(researchScope) } });
           }
           if (attempt < MAX_PROSPECT_RETRIES && workCalls < maxWorkCalls) {
@@ -922,7 +925,9 @@ export async function executeJobRun(runId: string): Promise<void> {
             await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { output, issues } });
             const reread = await readResearchRetry(retry);
             // An attempt that opened nothing has no evidence, so it cannot replace what an earlier one really found.
-            if (reread.records.length || openedPages(retry.toolsUsed)) output = reread;
+            if (openedPages(retry.toolsUsed)) output = reread;
+            // With the paid retry spent, more attempts that open nothing cannot help, so run the checks once more and stop.
+            else if (paidResearchUsed) attempt = MAX_PROSPECT_RETRIES - 1;
             issues = checkRecords(activeDesign.fields, output);
             continue;
           }
@@ -1044,7 +1049,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       } catch (error) {
         // The real browser opened their homepage here, so a missing Bluesky link is proof. Anything else may be worth another look.
         const problem = error instanceof Error ? error.message : 'The signature could not be made.';
-        await rememberQualificationGap(researchScope, candidate.values, candidate.sources, problem, excludedDomains, problem.includes('homepage must link')).catch((saveError: unknown) => console.error(`[research] run ${run._id} could not save what it learned`, saveError instanceof Error ? saveError.message : 'unknown'));
+        await rememberQualificationGap(researchScope, candidate.values, candidate.sources, problem, excludedDomains, String(run._id), problem.includes('homepage must link')).catch((saveError: unknown) => console.error(`[research] run ${run._id} could not save what it learned`, saveError instanceof Error ? saveError.message : 'unknown'));
         throw error;
       }
       try {

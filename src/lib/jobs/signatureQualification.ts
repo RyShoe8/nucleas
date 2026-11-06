@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { browserNavigate } from '@/lib/ai/tools/browserClient';
+import { browserFetch, browserNavigate } from '@/lib/ai/tools/browserClient';
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
 
 export const prospectQualification = z.object({
@@ -12,6 +12,30 @@ export const prospectQualification = z.object({
     website: z.string().url(),
     social: z.string().regex(/^https:\/\/bsky\.app\/profile\/[\w.-]+\/?$/, 'Use the company Bluesky profile.'),
 });
+
+const NOT_A_PUBLICATION = new Set(['www', 'cdn', 'open', 'on', 'app', 'help', 'support', 'blog']);
+
+/** Hosted blogs a page refers to by their own address, like company.substack.com. A shared host on its own proves nothing. */
+export function publishingHostsIn(html: string): Set<string> {
+    const hosts = new Set<string>();
+    for (const match of html.matchAll(/\b([a-z0-9][a-z0-9-]*)\.(substack\.com|ghost\.io|beehiiv\.com|medium\.com|tumblr\.com|wordpress\.com|blogspot\.com|buttondown\.email)\b/gi)) {
+        if (!NOT_A_PUBLICATION.has(match[1].toLowerCase())) hosts.add(match[0].toLowerCase());
+    }
+    return hosts;
+}
+
+/**
+ * A company's own hosted blog counts as its official site when its homepage points to that exact address. News coverage
+ * and other sites a homepage links to never count. Raw HTML is read because such blogs are often embedded, not linked.
+ */
+export async function officialPublishingHosts(website: string): Promise<Set<string>> {
+    try {
+        return publishingHostsIn((await browserFetch(website)).body);
+    } catch (error) {
+        console.warn('[signature] could not read the homepage for its hosted blog', error instanceof Error ? error.message : 'unknown');
+        return new Set();
+    }
+}
 
 /** Code decides this, so a model cannot apply a stricter rule than the job's: anything goes unless the quote itself states more than 25. */
 export function teamEvidenceProblem(quote: string): string | null {
@@ -34,6 +58,7 @@ export async function qualifySignatureProspect(values: Record<string, unknown>, 
     const candidate = parsed.data;
     const teamProblem = teamEvidenceProblem(candidate.team_quote);
     if (teamProblem) throw new Error(teamProblem);
+    if (/\[[^\]]*\]/.test(String(values.post ?? ''))) throw new Error('Write the social post as finished text, with no bracketed placeholders or labels.');
     const host = (raw: string) => assertSafePublicHttpsUrl(raw).hostname.toLowerCase().replace(/^www\./, '');
     const domain = host(candidate.website);
     if (excluded.some(raw => {
@@ -42,19 +67,23 @@ export async function qualifySignatureProspect(values: Record<string, unknown>, 
     })) throw new Error('Choose an external small company. Owned properties are excluded.');
     const dated = Date.parse(`${candidate.growth_date}T12:00:00Z`);
     if (!Number.isFinite(dated) || dated > Date.now() + 86400000 || dated < Date.now() - 366 * 86400000) throw new Error('Supply a growth announcement from the last year.');
+    const evidence = [candidate.team_source, candidate.growth_source, String(values.person_source ?? ''), String(values.contact_source ?? '')].filter(Boolean);
+    const official = evidence.some(url => host(url) !== domain) ? await officialPublishingHosts(candidate.website) : new Set<string>();
+    const isOfficial = (url: string) => host(url) === domain || official.has(host(url));
     for (const url of [candidate.team_source, candidate.growth_source]) {
-        if (host(url) !== domain) throw new Error('Team and growth evidence must come from the prospect’s official site.');
+        if (!isOfficial(url)) throw new Error('Team and growth evidence must come from the prospect’s official site.');
     }
     const required = ['team_source', 'growth_source', 'person_source', 'contact_source', 'cta_url', ...(needsBlog ? ['feed'] : [])];
     for (const key of required) {
-        const url = String(values[key] ?? '');
-        assertSafePublicHttpsUrl(url);
+        const url = String(values[key] ?? '').trim();
+        if (!url) throw new Error(`Missing ${key}.`);
+        try { assertSafePublicHttpsUrl(url); } catch { throw new Error(`${key} must be a public https address.`); }
         if (!sources.some(source => source.replace(/\/$/, '') === url.replace(/\/$/, ''))) throw new Error(`Cite the exact ${key} URL in sources.`);
     }
     const urls = [...new Set([candidate.team_source, candidate.growth_source, String(values.person_source), String(values.contact_source)])];
     const pages = await Promise.all(urls.map(async url => {
         const page = await browserNavigate(url);
-        if (host(page.url) !== domain) throw new Error('Primary evidence redirected outside the prospect website.');
+        if (!isOfficial(page.url)) throw new Error('Primary evidence redirected outside the prospect website.');
         return { url, text: page.text };
     }));
     const normalize = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim();

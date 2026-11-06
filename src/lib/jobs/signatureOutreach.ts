@@ -1,6 +1,7 @@
 import { put } from '@vercel/blob';
 import { browserNavigate, browserWorkerCall } from '@/lib/ai/tools/browserClient';
 import { assertSafePublicHttpsUrl } from '@/lib/ai/tools/ssrf';
+import { officialPublishingHosts } from './signatureQualification';
 
 export async function captureOutreach(values: Record<string, unknown>, sources: string[], path: string) {
   const read = (key: string) => String(values[key] ?? '').trim();
@@ -19,7 +20,7 @@ export async function captureOutreach(values: Record<string, unknown>, sources: 
   const teamText = teamPage.text.toLowerCase();
   if (host(new URL(teamPage.url)) !== host(website) || ![read('first_name'), read('last_name'), read('role')].every(v => v && teamText.includes(v.toLowerCase()))) throw new Error('The name and role must be visible on the official team page.');
   const feed = read('feed');
-  if (feed && host(assertSafePublicHttpsUrl(feed)) !== host(website) && !homepage.links.includes(feed)) throw new Error('Choose a first-party feed or one linked from the official site.');
+  if (feed && host(assertSafePublicHttpsUrl(feed)) !== host(website) && !homepage.links.includes(feed) && !(await officialPublishingHosts(website.href)).has(host(new URL(feed)))) throw new Error('Choose a first-party feed or one linked from the official site.');
   if (host(new URL(contactPage.url)) !== host(website) || !contactPage.text.toLowerCase().includes(read('email').toLowerCase())) throw new Error('Work email must be publicly listed on the contact page.');
   const destination = assertSafePublicHttpsUrl(read('cta_url'));
   if (!sources.some(s => s.replace(/\/$/, '') === destination.href.replace(/\/$/, ''))) throw new Error('Cite the working destination for the secondary CTA.');
