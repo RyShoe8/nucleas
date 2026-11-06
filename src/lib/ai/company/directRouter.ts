@@ -34,11 +34,11 @@ type Turn = { role: 'user' | 'assistant' | 'status'; text: string };
 export function routerPrompt(companies: string[], codeCompanies: string[]): string {
   return [
     'You sort requests sent to Nucleas, the operating system for a group of companies. You do not answer them.',
-    'answer: a question about the companies, their numbers or their work that can be answered now, or anything conversational.',
+    'answer: anything that can be answered now, including a one-time request for information however large, such as finding, listing, ranking, comparing or researching something, or anything conversational.',
     'code_change: a change to a website or app (fix, remove, add or edit something on a page or in the code). Only these companies have code connected: ' +
       (codeCompanies.length ? codeCompanies.join(', ') : 'none') +
       '.',
-    'job: non-code work to carry out once or on a repeat (research, collecting details into a catalog, outreach such as earning backlinks, content).',
+    'job: non-code work that repeats or keeps watching, that acts outside this chat (adds to a catalog or site, publishes, sends, outreach such as earning backlinks), or that the user asks to make a job.',
     `company: which company the request is about, exactly as written in this list, or "none": ${companies.join(', ') || 'none'}.`,
     'request: the request restated in full so it stands alone. If the latest message is a follow-up ("yes, do that", "the second one"), use the conversation to spell out what is meant. Keep every page, URL, name and detail.',
     'Reply with JSON only: {"route": "...", "company": "...", "request": "..."}.',

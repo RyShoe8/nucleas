@@ -1,3 +1,4 @@
+import type { AnswerEvidence } from '@/lib/ai/evidence';
 import 'server-only';
 import { randomUUID } from 'crypto';
 import { Types } from 'mongoose';
@@ -64,6 +65,8 @@ export type TeamChatTurn = {
   noProviderFee?: boolean;
   artifacts?: { kind: 'image'; assetId: string; name: string; url: string }[];
   toolsUsed?: string[];
+  /** Pages and images the tools found while answering. */
+  evidence?: AnswerEvidence;
   /** The model that actually served this stage (after any automatic switch). */
   model?: string;
   /** This answer came from the tool-less compact retry after an upstream error. */

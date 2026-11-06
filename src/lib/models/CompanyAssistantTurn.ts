@@ -14,6 +14,8 @@ const turnSchema = new Schema(
     runId: { type: Schema.Types.ObjectId, ref: 'AiRun' },
     costMicros: { type: Number },
     contextSources: { type: [String], default: [] },
+    /** What the answer is based on: pages, images and company data, capped and shown to the person who asked. */
+    evidence: { type: Schema.Types.Mixed },
     /** 'orchestrated' (routes) or 'direct' (one chosen model). */
     mode: { type: String, enum: ['orchestrated', 'direct'] },
     /** Per-step record: which model handled each step and what it cost. */

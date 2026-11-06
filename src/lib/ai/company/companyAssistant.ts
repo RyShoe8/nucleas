@@ -15,6 +15,8 @@ import { processAttachments, type AttachmentRef, type ProcessedAttachment } from
 import { renderAttachments } from '@/lib/ai/attachments/extract';
 import { withActionTools } from './actionTools';
 import { isFreeProfile, routeDirectRequest, type RouteDecision } from './directRouter';
+import { requestNeedsJob } from '@/lib/ai/orchestrator/responseRouting';
+import { emptyEvidence, finishEvidence, mergeEvidence, type AnswerEvidence } from '@/lib/ai/evidence';
 import type { ExtraToolSet } from '@/lib/ai/tools/runToolLoop';
 import { readEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
 
@@ -45,7 +47,7 @@ export function buildSystemPrompt(contextBlock: string, today: string, focusName
 }
 
 export interface AssistantReply {
-  turn: { id: string; role: 'assistant' | 'status'; text: string; createdAt: string; costMicros?: number | null; mode: 'orchestrated' | 'direct'; stages?: StageRecord[]; build?: BuildView | null; job?: JobView | null; contextSources?: string[] };
+  turn: { id: string; role: 'assistant' | 'status'; text: string; createdAt: string; costMicros?: number | null; mode: 'orchestrated' | 'direct'; stages?: StageRecord[]; evidence?: AnswerEvidence; build?: BuildView | null; job?: JobView | null; contextSources?: string[] };
   actions: (InvocationView & { companyName?: string })[];
   focused: { id: string; name: string }[];
   contextSources: string[];
@@ -124,6 +126,7 @@ export async function askAssistant(
       contextSources: context.sources,
       mode,
       stages: result.stages,
+      evidence: result.evidence,
       ...(result.build ? { buildRequestId: new Types.ObjectId(result.build.id) } : {}),
       ...(result.job ? { jobId: new Types.ObjectId(result.job.id) } : {}),
     });
@@ -131,7 +134,7 @@ export async function askAssistant(
     return {
       ok: true,
       reply: {
-        turn: { id: String(saved._id), role: result.role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: result.costMicros, mode, stages: result.stages, build: result.build ?? null, job: result.job ?? null, contextSources: context.sources },
+        turn: { id: String(saved._id), role: result.role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: result.costMicros, mode, stages: result.stages, evidence: result.evidence, build: result.build ?? null, job: result.job ?? null, contextSources: context.sources },
         actions: await actionViews(result.invocationIds, context.companies),
         focused: focusedCompanies.map((c) => ({ id: c.id, name: c.name })),
         contextSources: context.sources,
@@ -160,7 +163,9 @@ export async function askAssistant(
     ledger: { organizationId: String(viewer.organizationId), projectId: assistantLedgerProjectId(String(viewer.organizationId)), userId: viewer.userId },
   });
   // Attached files only reach the chat loop, so requests with files keep the model in charge of actions.
-  const routedAction = decision && !files && decision.route !== 'answer' && decision.company ? await runRoutedAction(actionTools.toolSet, decision, input.onProgress) : null;
+  // A one-time request for information is answered here, whatever the sorting model called it.
+  const needsAction = decision && (decision.route !== 'job' || requestNeedsJob(text));
+  const routedAction = decision && needsAction && !files && decision.route !== 'answer' && decision.company ? await runRoutedAction(actionTools.toolSet, decision, input.onProgress) : null;
 
   if (!routedAction) input.onProgress?.(`Asking ${modelName}`);
   const turn = routedAction
@@ -184,6 +189,9 @@ export async function askAssistant(
   });
 
   const role = turn.role === 'status' ? 'status' : 'assistant';
+  const gathered = emptyEvidence();
+  mergeEvidence(gathered, (turn as { evidence?: AnswerEvidence }).evidence);
+  const answerEvidence = role === 'assistant' ? finishEvidence(gathered, turn.text ?? '') : undefined;
   const saved = await CompanyAssistantTurn.create({
     organizationId: viewer.organizationId,
     userId: uid,
@@ -195,6 +203,7 @@ export async function askAssistant(
     costMicros: turn.costMicros ?? undefined,
     contextSources: context.sources,
     mode,
+    evidence: answerEvidence,
     ...(actionTools.results.build ? { buildRequestId: new Types.ObjectId(actionTools.results.build.id) } : {}),
     ...(actionTools.results.job ? { jobId: new Types.ObjectId(actionTools.results.job.id) } : {}),
   });
@@ -211,7 +220,7 @@ export async function askAssistant(
   return {
     ok: true,
     reply: {
-      turn: { id: String(saved._id), role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: (turn.costMicros ?? 0) + (files?.costMicros ?? 0), mode, build: actionTools.results.build ?? null, job: actionTools.results.job ?? null, contextSources: context.sources },
+      turn: { id: String(saved._id), role, text: saved.text, createdAt: saved.createdAt.toISOString(), costMicros: (turn.costMicros ?? 0) + (files?.costMicros ?? 0), evidence: answerEvidence, mode, build: actionTools.results.build ?? null, job: actionTools.results.job ?? null, contextSources: context.sources },
       actions,
       focused: focusedCompanies.map((c) => ({ id: c.id, name: c.name })),
       contextSources: context.sources,
@@ -233,8 +242,8 @@ export async function listAssistantTurns(viewer: CompanyViewer, limit = 40) {
   const rows = await CompanyAssistantTurn.find({ organizationId: viewer.organizationId, userId: new Types.ObjectId(viewer.userId) })
     .sort({ createdAt: -1 })
     .limit(Math.min(limit, 100))
-    .select('role text createdAt invocationIds costMicros contextSources mode stages buildRequestId jobId attachments.name attachments.kind attachments.size attachments.error')
-    .lean<{ _id: Types.ObjectId; role: string; text: string; createdAt: Date; invocationIds?: Types.ObjectId[]; costMicros?: number; contextSources?: string[]; mode?: string; stages?: StageRecord[]; buildRequestId?: Types.ObjectId; jobId?: Types.ObjectId; attachments?: { name: string; kind: string; size: number; error?: string }[] }[]>();
+    .select('role text createdAt invocationIds costMicros contextSources evidence mode stages buildRequestId jobId attachments.name attachments.kind attachments.size attachments.error')
+    .lean<{ _id: Types.ObjectId; role: string; text: string; createdAt: Date; invocationIds?: Types.ObjectId[]; costMicros?: number; contextSources?: string[]; evidence?: AnswerEvidence; mode?: string; stages?: StageRecord[]; buildRequestId?: Types.ObjectId; jobId?: Types.ObjectId; attachments?: { name: string; kind: string; size: number; error?: string }[] }[]>();
   // Proposed builds show their current state (approved, building, …) wherever they appear.
   const builds = new Map<string, BuildView | null>();
   for (const r of rows) {
@@ -255,6 +264,7 @@ export async function listAssistantTurns(viewer: CompanyViewer, limit = 40) {
     mode: r.mode ?? 'direct',
     stages: r.stages ?? [],
     contextSources: r.contextSources ?? [],
+    evidence: r.evidence ?? null,
     build: r.buildRequestId ? builds.get(String(r.buildRequestId)) ?? null : null,
     job: r.jobId ? jobs.get(String(r.jobId)) ?? null : null,
     attachments: (r.attachments ?? []).map((a) => ({ name: a.name, kind: a.kind, size: a.size, error: a.error ?? null })),

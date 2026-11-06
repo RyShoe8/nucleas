@@ -1,3 +1,4 @@
+import type { AnswerEvidence } from '@/lib/ai/evidence';
 import type { GatewayConfiguration } from '@nucleas/ai-core/gateway';
 import { GatewayError, generateImage } from '@nucleas/ai-core/gateway';
 import { Types } from 'mongoose';
@@ -27,6 +28,8 @@ export type ToolArtifact = {
 export type ToolExecutionResult = {
   content: string;
   artifacts: ToolArtifact[];
+  /** What this call found, kept so a person can check an answer against it. */
+  evidence?: Partial<AnswerEvidence>;
   evidenceReceipts?: RepositoryEvidenceReceipt[];
 };
 
@@ -293,6 +296,10 @@ export async function executeIdeTool(input: {
         hits,
       }),
       artifacts: fromPages,
+      evidence: {
+        sources: (result.hits ?? []).map((hit) => ({ url: hit.url, title: hit.title, snippet: hit.snippet })),
+        images: (result.pageImages ?? []).map((image) => ({ imageUrl: image.imageUrl, title: image.title, pageUrl: image.contextUrl })),
+      },
     };
   }
 
@@ -314,6 +321,7 @@ export async function executeIdeTool(input: {
         hits,
       }),
       artifacts: imageHitsToArtifacts(result.hits),
+      evidence: { images: (result.hits ?? []).map((image) => ({ imageUrl: image.imageUrl, title: image.title, pageUrl: image.contextUrl })) },
     };
   }
 
@@ -333,7 +341,11 @@ export async function executeIdeTool(input: {
           }
         : { url: urls[i], error: outcome.reason instanceof Error ? outcome.reason.message.slice(0, 200) : 'Fetch failed.' }
     );
-    return { content: JSON.stringify({ pages }).slice(0, 12000), artifacts };
+    return {
+      content: JSON.stringify({ pages }).slice(0, 12000),
+      artifacts,
+      evidence: { sources: settled.flatMap((outcome) => (outcome.status === 'fulfilled' ? [{ url: outcome.value.url, title: outcome.value.title ?? outcome.value.url, snippet: outcome.value.text.slice(0, 240) }] : [])) },
+    };
   }
 
   if (input.name === 'web_fetch') {
@@ -353,6 +365,7 @@ export async function executeIdeTool(input: {
         suggestReason: routing.reason,
       }).slice(0, 12000),
       artifacts,
+      evidence: { sources: [{ url: result.url, title: result.title ?? result.url, snippet: result.text.slice(0, 240) }] },
     };
   }
 
@@ -369,7 +382,15 @@ export async function executeIdeTool(input: {
   if (input.name === 'browser_navigate') {
     const url = typeof args.url === 'string' ? args.url : '';
     const result = await browserNavigate(url, { signal: input.signal });
-    return { content: JSON.stringify(result).slice(0, 12000), artifacts };
+    const forModel = { ...result, plainText: undefined };
+    return {
+      content: JSON.stringify(forModel).slice(0, 12000),
+      artifacts,
+      evidence: {
+        sources: [{ url: result.url, title: result.title ?? result.url, snippet: result.text.slice(0, 240) }],
+        images: result.images.map((imageUrl) => ({ imageUrl, title: result.title ?? 'Image', pageUrl: result.url })),
+      },
+    };
   }
 
   if (input.name === 'image_generate') {

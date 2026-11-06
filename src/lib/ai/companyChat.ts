@@ -1072,6 +1072,7 @@ export async function attemptCompanyCredentialChat(input: {
       artifacts: loop.artifacts,
       toolsUsed: loop.toolCallsMade,
       evidenceReceipts: loop.evidenceReceipts,
+      evidence: loop.evidence,
     };
   } catch (error) {
     const errorUsage = failedToolUsage ?? (error as { usage?: { inputTokens?: number; outputTokens?: number } })?.usage;

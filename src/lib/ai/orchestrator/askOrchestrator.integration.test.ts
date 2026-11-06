@@ -507,6 +507,29 @@ describe('live progress', () => {
 });
 
 describe('jobs from Ask', () => {
+  it('answers a one-time request in the chat even when the planner calls it a job, showing what it did', async () => {
+    const request = 'Build me a list of 10 video game sites that review games on playbound.club, sorted by size';
+    const prompts: string[] = [];
+    chat.mockImplementation(async (input: { systemPrompt: string; userText: string }) => {
+      prompts.push(input.systemPrompt);
+      if (input.systemPrompt.includes('You plan answers')) return reply('{"kind":"answer","scope":"company","job":{"company":"Frugal Gambler","request":"' + request + '"},"outline":[],"review":false}');
+      if (input.systemPrompt.includes('research agent')) return { ...reply('Findings: [IGN](https://www.ign.com/) reviews Factorio.'), toolsUsed: ['web_search', 'web_fetch'], evidence: { sources: [{ url: 'https://www.ign.com/', title: 'IGN', snippet: 'Reviews' }, { url: 'https://other.com/', title: 'Other' }], images: [{ imageUrl: 'https://cdn.com/cover.png', title: 'Cover', pageUrl: 'https://www.ign.com/' }], data: [] } };
+      return reply('| Site | Link |\n|---|---|\n| IGN | [ign.com](https://www.ign.com/) |');
+    });
+    createJob.mockClear();
+    const steps: string[] = [];
+    const context = await resolvePortfolioContext(admin, { message: request });
+    const answer = await runAskOrchestrator(admin, { text: request, context, projectId: new Types.ObjectId(), history: [], level: 'low', onProgress: (step: string) => steps.push(step) });
+    expect(createJob).not.toHaveBeenCalled();
+    expect(answer.job).toBeUndefined();
+    expect(answer.text).toContain('[ign.com](https://www.ign.com/)');
+    expect(prompts.some((prompt) => prompt.includes('research agent'))).toBe(true);
+    expect(steps.some((step) => step.startsWith('Researching with'))).toBe(true);
+    expect(answer.stages?.some((stage) => stage.note?.includes('answering in the chat'))).toBe(true);
+    expect(answer.evidence?.sources).toEqual([{ url: 'https://www.ign.com/', title: 'IGN', snippet: 'Reviews', cited: true }, { url: 'https://other.com/', title: 'Other' }]);
+    expect(answer.evidence?.images).toEqual([{ imageUrl: 'https://cdn.com/cover.png', title: 'Cover', pageUrl: 'https://www.ign.com/' }]);
+  });
+
   it('turns a request for work into a job that Nucleas designs, and relays its questions', async () => {
     chat.mockImplementation(async () =>
       reply('{"kind":"answer","scope":"company","job":{"company":"Frugal Gambler","request":"Every day, earn one dofollow backlink to a Frugal Gambler page"},"outline":[],"review":false}')

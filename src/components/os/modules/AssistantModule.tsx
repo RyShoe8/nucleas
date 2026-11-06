@@ -1,5 +1,7 @@
 'use client';
 
+import type { AnswerEvidence } from '@/lib/ai/evidence';
+import AnswerDetails from './assistant/AnswerDetails';
 import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import AnswerPresentation from './assistant/AnswerPresentation';
@@ -43,6 +45,8 @@ interface Turn {
     progress?: string[];
     /** Company/data sources used to ground this answer. */
     contextSources?: string[];
+    /** What this answer is based on. */
+    evidence?: AnswerEvidence | null;
     startedAt?: number;
 }
 
@@ -56,14 +60,6 @@ function readMode(): ChatMode {
     }
 }
 
-function usd(micros: number): string {
-    const d = micros / 1_000_000;
-    return d === 0 ? '$0' : d < 0.01 ? '<$0.01' : `$${d.toFixed(d < 1 ? 3 : 2)}`;
-}
-
-function shortModel(model?: string): string {
-    return (model ?? '').split('/').pop()?.replace(/-(instruct|it|awq|fp8|qat).*$/i, '') ?? '';
-}
 
 type AnswerBody = { turn?: Turn; actions?: Turn['actions']; error?: string };
 
@@ -131,24 +127,6 @@ function PendingProgress({ turn }: { turn: Turn }) {
                 </span>
             </p>
         </div>
-    );
-}
-
-/** "plan · sonnet $0.004 → fetch 3 jobs → write · gemma free → numbers ✓ → total $0.004" */
-function StageLine({ turn }: { turn: Turn }) {
-    if (!turn.stages?.length) return turn.costMicros != null ? <p className="mt-1 text-[10px] text-text-secondary">{usd(turn.costMicros)}</p> : null;
-    const label: Record<string, string> = { plan: 'plan', fetch: 'fetch', research: 'research', work: 'write', check: 'numbers', review: 'review' };
-    const parts = turn.stages.map((s) => {
-        if (s.stage === 'fetch') return s.note ?? 'fetch';
-        if (s.stage === 'check') return `numbers ${s.note?.startsWith('all') ? '✓' : '⚠'}`;
-        const cost = s.free ? 'free' : s.costMicros != null ? usd(s.costMicros) : '';
-        return `${label[s.stage] ?? s.stage} · ${shortModel(s.model)} ${cost}`.trim();
-    });
-    return (
-        <p className="mt-1 text-[10px] text-text-secondary" title={turn.stages.map((s) => `${s.stage}: ${s.note ?? s.model ?? ''}`).join('\n')}>
-            {parts.join(' → ')}
-            {turn.costMicros != null ? ` · total ${usd(turn.costMicros)}` : ''}
-        </p>
     );
 }
 
@@ -394,18 +372,7 @@ export default function AssistantModule() {
                                     />
                                 </div>
                             ) : null}
-                            {t.role !== 'user' && !t.pending ? <StageLine turn={t} /> : null}
-                            {t.role === 'assistant' && t.contextSources?.length ? (
-                                <details className="mt-2 border-t border-border pt-2">
-                                    <summary className="cursor-pointer text-[11px] text-text-secondary">AI citations · {t.contextSources.length}</summary>
-                                    <ul className="mt-1 space-y-1 text-[11px]">
-                                        {t.contextSources.map((source, index) => {
-                                            const isUrl = /^https?:\/\//i.test(source);
-                                            return <li key={`${source}-${index}`} className="break-all">{isUrl ? <a href={source} target="_blank" rel="noreferrer" className="text-primary hover:underline">{source}</a> : <span className="text-text-secondary">{source}</span>}</li>;
-                                        })}
-                                    </ul>
-                                </details>
-                            ) : null}
+                            {t.role !== 'user' && !t.pending ? <AnswerDetails stages={t.stages} evidence={t.evidence} contextSources={t.contextSources} costMicros={t.costMicros} /> : null}
                         </div>
                     </div>
                 ))}

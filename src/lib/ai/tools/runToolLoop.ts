@@ -5,6 +5,7 @@ import type { ToolCall, ToolDefinition } from '@nucleas/ai-contracts';
 import { Types } from 'mongoose';
 import { AiRunEvent } from '@/lib/models/AiControl';
 import { executeIdeTool, type ToolArtifact } from '@/lib/ai/tools/executeTool';
+import { emptyEvidence, mergeEvidence, type AnswerEvidence } from '@/lib/ai/evidence';
 import { ideChatToolDefinitions, type IdeToolProfile } from '@/lib/ai/tools/definitions';
 import { dedupeEvidenceReceipts, type RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 
@@ -21,6 +22,8 @@ export type ToolLoopResult = {
   toolCallsMade: string[];
   artifacts: ToolArtifact[];
   evidenceReceipts?: RepositoryEvidenceReceipt[];
+  /** Pages and images the tools found. */
+  evidence?: AnswerEvidence;
   inputTokens: number | null;
   outputTokens: number | null;
   latencyMs: number;
@@ -97,6 +100,7 @@ export async function runIdeToolLoop(input: {
     [...input.messages].reverse().find((m) => m.role === 'user') ??
     input.messages[input.messages.length - 1];
   const artifacts: ToolArtifact[] = [];
+  const evidence = emptyEvidence();
   const evidenceReceipts: RepositoryEvidenceReceipt[] = [];
   const toolCallsMade: string[] = [];
   let inputTokens: number | null = null;
@@ -141,6 +145,7 @@ export async function runIdeToolLoop(input: {
           toolCallsMade,
           artifacts,
           evidenceReceipts: dedupeEvidenceReceipts(evidenceReceipts),
+          evidence,
           inputTokens,
           outputTokens,
           latencyMs,
@@ -220,6 +225,7 @@ export async function runIdeToolLoop(input: {
             signal: input.signal,
           });
           artifacts.push(...executed.artifacts);
+          mergeEvidence(evidence, executed.evidence);
           evidenceReceipts.push(...(executed.evidenceReceipts ?? []));
           toolContent = executed.content;
           sequence += 1;
@@ -265,7 +271,7 @@ export async function runIdeToolLoop(input: {
     latencyMs += final.latencyMs;
     if (final.inputTokens != null) inputTokens = (inputTokens ?? 0) + final.inputTokens;
     if (final.outputTokens != null) outputTokens = (outputTokens ?? 0) + final.outputTokens;
-    return { content: final.content.trim().slice(0, 16000), toolCallsMade, artifacts, evidenceReceipts: dedupeEvidenceReceipts(evidenceReceipts), inputTokens, outputTokens, latencyMs };
+    return { content: final.content.trim().slice(0, 16000), toolCallsMade, artifacts, evidenceReceipts: dedupeEvidenceReceipts(evidenceReceipts), evidence, inputTokens, outputTokens, latencyMs };
   } catch (err) {
     if (err && typeof err === 'object') {
       (err as { usage?: { inputTokens: number | null; outputTokens: number | null; latencyMs: number } }).usage = {
