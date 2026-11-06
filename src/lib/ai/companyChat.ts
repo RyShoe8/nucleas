@@ -15,7 +15,7 @@ import {
   assertDispatchLockClaimable,
   claimDispatchLock,
   releaseDispatchLock,
-  waitForDispatchLock,
+  whenDispatchFree,
   watchAbortReleaseDispatchLock,
 } from '@/lib/ai/control/dispatchLock';
 import { aiTransaction } from '@/lib/ai/control/transaction';
@@ -213,6 +213,8 @@ export async function attemptCompanyCredentialChat(input: {
   forceToolLoop?: boolean;
   /** Research jobs supply a structured brief. Let the worker choose searches instead of querying the whole brief. */
   disableLookupAssist?: boolean;
+  /** How long a free-model call waits for its turn. Background work can afford more than a person waiting on a reply. */
+  dispatchWaitMs?: number;
   /** Pre-fetched repo dig from orchestra; skips proactive tryRepoAssistPlain. */
   repoContextBlock?: string;
   /**
@@ -250,8 +252,7 @@ export async function attemptCompanyCredentialChat(input: {
   try {
     // The shared lock protects the shared free/local model (one request at a time). Paid providers
     // take many requests at once, so they skip it. Free calls wait their turn instead of failing.
-    if (freeCredential) await waitForDispatchLock({ signal: input.signal });
-    const admitted = await aiTransaction(async (session) => {
+    const admit = () => aiTransaction(async (session) => {
       policy = await getPipelineInferencePolicy(
         input.organizationId,
         String(input.projectId),
@@ -312,6 +313,9 @@ export async function attemptCompanyCredentialChat(input: {
       );
       return { runId: run._id, policy, reservationMicros };
     });
+    const admitted = await (freeCredential
+      ? whenDispatchFree(admit, { maxWaitMs: input.dispatchWaitMs, signal: input.signal, onWaiting: () => input.onProgress?.('Waiting for the free model, which another job is using') })
+      : admit());
     runId = admitted.runId;
     policy = admitted.policy;
     reservationMicros = admitted.reservationMicros;

@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/db/mongodb';
 import { claimDueJobRuns, executeJobRun, sweepJobs } from '@/lib/jobs/jobs';
+import { nextQueuedRunId } from '@/lib/jobs/runLifecycle';
 import { runQueuedModelChecks } from '@/lib/ai/engine/modelChecks';
 import { verifyDueLinkOpportunities } from '@/lib/jobs/linkOpportunities';
 import { processPropertyOverviewQueue } from '@/lib/propertyOverview/crawler';
@@ -24,7 +25,9 @@ export async function GET(request: NextRequest) {
     const swept = await sweepJobs();
     const postsRecovered = await recoverStuckDeliveries();
     const scheduledRunIds = await claimDueJobRuns(new Date(), 2);
-    await Promise.all(scheduledRunIds.map((id) => executeJobRun(id)));
+    // A finishing run wakes the next queued one. This is the safety net in case that request was lost.
+    const queuedRunId = await nextQueuedRunId();
+    await Promise.all([...scheduledRunIds, ...(queuedRunId ? [queuedRunId] : [])].map((id) => executeJobRun(id)));
     const linksVerified = await verifyDueLinkOpportunities(new Date(), 10);
     const propertyOverviewQueue = await processPropertyOverviewQueue();
     const checks = await runQueuedModelChecks({ budgetMs: 240_000 });

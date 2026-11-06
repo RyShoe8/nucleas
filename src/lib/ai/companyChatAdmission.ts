@@ -8,7 +8,7 @@ export function companyChatAdmissionMessage(code: GatewayError['code']): string 
     case 'rate_limit':
       return 'Shared AI request limit or spacing was hit (Admin → AI Settings → Minimum seconds between attempts / daily limit). Wait and retry, or raise those limits.';
     case 'unavailable':
-      return 'Another AI run currently holds the shared dispatch lock. Retry shortly.';
+      return 'The free model stayed busy with other work for too long. Try again shortly.';
     case 'credentials':
       return 'Company credential authentication was rejected.';
     case 'cancelled':

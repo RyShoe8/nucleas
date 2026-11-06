@@ -41,7 +41,7 @@ import { updateLinkOpportunity, verifyLinkOpportunity, syncLinkOpportunities } f
 import { completePropertyOverviewJob, createPropertyOverviewJob, startPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
 import { processPropertyOverviewQueue } from '@/lib/propertyOverview/crawler';
 import { replaceCompanyOverview } from '@/lib/propertyOverview/storage';
-import { claimJobRunExecution, heartbeatJobRun, initialRunLease } from './runLifecycle';
+import { claimJobRunExecution, heartbeatJobRun, initialRunLease, nextQueuedRunId, queueIfBusy, wakeJobQueue } from './runLifecycle';
 import { updateMarketingPlan } from './marketingPlans';
 import { ResearchEvidence } from './researchEvidence';
 
@@ -453,6 +453,114 @@ describe('approving and the dry run', () => {
     expect(calls[0][0].userText).toContain('Deadlock');
     const planner = mocks.chat.mock.calls.find(([input]) => input.systemPrompt.startsWith('Choose a concrete'));
     expect(planner?.[0].userText).toContain('Start from the rarest requirement, a company Bluesky profile');
+  });
+
+  describe('the job queue', () => {
+    const running = async (at: Date, extra: Record<string, unknown> = {}) => {
+      const job = await proposed({ ...DESIGN, title: `Job ${at.getTime()}` });
+      const run = await JobRun.create({ organizationId: admin.organizationId, jobId: job.id, companyId, dryRun: true, status: 'running', startedAt: at, executionStartedAt: at, leaseExpiresAt: new Date(Date.now() + 600_000), leaseOwner: 'x', ...extra });
+      return { job, run };
+    };
+
+    it('runs the first job and queues the next, saying what it waits for', async () => {
+      const first = await running(new Date(Date.now() - 60_000));
+      const second = await running(new Date());
+      expect(await queueIfBusy(first.run._id)).toBe(false);
+      expect(await queueIfBusy(second.run._id)).toBe(true);
+      const queued = (await JobRun.findById(second.run._id).lean())!;
+      expect(queued.status).toBe('running');
+      expect(queued.executionStartedAt).toBeUndefined();
+      expect(queued.leaseOwner).toBeUndefined();
+      expect(queued.progressState?.label).toContain('Queued: starts when');
+      expect(queued.leaseExpiresAt!.getTime()).toBeGreaterThan(Date.now() + 23 * 3600_000);
+      await JobRun.deleteMany({});
+    });
+
+    it('survives the stuck-run sweep while it waits, and can be claimed when its turn comes', async () => {
+      const first = await running(new Date(Date.now() - 60_000));
+      const second = await running(new Date());
+      await queueIfBusy(first.run._id);
+      await queueIfBusy(second.run._id);
+      await sweepJobs();
+      expect((await JobRun.findById(second.run._id).lean())?.status).toBe('running');
+      expect(await nextQueuedRunId()).toBe(String(second.run._id));
+      await JobRun.updateOne({ _id: first.run._id }, { $set: { status: 'completed' } });
+      const claim = await claimJobRunExecution(String(second.run._id));
+      expect(claim).not.toBeNull();
+      expect(await queueIfBusy(second.run._id)).toBe(false);
+      expect((await JobRun.findById(second.run._id).lean())?.queuedAt).toBeUndefined();
+      expect(await nextQueuedRunId()).toBeNull();
+      await JobRun.deleteMany({});
+    });
+
+    it('takes the longest waiting run first, and keeps its place if it has to wait again', async () => {
+      const holder = await running(new Date(Date.now() - 120_000));
+      await queueIfBusy(holder.run._id);
+      const older = await running(new Date(Date.now() - 60_000));
+      const newer = await running(new Date());
+      await queueIfBusy(older.run._id, new Date(Date.now() - 30_000));
+      await queueIfBusy(newer.run._id);
+      expect(await nextQueuedRunId()).toBe(String(older.run._id));
+      const before = (await JobRun.findById(older.run._id).lean())!.queuedAt;
+      await claimJobRunExecution(String(older.run._id));
+      expect(await queueIfBusy(older.run._id)).toBe(true);
+      expect((await JobRun.findById(older.run._id).lean())?.queuedAt).toEqual(before);
+      await JobRun.deleteMany({});
+    });
+
+    it('does not let a dead run block the queue', async () => {
+      const dead = await running(new Date(Date.now() - 60_000), { queueSlot: true, leaseExpiresAt: new Date(Date.now() - 1000) });
+      const next = await running(new Date());
+      expect(await queueIfBusy(next.run._id)).toBe(false);
+      await JobRun.deleteOne({ _id: dead.run._id });
+      await JobRun.deleteMany({});
+    });
+
+    it('queues a real run without doing any work or waking itself, then wakes the next when one finishes', async () => {
+      process.env.CRON_SECRET = 'test-cron';
+      const realFetch = globalThis.fetch;
+      const wakes = vi.fn<typeof fetch>(async () => new Response('{}'));
+      globalThis.fetch = wakes;
+      try {
+        const holder = await running(new Date(Date.now() - 60_000));
+        await queueIfBusy(holder.run._id);
+        const job = await proposed(DESIGN);
+        mocks.chat.mockClear();
+        mocks.chat.mockImplementation(async () => ({ requestId: 'test', role: 'assistant', text: GOOD, costMicros: 0 }));
+        const approved = await approveJob(admin, job.id, { completion: 'review' });
+        await executeJobRun(approved.dryRunId!);
+        expect(mocks.chat).not.toHaveBeenCalled();
+        expect(wakes).not.toHaveBeenCalled();
+        expect((await JobRun.findById(approved.dryRunId).lean())?.queuedAt).toBeDefined();
+        await JobRun.updateOne({ _id: holder.run._id }, { $set: { status: 'completed' } });
+        await executeJobRun(approved.dryRunId!);
+        expect(mocks.chat).toHaveBeenCalled();
+        expect((await JobRun.findById(approved.dryRunId).lean())?.status).not.toBe('running');
+      } finally {
+        globalThis.fetch = realFetch;
+        delete process.env.CRON_SECRET;
+        await JobRun.deleteMany({});
+      }
+    });
+
+    it('wakes the queue only when something is waiting', async () => {
+      process.env.CRON_SECRET = 'test-cron';
+      try {
+        const fetcher = vi.fn<typeof fetch>(async () => new Response('{}'));
+        await wakeJobQueue(fetcher);
+        expect(fetcher).not.toHaveBeenCalled();
+        const first = await running(new Date(Date.now() - 60_000));
+        const second = await running(new Date());
+        await queueIfBusy(first.run._id);
+        await queueIfBusy(second.run._id);
+        await wakeJobQueue(fetcher);
+        expect(String(fetcher.mock.calls[0]?.[0])).toContain('/api/cron/job-queue');
+        await expect(wakeJobQueue(vi.fn<typeof fetch>(async () => { throw new Error('offline'); }))).resolves.toBeUndefined();
+        await JobRun.deleteMany({});
+      } finally {
+        delete process.env.CRON_SECRET;
+      }
+    });
   });
 
   describe('free model legwork on a Spotlight run', () => {

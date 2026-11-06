@@ -109,6 +109,25 @@ export async function waitForDispatchLock(options: { maxWaitMs?: number; pollMs?
 }
 
 /**
+ * Runs an admission when the shared model is free, waiting its turn. Another run can take the lock in the moment after a
+ * wait ends, so being beaten to it means waiting again until the time runs out. onWaiting is called once.
+ */
+export async function whenDispatchFree<T>(admit: () => Promise<T>, options: { maxWaitMs?: number; pollMs?: number; signal?: AbortSignal; onWaiting?: () => void } = {}): Promise<T> {
+  const deadline = Date.now() + (options.maxWaitMs ?? 90_000);
+  let told = false;
+  for (;;) {
+    try {
+      if (await freeModelBusy() && !told) { told = true; options.onWaiting?.(); }
+      await waitForDispatchLock({ maxWaitMs: Math.max(0, deadline - Date.now()), pollMs: options.pollMs, signal: options.signal });
+      return await admit();
+    } catch (error) {
+      const beaten = error instanceof GatewayError && error.details?.kind === 'dispatch_lock_held';
+      if (!beaten || Date.now() >= deadline) throw error;
+    }
+  }
+}
+
+/**
  * Holds the shared lock for work that is not an AiRun (model checks). A lock without a run id is
  * respected until it expires, so chats wait their turn; release it as soon as the work is done.
  */

@@ -91,6 +91,10 @@ const runSchema = new Schema(
     heartbeatAt: { type: Date },
     executionStartedAt: { type: Date },
     finishedAt: { type: Date },
+    /** Set while this run holds or wants the one research slot; only one such run executes at a time. */
+    queueSlot: { type: Boolean },
+    /** When this run started waiting for that slot. Unset once it is executing. */
+    queuedAt: { type: Date },
     /** Live progress lines, newest last. */
     progress: { type: [String], default: [] },
     /** Persisted milestone shown after reloads and across clients. */

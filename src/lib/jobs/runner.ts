@@ -33,7 +33,7 @@ import { assistantLedgerProjectId } from '@/lib/ai/company/assistantLedger';
 import { loadCompanyViewer, getCompanyProfile, listCompanyProfiles } from '@/lib/companies/companyProfile';
 import { resolveCompanyRepository } from '@/lib/building/companyCode';
 import { Job, JobRun, type JobRunProgressStage } from '@/lib/models/Job';
-import { claimJobRunExecution, heartbeatJobRun, startJobRunHeartbeat } from './runLifecycle';
+import { claimJobRunExecution, heartbeatJobRun, startJobRunHeartbeat, queueIfBusy, wakeJobQueue } from './runLifecycle';
 import { checkRecords, jobDesignSchema, jobRunOutputSchema, type JobDesign, type JobRunOutput } from './schema';
 import { linkOpportunityMemory, syncLinkOpportunities, missingLinkOpportunityUrls, rememberMissingLinkOpportunity, normalizeUrl } from './linkOpportunities';
 import { judgePrompt, verifyOpportunity, type Judge } from './opportunityPages';
@@ -360,6 +360,8 @@ export async function executeJobRun(runId: string): Promise<void> {
   if (!claim) return;
   const { run, owner } = claim;
   const heartbeat = startJobRunHeartbeat(run._id, owner);
+  // A run that only queued itself did no work, so it must not wake the queue, or it would wake itself again and again.
+  let queuedForLater = false;
   try {
   const job = await Job.findById(run.jobId).lean<{
     _id: Types.ObjectId;
@@ -396,6 +398,11 @@ export async function executeJobRun(runId: string): Promise<void> {
   if (!job) return fail('The job no longer exists.');
   const design = jobDesignSchema.safeParse(job.design);
   if (!design.success) return fail('The job has no valid design.');
+  // Publishing runs are short and Company Overviews run on their own worker, so only research-style jobs share the queue.
+  if (design.data.skill !== 'social_publish' && design.data.skill !== 'property_overview' && await queueIfBusy(run._id)) {
+    queuedForLater = true;
+    return;
+  }
   // Publishing jobs check a source and post; they do not research records.
   if (design.data.skill === 'social_publish') {
     try {
@@ -591,6 +598,7 @@ export async function executeJobRun(runId: string): Promise<void> {
       disableLookupAssist: strategic,
       extraTools: scouting || spotlight || compact || (correction && !researchRetry) ? undefined : tools.toolSet,
       stopOnUpstreamFailure: true,
+      dispatchWaitMs: 5 * 60_000,
       maxOutputTokensOverride: compact ? COMPACT_RUN_MAX_TOKENS : manualArtifact(activeDesign.skill) || activeDesign.skill === 'casino_discovery' ? 6000 : RUN_MAX_TOKENS,
       onProgress,
     });
@@ -1209,5 +1217,6 @@ export async function executeJobRun(runId: string): Promise<void> {
   }
   } finally {
     clearInterval(heartbeat);
+    if (!queuedForLater) await wakeJobQueue().catch(() => undefined);
   }
 }
