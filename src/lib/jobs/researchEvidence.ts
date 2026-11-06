@@ -15,8 +15,8 @@ const schema = new Schema({
   name: String, website: String, source: String,
   checkedAt: Date, pageStatus: String, observedLinks: [String],
   qualificationGap: String, lastTried: Date,
-  /** How many runs have tried this lead, so a dead end is not paid for over and over. One run's retries count once. */
-  runsTried: Number, lastRun: String,
+  /** Runs in a row that tried this lead and confirmed nothing new, so a dead end is not paid for over and over. */
+  staleRuns: Number, lastRun: String,
   /** Checked facts: what was found, where, when and how. A model's claim is not a fact until code has seen it. */
   facts: [new Schema({ field: String, value: String, source: String, method: String, checkedAt: Date }, { _id: false })],
   /** Set only when a check proved this lead cannot qualify, unlike a page we could not open or have not checked. */
@@ -72,10 +72,10 @@ export function leadsNeedingCheck(scope: Scope) {
   return ResearchEvidence.countDocuments({ ...scope, qualificationGap: { $type: 'string' }, ineligibleAt: null });
 }
 
-const MAX_LEAD_RUNS = 3;
+const MAX_STALE_RUNS = 3;
 
 function countRun(filter: Record<string, unknown>, runId: string) {
-  return ResearchEvidence.updateOne({ ...filter, lastRun: { $ne: runId } }, { $inc: { runsTried: 1 }, $set: { lastRun: runId } });
+  return ResearchEvidence.updateOne({ ...filter, lastRun: { $ne: runId } }, { $inc: { staleRuns: 1 }, $set: { lastRun: runId } });
 }
 
 /** The saved leads worth finishing: those already holding the link the job cannot work without. */
@@ -102,8 +102,8 @@ export async function researchReserve(scope: Scope, excluded: Set<string>) {
       { lastTried: { $gte: new Date(Date.now() - 30 * 86400000) } },
       { checkedAt: null, createdAt: { $gte: new Date(Date.now() - 30 * 86400000) } },
     ] }, { $or: [{ ineligibleAt: null }, { ineligibleAt: { $lt: new Date(Date.now() - 30 * 86400000) } }] }],
-    // A later run, even the same day, picks up saved work. After three runs a lead rests for a month.
-    $or: [{ runsTried: null }, { runsTried: { $lt: MAX_LEAD_RUNS } }, { lastTried: { $lt: new Date(Date.now() - 30 * 86400000) } }],
+    // A later run, even the same day, picks up saved work. Only a lead that stops making progress rests, for a month.
+    $or: [{ staleRuns: null }, { staleRuns: { $lt: MAX_STALE_RUNS } }, { lastTried: { $lt: new Date(Date.now() - 30 * 86400000) } }],
   }).sort({ pageStatus: -1, lastTried: 1, checkedAt: -1 }).limit(30).select('pageStatus name domain website source checkedAt observedLinks qualificationGap facts -_id').lean()
     .then(rows => rows.filter(row => allowed(row.domain, excluded)).sort((a, b) => leadRank(b) - leadRank(a)).slice(0, 5));
 }

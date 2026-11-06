@@ -122,6 +122,14 @@ describe('checking what it reports', () => {
     expect(result.rejected.join(' ')).toContain('redirected');
   });
 
+  it('brings a resting lead back when it makes progress, and not when it does not', async () => {
+    await ResearchEvidence.updateOne({ domain: 'transistor.fm' }, { $set: { staleRuns: 3, lastTried: new Date() } });
+    await verifyLeadClaims(scope, lead, JSON.stringify({ email: 'nobody@transistor.fm', contact_source: good.contact_source }), deps);
+    expect((await ResearchEvidence.findOne({ domain: 'transistor.fm' }).lean())?.staleRuns).toBe(3);
+    await verifyLeadClaims(scope, lead, JSON.stringify({ email: good.email, contact_source: good.contact_source }), deps);
+    expect((await ResearchEvidence.findOne({ domain: 'transistor.fm' }).lean())?.staleRuns).toBe(0);
+  });
+
   it('survives an unreadable reply and leaves saved facts alone', async () => {
     expect((await verifyLeadClaims(scope, lead, 'I could not find anything.', deps)).confirmed).toEqual([]);
     expect((await ResearchEvidence.findOne({ domain: 'transistor.fm' }).lean())?.facts).toHaveLength(1);

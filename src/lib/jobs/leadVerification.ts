@@ -134,6 +134,7 @@ export async function verifyLeadClaims(scope: Scope, lead: Lead, reply: string, 
 
   const replaced = new Set(confirmedFacts.map((fact) => fact.field));
   const merged = [...facts.filter((fact) => !replaced.has(fact.field)), ...confirmedFacts];
-  if (confirmedFacts.length) await ResearchEvidence.updateOne({ ...scope, domain: lead.domain }, { $set: { facts: merged } });
+  // New evidence means this lead is still going somewhere.
+  if (confirmedFacts.length) await ResearchEvidence.updateOne({ ...scope, domain: lead.domain }, { $set: { facts: merged, staleRuns: 0 } });
   return { confirmed: [...replaced] as string[], rejected, facts: merged };
 }

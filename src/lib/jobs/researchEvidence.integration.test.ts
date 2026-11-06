@@ -175,12 +175,12 @@ describe('companies a worker screened', () => {
   it('counts one run\'s retries once, however many times it fails', async () => {
     const values = { company: 'Close', website: 'https://close.com/' };
     for (let tries = 0; tries < 5; tries++) await rememberQualificationGap(scope, values, ['https://close.com/'], 'Feed missing', new Set(), 'run-1');
-    expect((await ResearchEvidence.findOne({ domain: 'close.com' }).lean())?.runsTried).toBe(1);
+    expect((await ResearchEvidence.findOne({ domain: 'close.com' }).lean())?.staleRuns).toBe(1);
     await ResearchEvidence.updateOne({ domain: 'close.com' }, { $set: { checkedAt: new Date() } });
     expect((await researchReserve(scope, new Set())).map((row) => row.domain)).toEqual(['close.com']);
   });
 
-  it('rests a lead after three runs, then lets it back after a month', async () => {
+  it('rests a lead after three runs with no progress, then lets it back after a month', async () => {
     const values = { company: 'Dead End', website: 'https://deadend.com/' };
     for (const run of ['run-1', 'run-2', 'run-3']) await rememberQualificationGap(scope, values, ['https://deadend.com/'], 'Still no feed', new Set(), run);
     await ResearchEvidence.updateOne({ domain: 'deadend.com' }, { $set: { checkedAt: new Date() } });

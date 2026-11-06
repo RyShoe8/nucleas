@@ -1,5 +1,26 @@
 import { expect, it, vi } from 'vitest';
-import { changedMethod, openScoutSources, planResearch, strategyBrief } from './researchStrategy';
+import { changedMethod, openScoutSources, planResearch, strategyBrief, withoutPlannerAsides } from './researchStrategy';
+
+it.each([
+  ['Start at Typefully. This is a research plan, not a verified record; tools are unavailable in this turn.', 'Start at Typefully.'],
+  ['Use its listings. This is a proposed research method, not a completed search.', 'Use its listings.'],
+  ['Open the site. No live checks were possible this turn.', 'Open the site.'],
+  ['Use its pages. Tools are disabled for this turn, so nothing is verified. Then check the feed.', 'Use its pages. Then check the feed.'],
+  ['No tools are available this turn. Start at Bluesky.', 'Start at Bluesky.'],
+])('removes what a planner says about its own tools: %s', (text, kept) => {
+  expect(withoutPlannerAsides(text)).toBe(kept);
+});
+
+it('leaves real instructions about tools alone', () => {
+  const text = 'Use web_fetch on the official site. If a page is unavailable, mark it inaccessible. Check the fetch result.';
+  expect(withoutPlannerAsides(text)).toBe(text);
+});
+
+it('tells the worker the plan, without the planner limits', async () => {
+  const plan = await planResearch('Scout', '', vi.fn().mockResolvedValue({ source: 'Bluesky profiles. Tools are unavailable in this turn.', discovery: 'Find profiles. No live checks were possible this turn.', verification: 'Open their sites', pivot: 'Try company sites' }));
+  expect(strategyBrief(plan)).not.toMatch(/this turn|unavailable/i);
+  expect(plan.discovery).toBe('Find profiles.');
+});
 
 const usable = { source: 'Bluesky profiles', discovery: 'Find company profiles', verification: 'Open their sites', pivot: 'Try company sites' };
 

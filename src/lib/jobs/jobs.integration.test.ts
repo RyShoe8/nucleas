@@ -616,6 +616,24 @@ describe('approving and the dry run', () => {
       expect(pushes.length).toBeGreaterThan(0);
     });
 
+    it('survives an unreadable reply and still gives the next attempt its turn', async () => {
+      const paid = { model: 'paid-research', profileId: 'b'.repeat(24), free: false };
+      const job = await proposed({ ...DESIGN, skill: 'signature_outreach' });
+      await Job.updateOne({ _id: job.id }, { $set: { level: 'medium' } });
+      mocks.select.mockResolvedValue({ primary: free, fallback: paid });
+      mocks.chat.mockImplementation(async ({ systemPrompt, model }) => {
+        if (systemPrompt.startsWith('Choose a concrete')) return answer(planner);
+        if (systemPrompt.startsWith('Scout public')) return answer('{"candidates":[]}', ['web_fetch']);
+        if (model === paid.model) return answer(bare, ['web_fetch']);
+        return answer(mocks.chat.mock.calls.length > 4 ? '{"records": [{"values": {}}, "summary": "broken"}' : bare, ['web_fetch']);
+      });
+      const approved = await approveJob(admin, job.id, { completion: 'review' });
+      await executeJobRun(approved.dryRunId!);
+      expect(mocks.chat.mock.calls.some(([input]) => input.model === paid.model)).toBe(true);
+      const run = await JobRun.findById(approved.dryRunId).lean();
+      expect(run?.error).not.toContain('failed output validation');
+    });
+
     it('says when search is down', async () => {
       search.hits = [{ provider: 'wikipedia' }];
       const job = await proposed({ ...DESIGN, skill: 'signature_outreach' });

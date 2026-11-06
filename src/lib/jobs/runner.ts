@@ -972,8 +972,8 @@ export async function executeJobRun(runId: string): Promise<void> {
           if (paidRecord && !paidFixUsed && fixer && !fixer.free && output.records.length === 1 && workCalls < maxWorkCalls) {
             paidFixUsed = true;
             const fix = await workWithPages(fixer, `Fix only this problem and keep everything else in the record as it is: ${problem}\nOpen the page it names and use its exact words. Never invent a value.\nRecord: ${JSON.stringify(output.records[0]).slice(0, 8000)}`, true);
-            const fixed = await readResearchRetry(fix);
-            if (openedPages(fix.toolsUsed) && fixed.records.length === 1) output = fixed;
+            const fixed = await readResearchRetry(fix).catch(() => null);
+            if (fixed && openedPages(fix.toolsUsed) && fixed.records.length === 1) output = fixed;
             issues = checkRecords(activeDesign.fields, output);
             attempt = MAX_PROSPECT_RETRIES - 1;
             continue;
@@ -994,7 +994,18 @@ export async function executeJobRun(runId: string): Promise<void> {
             const choice = researchRetryWorker(Boolean(candidate) || finish.length > 0 || attempt >= 1);
             const retry = await workWithPages(choice, `Prospect search retry ${attempt + 1} of ${MAX_PROSPECT_RETRIES}. ${problem}\n${assignment}\nPrevious candidate: ${JSON.stringify(candidate).slice(0, 8000)}\nPrevious searches: ${previousSearches.join(' | ')}${screenedThisRun.size ? `\nAlready screened this run and saved, so find others: ${[...screenedThisRun].join(', ')}` : ''}`, true);
             await JobRun.updateOne({ _id: run._id, status: 'running', leaseOwner: owner }, { $set: { output, issues } });
-            const reread = await readResearchRetry(retry);
+            // One unreadable reply is a failed attempt, not the end of the run, so the next attempt still gets its turn.
+            const reread = await readResearchRetry(retry).catch((readError: unknown) => {
+              const reason = readError instanceof Error ? readError.message : 'The reply could not be read.';
+              console.warn(`[research] run ${run._id} attempt could not be read: ${reason}`);
+              const failedStep = modelPath[modelPath.length - 1];
+              if (failedStep) failedStep.outcome = stepText([failedStep.outcome, `This attempt could not be used: ${reason}`].filter(Boolean).join('\n'));
+              return null;
+            });
+            if (!reread) {
+              issues = checkRecords(activeDesign.fields, output);
+              continue;
+            }
             // An attempt that opened nothing has no evidence, so it cannot replace what an earlier one really found.
             // Nor can an empty result replace a candidate, or a free attempt replace what the paid researcher submitted.
             const opened = openedPages(retry.toolsUsed);
