@@ -85,6 +85,11 @@ const deliverySchema = new Schema(
     postedAt: { type: Date },
     postedByUserId: { type: Schema.Types.ObjectId },
     error: { type: String, maxlength: 1000 },
+    /** Waiting for the Reddit card, whose edits this post takes on before it goes out. */
+    heldFor: { type: String, enum: ['reddit'] },
+    /** What Nucleas wrote for a Reddit card, so a person's edits can be found and passed on. */
+    draftBody: { type: String, maxlength: 40000 },
+    holdUntil: { type: Date },
     /** Facts from other sites this post was written with, so a person can check them. */
     researched: { type: [{ _id: false, fact: String, quote: String, url: String, site: String }], default: undefined },
   },

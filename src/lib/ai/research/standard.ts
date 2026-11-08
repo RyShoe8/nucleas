@@ -68,6 +68,11 @@ export const POST_METHOD = {
   writerTimeoutMs: 90_000,
   /** Rewrites after a failed review, before the card is flagged for a person. */
   maxRewrites: 1,
+  /**
+   * Facebook and Bluesky wait for the Reddit card, so a person's edits there reach them too. If nobody handles the
+   * Reddit card in this long, they go out as written.
+   */
+  holdForRedditHours: 24,
 } as const;
 
 export type PostMethod = { strongWriting: boolean; research: boolean };

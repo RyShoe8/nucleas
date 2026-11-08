@@ -170,7 +170,7 @@ describe('publishing jobs', () => {
       });
       expect(prompts.every((user) => user.includes('You build automated factories') && user.includes('from pcgamer.com'))).toBe(true);
       expect(deliveries[0]?.researched).toMatchObject([{ fact: 'You build automated factories on an alien planet.', site: 'pcgamer.com' }]);
-      expect(deliveries.map((d) => d.status)).toEqual(['posted', 'posted', 'ready']);
+      expect(deliveries.map((d) => [d.status, d.heldFor ?? null])).toEqual([['ready', 'reddit'], ['ready', 'reddit'], ['ready', null]]);
     });
 
     it('rewrites once after a failed review, and posts the fix', async () => {
@@ -183,7 +183,7 @@ describe('publishing jobs', () => {
       });
       expect(seen.some((user) => user.includes('Could be any game'))).toBe(true);
       expect(deliveries.map((d) => d.body)).toEqual(['Specific rewrite', 'Specific rewrite', 'Specific rewrite']);
-      expect(deliveries.map((d) => d.status)).toEqual(['posted', 'posted', 'ready']);
+      expect(deliveries.map((d) => d.heldFor ?? null)).toEqual(['reddit', 'reddit', null]);
     });
 
     it('holds a post for a person when the reviewer still has a concern', async () => {
@@ -199,7 +199,7 @@ describe('publishing jobs', () => {
 
     it('still writes the post when research finds nothing and the review cannot be read', async () => {
       const deliveries = await runOne(async ({ system }) => (system.startsWith('You check a') ? 'not json' : post('From our own page')), { search: async () => { throw new Error('search down'); } });
-      expect(deliveries.map((d) => [d.body, d.status])).toEqual([['From our own page', 'posted'], ['From our own page', 'posted'], ['From our own page', 'ready']]);
+      expect(deliveries.map((d) => [d.body, d.status])).toEqual([['From our own page', 'ready'], ['From our own page', 'ready'], ['From our own page', 'ready']]);
       expect(deliveries[0]?.researched ?? []).toEqual([]);
     });
 
@@ -238,9 +238,14 @@ describe('publishing jobs', () => {
     pages.push('factorio');
     const run = await newRun(job._id, false);
     await runPublishing(run, 'owner', (await Job.findById(job._id).lean())!, deps());
-    expect(published.map((p) => p.platform)).toEqual(['facebook', 'bluesky']);
+    // Facebook and Bluesky wait for the Reddit card, then go out once it is posted.
+    expect(published).toEqual([]);
+    const reddit = await PublishDelivery.findOne({ platform: 'reddit' }).lean();
+    expect(await markPosted((await Job.findById(job._id).lean())!, String(reddit!._id), String(userId), undefined, deps())).toEqual({ ok: true });
+    expect(published.map((p) => p.platform).sort()).toEqual(['bluesky', 'facebook']);
     const deliveries = await PublishDelivery.find().sort({ platform: 1 }).lean();
-    expect(deliveries.map((d) => [d.platform, d.status])).toEqual([['bluesky', 'posted'], ['facebook', 'posted'], ['reddit', 'ready']]);
+    expect(deliveries.map((d) => [d.platform, d.status])).toEqual([['bluesky', 'posted'], ['facebook', 'posted'], ['reddit', 'posted']]);
+    expect(deliveries.map((d) => d.heldFor ?? null)).toEqual([null, null, null]);
     expect(deliveries.find((d) => d.platform === 'reddit')).toMatchObject({ title: 'New Game Release', link: 'https://playbound.club/games/factorio', assets: [{ kind: 'image', url: 'https://playbound.club/factorio.jpg' }] });
     expect(sent).toEqual([{ to: 'ryan@example.com', subject: '1 post ready to post · PlayBound' }]);
 
@@ -278,8 +283,100 @@ describe('publishing jobs', () => {
     expect((await JobRun.findById(third._id).lean())?.output).toMatchObject({ summary: 'No new games.' });
   });
 
+  describe('passing Reddit edits on to Facebook and Bluesky', () => {
+    const writer = (edited: (system: string, user: string) => string | null): PublishDeps['write'] => async ({ system, user }) => {
+      if (system.startsWith('A person edited the Reddit post')) return edited(system, user);
+      return system.includes('{"title"') ? JSON.stringify({ title: 'New Game Release', body: 'Reddit body as written' }) : JSON.stringify({ body: system.startsWith('You write one Bluesky') ? 'Bluesky as written' : 'Facebook as written' });
+    };
+    const start = async (write: PublishDeps['write']) => {
+      const job = await newJob();
+      await takeBaseline(job.toObject(), deps());
+      pages.push('factorio');
+      await runPublishing(await newRun(job._id, false), 'owner', (await Job.findById(job._id).lean())!, { ...deps(), write });
+      const current = (await Job.findById(job._id).lean())!;
+      const card = async (platform: string) => (await PublishDelivery.findOne({ platform }).lean())!;
+      return { current, card };
+    };
+
+    it('rewrites each held post with the Reddit edits, then posts it', async () => {
+      const prompts: string[] = [];
+      const write = writer((system, user) => {
+        prompts.push(user);
+        return JSON.stringify({ body: system.includes('Bluesky') ? 'Bluesky with the edits' : 'Facebook with the edits' });
+      });
+      const { current, card } = await start(write);
+      const reddit = await card('reddit');
+      expect(await editDelivery(current, String(reddit._id), { body: 'Reddit body with a correction' })).toEqual({ ok: true });
+      expect(await markPosted(current, String(reddit._id), String(userId), undefined, { ...deps(), write })).toEqual({ ok: true });
+      expect(prompts).toHaveLength(2);
+      expect(prompts[0]).toContain('Reddit body as written');
+      expect(prompts[0]).toContain('Reddit body with a correction');
+      expect((await card('facebook')).body).toBe('Facebook with the edits');
+      expect((await card('bluesky')).body).toBe('Bluesky with the edits');
+      expect(published.map((p) => p.text).sort()).toEqual(['Bluesky with the edits', 'Facebook with the edits']);
+    });
+
+    it('posts them as written when Reddit was not edited, without asking a model', async () => {
+      const edits = vi.fn(() => null);
+      const { current, card } = await start(writer(edits));
+      await markPosted(current, String((await card('reddit'))._id), String(userId), undefined, deps());
+      expect(edits).not.toHaveBeenCalled();
+      expect(published.map((p) => p.text).sort()).toEqual(['Bluesky as written', 'Facebook as written']);
+    });
+
+    it('keeps a post the person already edited as they wrote it', async () => {
+      const write = writer((system) => JSON.stringify({ body: system.includes('Bluesky') ? 'Bluesky with the edits' : 'Facebook with the edits' }));
+      const { current, card } = await start(write);
+      await editDelivery(current, String((await card('facebook'))._id), { body: 'Facebook my own way' });
+      const reddit = await card('reddit');
+      await editDelivery(current, String(reddit._id), { body: 'Reddit body with a correction' });
+      await markPosted(current, String(reddit._id), String(userId), undefined, { ...deps(), write });
+      expect((await card('facebook')).body).toBe('Facebook my own way');
+      expect((await card('bluesky')).body).toBe('Bluesky with the edits');
+    });
+
+    it('holds back a post the edits could not be applied to, and says why', async () => {
+      const write = writer(() => null);
+      const { current, card } = await start(write);
+      const reddit = await card('reddit');
+      await editDelivery(current, String(reddit._id), { body: 'Reddit body with a correction' });
+      await markPosted(current, String(reddit._id), String(userId), undefined, { ...deps(), write });
+      expect(published).toEqual([]);
+      const facebook = await card('facebook');
+      expect(facebook).toMatchObject({ status: 'ready', body: 'Facebook as written', error: expect.stringContaining('could not apply your Reddit edits') });
+      expect(facebook.heldFor).toBeUndefined();
+    });
+
+    it('lets them go as written when Reddit is skipped', async () => {
+      const { current, card } = await start(writer(() => null));
+      await skipDelivery(current, String((await card('reddit'))._id), String(userId), deps());
+      expect(published.map((p) => p.text).sort()).toEqual(['Bluesky as written', 'Facebook as written']);
+    });
+
+    it('sends them as written once nobody has handled Reddit for a day', async () => {
+      const { current } = await start(writer(() => null));
+      await runPublishing(await newRun(current._id, false), 'owner', current, deps());
+      expect(published).toEqual([]);
+      await PublishDelivery.updateMany({ heldFor: 'reddit' }, { $set: { holdUntil: new Date(Date.now() - 1000) } });
+      await runPublishing(await newRun(current._id, false), 'owner', (await Job.findById(current._id).lean())!, deps());
+      expect(published.map((p) => p.text).sort()).toEqual(['Bluesky as written', 'Facebook as written']);
+      expect(await PublishDelivery.countDocuments({ heldFor: 'reddit' })).toBe(0);
+    });
+
+    it('never posts a held post twice when Reddit is posted and the wait runs out together', async () => {
+      const { current, card } = await start(writer(() => null));
+      await PublishDelivery.updateMany({ heldFor: 'reddit' }, { $set: { holdUntil: new Date(Date.now() - 1000) } });
+      await Promise.all([
+        markPosted(current, String((await card('reddit'))._id), String(userId), undefined, deps()),
+        runPublishing(await newRun(current._id, false), 'owner', current, deps()),
+      ]);
+      expect(published).toHaveLength(2);
+    });
+  });
+
   it('turns a failed automatic post into a card and switches that channel to manual with a note', async () => {
     const job = await newJob();
+    await Job.updateOne({ _id: job._id }, { $set: { 'publishing.channels': [{ platform: 'facebook', mode: 'auto' }, { platform: 'bluesky', mode: 'auto' }] } });
     await takeBaseline(job.toObject(), deps());
     failFacebook = new PublishError('needs_permission', 'The Facebook connection is not allowed to post.');
     pages.push('factorio');
@@ -290,7 +387,7 @@ describe('publishing jobs', () => {
     const view = await publishingView((await Job.findById(job._id).lean())!);
     expect(view?.channels.find((c) => c.platform === 'facebook')?.mode).toBe('manual');
     expect(view?.notes.facebook).toContain('not allowed to post');
-    expect(view?.ready.map((d) => d.platform).sort()).toEqual(['facebook', 'reddit']);
+    expect(view?.ready.map((d) => d.platform).sort()).toEqual(['facebook']);
 
     // Once the account is fixed, the card can be posted through the API.
     failFacebook = null;

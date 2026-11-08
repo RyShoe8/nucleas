@@ -88,6 +88,11 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
                     <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">{companyName ? `${companyName} · ` : ''}{delivery.itemTitle}</span>
                 </header>
                 {delivery.error ? <p className="rounded border border-amber-400/40 bg-amber-400/5 p-2 text-xs text-amber-300">{delivery.error}</p> : null}
+                {delivery.heldFor === 'reddit' ? (
+                    <p className="rounded border border-border p-2 text-xs text-text-secondary">
+                        Waiting for the Reddit post. When you post it, this takes on your Reddit edits{delivery.status === 'ready' ? ' and goes out' : ''}. If the Reddit card is not handled{delivery.holdUntil ? ` by ${new Date(delivery.holdUntil).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}` : ' within a day'}, it goes out as written.
+                    </p>
+                ) : null}
                 {delivery.researched?.length ? (
                     <details className="text-xs text-text-secondary">
                         <summary className="cursor-pointer">Facts from other sites · {delivery.researched.length}</summary>

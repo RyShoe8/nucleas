@@ -35,7 +35,7 @@ import { nextScheduledAt } from '@/lib/jobs/schedule';
 import { MANUAL_ONLY, PLATFORM_LABEL, SOCIAL_PLATFORMS, cadenceLabel, publishingConfigSchema, type AdminTarget, type PublishChannel, type PublishPlatform, type PublishingConfig } from './config';
 import { addRecord, fillValues, valueLines, type AdminBrowser, type AdminSession } from './admin';
 import { workerAdminBrowser } from './adminBrowser';
-import { composePost, describeResearchedFacts, fallbackSocialDraft, relabelNewItemTitle, type Draft, type Writer } from './compose';
+import { composePost, describeResearchedFacts, fallbackSocialDraft, followEditsPrompt, parseDraft, relabelNewItemTitle, type Draft, type Writer } from './compose';
 import type { FetchLike } from './fetchPublic';
 import { readPageFacts, type PageFacts } from './pageFacts';
 import { listSitePages } from './siteSource';
@@ -657,6 +657,7 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
     return;
   }
 
+  await releaseExpiredHolds(job, deps).catch((error: unknown) => console.error(`[publishing] job ${job._id} could not release held posts`, error instanceof Error ? error.message : 'unknown'));
   const current = await Job.findById(job._id).select('publishing.baselineAt').lean<{ publishing?: { baselineAt?: Date } }>();
   if (!rotation && !(config.source.type === 'site' && config.source.roundup) && !current?.publishing?.baselineAt) {
     const count = await takeBaseline(job, deps);
@@ -761,12 +762,14 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
     await PublishItem.updateOne({ _id: itemId }, { $set: { title: facts.title.slice(0, 500), facts: { title: facts.title, description: facts.description, text: facts.text, image: facts.image ?? undefined, images: facts.images, video: facts.video ?? undefined } } });
     const channels = isBestOffer(entry.key) ? config.channels : config.channels.filter((c) => c.platform === 'admin');
     const drafts = await draftAll(job, { ...config, channels }, facts, context, write, deps);
+    const waitsForReddit = holdsForReddit(config, channels);
     for (const channel of channels) {
       const prepared = drafts.get(channel.platform);
       if (!prepared) continue;
       const { draft, written } = prepared;
+      const held = waitsForReddit && HELD_PLATFORMS.includes(channel.platform);
       // Never auto-post copy no model wrote: a person looks at it first.
-      const auto = channel.mode === 'auto' && written && !MANUAL_ONLY.includes(channel.platform);
+      const auto = channel.mode === 'auto' && written && !held && !MANUAL_ONLY.includes(channel.platform);
       const delivery = await PublishDelivery.create({
         organizationId: job.organizationId,
         jobId: job._id,
@@ -781,9 +784,15 @@ export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean 
         assets: channel.platform === 'admin' ? [] : assetsOf(facts),
         ...(prepared.values ? { values: prepared.values } : {}),
         ...(prepared.researched?.length ? { researched: prepared.researched } : {}),
+        ...(channel.platform === 'reddit' && waitsForReddit ? { draftBody: [draft.title, draft.body].filter(Boolean).join('\n') } : {}),
+        ...(held ? { heldFor: 'reddit', holdUntil: new Date(Date.now() + POST_METHOD.holdForRedditHours * 3600_000) } : {}),
         // The reason is kept for review cards too, so a card is never silently empty.
         ...(!written ? { error: prepared.problem ?? (channel.mode === 'auto' ? 'Nucleas could not write this post, so it was not posted automatically. Check it and post it by hand.' : 'No model wrote this, so it shows the plain facts. Check it before posting.') } : {}),
       });
+      if (held) {
+        records.push(record(channel.platform, draft, facts, { status: 'Waiting for the Reddit post' }));
+        continue;
+      }
       if (!auto) {
         ready.push(`${PLATFORM_LABEL[channel.platform]}: ${facts.title}`);
         records.push(record(channel.platform, draft, facts, { status: 'Ready to post' }));
@@ -843,8 +852,83 @@ function deliveryFilter(job: { _id: Types.ObjectId; organizationId: Types.Object
   return Types.ObjectId.isValid(deliveryId) ? { _id: new Types.ObjectId(deliveryId), jobId: job._id, organizationId: job.organizationId } : null;
 }
 
+const HELD_PLATFORMS: readonly PublishPlatform[] = ['facebook', 'bluesky'];
+
+/** Posts about a new item with a Reddit card: the others wait for it, so the person's edits there reach them too. */
+function holdsForReddit(config: PublishingConfig, channels: PublishChannel[]): boolean {
+  return postMethod(config.source).strongWriting && !(config.source.type === 'site' && config.source.rotation) && channels.some((channel) => channel.platform === 'reddit') && channels.some((channel) => HELD_PLATFORMS.includes(channel.platform));
+}
+
+/** A held post rewritten to take on the person's Reddit edits, or null if that could not be done. */
+async function withRedditEdits(job: JobLike, platform: PublishPlatform, body: string, reddit: { before: string; after: string }, deps: PublishDeps): Promise<string | null> {
+  if (platform !== 'facebook' && platform !== 'bluesky') return null;
+  const write = deps.write ?? engineWriter(job, undefined, true, { need: POST_METHOD.writerNeed, timeoutMs: POST_METHOD.writerTimeoutMs });
+  const reply = await write({
+    system: followEditsPrompt(platform),
+    user: `# Reddit post as written\n${reddit.before}\n\n# Reddit post as the person posted it\n${reddit.after}\n\n# ${PLATFORM_LABEL[platform]} post to change\n${body}`,
+    maxTokens: 3000,
+  }).catch(() => null);
+  return parseDraft(platform, reply)?.body ?? null;
+}
+
+/**
+ * The Reddit card was posted or skipped, or the wait ran out: the posts held for it go out. When the person edited the
+ * Reddit post, each held post takes on the same edits first. One the person already edited is left as they wrote it.
+ * A post whose edits could not be applied stays a card, so nothing goes out that misses the person's changes.
+ */
+export async function releaseHeldPosts(job: JobLike, itemId: Types.ObjectId, userId: string, reddit: { before: string; after: string } | null, deps: PublishDeps = {}): Promise<void> {
+  const held = await PublishDelivery.find({ itemId, organizationId: job.organizationId, heldFor: 'reddit', status: 'ready' }).lean();
+  await Promise.all(held.map(async (delivery) => {
+    // Claimed first, so a second release (the hourly run and a person at once) cannot post it twice.
+    const claimed = await PublishDelivery.findOneAndUpdate({ _id: delivery._id, heldFor: 'reddit', status: 'ready' }, { $unset: { heldFor: '', holdUntil: '' } }, { new: true }).lean();
+    if (!claimed) return;
+    if (reddit && !claimed.voiceExample) {
+      const body = await withRedditEdits(job, claimed.platform as PublishPlatform, claimed.body, reddit, deps);
+      if (!body) {
+        await PublishDelivery.updateOne({ _id: claimed._id, status: 'ready' }, { $set: { error: 'Nucleas could not apply your Reddit edits to this post, so it was not posted automatically. Check it and post it.' } });
+        return;
+      }
+      await PublishDelivery.updateOne({ _id: claimed._id, status: 'ready' }, { $set: { body }, $unset: { error: '' } });
+    }
+    if (claimed.mode !== 'auto') return;
+    const result = await postDeliveryNow(job, String(claimed._id), userId, deps).catch((error: unknown) => ({ ok: false as const, error: error instanceof Error ? error.message : 'unknown' }));
+    if (!result.ok) console.error(`[publishing] job ${job._id} could not post ${claimed.platform} after Reddit`, result.error);
+  }));
+}
+
+/** Posts still waiting for a Reddit card nobody handled go out as written. */
+async function releaseExpiredHolds(job: JobLike, deps: PublishDeps): Promise<void> {
+  const expired = await PublishDelivery.find({ jobId: job._id, organizationId: job.organizationId, heldFor: 'reddit', status: 'ready', holdUntil: { $lte: new Date() } }).select('itemId').lean();
+  for (const itemId of new Set(expired.map((row) => String(row.itemId)))) {
+    await releaseHeldPosts(job, new Types.ObjectId(itemId), String(job.createdByUserId), null, deps);
+  }
+}
+
+/** The Reddit card's edits, when the person changed it, for the posts held for it. */
+async function redditEdits(delivery: { platform: string; title?: string | null; body: string; draftBody?: string | null }): Promise<{ before: string; after: string } | null> {
+  if (delivery.platform !== 'reddit' || !delivery.draftBody) return null;
+  const before = delivery.draftBody;
+  const after = [delivery.title, delivery.body].filter(Boolean).join('\n');
+  return before.replace(/\s+/g, ' ').trim() === after.replace(/\s+/g, ' ').trim() ? null : { before, after };
+}
+
 /** Someone posted a ready card by hand. The link is optional; it is kept so the post can be found later. */
-export async function markPosted(job: { _id: Types.ObjectId; organizationId: Types.ObjectId }, deliveryId: string, userId: string, postedUrl?: string): Promise<DeliveryResult> {
+export async function markPosted(job: JobLike, deliveryId: string, userId: string, postedUrl?: string, deps: PublishDeps = {}): Promise<DeliveryResult> {
+  const result = await markPostedOnly(job, deliveryId, userId, postedUrl);
+  if (result.ok) await afterReddit(job, deliveryId, userId, true, deps);
+  return result;
+}
+
+async function afterReddit(job: JobLike, deliveryId: string, userId: string, posted: boolean, deps: PublishDeps): Promise<void> {
+  const filter = deliveryFilter(job, deliveryId);
+  const delivery = filter ? await PublishDelivery.findOne(filter).lean() : null;
+  if (delivery?.platform !== 'reddit') return;
+  await releaseHeldPosts(job, delivery.itemId, userId, posted ? await redditEdits(delivery) : null, deps).catch((error: unknown) => {
+    console.error(`[publishing] job ${job._id} could not release posts held for Reddit`, error instanceof Error ? error.message : 'unknown');
+  });
+}
+
+async function markPostedOnly(job: { _id: Types.ObjectId; organizationId: Types.ObjectId }, deliveryId: string, userId: string, postedUrl?: string): Promise<DeliveryResult> {
   const filter = deliveryFilter(job, deliveryId);
   if (!filter) return { ok: false, status: 404, error: 'Post not found.' };
   let url: string | undefined;
@@ -874,11 +958,14 @@ export async function markPosted(job: { _id: Types.ObjectId; organizationId: Typ
   return done.modifiedCount ? { ok: true } : { ok: false, status: 409, error: 'Someone already handled this post.' };
 }
 
-export async function skipDelivery(job: { _id: Types.ObjectId; organizationId: Types.ObjectId }, deliveryId: string, userId: string): Promise<DeliveryResult> {
+export async function skipDelivery(job: JobLike, deliveryId: string, userId: string, deps: PublishDeps = {}): Promise<DeliveryResult> {
   const filter = deliveryFilter(job, deliveryId);
   if (!filter) return { ok: false, status: 404, error: 'Post not found.' };
-  const done = await PublishDelivery.updateOne({ ...filter, status: 'ready' }, { $set: { status: 'skipped', postedByUserId: new Types.ObjectId(userId) } });
-  return done.modifiedCount ? { ok: true } : { ok: false, status: 409, error: 'Someone already handled this post.' };
+  const done = await PublishDelivery.updateOne({ ...filter, status: 'ready' }, { $set: { status: 'skipped', postedByUserId: new Types.ObjectId(userId) }, $unset: { heldFor: '', holdUntil: '' } });
+  if (!done.modifiedCount) return { ok: false, status: 409, error: 'Someone already handled this post.' };
+  // Skipping Reddit is not a reason to hold the others back.
+  await afterReddit(job, deliveryId, userId, false, deps);
+  return { ok: true };
 }
 
 /** Edit a card's text before it is posted. */
@@ -984,6 +1071,7 @@ export async function postDeliveryNow(job: JobLike, deliveryId: string, userId: 
   }
   const shot = outcome.screenshot ? { screenshot: outcome.screenshot } : {};
   if (outcome.ok) {
+    await PublishDelivery.updateOne({ _id: delivery._id }, { $unset: { heldFor: '', holdUntil: '' } });
     await PublishDelivery.updateOne({ _id: delivery._id }, { $set: { status: 'posted', postedUrl: outcome.url, postedAt: new Date(), postedByUserId: new Types.ObjectId(userId), ...shot, ...(outcome.warning ? { error: outcome.warning } : {}) }, ...(outcome.warning ? {} : { $unset: { error: '' } }) });
     return { ok: true };
   }
@@ -1020,13 +1108,16 @@ export interface DeliveryView {
   createdAt: string;
   /** Facts from other sites this post was written with. */
   researched?: ResearchedFact[];
+  /** Waiting for the Reddit card, and until when. */
+  heldFor?: 'reddit';
+  holdUntil?: string;
   /** Admin records: each field as the form shows it, and the filled form (or the page after saving) as a JPEG. */
   fields: { label: string; value: string }[] | null;
   editableFields?: { key: string; label: string; type: string; required: boolean; options?: { value: string; label: string }[]; value: string | boolean }[];
   screenshot: string | null;
 }
 
-type DeliveryLean = { researched?: ResearchedFact[]; _id: Types.ObjectId; itemId: Types.ObjectId; platform: string; status: DeliveryView['status']; title?: string; body: string; link?: string; assets?: { kind: 'image' | 'video'; url: string }[]; postedUrl?: string; postedAt?: Date; error?: string; createdAt: Date; values?: Record<string, string | boolean>; screenshot?: string };
+type DeliveryLean = { heldFor?: 'reddit'; holdUntil?: Date; researched?: ResearchedFact[]; _id: Types.ObjectId; itemId: Types.ObjectId; platform: string; status: DeliveryView['status']; title?: string; body: string; link?: string; assets?: { kind: 'image' | 'video'; url: string }[]; postedUrl?: string; postedAt?: Date; error?: string; createdAt: Date; values?: Record<string, string | boolean>; screenshot?: string };
 
 export interface PublishingView {
   image?: PublishingConfig['image'];
@@ -1071,6 +1162,7 @@ export async function publishingView(job: { _id: Types.ObjectId; publishing?: un
     error: d.error ?? null,
     createdAt: d.createdAt.toISOString(),
     ...(d.researched?.length ? { researched: d.researched } : {}),
+    ...(d.heldFor ? { heldFor: d.heldFor, ...(d.holdUntil ? { holdUntil: d.holdUntil.toISOString() } : {}) } : {}),
     fields: d.platform === 'admin' && config.admin ? valueLines(config.admin.fields, d.values ?? {}) : null,
     ...(d.platform === 'admin' && config.admin ? { editableFields: config.admin.fields.filter(field => field.type !== 'file' && !/\bcasino\b/i.test(`${field.key.replaceAll('_', ' ')} ${field.label}`) && !/^slug$/i.test(field.key) && !/^slug$/i.test(field.label.trim())).map(field => ({ key: field.key, label: /^(notes|description)$/i.test(field.label.trim()) ? `Body / ${field.label.toLowerCase()}` : field.label || field.key, type: field.type, required: field.required, options: field.options, value: d.values?.[field.key] ?? (field.type === 'checkbox' ? false : '') })) } : {}),
     screenshot: d.screenshot ?? null,
