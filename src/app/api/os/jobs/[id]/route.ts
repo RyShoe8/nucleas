@@ -5,6 +5,7 @@ import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import {
   answerQuestions,
   approveJob,
+  updateJobBudget,
   archiveJob,
   decideRun,
   executeJobRun,
@@ -89,6 +90,9 @@ async function performAction(request: NextRequest, { params }: Context) {
         completion: body.completion === 'automatic' ? 'automatic' : body.completion === 'review' ? 'review' : ('' as 'review'),
         monthlyBudgetMicros: typeof body.monthlyBudgetUsd === 'number' ? Math.round(body.monthlyBudgetUsd * 1_000_000) : undefined,
       });
+      break;
+    case 'budget':
+      result = await updateJobBudget(viewer, id, body.monthlyBudgetUsd);
       break;
     case 'reject':
       result = await rejectJob(viewer, id, note);

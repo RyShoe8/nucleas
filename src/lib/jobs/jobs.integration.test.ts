@@ -1,3 +1,4 @@
+import { PublishItem, PublishDelivery } from '@/lib/models/Publishing';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import mongoose, { Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
@@ -43,7 +44,7 @@ import { brandVoiceContext, getBrandVoice, updateBrandVoice } from '@/lib/brandV
 import { ArtifactRevision, artifactHistory } from './artifactHistory';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
-import { answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, listJobs, pauseJob, renameJob, runDesign, runNow, sweepJobs } from './jobs';
+import { updateJobBudget, publishingAction, answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, listJobs, pauseJob, renameJob, runDesign, runNow, sweepJobs } from './jobs';
 import type { JobDesign } from './schema';
 import { updateLinkOpportunity, verifyLinkOpportunity, syncLinkOpportunities } from './linkOpportunities';
 import { completePropertyOverviewJob, createPropertyOverviewJob, startPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
@@ -137,6 +138,46 @@ async function proposed(design: JobDesign = DESIGN) {
   if (!created.ok) throw new Error(created.error);
   return created.job;
 }
+
+describe('ongoing job settings', () => {
+  it('edits budget independently of schedule and enforces management rights', async () => {
+    const job = await proposed();
+    const nextRunAt = new Date(Date.now() + 86400000);
+    await Job.updateOne({ _id: job.id }, { $set: { status: 'active', nextRunAt } });
+    expect(await updateJobBudget(admin, job.id, 25)).toMatchObject({ ok: true });
+    expect(await Job.findById(job.id).lean()).toMatchObject({ monthlyBudgetMicros: 25_000_000, status: 'active', nextRunAt });
+    expect(await updateJobBudget(member, job.id, 40)).toMatchObject({ ok: false });
+    for (const value of [0, -1, Infinity, '20', 1001]) expect(await updateJobBudget(admin, job.id, value)).toMatchObject({ ok: false });
+  });
+
+  it('keeps a due schedule when creating its run fails', async () => {
+    const job = await proposed({ ...DESIGN, schedule: { kind: 'daily', time: '09:00', timezone: 'UTC' } });
+    const due = new Date('2026-11-09T09:00:00Z');
+    await Job.updateOne({ _id: job.id }, { $set: { status: 'active', nextRunAt: due } });
+    const create = vi.spyOn(JobRun, 'create').mockRejectedValueOnce(new Error('Simulated storage failure'));
+    try { await expect(claimDueJobRuns(new Date('2026-11-09T09:01:00Z'))).rejects.toThrow('Simulated storage failure'); }
+    finally { create.mockRestore(); }
+    expect((await Job.findById(job.id).lean())?.nextRunAt).toEqual(due);
+    expect(await JobRun.countDocuments({ jobId: job.id })).toBe(0);
+    expect(await claimDueJobRuns(new Date('2026-11-09T09:02:00Z'))).toHaveLength(1);
+  });
+
+  it('posting a Spotlight sample enables its recurring schedule and completes review', async () => {
+    const job = await proposed({ ...DESIGN, skill: 'signature_outreach', schedule: { kind: 'weekly', weekday: 1, time: '09:00', timezone: 'America/Chicago' } });
+    await Job.updateOne({ _id: job.id }, { $set: { status: 'testing' } });
+    const run = await JobRun.create({ organizationId: org, companyId, jobId: job.id, dryRun: true, status: 'needs_review', startedAt: new Date(), output: { records: [{ values: { prospect_domain: 'transistor.fm' }, sources: [] }], summary: '', gaps: [] } });
+    const item = await PublishItem.create({ organizationId: org, companyId, jobId: job.id, key: 'signature:transistor.fm', status: 'processed' });
+    const delivery = await PublishDelivery.create({ organizationId: org, companyId, jobId: job.id, itemId: item._id, platform: 'bluesky', mode: 'manual', status: 'ready', body: 'Signature concept' });
+    expect(await publishingAction(admin, job.id, 'mark_posted', { deliveryId: String(delivery._id) })).toMatchObject({ ok: true });
+    expect(await JobRun.findById(run._id).lean()).toMatchObject({ status: 'completed' });
+    const updated = await Job.findById(job.id).lean();
+    expect(updated?.status).toBe('ready');
+    expect(updated?.nextRunAt?.getTime()).toBeGreaterThan(Date.now());
+    await Job.updateOne({ _id: job.id }, { $set: { status: 'paused' } });
+    expect(await publishingAction(admin, job.id, 'mark_posted', { deliveryId: String(delivery._id) })).toMatchObject({ ok: true });
+    expect((await Job.findById(job.id).lean())?.status).toBe('paused');
+  });
+});
 
 describe('completed job visibility', () => {
   it('hides completed jobs at three days, keeps active jobs and preserves history access', async () => {

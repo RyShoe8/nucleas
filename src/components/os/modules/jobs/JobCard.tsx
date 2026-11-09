@@ -821,6 +821,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [resultRun, setResultRun] = useState<JobRunView | null>(null);
+    const [budgetEdit, setBudgetEdit] = useState<string | null>(null);
     const [renaming, setRenaming] = useState<string | null>(null);
     const update = (next: JobView) => {
         setJob(next);
@@ -841,19 +842,21 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
         // eslint-disable-next-line react-hooks/exhaustive-deps -- poll while busy
     }, [busyNow, job.id]);
 
-    const act = async (action: string) => {
+    const act = async (action: string, extra: Record<string, unknown> = {}) => {
         setBusy(action);
         setError(null);
-        const res = await post(job.id, { action });
+        const res = await post(job.id, { action, ...extra });
         setBusy(null);
         if (res.error || !res.job) return setError(res.error ?? 'Failed');
         update(res.job);
+        if (action === 'budget') setBudgetEdit(null);
     };
 
     const d = job.design;
     const reviewRun = job.runs.find((r) => r.status === 'needs_review' || r.status === 'running')
-        ?? (job.status === 'testing' || job.status === 'proposed' ? job.runs.find((r) => r.status === 'failed') : undefined);
+        ?? (job.runs[0]?.status === 'failed' ? job.runs[0] : undefined);
     const doneRuns = job.runs.filter((r) => r.status === 'completed');
+    const historyRuns = job.runs.filter(r => r.id !== reviewRun?.id && r.status !== 'running' && r.status !== 'needs_review');
     const failedAttempt = job.runs.some((r) => r.status === 'failed');
     const canArchive = ['proposed', 'ready', 'active', 'paused', 'done', 'failed', 'needs_answers'].includes(job.status)
         || (job.status === 'testing' && !job.runs.some((r) => r.status === 'running'));
@@ -937,17 +940,27 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
             {!compact && d?.skill === 'seo_brief' ? <SeoBriefEditor job={job} /> : null}
             {!compact && d?.skill === 'marketing_plan' ? <MarketingPlanEditor companyId={job.companyId} updatedAt={job.updatedAt} /> : null}
             {/* Link building shows only its current opportunity (above), not every earlier run. */}
-            {!compact && doneRuns.length && d?.skill !== 'link_building' ? (
-                <details open={doneRuns.length === 1}>
-                    <summary className="cursor-pointer text-xs text-text-secondary">Results ({doneRuns.length} run{doneRuns.length === 1 ? '' : 's'})</summary>
+            {!compact && historyRuns.length > 0 && d?.skill !== 'link_building' ? (
+                <details>
+                    <summary className="cursor-pointer text-xs text-text-secondary">Run history ({historyRuns.length})</summary>
                     <div className="mt-2 space-y-2">
-                        {doneRuns.slice(0, 5).map((r) => (
+                        {historyRuns.slice(0, 5).map((r) => (
                             <RunBlock key={r.id} job={job} run={r} onChange={update} onView={setResultRun} />
                         ))}
                     </div>
                 </details>
             ) : null}
 
+            {!compact && d && d.schedule.kind !== 'once' && ['ready', 'active'].includes(job.status) && job.nextRunAt ? <p className="text-sm text-emerald-300">Schedule enabled · Next run {new Date(job.nextRunAt).toLocaleString()}. Each new result will appear here.</p> : null}
+            {!compact && job.canManage && d && !manualArtifact(d.skill) && <div className="text-xs">
+                {budgetEdit === null ? <button className={BUTTON} type="button" onClick={() => setBudgetEdit(String(job.monthlyBudgetMicros / 1_000_000))}>Edit monthly budget</button> :
+                    <form className="flex flex-wrap items-center gap-2" onSubmit={event => { event.preventDefault(); void act('budget', { monthlyBudgetUsd: Number(budgetEdit) }); }}>
+                        <label>Monthly job budget $ <input className="ui-control w-24" type="number" min="0.01" max="1000" step="0.01" required value={budgetEdit} onChange={event => setBudgetEdit(event.target.value)} /></label>
+                        <button className={PRIMARY} disabled={busy !== null}>Save budget</button>
+                        <button className={BUTTON} type="button" onClick={() => setBudgetEdit(null)}>Cancel</button>
+                        <p className="w-full text-text-secondary">Spent this month {usd(job.spentThisMonthMicros)}. A cap below current spending stops further runs until the next month or a budget increase.</p>
+                    </form>}
+            </div>}
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
             <div className="flex flex-wrap gap-2">
                 {!compact && job.canManage && (job.status === 'ready' || job.status === 'active') && job.deliveryRunnable ? (

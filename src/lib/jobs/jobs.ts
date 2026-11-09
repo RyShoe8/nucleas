@@ -1,3 +1,4 @@
+import { PublishDelivery, PublishItem } from '@/lib/models/Publishing';
 import { importCasinoDrafts } from '@/lib/casinoDiscovery/service';
 import { retryDatabaseRead, retryIdempotentWrite } from '@/lib/db/retryRead';
 import type { ModelStep } from '@/lib/jobs/modelPath';
@@ -570,6 +571,40 @@ export type PublishingAction = 'publishing_settings' | 'mark_posted' | 'skip_pos
  * Settings are for managers. Anyone who can see the job may handle its ready-to-post cards: they are the
  * people the job notifies to post them.
  */
+export async function updateJobBudget(viewer: CompanyViewer, id: string, dollars: unknown): Promise<ActionResult> {
+  const found = await managed(viewer, id);
+  if (!found.ok) return found;
+  const design = jobDesignSchema.safeParse(found.job.design);
+  if (!design.success || manualArtifact(design.data.skill)) return { ok: false, status: 400, error: 'This job has no monthly spending cap.' };
+  if (typeof dollars !== 'number' || !Number.isFinite(dollars) || dollars <= 0 || dollars > 1000) return { ok: false, status: 400, error: 'Enter a monthly budget above $0 and up to $1,000.' };
+  const micros = Math.round(dollars * 1_000_000);
+  if (micros < 1) return { ok: false, status: 400, error: 'Enter a budget above $0.' };
+  await Job.updateOne({ _id: found.job._id, organizationId: viewer.organizationId },
+    { $set: { monthlyBudgetMicros: micros }, $push: { events: event(viewer, 'budget_updated', 'Monthly budget $' + dollars.toFixed(2)) } });
+  return done(viewer, id);
+}
+
+async function completePostedSpotlight(viewer: CompanyViewer, job: JobLean, deliveryId: string) {
+  if (!Types.ObjectId.isValid(deliveryId)) return false;
+  const delivery = await PublishDelivery.findOne({ _id: deliveryId, jobId: job._id, organizationId: job.organizationId, status: 'posted' }).select('itemId').lean();
+  if (!delivery) return false;
+  const item = await PublishItem.findOne({ _id: delivery.itemId, jobId: job._id, organizationId: job.organizationId }).select('key').lean();
+  if (!item?.key.startsWith('signature:')) return false;
+  const domain = item.key.slice('signature:'.length);
+  const run = await JobRun.findOneAndUpdate({ jobId: job._id, organizationId: job.organizationId,
+    status: { $in: ['needs_review', 'completed'] }, 'output.records.values.prospect_domain': domain },
+    { $set: { status: 'completed', decidedByUserId: new Types.ObjectId(viewer.userId), decisionNote: 'Signature post published.' } },
+    { new: true, sort: { createdAt: -1 } }).lean();
+  if (!run) return false;
+  if (!run.dryRun) return true;
+  const design = jobDesignSchema.safeParse(job.design);
+  if (!design.success || design.data.schedule.kind === 'once') return true;
+  const nextRunAt = nextScheduledAt(design.data.schedule, new Date());
+  await Job.updateOne({ _id: job._id, status: 'testing' },
+    { $set: { status: 'ready', nextRunAt }, $push: { events: event(viewer, 'dry_run_accepted', 'Signature sample posted; recurring schedule enabled.') } });
+  return true;
+}
+
 export async function publishingAction(viewer: CompanyViewer, id: string, action: PublishingAction, body: Record<string, unknown>): Promise<ActionResult> {
   const found = await retryDatabaseRead('publishing.authorize', () => managed(viewer, id, { anyMember: action !== 'publishing_settings' }));
   if (!found.ok) return found;
@@ -583,6 +618,10 @@ export async function publishingAction(viewer: CompanyViewer, id: string, action
     : action === 'refill_post' ? await refillAdminDelivery(found.job, deliveryId)
       : action === 'edit_post' ? await editDelivery(found.job, deliveryId, { title: typeof body.title === 'string' ? body.title : undefined, body: typeof body.body === 'string' ? body.body : undefined, values: body.values })
     : await postDeliveryNow(found.job, deliveryId, viewer.userId);
+  if (['mark_posted', 'post_now'].includes(action) && jobDesignSchema.safeParse(found.job.design).data?.skill === 'signature_outreach' && (result.ok || result.status === 409)) {
+    const reconciled = await completePostedSpotlight(viewer, found.job, deliveryId);
+    if (reconciled) return retryDatabaseRead('publishing.refresh', () => done(viewer, id));
+  }
   if (!result.ok) return result;
   return retryDatabaseRead('publishing.refresh', () => done(viewer, id));
 }
@@ -601,27 +640,26 @@ export async function claimDueJobRuns(now = new Date(), limit = 2): Promise<stri
   for (const job of candidates) {
     const design = jobDesignSchema.safeParse(job.design);
     if (!design.success || design.data.schedule.kind === 'once' || !deliveryRunnable(design.data)) continue;
-    if (await JobRun.exists({ jobId: job._id, status: 'running' })) continue;
     const nextRunAt = nextScheduledAt(design.data.schedule, now);
-    const claimed = await Job.findOneAndUpdate(
-      { _id: job._id, status: { $in: ['ready', 'active'] }, nextRunAt: job.nextRunAt },
-      { $set: { status: 'active', lastRunAt: now, ...(nextRunAt ? { nextRunAt } : {}) }, $push: { events: event(null, 'scheduled_run_started') } },
-      { new: true }
-    );
-    if (!claimed) continue;
+    const runId = new Types.ObjectId();
     const startedAt = new Date();
-    const run = await JobRun.create({
-      organizationId: job.organizationId,
-      jobId: job._id,
-      companyId: job.companyId,
-      dryRun: false,
-      status: 'running',
-      startedAt,
-      ...initialRunLease(undefined, startedAt),
-      progress: ['Starting scheduled run'],
-      progressState: { stage: 'preparing', label: 'Preparing the scheduled run', percent: 5, updatedAt: startedAt },
+    const claimed = await aiTransaction(async session => {
+      if (await JobRun.exists({ jobId: job._id, status: 'running' }).session(session)) return false;
+      const changed = await Job.updateOne(
+        { _id: job._id, status: { $in: ['ready', 'active'] }, nextRunAt: job.nextRunAt },
+        { $set: { status: 'active', lastRunAt: now, ...(nextRunAt ? { nextRunAt } : {}) }, $push: { events: event(null, 'scheduled_run_started') } },
+        { session }
+      );
+      if (!changed.modifiedCount) return false;
+      await JobRun.create([{
+        _id: runId, organizationId: job.organizationId, jobId: job._id, companyId: job.companyId,
+        dryRun: false, status: 'running', startedAt, ...initialRunLease(undefined, startedAt),
+        progress: ['Starting scheduled run'],
+        progressState: { stage: 'preparing', label: 'Preparing the scheduled run', percent: 5, updatedAt: startedAt },
+      }], { session });
+      return true;
     });
-    runIds.push(String(run._id));
+    if (claimed) runIds.push(String(runId));
   }
   return runIds;
 }

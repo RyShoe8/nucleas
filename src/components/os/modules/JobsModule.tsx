@@ -35,7 +35,7 @@ const GROUPS: Group[] = [
 function attentionKey(job: JobView) {
     const reasons = [
         ...(['needs_answers', 'proposed', 'failed'].includes(job.status) ? [job.status] : []),
-        ...job.runs.filter(r => r.status === 'needs_review').map(r => r.id),
+        ...job.runs.filter(r => r.status === 'needs_review' || (r === job.runs[0] && r.status === 'failed')).map(r => r.id),
         ...(job.publishing?.ready ?? []).map(item => item.id),
         ...job.opportunities.filter(o => linkNeedsAction(o.status)).map(o => o.id),
     ];
