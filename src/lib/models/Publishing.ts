@@ -89,6 +89,8 @@ const deliverySchema = new Schema(
     heldFor: { type: String, enum: ['reddit'] },
     /** What Nucleas wrote for a Reddit card, so a person's edits can be found and passed on. */
     draftBody: { type: String, maxlength: 40000 },
+    /** A person changed the post's text, so it is posted as they wrote it. */
+    editedByPerson: Boolean,
     holdUntil: { type: Date },
     /** Facts from other sites this post was written with, so a person can check them. */
     researched: { type: [{ _id: false, fact: String, quote: String, url: String, site: String }], default: undefined },

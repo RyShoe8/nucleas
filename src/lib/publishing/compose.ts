@@ -179,6 +179,13 @@ export function parseDraft(platform: SocialPlatform, reply: string | null): Draf
   return { title: rules.title ? fitToLimit(title, 300) : null, body: fitToLimit(body, rules.maxChars) };
 }
 
+/** How long the post in a writer's reply is before any trimming, so an overlong one can be asked for again. */
+export function draftLength(platform: SocialPlatform, reply: string | null): number {
+  if (!reply) return 0;
+  const raw = draftSchema.safeParse(extractJson(reply)).data?.body ?? reply;
+  return charCount(cleanCopy(raw, platform === 'reddit'));
+}
+
 export type Writer = (input: { system: string; user: string; maxTokens: number }) => Promise<string | null>;
 
 /**

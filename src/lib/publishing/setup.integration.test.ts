@@ -132,8 +132,9 @@ describe('setting up a publishing job', () => {
     expect(runId).toBeTruthy();
     await executeJobRun(runId!);
     const ready = (await getJob(admin, created.job.id))!.publishing!.ready;
-    // Facebook refused the automatic post (the stubbed Graph API answers 404), so it became a card too.
-    expect(ready.map((d) => d.platform).sort()).toEqual(['bluesky', 'facebook', 'reddit']);
+    // Facebook and Bluesky wait for the Reddit post, so they are on its card rather than cards of their own.
+    expect(ready.map((d) => d.platform)).toEqual(['reddit']);
+    expect(ready[0]?.following?.map((d) => d.platform).sort()).toEqual(['bluesky', 'facebook']);
     expect(ready.find((d) => d.platform === 'reddit')).toMatchObject({ title: 'New Game: Factorio', itemTitle: 'factorio' });
     expect(vi.mocked(sendEmail).mock.calls.at(-1)?.[0]).toMatchObject({ to: 'owner@example.invalid', subject: '1 post ready to post · PlayBound' });
 

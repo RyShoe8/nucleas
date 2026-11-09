@@ -207,6 +207,15 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
                 </div>
             ) : null}
 
+            {delivery.following?.length ? (
+                <section className="space-y-2 rounded border border-border p-2">
+                    <p className="text-xs text-text-secondary">
+                        When you mark this posted, {delivery.following.map((f) => PLATFORM_LABEL[f.platform]).join(' and ')} take on your Reddit edits and go out. Edit one below to post it exactly as you write it instead.
+                    </p>
+                    {delivery.following.map((f) => <FollowingPost key={f.id} jobId={jobId} delivery={f} onChange={onChange} />)}
+                </section>
+            ) : null}
+
             {marking ? (
                 <div className="flex flex-wrap items-center gap-2">
                     <input className="ui-control min-w-0 flex-1" value={postedUrl} onChange={(e) => setPostedUrl(e.target.value)} placeholder="Link to the live post (optional)" aria-label="Link to the live post" />
@@ -229,5 +238,49 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
             {copied === 'failed' ? <p className="text-[11px] text-red-400">Could not copy. Select the text and copy it by hand.</p> : null}
             {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
         </article>
+    );
+}
+
+/** A Facebook or Bluesky post waiting for the Reddit card, edited on that card. Bluesky shows its character limit. */
+function FollowingPost({ jobId, delivery, onChange }: { jobId: string; delivery: DeliveryView; onChange: (job: JobView) => void }) {
+    const [editing, setEditing] = useState(false);
+    const [body, setBody] = useState(delivery.body);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const limit = delivery.platform === 'admin' ? 0 : PLATFORM_RULES[delivery.platform].maxChars;
+    const count = (text: string) => Array.from(delivery.platform === 'bluesky' ? manualPostText('bluesky', text, delivery.link) : text).length;
+    const length = count(editing ? body : delivery.body);
+    const over = limit > 0 && length > limit;
+    const save = async () => {
+        setBusy(true);
+        setError(null);
+        const res = await act(jobId, { deliveryId: delivery.id, action: 'edit_post', body }).catch(() => ({ error: 'Could not save this change. Check your connection and try again.', job: undefined }));
+        setBusy(false);
+        if (res.error || !res.job) return setError(res.error ?? 'Failed');
+        setEditing(false);
+        onChange(res.job);
+        window.dispatchEvent(new Event('nucleas:jobs-changed'));
+    };
+    return (
+        <div className="space-y-1">
+            <div className="flex items-center gap-2">
+                <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide">{PLATFORM_LABEL[delivery.platform]}</span>
+                <span className="flex-1" />
+                {limit && delivery.platform === 'bluesky' ? <span className={`text-[11px] tabular-nums ${over ? 'text-red-400' : 'text-text-secondary'}`} aria-live="polite">{length} / {limit}{over ? ' · too long' : ''}</span> : null}
+                {!editing ? <button type="button" className="text-[11px] text-text-secondary hover:text-text-primary" onClick={() => { setBody(delivery.body); setEditing(true); }}>Edit</button> : null}
+            </div>
+            {editing ? (
+                <div className="space-y-1" onKeyDown={(e) => { if (e.key === 'Escape') setEditing(false); if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !busy && !over) void save(); }}>
+                    <textarea autoFocus className="ui-control h-28 w-full resize-y text-xs leading-relaxed" value={body} onChange={(e) => setBody(e.target.value)} aria-label={`${PLATFORM_LABEL[delivery.platform]} post`} />
+                    <div className="flex gap-2">
+                        <button type="button" className="ui-button-primary" disabled={busy || !body.trim() || over} onClick={() => void save()}>{busy ? 'Saving…' : 'Save'}</button>
+                        <button type="button" className="ui-button" onClick={() => setEditing(false)}>Cancel</button>
+                    </div>
+                </div>
+            ) : (
+                <p className="max-h-32 cursor-text overflow-y-auto whitespace-pre-wrap break-words rounded text-xs leading-relaxed hover:bg-background-elevated/50" title="Click to edit" onClick={() => { setBody(delivery.body); setEditing(true); }}>{delivery.body}</p>
+            )}
+            {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
+        </div>
     );
 }

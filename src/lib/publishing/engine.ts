@@ -35,7 +35,7 @@ import { nextScheduledAt } from '@/lib/jobs/schedule';
 import { MANUAL_ONLY, PLATFORM_LABEL, SOCIAL_PLATFORMS, cadenceLabel, publishingConfigSchema, type AdminTarget, type PublishChannel, type PublishPlatform, type PublishingConfig } from './config';
 import { addRecord, fillValues, valueLines, type AdminBrowser, type AdminSession } from './admin';
 import { workerAdminBrowser } from './adminBrowser';
-import { composePost, describeResearchedFacts, fallbackSocialDraft, followEditsPrompt, parseDraft, relabelNewItemTitle, type Draft, type Writer } from './compose';
+import { PLATFORM_RULES, composePost, describeResearchedFacts, draftLength, fallbackSocialDraft, followEditsPrompt, parseDraft, relabelNewItemTitle, type Draft, type Writer } from './compose';
 import type { FetchLike } from './fetchPublic';
 import { readPageFacts, type PageFacts } from './pageFacts';
 import { listSitePages } from './siteSource';
@@ -863,11 +863,16 @@ function holdsForReddit(config: PublishingConfig, channels: PublishChannel[]): b
 async function withRedditEdits(job: JobLike, platform: PublishPlatform, body: string, reddit: { before: string; after: string }, deps: PublishDeps): Promise<string | null> {
   if (platform !== 'facebook' && platform !== 'bluesky') return null;
   const write = deps.write ?? engineWriter(job, undefined, true, { need: POST_METHOD.writerNeed, timeoutMs: POST_METHOD.writerTimeoutMs });
-  const reply = await write({
-    system: followEditsPrompt(platform),
-    user: `# Reddit post as written\n${reddit.before}\n\n# Reddit post as the person posted it\n${reddit.after}\n\n# ${PLATFORM_LABEL[platform]} post to change\n${body}`,
-    maxTokens: 3000,
-  }).catch(() => null);
+  const system = followEditsPrompt(platform);
+  const user = `# Reddit post as written\n${reddit.before}\n\n# Reddit post as the person posted it\n${reddit.after}\n\n# ${PLATFORM_LABEL[platform]} post to change\n${body}`;
+  const reply = await write({ system, user, maxTokens: 3000 }).catch(() => null);
+  // Bluesky has a hard limit: an overlong rewrite is asked for once more, shorter, rather than cut mid-thought.
+  const limit = PLATFORM_RULES[platform].maxChars;
+  const length = draftLength(platform, reply);
+  if (length > limit) {
+    const shorter = await write({ system, user: `${user}\n\nYour last version was ${length} characters. Keep it under ${limit} characters, keeping the person's changes.`, maxTokens: 3000 }).catch(() => null);
+    if (shorter && draftLength(platform, shorter) <= limit) return parseDraft(platform, shorter)?.body ?? null;
+  }
   return parseDraft(platform, reply)?.body ?? null;
 }
 
@@ -882,7 +887,7 @@ export async function releaseHeldPosts(job: JobLike, itemId: Types.ObjectId, use
     // Claimed first, so a second release (the hourly run and a person at once) cannot post it twice.
     const claimed = await PublishDelivery.findOneAndUpdate({ _id: delivery._id, heldFor: 'reddit', status: 'ready' }, { $unset: { heldFor: '', holdUntil: '' } }, { new: true }).lean();
     if (!claimed) return;
-    if (reddit && !claimed.voiceExample) {
+    if (reddit && !claimed.voiceExample && !claimed.editedByPerson) {
       const body = await withRedditEdits(job, claimed.platform as PublishPlatform, claimed.body, reddit, deps);
       if (!body) {
         await PublishDelivery.updateOne({ _id: claimed._id, status: 'ready' }, { $set: { error: 'Nucleas could not apply your Reddit edits to this post, so it was not posted automatically. Check it and post it.' } });
@@ -1019,7 +1024,7 @@ export async function editDelivery(job: { _id: Types.ObjectId; organizationId: T
   const before = [delivery.title, delivery.body].filter(Boolean).join('\n');
   const after = [set.title ?? delivery.title, set.body ?? delivery.body].filter(Boolean).join('\n');
   const example = editorialExample(before, after);
-  const done = await PublishDelivery.updateOne({ ...filter, status: 'ready', updatedAt: delivery.updatedAt }, { $set: { ...set, ...(example ? { voiceExample: example } : {}) } });
+  const done = await PublishDelivery.updateOne({ ...filter, status: 'ready', updatedAt: delivery.updatedAt }, { $set: { ...set, ...(after !== before ? { editedByPerson: true } : {}), ...(example ? { voiceExample: example } : {}) } });
   return done.matchedCount ? { ok: true } : { ok: false, status: 409, error: 'This post changed. Refresh before editing again.' };
 }
 
@@ -1111,6 +1116,8 @@ export interface DeliveryView {
   /** Waiting for the Reddit card, and until when. */
   heldFor?: 'reddit';
   holdUntil?: string;
+  /** A Reddit card: the posts waiting for it, shown and edited on the same card. */
+  following?: DeliveryView[];
   /** Admin records: each field as the form shows it, and the filled form (or the page after saving) as a JPEG. */
   fields: { label: string; value: string }[] | null;
   editableFields?: { key: string; label: string; type: string; required: boolean; options?: { value: string; label: string }[]; value: string | boolean }[];
@@ -1173,6 +1180,8 @@ export async function publishingView(job: { _id: Types.ObjectId; publishing?: un
   let redditHistory: Awaited<ReturnType<typeof redditDealHistory>> | undefined;
   const visibleReady: DeliveryLean[] = [];
   for (const delivery of ready) {
+    // Posts waiting for the Reddit card are handled through it, so they are not a second thing to do.
+    if (delivery.heldFor === 'reddit' && delivery.status === 'ready') continue;
     if (delivery.platform === 'reddit' && config.redditDealPolicy && delivery.status === 'ready') {
       const full = await PublishDelivery.findById(delivery._id).lean();
       if (full && !redditHistory) redditHistory = await redditDealHistory(full);
@@ -1192,7 +1201,12 @@ export async function publishingView(job: { _id: Types.ObjectId; publishing?: un
     source: config.source,
     notes: raw.notes ?? {},
     admin: config.admin ? { formUrl: config.admin.formUrl, listUrl: config.admin.listUrl, fields: config.admin.fields.map((f) => ({ label: f.label || f.key, required: f.required })) } : null,
-    ready: visibleReady.map(view),
+    ready: visibleReady.map((delivery) => {
+      const shown = view(delivery);
+      if (delivery.platform !== 'reddit') return shown;
+      const following = ready.filter((other) => other.heldFor === 'reddit' && other.status === 'ready' && String(other.itemId) === String(delivery.itemId)).map(view);
+      return following.length ? { ...shown, following } : shown;
+    }),
     recent: recent.map(view),
     postedThisWeek,
   };

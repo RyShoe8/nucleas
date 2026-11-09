@@ -347,6 +347,39 @@ describe('publishing jobs', () => {
       expect(facebook.heldFor).toBeUndefined();
     });
 
+    it('shows one card: the Reddit post, with the waiting posts on it', async () => {
+      const { current } = await start(writer(() => null));
+      const view = (await publishingView(current))!;
+      expect(view.ready.map((d) => d.platform)).toEqual(['reddit']);
+      expect(view.ready[0]?.following?.map((d) => d.platform).sort()).toEqual(['bluesky', 'facebook']);
+    });
+
+    it('asks again for a Bluesky post the edits made too long, instead of cutting it', async () => {
+      const long = 'x'.repeat(400);
+      const asked: string[] = [];
+      const write = writer((system, user) => {
+        if (!system.includes('Bluesky')) return JSON.stringify({ body: 'Facebook with the edits' });
+        asked.push(user);
+        return JSON.stringify({ body: user.includes('Keep it under 300') ? 'Bluesky short with the edits' : long });
+      });
+      const { current, card } = await start(write);
+      const reddit = await card('reddit');
+      await editDelivery(current, String(reddit._id), { body: 'Reddit body with a correction' });
+      await markPosted(current, String(reddit._id), String(userId), undefined, { ...deps(), write });
+      expect(asked).toHaveLength(2);
+      expect((await card('bluesky')).body).toBe('Bluesky short with the edits');
+    });
+
+    it('keeps even a one-word change the person made to a waiting post', async () => {
+      const write = writer((system) => JSON.stringify({ body: system.includes('Bluesky') ? 'Bluesky with the edits' : 'Facebook with the edits' }));
+      const { current, card } = await start(write);
+      await editDelivery(current, String((await card('bluesky'))._id), { body: 'Bluesky as written!' });
+      const reddit = await card('reddit');
+      await editDelivery(current, String(reddit._id), { body: 'Reddit body with a correction' });
+      await markPosted(current, String(reddit._id), String(userId), undefined, { ...deps(), write });
+      expect((await card('bluesky')).body).toBe('Bluesky as written!');
+    });
+
     it('lets them go as written when Reddit is skipped', async () => {
       const { current, card } = await start(writer(() => null));
       await skipDelivery(current, String((await card('reddit'))._id), String(userId), deps());
