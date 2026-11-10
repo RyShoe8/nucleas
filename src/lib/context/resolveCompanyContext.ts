@@ -1,3 +1,4 @@
+import { companyFactsContext } from '@/lib/companies/companyFacts';
 import { Types } from 'mongoose';
 import Project from '@/lib/models/Project';
 import ContentItem from '@/lib/models/ContentItem';
@@ -70,6 +71,13 @@ export async function resolveCompanyContext(
       .join('\n'),
   });
   sources.push('company profile');
+  // What the Company Overview found and what the company corrected: audience, topics, competitors, key facts.
+  const facts = await companyFactsContext(viewer.organizationId, companyId, profile.description).catch(() => '');
+  if (facts) {
+    const company = sections[sections.length - 1];
+    company.body = `${company.body.replace(/\nDescription: [^\n]*/, '')}\n${facts}`;
+    sources.push('company information');
+  }
 
   // The company's direction and Voice, so anything the assistant advises or writes stays on them.
   const [direction, voice] = await Promise.all([upstreamContext(viewer.organizationId, cid).catch(() => ''), brandVoiceContext(viewer.organizationId, cid).catch(() => '')]);

@@ -5,6 +5,8 @@ import { useWindowManager } from '@/hooks/os/useWindowManager';
 import type { ModuleRenderContext } from '@/lib/os/types';
 import { RELATIONSHIP_LABEL, type OsCompanyDetail, type OsConnection } from './companyTypes';
 import CompanyTeamPanel from './CompanyTeamPanel';
+import CompanySwitcher from './CompanySwitcher';
+import CompanyAbout from './CompanyAbout';
 import CompanySnapshot from './CompanySnapshot';
 import { setAssistantFocus } from '@/lib/os/assistantFocus';
 import CompanyTimeline from './CompanyTimeline';
@@ -17,7 +19,8 @@ import { SOCIAL_NETWORK_LABELS } from '@/lib/utils/socialUrls';
 import type { SocialNetwork } from '@/lib/models/Project';
 
 export default function CompanyModule({ payload }: ModuleRenderContext) {
-    const companyId = payload?.companyId;
+    // The screen can move to another company in place, keeping the tab you are on.
+    const [companyId, setCompanyId] = useState(payload?.companyId);
     const [section, setSection] = useState(payload?.section ?? 'performance');
     const [detail, setDetail] = useState<OsCompanyDetail | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -58,19 +61,38 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
     return (
         <div className="h-full overflow-y-auto p-5 space-y-5 text-text-primary">
             <header className="flex items-start gap-3">
-                <span
-                    aria-hidden
-                    className="mt-1 h-3 w-3 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: company.color ?? '#64748b' }}
-                />
                 <div className="min-w-0 flex-1">
-                    <h2 className="text-lg font-semibold leading-tight">{company.name}</h2>
+                    <CompanySwitcher current={company} onSwitch={(next) => { setDetail(null); setFocusJobId(undefined); setCompanyId(next.id); }} />
                     <p className="text-xs text-text-secondary">
                         {RELATIONSHIP_LABEL[company.relationship]}
                         {company.devUrl ? ` · dev ${company.devUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}` : ''}
                     </p>
-                    <details className="mt-2 text-xs">
-                    <summary className="cursor-pointer text-text-secondary">Company details</summary>
+                    <button type="button" className="mt-1 block text-left text-sm text-text-secondary hover:text-text-primary" onClick={() => setSection('about')} title="Open About: what it does, who it is for, competitors and key facts">
+                        <span className="line-clamp-2">{company.description || 'Add what this company does, who it is for and what the team should know.'}</span>
+                        <span className="text-xs text-primary">About {company.name} →</span>
+                    </button>
+                    <SocialLinks links={company.socialLinks ?? []} />
+                </div>
+                <div className="flex flex-col gap-2">
+                    <CompanyContentButton companyId={company.id} companyName={company.name} />
+                    <details className="text-xs">
+                    <summary className="cursor-pointer text-text-secondary">Brand and planning</summary>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                    <VoiceButton companyId={company.id} companyName={company.name} status={detail.voiceStatus ?? 'none'} />
+                    <PropertyOverviewButton companyId={company.id} companyName={company.name} canManage={detail.canManage} />
+                    <MarketingPlanButton companyId={company.id} companyName={company.name} />
+                    <AskButton companyId={company.id} companyName={company.name} />
+                    </div>
+                    </details>
+                </div>
+            </header>
+
+            <nav aria-label="Company workspace" className="sticky top-0 z-10 flex gap-1 rounded-xl border border-border bg-background p-1">
+                {[['performance', 'Performance'], ['team', 'Team'], ['activity', 'Activity'], ['about', 'About'], ['setup', 'Setup']].map(([id, label]) => <button key={id} aria-pressed={section === id} onClick={() => setSection(id)} className={`flex-1 rounded-lg px-3 py-2 text-sm ${section === id ? 'bg-primary/15 text-primary font-medium' : 'text-text-secondary hover:bg-background-card'}`}>{label}</button>)}
+            </nav>
+            {section === 'about' && <CompanyAbout key={company.id} companyId={company.id} companyName={company.name}
+                overviewAction={<PropertyOverviewButton companyId={company.id} companyName={company.name} canManage={detail.canManage} />}
+                basics={<>
                     <SubredditEditor
                         companyId={company.id}
                         subreddit={company.subreddit}
@@ -89,29 +111,7 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                             setActivityKey((key) => key + 1);
                         }}
                     />
-                    </details>
-                    {company.description ? (
-                        <p className="mt-1 text-sm text-text-secondary line-clamp-2">{company.description}</p>
-                    ) : null}
-                    <SocialLinks links={company.socialLinks ?? []} />
-                </div>
-                <div className="flex flex-col gap-2">
-                    <CompanyContentButton companyId={company.id} companyName={company.name} />
-                    <details className="text-xs">
-                    <summary className="cursor-pointer text-text-secondary">Brand and planning</summary>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                    <VoiceButton companyId={company.id} companyName={company.name} status={detail.voiceStatus ?? 'none'} />
-                    <PropertyOverviewButton companyId={company.id} companyName={company.name} canManage={detail.canManage} />
-                    <MarketingPlanButton companyId={company.id} companyName={company.name} />
-                    <AskButton companyId={company.id} companyName={company.name} />
-                    </div>
-                    </details>
-                </div>
-            </header>
-
-            <nav aria-label="Company workspace" className="sticky top-0 z-10 flex gap-1 rounded-xl border border-border bg-background p-1">
-                {[['performance', 'Performance'], ['team', 'Team'], ['activity', 'Activity'], ['setup', 'Setup']].map(([id, label]) => <button key={id} aria-pressed={section === id} onClick={() => setSection(id)} className={`flex-1 rounded-lg px-3 py-2 text-sm ${section === id ? 'bg-primary/15 text-primary font-medium' : 'text-text-secondary hover:bg-background-card'}`}>{label}</button>)}
-            </nav>
+                </>} />}
             {section === 'team' && <CompanyTeamPanel key={`${company.id}:${focusJobId ?? ''}`} companyId={company.id} companyName={company.name} focusJobId={focusJobId} />}
             {section === 'performance' && <CompanySnapshot
                 key={company.id}

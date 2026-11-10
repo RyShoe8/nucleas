@@ -1,4 +1,5 @@
 'use client';
+import Modal from '@/components/ui/Modal';
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { useOsAuth } from '@/hooks/os/useOsAuth';
@@ -94,7 +95,7 @@ export function dayTicks(firstMs: number, lastMs: number): { ms: number; label: 
     return out;
 }
 
-export function Sparkline({ series, label, start, end, format }: { series: { value: number; date?: string }[]; label: string; start?: string; end?: string; format?: (value: number) => string }) {
+export function Sparkline({ series, label, start, end, format, height = 56 }: { series: { value: number; date?: string }[]; label: string; start?: string; end?: string; format?: (value: number) => string; height?: number }) {
     if (!series.length) return null;
     const show = format ?? ((value: number) => new Intl.NumberFormat('en-US').format(Math.round(value)));
     const dated = series.every(p => p.date);
@@ -111,7 +112,7 @@ export function Sparkline({ series, label, start, end, format }: { series: { val
     return <figure className="text-primary" aria-label={`${label}; ${start ?? series[0].date ?? ''} to ${end ?? series.at(-1)?.date ?? ''}; ${series.length} observations`}>
         <div className="flex justify-between text-[10px] tabular-nums text-text-secondary"><span>High {show(max)}</span><span>Low {show(min)}</span></div>
         <div className="mx-1">
-            <svg viewBox="0 0 100 40" width="100%" height={56} preserveAspectRatio="none" role="img" aria-label={`${label} by day`} className="block overflow-visible">
+            <svg viewBox="0 0 100 40" width="100%" height={height} preserveAspectRatio="none" role="img" aria-label={`${label} by day`} className="block overflow-visible">
                 <title>{label}: a missing day is a gap, not zero</title>
                 {ticks.map(tick => <line key={tick.ms} x1={across(tick.ms)} x2={across(tick.ms)} y1={tick.major ? 0 : 37} y2={40} stroke="currentColor" strokeOpacity={tick.major ? 0.18 : 0.3} strokeWidth="1" vectorEffect="non-scaling-stroke" />)}
                 <line x1="0" x2="100" y1="40" y2="40" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1" vectorEffect="non-scaling-stroke" />
@@ -174,11 +175,25 @@ const METRIC_GROUPS: { title: string; metrics: MetricSlot[] }[] = [
 const REVENUE_KEYS = new Set(METRIC_GROUPS.find(group => group.title === 'Revenue')!.metrics.map(slot => slot.key));
 
 function MetricCard({ m, slot }: { m?: OsMetric; slot: MetricSlot }) {
+    const [open, setOpen] = useState(false);
     const c = m?.coverage;
+    const shown = (n: number) => m?.unit === 'money' && m.currency ? new Intl.NumberFormat('en-US', { style: 'currency', currency: m.currency }).format(n / 100) : formatMetric(m?.unit ?? 'count', n);
     const value = !m ? '–' : m.unit === 'money' ? m.currency && !m.warning ? new Intl.NumberFormat('en-US', { style: 'currency', currency: m.currency }).format(m.current / 100) : '–' : formatMetric(m.unit, m.current);
     return <div className="rounded-xl border border-border bg-background-card/40 p-3 min-w-0 space-y-1">
         <div className="flex items-baseline justify-between gap-2"><span className="text-xs text-text-secondary">{slot.label}</span><ChangeBadge change={m?.warning ? null : m?.change ?? null} /></div>
-        <div className="text-2xl font-semibold tabular-nums">{value}</div>
+        {m?.series.length ? <button type="button" className="block text-left text-2xl font-semibold tabular-nums hover:text-primary" onClick={() => setOpen(true)} title={`Open ${slot.label}: each day, the source and how complete it is`}>{value} <span className="align-middle text-xs font-normal text-primary">Details →</span></button> : <div className="text-2xl font-semibold tabular-nums">{value}</div>}
+        {m && open ? <Modal isOpen onClose={() => setOpen(false)} title={slot.label} maxWidth="3xl" appearance="theme">
+            <div className="space-y-4 text-sm">
+                <p><span className="text-3xl font-semibold tabular-nums">{value}</span> <ChangeBadge change={m.warning ? null : m.change ?? null} /><span className="ml-2 text-text-secondary">{c ? `${c.start} to ${c.end}${m.previous !== null && m.previous !== undefined ? `, against ${shown(m.previous)} in the ${c.days} days before` : ''}` : `Latest value${m.asOf ? `, ${m.asOf}` : ''}`}</span></p>
+                {m.warning ? <p className="text-amber-300">{m.warning}</p> : <Sparkline series={m.series} label={slot.label} start={c?.start} end={c?.end} format={shown} height={180} />}
+                {c ? <p className={c.observed < c.days ? 'text-amber-300' : 'text-text-secondary'}>{c.observed} of {c.days} days have a recorded value{c.observed < c.days ? '. The total covers only those days; a missing day is unknown, not zero.' : '.'}</p> : null}
+                <div className="max-h-64 overflow-y-auto rounded-lg border border-border">
+                    <table className="w-full text-left text-sm"><thead className="sticky top-0 bg-background text-xs text-text-secondary"><tr><th className="px-3 py-2 font-normal">Day</th><th className="px-3 py-2 text-right font-normal">{slot.label}</th></tr></thead>
+                        <tbody>{[...m.series].reverse().map((point) => <tr key={point.date} className="border-t border-border"><td className="px-3 py-1.5">{new Date(point.date + 'T00:00:00Z').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })}</td><td className="px-3 py-1.5 text-right tabular-nums">{shown(point.value)}</td></tr>)}</tbody></table>
+                </div>
+                <p className="text-xs text-text-secondary">Source: {m.source ?? 'Company evidence'}{m.updatedAt ? ` · stored ${new Date(m.updatedAt).toLocaleString()}` : ''}. Use the timeframe at the top of Performance to see a longer or shorter period.</p>
+            </div>
+        </Modal> : null}
         <p className="text-[11px] text-text-secondary">{!m ? 'No observations for this period' : c ? `${c.start} → ${c.end}` : `Latest observation${m.asOf ? ` · ${m.asOf}` : ''}`}</p>
         {c && <p className={`text-[11px] ${c.observed < c.days ? 'text-amber-300' : 'text-text-secondary'}`}>{c.observed}/{c.days} days recorded{c.observed < c.days ? ' · partial total' : ''}</p>}
         {m?.series.length && !m.warning ? <Sparkline series={m.series} label={slot.label} start={c?.start} end={c?.end} format={(value) => m.unit === 'money' && m.currency ? new Intl.NumberFormat('en-US', { style: 'currency', currency: m.currency, maximumFractionDigits: 0 }).format(value / 100) : formatMetric(m.unit, value)} /> : null}

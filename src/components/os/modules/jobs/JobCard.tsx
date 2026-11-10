@@ -337,62 +337,55 @@ function Questions({ job, onChange }: { job: JobView; onChange: (j: JobView) => 
     );
 }
 
+/** The first sentences of a brief: enough to know what a run does without reading all of it. */
+export function briefLead(instructions: string, max = 320): string {
+    const clean = instructions.replace(/\s+/g, ' ').trim();
+    if (clean.length <= max) return clean;
+    const cut = clean.slice(0, max);
+    const stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '));
+    return stop > max * 0.4 ? cut.slice(0, stop + 1) : `${cut.slice(0, cut.lastIndexOf(' '))}…`;
+}
+
+/** The plan as a person reads it: what will happen and what you get, then the reasoning and rules one click away. */
 function DesignSummary({ job }: { job: JobView }) {
     const d = job.design;
     if (!d) return null;
+    const required = d.fields.filter((f) => f.required);
+    const optional = d.fields.filter((f) => !f.required);
+    const lead = briefLead(d.instructions);
+    const tile = 'rounded-lg border border-border p-2.5';
     return (
-        <div className="space-y-2 text-xs">
-            <dl className="grid grid-cols-[110px_1fr] gap-x-2 gap-y-1">
-                <dt className="text-text-secondary">Category</dt>
-                <dd className="capitalize">{d.category}</dd>
-                <dt className="text-text-secondary">Schedule</dt>
-                <dd>
-                    {scheduleLabel(d.schedule)} · {d.recordsPerRun} record{d.recordsPerRun === 1 ? '' : 's'} per run
-                </dd>
-                <dt className="text-text-secondary">Results go</dt>
-                <dd>
-                    {job.deliveryLabel}
-                    {d.delivery.detail ? <span className="block text-text-secondary">{d.delivery.detail}</span> : null}
-                </dd>
-                <dt className="text-text-secondary">Collects</dt>
-                <dd>{d.fields.map((f) => `${f.label}${f.required ? '*' : ''}`).join(', ')}</dd>
-                <dt className="text-text-secondary">Sources</dt>
-                <dd>{d.sourcePolicy}</dd>
+        <div className="space-y-3 text-sm">
+            <div>
+                <p className="text-[11px] uppercase tracking-wider text-text-secondary">The plan</p>
+                <p className="mt-1 leading-6">{lead}</p>
+            </div>
+            <dl className="grid gap-2 sm:grid-cols-3">
+                <div className={tile}><dt className="text-[11px] uppercase tracking-wider text-text-secondary">How often</dt><dd className="mt-0.5">{scheduleLabel(d.schedule)}<span className="block text-xs text-text-secondary">{d.recordsPerRun} result{d.recordsPerRun === 1 ? '' : 's'} each time</span></dd></div>
+                <div className={tile}><dt className="text-[11px] uppercase tracking-wider text-text-secondary">Where results go</dt><dd className="mt-0.5">{job.deliveryLabel}</dd></div>
+                <div className={tile}><dt className="text-[11px] uppercase tracking-wider text-text-secondary">Kind of work</dt><dd className="mt-0.5 capitalize">{d.category}</dd></div>
             </dl>
+            <div>
+                <p className="text-[11px] uppercase tracking-wider text-text-secondary">What you get each time</p>
+                <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                    {required.map((f) => <li key={f.key} className="rounded-full border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs" title={f.description}>{f.label}</li>)}
+                    {optional.map((f) => <li key={f.key} className="rounded-full border border-border px-2.5 py-1 text-xs text-text-secondary" title={f.description}>{f.label} <span className="opacity-70">when available</span></li>)}
+                </ul>
+            </div>
             {d.delivery.setupSteps.length ? (
-                <div className={`rounded border p-2 ${job.deliveryRunnable ? 'border-border' : 'border-amber-400/40'}`}>
+                <div className={`rounded-lg border p-2.5 ${job.deliveryRunnable ? 'border-border' : 'border-amber-400/40'}`}>
                     <p className="font-medium">One-time setup{job.deliveryRunnable ? '' : ' (needed before real runs)'}</p>
-                    <ol className="list-decimal pl-4">
-                        {d.delivery.setupSteps.map((s, i) => (
-                            <li key={i}>{s}</li>
-                        ))}
-                    </ol>
+                    <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-xs">{d.delivery.setupSteps.map((step, i) => <li key={i}>{step}</li>)}</ol>
                 </div>
             ) : null}
-            {d.safeguards.length ? (
-                <div>
-                    <p className="font-medium">Safeguards</p>
-                    <ul className="list-disc pl-4 text-text-secondary">
-                        {d.safeguards.map((s, i) => (
-                            <li key={i}>{s}</li>
-                        ))}
-                    </ul>
-                </div>
-            ) : null}
-            {d.findings.length ? (
-                <details>
-                    <summary className="cursor-pointer text-text-secondary">What Nucleas found ({d.findings.length})</summary>
-                    <ul className="list-disc pl-4 text-text-secondary">
-                        {d.findings.map((s, i) => (
-                            <li key={i}>{s}</li>
-                        ))}
-                    </ul>
-                </details>
-            ) : null}
-            <details>
-                <summary className="cursor-pointer text-text-secondary">Instructions each run follows</summary>
-                <p className="whitespace-pre-wrap text-text-secondary">{d.instructions}</p>
-            </details>
+            <div className="divide-y divide-border rounded-lg border border-border text-sm">
+                {d.findings.length ? <details className="p-2.5"><summary className="cursor-pointer">Why this plan <span className="text-text-secondary">· {d.findings.length} thing{d.findings.length === 1 ? '' : 's'} the team found first</span></summary><ul className="mt-2 list-disc space-y-1 pl-5 text-text-secondary">{d.findings.map((finding, i) => <li key={i}>{finding}</li>)}</ul></details> : null}
+                {d.safeguards.length ? <details className="p-2.5"><summary className="cursor-pointer">Rules it will not break <span className="text-text-secondary">· {d.safeguards.length}</span></summary><ul className="mt-2 list-disc space-y-1 pl-5 text-text-secondary">{d.safeguards.map((rule, i) => <li key={i}>{rule}</li>)}</ul></details> : null}
+                <details className="p-2.5"><summary className="cursor-pointer">Where it gets its information</summary><p className="mt-2 text-text-secondary">{d.sourcePolicy}</p></details>
+                {d.delivery.detail ? <details className="p-2.5"><summary className="cursor-pointer">Exactly what is saved, and where</summary><p className="mt-2 text-text-secondary">{d.delivery.detail}</p></details> : null}
+                {d.fields.some((f) => f.description) ? <details className="p-2.5"><summary className="cursor-pointer">What each part of a result means</summary><dl className="mt-2 space-y-1.5 text-text-secondary">{d.fields.filter((f) => f.description).map((f) => <div key={f.key}><dt className="inline font-medium text-text-primary">{f.label}: </dt><dd className="inline">{f.description}</dd></div>)}</dl></details> : null}
+                <details className="p-2.5"><summary className="cursor-pointer">The full brief each run follows</summary><p className="mt-2 whitespace-pre-wrap text-text-secondary">{d.instructions}</p></details>
+            </div>
         </div>
     );
 }
