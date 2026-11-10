@@ -3,6 +3,8 @@ import { changedMethod, planResearch, researchStrategy, scoutSources, strategyBr
 import { NEWS_SLIDES_PROMPT } from '@/lib/ai/answerSlides';
 import { Types } from 'mongoose';
 import { z } from 'zod';
+import { ACTIVE_ROLES, askMembers } from '@/lib/companies/teamConsult';
+import { TEAM, TEAM_ROLES } from '@/lib/companies/teamRoles';
 import { attemptCompanyCredentialChat } from '@/lib/ai/companyChat';
 import type { TeamChatTurn } from '@/lib/ai/teamChat';
 import type { CompanyProfile, CompanyViewer } from '@/lib/companies/companyProfile';
@@ -37,6 +39,7 @@ const MAX_RESEARCH = 3;
 const PLAN_MAX_TOKENS = 4000;
 const REVIEW_MAX_TOKENS = 5000;
 
+const MAX_TEAM = 3;
 const planSchema = z.object({
   kind: z.enum(['answer', 'clarify']),
   /** company = needs Nucleas data; general = world knowledge; mixed = both. */
@@ -57,6 +60,8 @@ const planSchema = z.object({
   actions: z.array(z.object({ company: z.string().max(200), tool: z.string().max(100) })).max(MAX_ACTIONS).default([]),
   outline: z.array(z.string().max(400)).max(12).default([]),
   review: z.boolean().default(false),
+  /** Team members whose judgement the answer needs, each with the question put to them. */
+  team: z.array(z.object({ member: z.enum(TEAM_ROLES), ask: z.string().min(8).transform((text) => text.slice(0, 400)), company: z.string().max(200).optional() })).max(6).default([]),
   /** A change to a company's website or app code; planned against its repository and queued for approval. */
   codeChange: z.object({ company: z.string().max(200), request: z.string().min(5).max(4000) }).optional(),
   /** Non-code work to set up as a job (once or repeating); Nucleas designs it and a person approves. */
@@ -138,7 +143,7 @@ export function codeChangeRequest(restated: string, original: string): string {
 }
 
 export interface StageRecord {
-  stage: 'plan' | 'fetch' | 'research' | 'verify' | 'size' | 'gaps' | 'work' | 'check' | 'review' | 'code' | 'job';
+  stage: 'plan' | 'fetch' | 'research' | 'verify' | 'size' | 'gaps' | 'team' | 'work' | 'check' | 'review' | 'code' | 'job';
   model?: string;
   free?: boolean;
   costMicros?: number | null;
@@ -224,7 +229,7 @@ function plannerPrompt(context: PortfolioContext, toolCatalog: string, today: st
     'Do NOT answer the question. Decide what data to fetch and how the answer should be structured. A separate writer produces the answer from the data you request.',
     '',
     'Return ONLY a JSON object:',
-    '{"kind":"answer"|"clarify","scope":"company"|"general"|"mixed","clarifyQuestion":"...","research":[{"query":"..."}],"deepResearch":{"question":"..."},"fetch":[{"company":"<exact name>","tool":"<tool>","days":28}],"actions":[{"company":"<exact name>","tool":"<change tool>"}],"codeChange":{"company":"<exact name>","request":"<the change, in full>"},"job":{"company":"<exact name>","request":"<the work, in full>"},"outline":["point 1","point 2"],"review":true|false}',
+    '{"kind":"answer"|"clarify","scope":"company"|"general"|"mixed","clarifyQuestion":"...","research":[{"query":"..."}],"deepResearch":{"question":"..."},"fetch":[{"company":"<exact name>","tool":"<tool>","days":28}],"team":[{"member":"<member>","ask":"<the question for them>","company":"<exact name, when about one company>"}],"actions":[{"company":"<exact name>","tool":"<change tool>"}],"codeChange":{"company":"<exact name>","request":"<the change, in full>"},"job":{"company":"<exact name>","request":"<the work, in full>"},"outline":["point 1","point 2"],"review":true|false}',
     '',
     'Rules:',
     '- scope: "company" for questions about these businesses, "general" for anything else (world knowledge, how-to, industry questions), "mixed" when both are needed.',
@@ -237,6 +242,7 @@ function plannerPrompt(context: PortfolioContext, toolCatalog: string, today: st
     `- actions: only when the user explicitly asks for a change; at most ${MAX_ACTIONS}.`,
     '- job: only for work that repeats or keeps watching ("every day…", "weekly…", "let me know when…"), work that acts outside this chat (adds to a catalog or site, publishes, sends, outreach such as earning backlinks), or when the user asks for a job. Restate the full request (what, for which company, how often, where results should go if said). Nucleas designs the job, asks what it must, and a person approves it. Leave fetch, research and actions empty when you set it. A one-time request for information is NEVER a job, however large: "find", "list", "rank", "compare", "research" and "build me a list" are answered right here with research or deepResearch. A change to site code is a codeChange.',
     '- codeChange: when the user asks to change, fix, add to or plan an edit of a company website or app (its code), OR reports something wrong on it that code would fix ("X shows up where it should not", "remove the listing under Y", a page URL plus a problem), and that company has a code repository listed below. Restate the full request so it stands alone, including any URL, what is wrong and what they want instead. It is planned against the repository and waits for approval; nothing is changed yet. Leave fetch, research and actions empty when you set it. Never answer such a report from guesses about the code.',
+    `- team: the company's specialists. Bring one in whenever the answer needs judgement in their field: advice, a recommendation, a plan, a critique, a "should we" or "how do we" question. Bring in several (at most ${MAX_TEAM}) when the question crosses fields, for example a redesign that affects sign-ups needs design and marketing, and a new feature needs engineering and design. Give each the exact question for them. Each member has an intern who searches the web for them first. Leave team empty only for plain lookups of a fact or figure. Members: ${ACTIVE_ROLES.map((role) => `${role} (${TEAM[role].remit})`).join('; ')}`,
     '- review: true only when the answer recommends business decisions for these companies or compares them; false for lookups and general questions.',
     '- Prefer a reasonable assumption over a question: infer missing details (market, time frame, company) from the portfolio and conversation, and put the assumption in the outline so the answer states it. Use kind "clarify" only when no sensible answer is possible without it.',
     '- Outline exactly what the user asked for. Do not add requirements, verification checklists or extra sections they did not ask for.',
@@ -269,6 +275,7 @@ function writerPrompt(today: string): string {
     '- If "# What counts" is given, leave out anything that does not meet it instead of listing it with a warning.',
     '- If "# Site size" is given and the user asked to sort by size, sort by that rank, show it in a column named for what it is, and do not say a ranking is unavailable.',
     '- If a table could not reach the number asked for, give what was verified and say in one line how many were found. Never pad it. Say what any ranking is based on, and mark unknown values as unknown rather than guessing.',
+    '- If "# Your team\'s input" is given, build the answer on it. Say which member a recommendation comes from ("Design recommends…"), keep the links they cite, and where members disagree say so and give your own call. Do not add a separate section that just repeats each member.',
     '- Be concise.',
     NEWS_SLIDES_PROMPT,
     '- Speak to the user directly. Never mention the prompt, the outline, "the provided facts" or "the research provided"; say "I found" or cite the source instead.',
@@ -730,6 +737,22 @@ export async function runAskOrchestrator(
   }
 
   const facts = factSheet(fetched);
+
+  // The members the question needs. Each one's intern searches the web first, then the member weighs in with the company in view.
+  const teamAsks = [...new Map(plan.team.filter((ask) => TEAM[ask.member].active).map((ask) => [ask.member, ask])).values()].slice(0, MAX_TEAM);
+  let teamInput: Awaited<ReturnType<typeof askMembers>> = [];
+  if (teamAsks.length) {
+    say(`Asking ${teamAsks.map((ask) => TEAM[ask.member].name).join(', ')}`);
+    const named = (name?: string) => (name ? input.context.companies.find((c) => c.name.toLowerCase() === name.trim().toLowerCase()) : undefined);
+    const company = named(teamAsks.find((ask) => ask.company)?.company) ?? named(plan.fetch[0]?.company) ?? (input.context.companies.length === 1 ? input.context.companies[0] : undefined);
+    const situation = [`The person asked: ${input.text}`, facts ? `\n# Figures Nucleas has\n${facts.slice(0, 2500)}` : '', research.length ? `\n# Research gathered so far\n${research.join('\n\n').slice(0, 2500)}` : ''].join('\n');
+    teamInput = await askMembers(viewer, company?.id ?? null, teamAsks.map((ask) => ({ member: ask.member, question: ask.ask })), situation, { level: input.level, signal: input.signal, interactive: true, onProgress: input.onProgress }).catch(() => []);
+    for (const ask of teamAsks) {
+      const answer = teamInput.find((item) => item.member === ask.member);
+      stages.push({ stage: 'team', model: answer?.model, note: `${TEAM[ask.member].name}: ${answer ? ask.ask : 'gave no answer'}${answer?.sources?.length ? ` (intern read ${answer.sources.length} page${answer.sources.length === 1 ? '' : 's'})` : answer ? ' (intern found nothing usable)' : ''}` });
+      if (answer) evidence.data.push({ label: `${TEAM[ask.member].name} · asked: ${ask.ask}`, detail: [answer.advice, answer.research ? `\nWhat their intern found:\n${answer.research}` : ''].join('\n') });
+    }
+  }
   for (const item of fetched) evidence.data.push({ label: `${item.company} · ${item.tool}`, detail: factSheet([item]) });
   const detail = renderContext({ sections: input.context.sections.filter((s) => s.key !== 'portfolio') });
   const workUser = [
@@ -743,6 +766,7 @@ export async function runAskOrchestrator(
     research.length ? `\n# Web research\n${research.join('\n\n')}` : '',
     input.attachments ? `\n# Files the user attached\n${input.attachments}` : '',
     plan.scope !== 'general' && detail ? `\n# Company detail\n${detail}` : '',
+    teamInput.length ? `\n# Your team's input\n${teamInput.map((item) => `## ${TEAM[item.member].name}, asked: ${item.question}\n${item.advice}`).join('\n\n')}` : '',
   ].join('\n');
 
   // 3. Work (Rogly), with explicit-consent paid fallback only. Free models gather the research; after that much
@@ -759,6 +783,17 @@ export async function runAskOrchestrator(
     say(`Retrying the answer with ${shortModel(workChoice.model)}`);
     workTurn = await call(workChoice, { viewer, projectId: input.projectId, system: writerPrompt(today), user: workUser, history: input.history.slice(-4), signal: input.signal, maxTokens: writeTokens });
     stages.push({ stage: 'work', model: workChoice.model, free: workChoice.free, costMicros: addCost(workTurn), note: `paid retry (${input.level} cost)` });
+  }
+  // A paid writer that is out of credits or silent: the next best paid models for writing take over, in order.
+  if ((workTurn.role !== 'assistant' || !workTurn.text.trim()) && !workChoice.free && !input.signal?.aborted) {
+    const standIns = (await selectModel(org, plan.deepResearch ? 'review' : 'write', input.level, { models, settings })).backups ?? [];
+    for (const standIn of standIns.filter((c) => c.model !== workChoice!.model)) {
+      workChoice = standIn;
+      say(`Retrying the answer with ${shortModel(standIn.model)}`);
+      workTurn = await call(standIn, { viewer, projectId: input.projectId, system: writerPrompt(today), user: workUser, history: input.history.slice(-4), signal: input.signal, maxTokens: writeTokens });
+      stages.push({ stage: 'work', model: standIn.model, free: standIn.free, costMicros: addCost(workTurn), note: 'next best model after the first gave no answer' });
+      if (workTurn.role === 'assistant' && workTurn.text.trim()) break;
+    }
   }
   if (workTurn.role !== 'assistant' || !workTurn.text.trim()) {
     return { ...status(`The writer model (${workChoice.model}) could not answer: ${workTurn.text || 'no output'}.`), invocationIds: tools.invocationIds };

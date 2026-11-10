@@ -7,11 +7,10 @@ import { RELATIONSHIP_LABEL, type OsCompanyDetail, type OsConnection } from './c
 import CompanyTeamPanel from './CompanyTeamPanel';
 import CompanySnapshot from './CompanySnapshot';
 import { setAssistantFocus } from '@/lib/os/assistantFocus';
-import CompanyActivity from './CompanyActivity';
+import CompanyTimeline from './CompanyTimeline';
 import CodeRepositories from './CodeRepositories';
 import WebsiteConnectionPanel from './WebsiteConnectionPanel';
 import AdminAccount from './AdminAccount';
-import CompanyChanges from './CompanyChanges';
 import PropertyOverviewButton from './PropertyOverviewReport';
 import SocialIcon from '@/components/projects/SocialIcon';
 import { SOCIAL_NETWORK_LABELS } from '@/lib/utils/socialUrls';
@@ -23,6 +22,7 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
     const [detail, setDetail] = useState<OsCompanyDetail | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [activityKey, setActivityKey] = useState(0);
+    const [focusJobId, setFocusJobId] = useState<string | undefined>(typeof payload?.jobId === 'string' ? payload.jobId : undefined);
 
     const load = useCallback(async () => {
         if (!companyId) return;
@@ -112,7 +112,7 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
             <nav aria-label="Company workspace" className="sticky top-0 z-10 flex gap-1 rounded-xl border border-border bg-background p-1">
                 {[['performance', 'Performance'], ['team', 'Team'], ['activity', 'Activity'], ['setup', 'Setup']].map(([id, label]) => <button key={id} aria-pressed={section === id} onClick={() => setSection(id)} className={`flex-1 rounded-lg px-3 py-2 text-sm ${section === id ? 'bg-primary/15 text-primary font-medium' : 'text-text-secondary hover:bg-background-card'}`}>{label}</button>)}
             </nav>
-            {section === 'team' && <CompanyTeamPanel key={company.id} companyId={company.id} companyName={company.name} />}
+            {section === 'team' && <CompanyTeamPanel key={`${company.id}:${focusJobId ?? ''}`} companyId={company.id} companyName={company.name} focusJobId={focusJobId} />}
             {section === 'performance' && <CompanySnapshot
                 key={company.id}
                 companyId={company.id}
@@ -131,10 +131,7 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
             <IntegrationsSummary companyId={company.id} companyName={company.name} connections={connections} />
             </div>
             </section>}
-            {section === 'activity' && <section className="ui-card p-3">
-                <h3 className="text-sm font-medium">Recent activity</h3>
-                <div className="mt-3 space-y-4"><CompanyChanges companyId={company.id} /><CompanyActivity companyId={company.id} refreshKey={activityKey} /></div>
-            </section>}
+            {section === 'activity' && <CompanyTimeline key={company.id} companyId={company.id} refreshKey={activityKey} onOpenJob={(jobId) => { setFocusJobId(jobId); setSection('team'); }} />}
         </div>
     );
 }

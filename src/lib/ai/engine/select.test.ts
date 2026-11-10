@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { dedupeAcrossCredentials, describeModel, type AvailableModel } from './catalog';
-import { DEFAULT_PRICE_CEILINGS, checkScore, mergeOverrides, selectFrom, selectModel, type CostLevel, type Need } from './select';
+import { DEFAULT_PRICE_CEILINGS, MAX_BACKUPS, backupsFrom, checkScore, mergeOverrides, selectFrom, selectModel, type CostLevel, type Need } from './select';
 import { buildModelMetaView } from '@/lib/ai/rolePipeline/modelMeta';
 
 function model(id: string, free: boolean, price: number | null, profile = free ? 'rogly' : 'paid'): AvailableModel {
@@ -336,5 +336,29 @@ describe('the best writer is picked at free, low and medium', () => {
     const grounded = withWriting(measured(gemma, { json: 1, routing: 1, tools: 1, grounded: 1 }), 0.4);
     const writer = withWriting(measured(coder, { json: 1, routing: 1, tools: 1, grounded: 0.8 }), 0.95);
     for (const level of ['free', 'low', 'medium'] as const) expect(pick('write', level, [grounded, writer]).primary).toBe(coder.model);
+  });
+});
+
+describe('paid stand-ins for when a paid model fails', () => {
+  it('lists the next best affordable paid models, strongest first, without the one already picked', () => {
+    const s = selectFrom(ALL, 'plan', 'medium');
+    const backups = s.backups ?? [];
+    expect(backups.length).toBeGreaterThan(0);
+    expect(backups.length).toBeLessThanOrEqual(MAX_BACKUPS);
+    expect(backups.every((b) => !b.free)).toBe(true);
+    expect(backups.map((b) => b.model)).not.toContain(s.primary?.model);
+    const price = (id: string) => ALL.find((m) => m.model === id)!.blendedPricePer1M!;
+    // Within the ceiling, or the single cheapest capable model when nothing else fits it.
+    expect(backups.every((b) => price(b.model) <= DEFAULT_PRICE_CEILINGS.medium!) || backups.length === 1).toBe(true);
+    expect(new Set(backups.map((b) => b.model)).size).toBe(backups.length);
+  });
+
+  it('has none at the free level, and falls back to the cheapest capable model when nothing else fits the ceiling', () => {
+    expect(selectFrom(ALL, 'plan', 'free').backups).toEqual([]);
+    const tight = { ...DEFAULT_PRICE_CEILINGS, low: 0.01 };
+    const taken = selectFrom(ALL, 'plan', 'low', tight);
+    const backups = backupsFrom(ALL, 'plan', 'low', tight, [taken.primary]);
+    expect(backups).toHaveLength(1);
+    expect(backups[0]!.model).not.toBe(taken.primary?.model);
   });
 });

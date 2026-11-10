@@ -1,5 +1,6 @@
 import { teamRoleFor, type TeamRole } from '@/lib/companies/teamRoles';
 import { companyTeamContext } from '@/lib/companies/teamContext';
+import { renderAdvice, teamAdviceForJob, type MemberAdvice } from '@/lib/companies/teamConsult';
 import { PublishDelivery, PublishItem } from '@/lib/models/Publishing';
 import { importCasinoDrafts } from '@/lib/casinoDiscovery/service';
 import { retryDatabaseRead, retryIdempotentWrite } from '@/lib/db/retryRead';
@@ -67,6 +68,8 @@ export interface JobRunView {
 
 export interface JobView {
   teamRole?: TeamRole;
+  /** Teammates the owner asked before starting, and what they said. */
+  teamAdvice?: MemberAdvice[];
   id: string;
   companyId: string;
   projectId: string | null;
@@ -98,6 +101,7 @@ export interface JobView {
 
 type JobLean = {
   teamRole?: TeamRole;
+  teamAdvice?: { at?: Date; items?: MemberAdvice[] };
   _id: Types.ObjectId;
   understanding?: ConfirmedUnderstanding;
   organizationId: Types.ObjectId;
@@ -173,6 +177,7 @@ async function toView(job: JobLean, company: { name: string; subreddit?: string 
   const design = parsed.success ? parsed.data : null;
   return {
     teamRole: teamRoleFor(job),
+    teamAdvice: job.teamAdvice?.items ?? [],
     id: String(job._id),
     companyId: String(job.companyId),
     projectId: job.projectId ? String(job.projectId) : null,
@@ -329,9 +334,11 @@ export async function runDesign(viewer: CompanyViewer, jobId: string, options: {
   const job = await Job.findById(jobId).lean<JobLean>();
   if (!job) return;
   const previous = jobDesignSchema.safeParse(job.design);
+  options.onProgress?.('Checking whether a teammate should weigh in');
+  const advice = await teamAdviceForJob(job, viewer, { signal: options.signal, save: (teamAdvice) => Job.updateOne({ _id: job._id }, { $set: { teamAdvice } }) });
   const result = await designJob(viewer, {
     companyId: String(job.companyId),
-    request: `${job.request}\n\n${await companyTeamContext(job)}`,
+    request: [job.request, await companyTeamContext(job), renderAdvice(advice)].filter(Boolean).join('\n\n'),
     understanding: job.understanding,
     level: job.level ?? 'low',
     answers: job.answers,
@@ -544,7 +551,7 @@ export async function editResponsibility(viewer: CompanyViewer, id: string, inpu
     if (pending) return false;
     const update = await Job.updateOne({ _id: current._id, updatedAt: found.job.updatedAt }, {
       $set: { design: changed.data, status: 'proposed' },
-      $unset: { nextRunAt: '', completion: '', completedAt: '', error: '' },
+      $unset: { nextRunAt: '', completion: '', completedAt: '', error: '', teamAdvice: '' },
       $push: { events: event(viewer, 'responsibility_edited', 'Brief edited. New approval and dry run required; historical results retained.') },
     }, { session });
     return update.modifiedCount === 1;

@@ -21,6 +21,8 @@ const jobSchema = new Schema(
     companyId: { type: Schema.Types.ObjectId, ref: 'Client', required: true },
     /** Durable company specialist; older jobs resolve from their field without changing schedules. */
     teamRole: { type: String, enum: TEAM_ROLES },
+    /** What teammates advised when the owner asked them; asked once and reused by every run. */
+    teamAdvice: { at: { type: Date }, items: { type: [new Schema({ member: String, question: { type: String, maxlength: 400 }, advice: { type: String, maxlength: 2000 }, model: String, research: { type: String, maxlength: 3000 }, researchModel: String, sources: { type: [String], default: undefined } }, { _id: false })], default: undefined } },
     /** Project whose property/strategy this first-party skill operates on. */
     projectId: { type: Schema.Types.ObjectId, ref: 'Project' },
     createdByUserId: { type: Schema.Types.ObjectId, ref: 'User', required: true },

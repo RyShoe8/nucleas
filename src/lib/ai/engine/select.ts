@@ -48,6 +48,11 @@ export interface Selection {
   primary: ModelChoice | null;
   /** Used when the primary (free) model fails; only ever set when the level allows paying for a retry. */
   fallback: ModelChoice | null;
+  /**
+   * The next best paid models for this task, strongest first, for when a paid model is out of credits
+   * or does not respond. Never used to start paying: only after a paid model was already the one that failed.
+   */
+  backups?: ModelChoice[];
   source: 'pinned' | 'auto' | 'none';
 }
 
@@ -202,7 +207,29 @@ function paidFor(models: AvailableModel[], need: Need): AvailableModel[] {
   }
 }
 
+export const MAX_BACKUPS = 3;
+
+/**
+ * Paid stand-ins for a task at a level: the strongest remaining models within the level's price ceiling.
+ * When nothing else fits under the ceiling, the single cheapest capable model, the same rule the first
+ * pick follows, so a level is never left with no stand-in just because prices moved.
+ */
+export function backupsFrom(models: AvailableModel[], need: Need, level: CostLevel, ceilings: PriceCeilings = DEFAULT_PRICE_CEILINGS, taken: (ModelChoice | null)[] = []): ModelChoice[] {
+  if (level === 'free') return [];
+  const used = new Set(taken.filter((c): c is ModelChoice => c !== null).map((c) => `${c.profileId}:${c.model}`));
+  const rest = paidFor(models, need).filter((m) => !used.has(`${m.profileId}:${m.model}`));
+  const ceiling = ceilings[level];
+  const affordable = rankByPower(rest.filter((m) => ceiling === null || (m.blendedPricePer1M ?? Infinity) <= ceiling), need);
+  const picks = affordable.length ? affordable : [...rest].sort((a, b) => (a.blendedPricePer1M ?? Infinity) - (b.blendedPricePer1M ?? Infinity)).slice(0, 1);
+  return picks.slice(0, MAX_BACKUPS).map((m) => choice(m)!);
+}
+
 export function selectFrom(models: AvailableModel[], need: Need, level: CostLevel, ceilings: PriceCeilings = DEFAULT_PRICE_CEILINGS): Omit<Selection, 'source'> {
+  const picked = pickFrom(models, need, level, ceilings);
+  return { ...picked, backups: backupsFrom(models, need, level, ceilings, [picked.primary, picked.fallback]) };
+}
+
+function pickFrom(models: AvailableModel[], need: Need, level: CostLevel, ceilings: PriceCeilings): Omit<Selection, 'source' | 'backups'> {
   const free = freeFor(models, need);
   const base = { need, level };
   // Free: Rogly for everything, no paid fallback of any kind.
@@ -310,7 +337,7 @@ export async function selectModel(
   if (pin) {
     const pinned = models.find((m) => m.profileId === pin.profileId && m.model === pin.model);
     // At the free level a paid pin does not apply.
-    if (pinned && (level !== 'free' || pinned.free)) return { need, level, primary: choice(pinned), fallback: null, source: 'pinned' };
+    if (pinned && (level !== 'free' || pinned.free)) return { need, level, primary: choice(pinned), fallback: null, backups: backupsFrom(models, need, level, settings.priceCeilings, [choice(pinned)]), source: 'pinned' };
   }
   const auto = selectFrom(models, need, level, settings.priceCeilings);
   return { ...auto, source: auto.primary ? 'auto' : 'none' };

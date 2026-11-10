@@ -60,6 +60,11 @@ function nameStep(stage: AnswerStage): Pick<AnswerStep, 'name' | 'detail' | 'war
     }
     case 'gaps':
       return { name: 'Checked what was still missing', detail: note ? clip(sentence(note), 200) : undefined };
+    case 'team': {
+      const [member, ...rest] = note.split(': ');
+      const silent = /gave no answer$/.test(note);
+      return { name: silent ? `Asked ${member}, who gave no answer` : `Asked ${member}`, detail: silent ? undefined : clip(rest.join(': '), 260), warning: silent };
+    }
     case 'work':
       return { name: 'Wrote the answer', detail: plainNote };
     case 'review': {

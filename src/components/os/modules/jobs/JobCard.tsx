@@ -93,6 +93,7 @@ export interface JobRunView {
 
 export interface JobView {
     teamRole?: import('@/lib/companies/teamRoles').TeamRole;
+    teamAdvice?: import('@/lib/companies/teamConsult').MemberAdvice[];
     id: string;
     companyId: string;
     projectId: string | null;
@@ -228,7 +229,7 @@ export function jobFacts(job: JobView, options: { showCompany: boolean }): JobFa
     const d = job.design;
     const facts: JobFact[] = [];
     if (options.showCompany) facts.push({ label: 'Company', value: job.companyName });
-    if (job.teamRole) facts.push({ label: 'Owner', value: TEAM[job.teamRole].name });
+    if (job.teamRole && options.showCompany) facts.push({ label: 'Owner', value: TEAM[job.teamRole].name });
     if (d) facts.push({ label: 'Schedule', value: scheduleLabel(d.schedule) });
     if (d && d.schedule.kind !== 'once') {
         facts.push({ label: 'Last checked', value: job.lastRunAt ? new Date(job.lastRunAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Not yet' });

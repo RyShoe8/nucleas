@@ -8,7 +8,8 @@ import { freeModelBusy } from '@/lib/ai/control/dispatchLock';
  * The one way a feature asks the AI engine for a single plain-text answer. The organization's cost level
  * (or an explicit one) and its per-level choices decide the model for the need, so free models do the
  * work wherever the level says they do. At the medium level a failed free model is retried once on the
- * level's paid pick; low and free never pay to retry. The model that answered is returned so callers can
+ * level's paid pick; low and free never pay to retry. When a paid model is the one that fails (out of
+ * credits, no response), the next best paid models for the task are tried in turn. The model that answered is returned so callers can
  * record the path.
  */
 export interface EngineAnswer {
@@ -24,6 +25,11 @@ type AskInput = { organizationId: string; userId: string; system: string; user: 
 export interface EngineFailure {
   model: string;
   reason: string;
+}
+
+/** A failure that takes the whole credential with it (no credits, bad key), so its other models are skipped too. */
+export function credentialWideFailure(reason: string): boolean {
+  return /credit|quota|billing|insufficient|payment|balance|unauthori[sz]ed|invalid.{0,12}key|api key|\b40[123]\b/i.test(reason);
 }
 
 async function run(choice: ModelChoice, input: AskInput): Promise<string | null> {
@@ -84,11 +90,29 @@ export async function askEngine(input: { organizationId: string; userId: string;
     const later = await run(pick.primary, input);
     return later ? { text: later, model: pick.primary.model, usedFallback: false } : null;
   }
-  const text = await run(pick.primary, input);
+  // Remember why each model failed: a credential with no credits takes its other models out too.
+  const failures = new Map<string, string>();
+  const tracked: AskInput = { ...input, onFailure: (failure) => { failures.set(failure.model, failure.reason); input.onFailure?.(failure); } };
+  const text = await run(pick.primary, tracked);
   if (text) return { text, model: pick.primary.model, usedFallback: false };
+  let lastTried = pick.primary;
   if (pick.fallback) {
-    const retry = await run(pick.fallback, input);
+    const retry = await run(pick.fallback, tracked);
     if (retry) return { text: retry, model: pick.fallback.model, usedFallback: true };
+    lastTried = pick.fallback;
+  }
+  // Stand-ins only take over from a paid model. A free model failing at a level that does not pay to retry stays unpaid.
+  if (lastTried.free || input.signal?.aborted) return null;
+  const deadCredentials = new Set<string>();
+  const noteFailure = (choice: ModelChoice) => { if (credentialWideFailure(failures.get(choice.model) ?? '')) deadCredentials.add(choice.profileId); };
+  noteFailure(pick.primary);
+  if (pick.fallback) noteFailure(pick.fallback);
+  for (const backup of pick.backups ?? []) {
+    if (input.signal?.aborted) return null;
+    if (deadCredentials.has(backup.profileId)) continue;
+    const answer = await run(backup, tracked);
+    if (answer) return { text: answer, model: backup.model, usedFallback: true };
+    noteFailure(backup);
   }
   return null;
 }

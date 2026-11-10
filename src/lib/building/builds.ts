@@ -1,4 +1,5 @@
 import { companyTeamContext } from '@/lib/companies/teamContext';
+import { consultTeammates, renderAdvice, type MemberAdvice } from '@/lib/companies/teamConsult';
 import 'server-only';
 import { Types } from 'mongoose';
 import { BuildRequest, type BuildStatus } from '@/lib/models/BuildRequest';
@@ -29,6 +30,7 @@ const BUILD_TIMEOUT_MS = 12 * 60 * 1000;
 
 export interface BuildView {
   teamRole?: 'design' | 'engineering';
+  teamAdvice?: MemberAdvice[];
   id: string;
   companyId: string;
   companyName: string;
@@ -63,6 +65,7 @@ export interface BuildView {
 
 type BuildDoc = {
   teamRole?: 'design' | 'engineering';
+  teamAdvice?: { at?: Date; items?: MemberAdvice[] };
   _id: Types.ObjectId;
   organizationId: Types.ObjectId;
   companyId: Types.ObjectId;
@@ -104,6 +107,7 @@ function toView(doc: BuildDoc, companyName: string, canManage: boolean): BuildVi
   const r = doc.result;
   return {
     teamRole: doc.teamRole ?? 'engineering',
+    teamAdvice: doc.teamAdvice?.items ?? [],
     id: String(doc._id),
     companyId: String(doc.companyId),
     companyName,
@@ -208,7 +212,9 @@ export async function proposeCodeChange(
       .catch(() => [] as BuildDoc[])
   );
   const memberContext = await companyTeamContext({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(input.companyId), teamRole: input.teamRole ?? 'engineering', request: input.request });
-  const background = [memberContext, recent?.length ? renderTimeline(recent) : '', rejected].filter(Boolean).join('\n\n');
+  input.onProgress?.('Checking whether a teammate should weigh in');
+  const advice = await consultTeammates(viewer, input.companyId, input.teamRole ?? 'engineering', `Code change requested: ${input.request}`, { level: input.level, signal: input.signal, interactive: true }).catch(() => [] as MemberAdvice[]);
+  const background = [memberContext, renderAdvice(advice), recent?.length ? renderTimeline(recent) : '', rejected].filter(Boolean).join('\n\n');
   // With a admin account for the site the request names, look at the page as it is now (read-only, time-boxed).
   const startedAt = Date.now();
   const { observePageForRequest } = await import('@/lib/companies/adminAccount');
@@ -241,6 +247,7 @@ export async function proposeCodeChange(
     status: 'proposed',
     request: input.request.slice(0, 6000),
     teamRole: input.teamRole ?? 'engineering',
+    teamAdvice: { at: new Date(), items: advice },
     title: (turn.plan.title || 'Code change').slice(0, 200),
     summary: (turn.plan.summary || '').slice(0, 2000),
     steps: turn.plan.steps.slice(0, 40).map((s) => s.slice(0, 500)),

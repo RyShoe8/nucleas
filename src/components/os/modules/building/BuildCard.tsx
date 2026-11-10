@@ -6,6 +6,7 @@ import IdeChatMarkdown from '@/components/ide/IdeChatMarkdown';
 export type BuildStatus = 'proposed' | 'rejected' | 'queued' | 'building' | 'ready' | 'failed' | 'pr_opened' | 'discarded';
 
 export interface BuildView {
+    teamAdvice?: import('@/lib/companies/teamConsult').MemberAdvice[];
     id: string;
     companyId: string;
     companyName: string;

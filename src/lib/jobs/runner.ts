@@ -1,4 +1,5 @@
 import { companyTeamContext } from '@/lib/companies/teamContext';
+import { renderAdvice, teamAdviceForJob } from '@/lib/companies/teamConsult';
 import { TEAM, teamRoleFor } from '@/lib/companies/teamRoles';
 import { datasetAssignment, leadBrief, leadsNeedingCheck, leadsToFinish, openedPages, researchExclusions, researchReserve, saveScoutBatch, saveScreened, rememberQualificationGap } from './researchEvidence';
 import 'server-only';
@@ -450,6 +451,9 @@ export async function executeJobRun(runId: string): Promise<void> {
   const viewer = await loadCompanyViewer(String(job.createdByUserId));
   const profile = viewer ? await getCompanyProfile(viewer, String(job.companyId)) : null;
   if (!viewer || !profile) return fail('The company is no longer accessible.');
+  // Asked once and kept with the responsibility: a scheduled run reuses the answers instead of asking again.
+  const advice = renderAdvice(await teamAdviceForJob(job, viewer, { save: (teamAdvice) => Job.updateOne({ _id: job._id }, { $set: { teamAdvice } }) }));
+  if (advice) activeDesign.instructions += `\n\n${advice}`;
   const excludedProspects = activeDesign.skill === 'signature_outreach'
     ? (await listCompanyProfiles(viewer)).filter(company => company.relationship === 'owned' || company.relationship === 'internal').map(company => company.domain).filter((domain): domain is string => Boolean(domain))
     : [];

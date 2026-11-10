@@ -4,6 +4,8 @@ import mongoose, { Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 
 vi.mock('server-only', () => ({}));
+// Teammate advice has its own tests; here it would use up the model replies these tests queue.
+vi.mock('@/lib/companies/teamConsult', () => ({ teamAdviceForJob: async () => [], renderAdvice: () => '' }));
 vi.mock('./linkProspects', () => ({ linkProspectContext: async () => 'UNVERIFIED_DIRECTORY_QUEUE_MARKER', priorPlacementProblems: async () => [], rememberProspectOutcome: async () => undefined }));
 
 const mocks = vi.hoisted(() => ({ design: vi.fn(), chat: vi.fn(), browser: vi.fn(), models: vi.fn(), select: vi.fn(), verify: vi.fn() }));

@@ -1,27 +1,71 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TEAM, TEAM_ROLES, type TeamRole } from '@/lib/companies/teamRoles';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
+import { visibleInterval } from '@/lib/os/visibleInterval';
 import BuildCard, { type BuildView } from './building/BuildCard';
 import ResponsibilityEditor from './jobs/ResponsibilityEditor';
-import JobCard, { scheduleLabel, jobIsBusy, type JobView } from './jobs/JobCard';
-import { visibleInterval } from '@/lib/os/visibleInterval';
+import JobCard, { scheduleLabel, type JobView } from './jobs/JobCard';
+import { STEPS, buildStage, jobStage, type Stage, type StageGroup } from './teamStages';
 
 type Member = { role: TeamRole; name: string; remit: string; process: string; active: boolean; lessons: string };
+type TeamJob = JobView & { teamRole: TeamRole };
 type TeamBuild = BuildView & { teamRole?: 'design' | 'engineering' };
-type TeamData = { builds: TeamBuild[]; canManage: boolean; members: Member[]; jobs: (JobView & { teamRole: TeamRole })[] };
-export default function CompanyTeamPanel({ companyId, companyName }: { companyId: string; companyName: string }) {
+type TeamData = { builds: TeamBuild[]; canManage: boolean; members: Member[]; jobs: TeamJob[] };
+type Advice = NonNullable<JobView['teamAdvice']>;
+type Row = { id: string; title: string; role: TeamRole; stage: Stage; line: string; advice: Advice; job?: TeamJob; build?: TeamBuild };
+
+/** Who the owner asked before starting, what each said, and what their intern read on the web. */
+function Consulted({ owner, advice }: { owner: TeamRole; advice: Advice }) {
+  if (!advice.length) return null;
+  return <details className="rounded-lg border border-border p-3 text-sm">
+    <summary className="cursor-pointer">{TEAM[owner].name} asked {advice.map(item => TEAM[item.member].name).join(' and ')} before starting</summary>
+    <div className="mt-3 space-y-4">{advice.map(item => <div key={item.member}>
+      <p className="font-medium">{TEAM[item.member].name} <span className="font-normal text-text-secondary">· asked: {item.question}</span></p>
+      <p className="mt-1 whitespace-pre-wrap break-words text-text-secondary">{item.advice}</p>
+      {item.sources?.length ? <p className="mt-1 text-xs text-text-secondary">Their intern read {item.sources.length} page{item.sources.length === 1 ? '' : 's'}: {item.sources.slice(0, 6).map((url, index) => <a key={url} href={url} target="_blank" rel="noreferrer" className="underline mr-2">{(() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return `source ${index + 1}`; } })()}</a>)}</p> : <p className="mt-1 text-xs text-text-secondary">Their intern found nothing usable on the web.</p>}
+    </div>)}</div>
+  </details>;
+}
+
+const GROUPS: { id: StageGroup; title: string; hint: string }[] = [
+  { id: 'you', title: 'Needs you', hint: 'Nothing moves on these until you act.' },
+  { id: 'moving', title: 'In progress', hint: 'Your team is working. No action needed.' },
+  { id: 'live', title: 'Running', hint: 'Approved and running on its schedule.' },
+  { id: 'rest', title: 'Paused and finished', hint: '' },
+];
+const TOOLS: Partial<Record<TeamRole, [string, string][]>> = {
+  marketing: [['marketing', 'Strategy & campaigns'], ['content', 'Content']],
+  engineering: [['building', 'Building']],
+  design: [['building', 'Building']],
+  support: [['mail', 'Communications']],
+  creative: [['content', 'Content & assets']],
+};
+
+function Steps({ stage }: { stage: Stage }) {
+  return <ol className="flex items-center gap-1" aria-label={`Step ${stage.step + 1} of ${STEPS.length}: ${STEPS[stage.step]}`}>
+    {STEPS.map((label, index) => <li key={label} className="flex items-center gap-1">
+      <span className={`h-1.5 w-6 rounded-full ${index < stage.step ? 'bg-emerald-400/70' : index === stage.step ? (stage.group === 'you' ? 'bg-amber-300' : stage.group === 'moving' ? 'bg-sky-400 animate-pulse' : 'bg-emerald-400') : 'bg-border'}`} />
+      {index === stage.step ? <span className="text-[10px] uppercase tracking-wider text-text-secondary">{label}</span> : null}
+    </li>)}
+  </ol>;
+}
+
+export default function CompanyTeamPanel({ companyId, companyName, focusJobId }: { companyId: string; companyName: string; focusJobId?: string }) {
   const wm = useWindowManager();
   const [data, setData] = useState<TeamData | null>(null);
-  const [role, setRole] = useState<TeamRole>('marketing');
+  const [role, setRole] = useState<TeamRole | 'all'>('all');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
-  const [editing, setEditing] = useState(false);
+  const [guiding, setGuiding] = useState(false);
   const [remit, setRemit] = useState('');
   const [lessons, setLessons] = useState('');
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(focusJobId ? { [focusJobId]: true } : {});
   const [filter, setFilter] = useState('');
   const [request, setRequest] = useState('');
+  const [assignee, setAssignee] = useState<TeamRole | 'auto'>('auto');
+
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
       const response = await fetch(`/api/os/companies/${companyId}/team`, { signal });
@@ -36,86 +80,121 @@ export default function CompanyTeamPanel({ companyId, companyName }: { companyId
     const stop = visibleInterval(() => { void load(controller.signal); }, 30_000);
     return () => { controller.abort(); stop(); };
   }, [load]);
-  async function act(body: Record<string, unknown>) {
-    setBusy(true); setError('');
+  useEffect(() => {
+    if (focusJobId && data) document.getElementById(`work-${focusJobId}`)?.scrollIntoView({ block: 'center' });
+    // Only on first load of a focused item.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusJobId, Boolean(data)]);
+
+  async function act(body: Record<string, unknown>): Promise<{ role?: TeamRole; job?: { id: string }; build?: { id: string } } | null> {
+    setBusy(true); setError(''); setNotice('');
     try {
       const response = await fetch(`/api/os/companies/${companyId}/team`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? 'Could not save.');
-      await load(); setEditing(false);
-      if (body.action === 'delegate') setRequest('');
-    } catch (e) { setError(e instanceof Error ? e.message : 'Could not save.'); }
+      await load();
+      return result;
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not save.'); return null; }
     finally { setBusy(false); }
   }
-  const selected = data?.members.find(m => m.role === role);
-  const jobs = data?.jobs.filter(j => j.teamRole === role) ?? [];
-  const attention = (j: JobView) => ['needs_answers', 'proposed', 'failed'].includes(j.status) || j.runs.some(r => r.status === 'needs_review') || j.runs[0]?.status === 'failed' || Boolean(j.publishing?.ready.length);
-  const builds = data?.builds?.filter(b => (b.teamRole ?? 'engineering') === role) ?? [];
+  async function handOff() {
+    const result = await act({ action: 'delegate', request, ...(assignee === 'auto' ? {} : { role: assignee }) });
+    if (!result) return;
+    const owner = TEAM[result.role ?? (assignee === 'auto' ? 'marketing' : assignee)].name;
+    setRequest(''); setRole('all');
+    const id = result.job?.id ?? result.build?.id;
+    if (id) setExpanded(old => ({ ...old, [id]: true }));
+    setNotice(`${owner} has it and is preparing a plan. It appears below; nothing runs until you approve it.`);
+  }
+
+  const rows = useMemo<Row[]>(() => {
+    if (!data) return [];
+    const fromJobs = data.jobs.map((job): Row => ({
+      id: job.id, job, advice: job.teamAdvice ?? [], role: job.teamRole, stage: jobStage(job), title: job.design?.title ?? job.request.slice(0, 100),
+      line: [job.design ? scheduleLabel(job.design.schedule) : null, job.nextRunAt && ['ready', 'active'].includes(job.status) ? `next ${new Date(job.nextRunAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : null].filter(Boolean).join(' · '),
+    }));
+    const fromBuilds = data.builds.map((build): Row => ({ id: build.id, build, advice: build.teamAdvice ?? [], role: build.teamRole ?? 'engineering', stage: buildStage(build.status), title: build.title, line: 'Code change' }));
+    return [...fromJobs, ...fromBuilds];
+  }, [data]);
+  const visible = rows.filter(r => (role === 'all' || r.role === role) && `${r.title} ${r.job?.request ?? r.build?.request ?? ''}`.toLowerCase().includes(filter.toLowerCase()));
+  const selected = role === 'all' ? undefined : data?.members.find(m => m.role === role);
   const openTool = (module: string) => wm.open(module, { payload: { companyId, companyName } });
-  return <section className="space-y-4">
-    <header><h3 className="text-lg font-semibold">Your company team</h3><p className="text-sm text-text-secondary">Give a member an outcome. They keep the context, own the responsibilities and learn from reviewed work.</p></header>
+
+  return <section className="space-y-5">
     {error && <p role="alert" className="text-amber-300 text-sm">{error} <button className="underline" onClick={() => void load()}>Retry</button></p>}
     {!data ? <p className="text-sm text-text-secondary">Loading team…</p> : <>
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2">{data.members.map(member => {
-        const owned = data.jobs.filter(j => j.teamRole === member.role);
-        const built = data.builds?.filter(b => (b.teamRole ?? 'engineering') === member.role) ?? [];
-        const needs = owned.filter(attention).length + built.filter(b => ['proposed', 'ready', 'failed'].includes(b.status)).length;
-        return <button key={member.role} onClick={() => { setRole(member.role); setEditing(false); setFilter(''); setRequest(''); }} aria-pressed={role === member.role} className={`rounded-2xl border p-3 text-left transition-colors ${role === member.role ? 'border-primary bg-primary/10' : 'border-border hover:bg-background-card'}`}>
-          <span className="flex items-center justify-between gap-2"><strong className="text-sm">{member.name}</strong><span className={`h-1.5 w-1.5 rounded-full ${member.active ? 'bg-emerald-400' : 'bg-text-secondary'}`} /></span>
-          <span className="block mt-1 text-[11px] text-text-secondary">{!member.active ? 'Reserved · inactive' : `${owned.filter(j => j.status === 'active' || jobIsBusy(j)).length} active · ${owned.length + built.length} responsibilities`}</span>
-          {needs > 0 && <span className="block mt-1 text-xs text-amber-300">{needs} need you</span>}
-          {member.role === 'operations' && <span className="block mt-1 text-[11px] text-text-secondary">Partners with every member</span>}
-        </button>;
-      })}</div>
-      <section className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold">{selected?.name}’s work <span className="text-text-secondary">{jobs.length + builds.length}</span></h4><input aria-label="Find assigned work" placeholder="Find assigned work…" value={filter} onChange={e => setFilter(e.target.value)} className="rounded-lg border border-border bg-background px-3 py-2 text-sm" /></div>
-        {[...jobs].filter(j => `${j.design?.title ?? ''} ${j.request}`.toLowerCase().includes(filter.toLowerCase())).sort((a, b) => Number(attention(b)) - Number(attention(a))).map(job => {
-          const opened = expanded[job.id] ?? (attention(job) || jobIsBusy(job));
-          return <article key={job.id} className="rounded-xl border border-border overflow-hidden">
-            <button className="w-full p-3 text-left hover:bg-background-card flex justify-between items-center gap-3" aria-expanded={opened} onClick={() => setExpanded(old => ({ ...old, [job.id]: !opened }))}>
-              <span className="min-w-0"><strong className="block text-sm">{job.design?.title ?? job.request.slice(0, 100)}</strong><span className="block mt-1 text-xs text-text-secondary">{scheduleLabel(job.design?.schedule)} · {job.status}{job.nextRunAt ? ` · Next ${new Date(job.nextRunAt).toLocaleString()}` : ''}</span></span>
-              <span className={`shrink-0 text-xs ${attention(job) ? 'text-amber-300' : 'text-primary'}`}>{attention(job) ? 'Review & manage' : 'View & edit'} {opened ? '▾' : '→'}</span>
-            </button>
-            {opened && <div className="border-t border-border p-3">
-              {data.canManage && <label className="block text-xs">Owner <select aria-label={`Owner for ${job.design?.title ?? job.request}`} disabled={busy} value={job.teamRole} onChange={e => void act({ action: 'assign', role: e.target.value, jobId: job.id })} className="ml-2 rounded border border-border bg-background-card p-1">{TEAM_ROLES.filter(r => TEAM[r].active).map(r => <option value={r} key={r}>{TEAM[r].name}</option>)}</select></label>}
-              <ResponsibilityEditor job={job} onSaved={() => void load()} />
-              <JobCard job={job} onChange={() => void load()} headerShownAbove />
-            </div>}
-          </article>;
+      {data.canManage && <form className="rounded-2xl border border-primary/40 bg-primary/5 p-4 space-y-3" onSubmit={e => { e.preventDefault(); void handOff(); }}>
+        <label className="block"><span className="text-base font-semibold">What do you need done for {companyName}?</span>
+          <textarea required minLength={10} maxLength={6000} value={request} onChange={e => setRequest(e.target.value)} rows={3} placeholder="Describe the outcome, any constraints, and how often it should happen. For example: every weekday, find three new sites worth a guest post and draft the pitch." className="mt-2 w-full rounded-xl border border-border bg-background p-3 text-sm" /></label>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-xs text-text-secondary">Who takes it <select aria-label="Who takes it" value={assignee} onChange={e => setAssignee(e.target.value as TeamRole | 'auto')} className="ml-1 rounded-lg border border-border bg-background-card p-2 text-sm text-text-primary"><option value="auto">Nucleas picks the right member</option>{TEAM_ROLES.filter(r => TEAM[r].active).map(r => <option key={r} value={r}>{TEAM[r].name}</option>)}</select></label>
+          <button disabled={busy} className="ui-button-primary ml-auto">{busy ? 'Handing off…' : 'Hand off'}</button>
+        </div>
+        <p className="text-xs text-text-secondary">{STEPS.join(' → ')}. The member asks teammates where their field matters, each with an intern searching the web, then writes a plan. You approve it, it does one test run for you to check, then it runs on its own. Nothing is posted or changed before your approval.</p>
+        {notice && <p role="status" className="text-sm text-emerald-300">{notice}</p>}
+      </form>}
+
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Team members">
+        {(['all', ...data.members.map(m => m.role)] as const).map(key => {
+          const member = key === 'all' ? null : data.members.find(m => m.role === key)!;
+          const owned = key === 'all' ? rows : rows.filter(r => r.role === key);
+          const needs = owned.filter(r => r.stage.group === 'you').length;
+          return <button key={key} type="button" disabled={member ? !member.active : false} aria-pressed={role === key} onClick={() => { setRole(key); setGuiding(false); }} className={`rounded-full border px-3 py-1.5 text-sm disabled:opacity-40 ${role === key ? 'border-primary bg-primary/15 text-primary' : 'border-border hover:bg-background-card'}`}>
+            {member ? member.name : 'Everyone'} <span className="text-xs text-text-secondary">{member && !member.active ? 'reserved' : owned.length}</span>
+            {needs > 0 && <span className="ml-1.5 rounded-full bg-amber-300/20 px-1.5 text-xs text-amber-300">{needs}</span>}
+          </button>;
         })}
-        {builds.filter(build => `${build.title} ${build.request}`.toLowerCase().includes(filter.toLowerCase())).map(build => <details key={build.id} className="rounded-xl border border-border p-3" open={['proposed', 'ready', 'failed'].includes(build.status)}><summary className="cursor-pointer text-sm font-medium">{build.title} · {build.status} · Review & edit plan</summary><BuildCard build={build} onChange={() => void load()} /></details>)}
-        {selected?.active && !jobs.length && !builds.length && <p className="text-sm text-text-secondary">No current responsibilities assigned. Give this member an outcome below.</p>}
-      </section>
-      {selected && <div className="rounded-2xl border border-border p-4 space-y-4">
-        <div className="flex justify-between gap-3"><div><h4 className="font-semibold">{selected.name} · {companyName}</h4><p className="text-sm text-text-secondary mt-1">{selected.remit}</p></div>{selected.active && data.canManage && <button className="ui-button h-fit" onClick={() => { setRemit(selected.remit); setLessons(selected.lessons); setEditing(!editing); }}>Guide member</button>}</div>
-        {!selected.active ? <p className="text-sm text-text-secondary">Tester is intentionally blank. No assignments, model calls or scheduled work.</p> : <>
-          {editing && <form className="space-y-3" onSubmit={e => { e.preventDefault(); void act({ action: 'profile', role, remit, lessons }); }}>
-            <label className="block text-xs">Responsibility and success criteria<textarea required minLength={10} maxLength={2000} value={remit} onChange={e => setRemit(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background p-2 text-sm" rows={3} /></label>
-            <label className="block text-xs">Lessons and preferences for future work<textarea maxLength={4000} value={lessons} onChange={e => setLessons(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background p-2 text-sm" rows={4} placeholder="What should this member repeat or change? Save only guidance you have reviewed." /></label>
-            <button disabled={busy} className="ui-button-primary">{busy ? 'Saving…' : 'Save guidance'}</button>
-          </form>}
-          <details className="text-sm"><summary className="cursor-pointer text-text-secondary">Thinking process & memory</summary><div className="mt-3 space-y-2">
-            <p>{selected.process}</p>
-            <ol className="list-decimal ml-5 space-y-1 text-text-secondary"><li>Resolve company strategy, source evidence, approved Voice and previous work.</li><li>Plan through the shared model engine; brief specialized Rogly workers for bounded tasks.</li><li>Verify evidence and outputs. Escalate unresolved reasoning within the existing cost policy.</li><li>Review results, apply your feedback and carry useful lessons into future responsibilities.</li></ol>
-            <p className="text-xs text-text-secondary">Operations guidance accompanies every research and publishing responsibility. Model selection still follows AI Engine settings and each responsibility’s cost level. No new model bindings or extra standing model calls.</p>
-            <p className="whitespace-pre-wrap">{selected.lessons || 'No manager-written lessons yet. Human review notes and the company’s approved Voice examples provide additional feedback.'}</p>
-            <p className="text-xs text-text-secondary">Access stays scoped to this company’s authorized connections. Tools and publishing permissions are unchanged. This is contextual learning, not model training.</p>
-          </div></details>
-          {role === 'operations' && <div className="rounded-xl bg-background-card p-3 text-sm space-y-1"><strong>Workflow observations</strong>
-            <p>{data.jobs.filter(j => j.runs[0]?.status === 'failed').length} responsibilities have a failed latest run.</p>
-            <p>{data.jobs.filter(j => j.monthlyBudgetMicros > 0 && j.spentThisMonthMicros >= j.monthlyBudgetMicros).length} have reached their monthly budget.</p>
-            <p className="text-text-secondary">Review failure causes before another retry; reuse verified research and correct the brief. Budget changes remain your decision.</p>
-          </div>}
-          <div className="flex gap-2 flex-wrap">
-            {role === 'marketing' && <><button className="ui-button" onClick={() => openTool('marketing')}>Strategy & campaigns</button><button className="ui-button" onClick={() => openTool('content')}>Content</button></>}
-            {['engineering', 'design'].includes(role) && <button className="ui-button" onClick={() => openTool('building')}>Open Building</button>}
-            {role === 'support' && <button className="ui-button" onClick={() => openTool('mail')}>Communications</button>}
-            {role === 'creative' && <button className="ui-button" onClick={() => openTool('content')}>Content & assets</button>}
+        <input aria-label="Find work" placeholder="Find work…" value={filter} onChange={e => setFilter(e.target.value)} className="ml-auto w-40 rounded-lg border border-border bg-background px-3 py-1.5 text-sm" />
+      </div>
+
+      {selected && <div className="rounded-2xl border border-border p-4 space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0"><h4 className="font-semibold">{selected.name}</h4><p className="text-sm text-text-secondary mt-1">{selected.remit}</p></div>
+          <div className="flex flex-wrap gap-2">
+            {(TOOLS[selected.role] ?? []).map(([module, label]) => <button key={label} type="button" className="ui-button" onClick={() => openTool(module)}>{label}</button>)}
+            {data.canManage && <button type="button" className="ui-button" aria-expanded={guiding} onClick={() => { setRemit(selected.remit); setLessons(selected.lessons); setGuiding(!guiding); }}>{guiding ? 'Close guidance' : 'Guide'}</button>}
           </div>
-          {data.canManage && <form className="space-y-2" onSubmit={e => { e.preventDefault(); void act({ action: 'delegate', role, request }); }}><label className="text-sm font-medium block">Give {selected.name} a responsibility<textarea required minLength={10} maxLength={6000} value={request} onChange={e => setRequest(e.target.value)} rows={3} placeholder="Describe the outcome, constraints and how often it should happen…" className="mt-2 w-full rounded-xl border border-border bg-background p-3 text-sm" /></label><button disabled={busy} className="ui-button-primary">{busy ? 'Working…' : 'Prepare a plan'}</button><span className="ml-2 text-xs text-text-secondary">Uses AI Engine routing. You review the plan before execution.</span></form>}
-        </>}
+        </div>
+        {role === 'operations' && <p className="text-sm text-text-secondary">{data.jobs.filter(j => j.runs[0]?.status === 'failed').length} responsibilities have a failed latest run · {data.jobs.filter(j => j.monthlyBudgetMicros > 0 && j.spentThisMonthMicros >= j.monthlyBudgetMicros).length} have reached their monthly budget. Operations advises every member; budget changes stay your decision.</p>}
+        {guiding && <form className="space-y-3 border-t border-border pt-3" onSubmit={e => { e.preventDefault(); void act({ action: 'profile', role, remit, lessons }).then(ok => { if (ok) { setGuiding(false); setNotice(''); } }); }}>
+          <label className="block text-xs">What {selected.name} is responsible for, and what good looks like<textarea required minLength={10} maxLength={2000} value={remit} onChange={e => setRemit(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background p-2 text-sm" rows={3} /></label>
+          <label className="block text-xs">Lessons and preferences to carry into future work<textarea maxLength={4000} value={lessons} onChange={e => setLessons(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background p-2 text-sm" rows={4} placeholder="What should this member repeat or change?" /></label>
+          <p className="text-xs text-text-secondary">How {selected.name} works: {selected.process} Your review notes on results are remembered too. Guidance never changes permissions, budgets or which tools a member can use.</p>
+          <button disabled={busy} className="ui-button-primary">{busy ? 'Saving…' : 'Save guidance'}</button>
+        </form>}
       </div>}
 
+      {GROUPS.map(group => {
+        const list = visible.filter(r => r.stage.group === group.id);
+        if (!list.length) return group.id === 'you' ? <p key={group.id} className="rounded-xl border border-border p-3 text-sm text-text-secondary">Nothing needs you right now.</p> : null;
+        const body = <ul className="space-y-2">{list.map(row => {
+          const opened = expanded[row.id] ?? false;
+          return <li key={row.id} id={`work-${row.id}`} className={`rounded-xl border overflow-hidden ${row.stage.group === 'you' ? 'border-amber-300/40' : 'border-border'}`}>
+            <button type="button" className="w-full p-3 text-left hover:bg-background-card flex flex-wrap items-center gap-x-4 gap-y-2" aria-expanded={opened} onClick={() => setExpanded(old => ({ ...old, [row.id]: !opened }))}>
+              <span className="min-w-0 flex-1 basis-60">
+                <strong className="block text-sm truncate">{row.title}</strong>
+                <span className="block mt-0.5 text-xs text-text-secondary">{[TEAM[row.role].name, row.stage.label, row.line, row.advice.length ? `asked ${row.advice.map(item => TEAM[item.member].name).join(', ')}` : null].filter(Boolean).join(' · ')}</span>
+              </span>
+              <Steps stage={row.stage} />
+              <span className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium ${row.stage.action ? 'bg-amber-300 text-black' : 'border border-border text-text-secondary'}`}>{row.stage.action ?? (opened ? 'Close' : 'Open')}</span>
+            </button>
+            {opened && <div className="border-t border-border p-3 space-y-3">
+              <Consulted owner={row.role} advice={row.advice} />
+              {row.job && <>
+                {data.canManage && <label className="block text-xs">Owner <select aria-label={`Owner for ${row.title}`} disabled={busy} value={row.role} onChange={e => void act({ action: 'assign', role: e.target.value, jobId: row.id })} className="ml-2 rounded border border-border bg-background-card p-1">{TEAM_ROLES.filter(r => TEAM[r].active).map(r => <option value={r} key={r}>{TEAM[r].name}</option>)}</select></label>}
+                <ResponsibilityEditor job={row.job} onSaved={() => void load()} />
+                <JobCard job={row.job} onChange={() => void load()} headerShownAbove />
+              </>}
+              {row.build && <BuildCard build={row.build} onChange={() => void load()} />}
+            </div>}
+          </li>;
+        })}</ul>;
+        return group.id === 'rest'
+          ? <details key={group.id}><summary className="cursor-pointer text-sm font-semibold">{group.title} <span className="font-normal text-text-secondary">{list.length}</span></summary><div className="mt-2">{body}</div></details>
+          : <section key={group.id} className="space-y-2"><h4 className="text-sm font-semibold">{group.title} <span className="font-normal text-text-secondary">{list.length}{group.hint ? ` · ${group.hint}` : ''}</span></h4>{body}</section>;
+      })}
+      {!rows.length && <p className="text-sm text-text-secondary">No work yet. {data.canManage ? 'Describe an outcome above and your team takes it from there.' : 'A manager hands work to the team.'}</p>}
+      {rows.length > 0 && !visible.length && <p className="text-sm text-text-secondary">Nothing matches. {selected ? `${selected.name} has no work${filter ? ' matching that search' : ''}.` : ''}</p>}
     </>}
   </section>;
 }

@@ -14,7 +14,7 @@ export const maxDuration = 800;
 const edit = z.discriminatedUnion('action', [
   z.object({ action: z.literal('profile'), role: z.enum(TEAM_ROLES), remit: z.string().trim().min(10).max(2000), lessons: z.string().trim().max(4000) }),
   z.object({ action: z.literal('assign'), role: z.enum(TEAM_ROLES), jobId: z.string().regex(/^[a-f\d]{24}$/i) }),
-  z.object({ action: z.literal('delegate'), role: z.enum(TEAM_ROLES), request: z.string().trim().min(10).max(6000) }),
+  z.object({ action: z.literal('delegate'), role: z.enum(TEAM_ROLES).optional(), request: z.string().trim().min(10).max(6000) }),
 ]);
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -42,23 +42,25 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const parsed = edit.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
   const body = parsed.data;
-  if (!TEAM[body.role].active) return NextResponse.json({ error: 'Tester is reserved and inactive.' }, { status: 409 });
+  // With no member named, the request text decides who owns it.
+  const role = body.role ?? teamRoleFor({ request: body.request });
+  if (!TEAM[role].active) return NextResponse.json({ error: 'Tester is reserved and inactive.' }, { status: 409 });
   const scope = { organizationId: viewer.organizationId, companyId: new Types.ObjectId(id) };
   if (body.action === 'profile') {
     await CompanyTeam.updateOne({ ...scope, role: body.role }, { $set: { remit: body.remit, lessons: body.lessons, updatedBy: new Types.ObjectId(viewer.userId) } }, { upsert: true, runValidators: true });
   } else if (body.action === 'assign') {
-    const result = await Job.updateOne({ ...scope, _id: new Types.ObjectId(body.jobId) }, { $set: { teamRole: body.role }, $push: { events: { at: new Date(), userId: new Types.ObjectId(viewer.userId), action: 'team_assigned', note: `Assigned to ${TEAM[body.role].name}; applies to future runs.` } } });
+    const result = await Job.updateOne({ ...scope, _id: new Types.ObjectId(body.jobId) }, { $set: { teamRole: body.role }, $unset: { teamAdvice: '' }, $push: { events: { at: new Date(), userId: new Types.ObjectId(viewer.userId), action: 'team_assigned', note: `Assigned to ${TEAM[body.role].name}; applies to future runs.` } } });
     if (!result.matchedCount) return NextResponse.json({ error: 'Responsibility not found in this company.' }, { status: 404 });
-  } else if (body.role === 'engineering' || body.role === 'design') {
+  } else if (role === 'engineering' || role === 'design') {
     const settings = await readEngineSettings(String(viewer.organizationId));
-    const result = await proposeCodeChange(viewer, { companyId: id, request: body.request, level: settings.defaultCostLevel, teamRole: body.role });
+    const result = await proposeCodeChange(viewer, { companyId: id, request: body.request, level: settings.defaultCostLevel, teamRole: role });
     if (!result.ok) return NextResponse.json({ error: result.message }, { status: 409 });
-    return NextResponse.json({ ok: true, build: result.build });
+    return NextResponse.json({ ok: true, role, build: result.build });
   } else {
-    const result = await createJob(viewer, { companyId: id, request: body.request, teamRole: body.role, background: true });
+    const result = await createJob(viewer, { companyId: id, request: body.request, teamRole: role, background: true });
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
     after(() => runDesign(viewer, result.job.id));
-    return NextResponse.json({ ok: true, job: result.job });
+    return NextResponse.json({ ok: true, role, job: result.job });
   }
   return NextResponse.json({ ok: true });
 }

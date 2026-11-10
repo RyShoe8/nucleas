@@ -81,4 +81,37 @@ describe('askEngine time limits and waiting people', () => {
     chat.mockResolvedValueOnce(ok('free only'));
     expect(await askEngine({ ...input, interactive: true })).toMatchObject({ model: 'free-model' });
   });
+
+  describe('when a paid model fails', () => {
+    const second = { profileId: 'p3', model: 'second-best', free: false, label: 'Anthropic' };
+    const sameKey = { profileId: 'p2', model: 'same-key-model', free: false, label: 'OpenAI' };
+    const third = { profileId: 'p4', model: 'third-best', free: false, label: 'Google' };
+
+    it('tries the next best paid models in order until one answers', async () => {
+      engine.selection = { primary: paid, fallback: null, backups: [second, third] };
+      chat.mockResolvedValueOnce({ role: 'status', text: 'The model did not respond.' }).mockResolvedValueOnce({ role: 'status', text: 'Timed out.' }).mockResolvedValueOnce(ok('third answered'));
+      expect(await askEngine({ ...input, need: 'plan' })).toEqual({ text: 'third answered', model: 'third-best', usedFallback: true });
+      expect(chat.mock.calls.map((c) => c[0].model)).toEqual(['paid-model', 'second-best', 'third-best']);
+    });
+
+    it('skips other models on a credential that is out of credits', async () => {
+      engine.selection = { primary: paid, fallback: null, backups: [sameKey, second] };
+      chat.mockResolvedValueOnce({ role: 'status', text: 'Insufficient credits on this account.' }).mockResolvedValueOnce(ok('other provider answered'));
+      expect(await askEngine({ ...input, need: 'plan' })).toEqual({ text: 'other provider answered', model: 'second-best', usedFallback: true });
+      expect(chat.mock.calls.map((c) => c[0].model)).toEqual(['paid-model', 'second-best']);
+    });
+
+    it('covers the paid retry of a free model too', async () => {
+      engine.selection = { primary: free, fallback: paid, backups: [second] };
+      chat.mockResolvedValueOnce({ role: 'error', text: '' }).mockResolvedValueOnce({ role: 'status', text: 'No response.' }).mockResolvedValueOnce(ok('stand-in'));
+      expect(await askEngine(input)).toMatchObject({ model: 'second-best' });
+    });
+
+    it('never starts paying when only a free model failed', async () => {
+      engine.selection = { primary: free, fallback: null, backups: [second] };
+      chat.mockResolvedValueOnce({ role: 'error', text: '' });
+      expect(await askEngine(input)).toBeNull();
+      expect(chat).toHaveBeenCalledTimes(1);
+    });
+  });
 });
