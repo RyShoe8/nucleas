@@ -66,7 +66,8 @@ function clip(text: string | undefined | null, max = 240): string | undefined {
 export async function companyActivityFeed(viewer: CompanyViewer, companyId: string, options: { days?: number; limit?: number } = {}): Promise<FeedItem[] | null> {
   const profile = await getCompanyProfile(viewer, companyId);
   if (!profile) return null;
-  const limit = Math.min(Math.max(options.limit ?? 300, 1), 500);
+  // Hourly checks add up fast; the screen folds repeats, so fetch enough to cover the whole range.
+  const limit = Math.min(Math.max(options.limit ?? 1500, 1), 2000);
   const since = new Date(Date.now() - Math.min(Math.max(options.days ?? 14, 1), 90) * 86_400_000);
   const scope = { organizationId: viewer.organizationId, companyId: new Types.ObjectId(profile.id) };
 
@@ -110,7 +111,8 @@ export async function companyActivityFeed(viewer: CompanyViewer, companyId: stri
     }
     for (const [index, event] of (job.events ?? []).entries()) {
       const at = new Date(event.at);
-      if (at < since) continue;
+      // The scheduler starting a run is not news: the run itself is in the list.
+      if (at < since || event.action === 'scheduled_run_started') continue;
       items.push({ id: `event:${job._id}:${index}`, at: at.toISOString(), kind: 'decision', tone: event.action === 'proposed' ? 'attention' : 'neutral', title: EVENT_LABEL[event.action] ?? sentence(event.action), subject: known.title, member: known.member, detail: clip(event.note), jobId: String(job._id) });
     }
   }

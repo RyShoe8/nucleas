@@ -41,13 +41,13 @@ describe('the activity timeline', () => {
     expect(days.map(d => d.rows.map(r => r.id))).toEqual([['new', 'mid'], ['old']]);
   });
 
-  it('folds back-to-back repeats into one row but keeps anything that happened between them', () => {
+  it('folds a day of repeats into one row at its latest time, and starts again the next day', () => {
     const days = groupTimeline([
       item('a3', '2026-11-10T12:00:00', 'k'), item('a2', '2026-11-10T11:00:00', 'k'), item('other', '2026-11-10T10:30:00'),
       item('a1', '2026-11-10T10:00:00', 'k'), item('yesterday', '2026-11-09T12:00:00', 'k'),
     ]);
-    expect(days[0].rows.map(r => [r.id, r.count])).toEqual([['a3', 2], ['other', 1], ['a1', 1]]);
-    expect(days[0].rows[0].firstAt).toBe('2026-11-10T11:00:00');
+    expect(days[0].rows.map(r => [r.id, r.count])).toEqual([['a3', 3], ['other', 1]]);
+    expect(days[0].rows[0].firstAt).toBe('2026-11-10T10:00:00');
     expect(days[1].rows.map(r => [r.id, r.count])).toEqual([['yesterday', 1]]);
   });
 });

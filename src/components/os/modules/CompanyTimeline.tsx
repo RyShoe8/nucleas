@@ -30,15 +30,15 @@ function dayLabel(iso: string, now = new Date()): string {
     return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
-/** Newest first, split by local day; the same thing repeating back to back (an hourly check) becomes one row. */
+/** Newest first, split by local day; the same thing repeating through a day (an hourly check) becomes one row at its latest time. */
 export function groupTimeline(items: FeedItem[]): { key: string; label: string; rows: TimelineRow[] }[] {
     const days: { key: string; label: string; rows: TimelineRow[] }[] = [];
     for (const item of [...items].sort((a, b) => b.at.localeCompare(a.at))) {
         const key = dayKey(item.at);
         let day = days.at(-1);
         if (!day || day.key !== key) { day = { key, label: dayLabel(item.at), rows: [] }; days.push(day); }
-        const last = day.rows.at(-1);
-        if (last && item.repeatKey && last.repeatKey === item.repeatKey) { last.count += 1; last.firstAt = item.at; }
+        const same = item.repeatKey ? day.rows.find((row) => row.repeatKey === item.repeatKey) : undefined;
+        if (same) { same.count += 1; same.firstAt = item.at; }
         else day.rows.push({ ...item, count: 1, firstAt: item.at });
     }
     return days;
