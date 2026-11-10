@@ -341,24 +341,28 @@ describe('the best writer is picked at free, low and medium', () => {
 
 describe('paid stand-ins for when a paid model fails', () => {
   it('lists the next best affordable paid models, strongest first, without the one already picked', () => {
-    const s = selectFrom(ALL, 'plan', 'medium');
+    // High has no price ceiling by default, so every other capable paid model can stand in.
+    const s = selectFrom(ALL, 'plan', 'high');
     const backups = s.backups ?? [];
     expect(backups.length).toBeGreaterThan(0);
     expect(backups.length).toBeLessThanOrEqual(MAX_BACKUPS);
     expect(backups.every((b) => !b.free)).toBe(true);
     expect(backups.map((b) => b.model)).not.toContain(s.primary?.model);
     const price = (id: string) => ALL.find((m) => m.model === id)!.blendedPricePer1M!;
-    // Within the ceiling, or the single cheapest capable model when nothing else fits it.
-    expect(backups.every((b) => price(b.model) <= DEFAULT_PRICE_CEILINGS.medium!) || backups.length === 1).toBe(true);
+    expect(backups.every((b) => price(b.model) > 0)).toBe(true);
     expect(new Set(backups.map((b) => b.model)).size).toBe(backups.length);
   });
 
-  it('has none at the free level, and falls back to the cheapest capable model when nothing else fits the ceiling', () => {
+  it('has none at the free level, and none that cost more per 1M tokens than the level allows', () => {
     expect(selectFrom(ALL, 'plan', 'free').backups).toEqual([]);
     const tight = { ...DEFAULT_PRICE_CEILINGS, low: 0.01 };
     const taken = selectFrom(ALL, 'plan', 'low', tight);
-    const backups = backupsFrom(ALL, 'plan', 'low', tight, [taken.primary]);
-    expect(backups).toHaveLength(1);
-    expect(backups[0]!.model).not.toBe(taken.primary?.model);
+    expect(backupsFrom(ALL, 'plan', 'low', tight, [taken.primary])).toEqual([]);
+    const price = (id: string) => ALL.find((m) => m.model === id)!.blendedPricePer1M!;
+    for (const level of ['low', 'medium'] as const) {
+      for (const need of ['plan', 'review', 'write', 'code'] as const) {
+        expect(backupsFrom(ALL, need, level).every((b) => price(b.model) <= DEFAULT_PRICE_CEILINGS[level]!)).toBe(true);
+      }
+    }
   });
 });

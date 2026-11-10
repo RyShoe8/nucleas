@@ -107,6 +107,19 @@ describe('askEngine time limits and waiting people', () => {
       expect(await askEngine(input)).toMatchObject({ model: 'second-best' });
     });
 
+    it('stops when the shared AI budget refuses, instead of trying other paid models', async () => {
+      engine.selection = { primary: paid, fallback: null, backups: [second, third] };
+      chat.mockResolvedValueOnce({ role: 'status', text: 'AI budget cannot reserve this run.' });
+      expect(await askEngine({ ...input, need: 'plan' })).toBeNull();
+      expect(chat).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports what every attempt cost together', async () => {
+      engine.selection = { primary: paid, fallback: null, backups: [second] };
+      chat.mockResolvedValueOnce({ role: 'status', text: 'No response.', costMicros: 300 }).mockResolvedValueOnce({ ...ok('answered'), costMicros: 1200 });
+      expect(await askEngine({ ...input, need: 'plan' })).toEqual({ text: 'answered', model: 'second-best', usedFallback: true, costMicros: 1500 });
+    });
+
     it('never starts paying when only a free model failed', async () => {
       engine.selection = { primary: free, fallback: null, backups: [second] };
       chat.mockResolvedValueOnce({ role: 'error', text: '' });

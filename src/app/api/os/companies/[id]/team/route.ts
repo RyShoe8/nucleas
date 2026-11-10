@@ -10,6 +10,7 @@ import { listBuilds, proposeCodeChange } from '@/lib/building/builds';
 import { readEngineSettings } from '@/lib/ai/engine/select';
 import { createJob, listJobs, runDesign } from '@/lib/jobs/jobs';
 import { readBoard } from '@/lib/companies/teamBoard';
+import { PLAYBOOKS } from '@/lib/companies/teamPlaybooks';
 
 export const maxDuration = 800;
 const edit = z.discriminatedUnion('action', [
@@ -31,7 +32,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   ]);
   return NextResponse.json({ board, canManage: isCompanyManager(viewer), members: TEAM_ROLES.map(role => {
     const saved = profiles.find(p => p.role === role);
-    return { role, ...TEAM[role], remit: saved?.remit ?? TEAM[role].remit, lessons: saved?.lessons ?? '', updatedAt: saved?.updatedAt?.toISOString() ?? null };
+    return { role, ...TEAM[role], playbook: { craft: PLAYBOOKS[role].craft, bar: PLAYBOOKS[role].bar, avoids: PLAYBOOKS[role].avoids, sources: PLAYBOOKS[role].sources }, remit: saved?.remit ?? TEAM[role].remit, lessons: saved?.lessons ?? '', updatedAt: saved?.updatedAt?.toISOString() ?? null };
   }), builds: builds.filter(build => build.companyId === id), jobs: jobs.map(job => ({ ...job, teamRole: teamRoleFor(job) })) }, { headers: { 'Cache-Control': 'no-store' } });
 }
 

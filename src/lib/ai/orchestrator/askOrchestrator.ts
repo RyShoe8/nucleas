@@ -746,10 +746,10 @@ export async function runAskOrchestrator(
     const named = (name?: string) => (name ? input.context.companies.find((c) => c.name.toLowerCase() === name.trim().toLowerCase()) : undefined);
     const company = named(teamAsks.find((ask) => ask.company)?.company) ?? named(plan.fetch[0]?.company) ?? (input.context.companies.length === 1 ? input.context.companies[0] : undefined);
     const situation = [`The person asked: ${input.text}`, facts ? `\n# Figures Nucleas has\n${facts.slice(0, 4500)}` : '', research.length ? `\n# Research gathered so far\n${research.join('\n\n').slice(0, 4500)}` : ''].join('\n');
-    teamInput = await askMembers(viewer, company?.id ?? null, teamAsks.map((ask) => ({ member: ask.member, question: ask.ask })), situation, { level: input.level, signal: input.signal, interactive: true, onProgress: input.onProgress }).catch(() => []);
+    teamInput = await askMembers(viewer, company?.id ?? null, teamAsks.map((ask) => ({ member: ask.member, question: ask.ask })), situation, { level: input.level, signal: input.signal, interactive: true, onProgress: input.onProgress, onCost: (micros) => { costMicros += micros; } }).catch(() => []);
     for (const ask of teamAsks) {
       const answer = teamInput.find((item) => item.member === ask.member);
-      stages.push({ stage: 'team', model: answer?.model, note: `${TEAM[ask.member].name}: ${answer ? ask.ask : 'gave no answer'}${answer?.sources?.length ? ` (intern read ${answer.sources.length} page${answer.sources.length === 1 ? '' : 's'})` : answer ? ' (intern found nothing usable)' : ''}` });
+      stages.push({ stage: 'team', model: answer?.model, costMicros: answer ? answer.costMicros ?? 0 : undefined, free: answer ? !answer.costMicros : undefined, note: `${TEAM[ask.member].name}: ${answer ? ask.ask : 'gave no answer'}${answer?.sources?.length ? ` (intern read ${answer.sources.length} page${answer.sources.length === 1 ? '' : 's'})` : answer ? ' (intern found nothing usable)' : ''}` });
       if (answer) evidence.data.push({ label: `${TEAM[ask.member].name} · asked: ${ask.ask}`, detail: [answer.advice, answer.research ? `\nWhat their intern found:\n${answer.research}` : ''].join('\n') });
     }
   }

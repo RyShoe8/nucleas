@@ -17,9 +17,16 @@ export interface EngineAnswer {
   model: string;
   /** True when the free primary failed and the paid fallback answered. */
   usedFallback: boolean;
+  /** What every attempt for this answer cost together, when anything was charged. */
+  costMicros?: number;
 }
 
-type AskInput = { organizationId: string; userId: string; system: string; user: string; maxTokens: number; signal?: AbortSignal; attemptTimeoutMs?: number; onFailure?: (failure: EngineFailure) => void };
+type AskInput = { organizationId: string; userId: string; system: string; user: string; maxTokens: number; signal?: AbortSignal; attemptTimeoutMs?: number; onFailure?: (failure: EngineFailure) => void; onCost?: (micros: number) => void };
+
+/** The shared AI budget said no. Another paid model would be refused the same way, so nothing else is tried. */
+export function budgetRefusal(reason: string): boolean {
+  return /AI budget cannot reserve|AI budget scope is unavailable|AI admission failed/i.test(reason);
+}
 
 /** Why a model gave no answer, for the caller's logs: which model, and what went wrong. */
 export interface EngineFailure {
@@ -63,6 +70,7 @@ async function run(choice: ModelChoice, input: AskInput): Promise<string | null>
     return undefined;
   });
   if (turn === undefined) return null;
+  if (turn?.costMicros) input.onCost?.(turn.costMicros);
   if (turn && turn.role === 'assistant' && turn.text.trim()) return turn.text.trim();
   const reason = signal?.aborted ? timedOut() : turn?.role === 'assistant' ? 'The model returned an empty answer.' : `${turn?.text ?? 'No answer.'}${turn?.failureCategory ? ` (${turn.failureCategory}${turn.debugHint ? `: ${turn.debugHint}` : ''})` : ''}`;
   input.onFailure?.({ model: choice.model, reason: reason.slice(0, 300) });
@@ -92,17 +100,20 @@ export async function askEngine(input: { organizationId: string; userId: string;
   }
   // Remember why each model failed: a credential with no credits takes its other models out too.
   const failures = new Map<string, string>();
-  const tracked: AskInput = { ...input, onFailure: (failure) => { failures.set(failure.model, failure.reason); input.onFailure?.(failure); } };
+  let spent = 0;
+  const tracked: AskInput = { ...input, onFailure: (failure) => { failures.set(failure.model, failure.reason); input.onFailure?.(failure); }, onCost: (micros) => { spent += micros; } };
+  const answered = (text: string, choice: ModelChoice, usedFallback: boolean): EngineAnswer => ({ text, model: choice.model, usedFallback, ...(spent ? { costMicros: spent } : {}) });
+  const refused = () => [...failures.values()].some(budgetRefusal);
   const text = await run(pick.primary, tracked);
-  if (text) return { text, model: pick.primary.model, usedFallback: false };
+  if (text) return answered(text, pick.primary, false);
   let lastTried = pick.primary;
-  if (pick.fallback) {
+  if (pick.fallback && !refused()) {
     const retry = await run(pick.fallback, tracked);
-    if (retry) return { text: retry, model: pick.fallback.model, usedFallback: true };
+    if (retry) return answered(retry, pick.fallback, true);
     lastTried = pick.fallback;
   }
   // Stand-ins only take over from a paid model. A free model failing at a level that does not pay to retry stays unpaid.
-  if (lastTried.free || input.signal?.aborted) return null;
+  if (lastTried.free || input.signal?.aborted || refused()) return null;
   const deadCredentials = new Set<string>();
   const noteFailure = (choice: ModelChoice) => { if (credentialWideFailure(failures.get(choice.model) ?? '')) deadCredentials.add(choice.profileId); };
   noteFailure(pick.primary);
@@ -111,7 +122,8 @@ export async function askEngine(input: { organizationId: string; userId: string;
     if (input.signal?.aborted) return null;
     if (deadCredentials.has(backup.profileId)) continue;
     const answer = await run(backup, tracked);
-    if (answer) return { text: answer, model: backup.model, usedFallback: true };
+    if (answer) return answered(answer, backup, true);
+    if (refused()) return null;
     noteFailure(backup);
   }
   return null;

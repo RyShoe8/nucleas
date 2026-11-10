@@ -8,7 +8,7 @@ import ResponsibilityEditor from './jobs/ResponsibilityEditor';
 import JobCard, { scheduleLabel, type JobView } from './jobs/JobCard';
 import { STEPS, buildStage, jobStage, type Stage, type StageGroup } from './teamStages';
 
-type Member = { role: TeamRole; name: string; remit: string; process: string; active: boolean; lessons: string };
+type Member = { role: TeamRole; name: string; remit: string; process: string; active: boolean; lessons: string; playbook?: { craft: string[]; bar: string[]; avoids: string[]; sources: string } };
 type TeamJob = JobView & { teamRole: TeamRole };
 type TeamBuild = BuildView & { teamRole?: 'design' | 'engineering' };
 type Board = { plan: { point: string; member: TeamRole; about?: string; at: string }[]; evidence: { fact: string; url: string; member: TeamRole; at: string }[] };
@@ -172,6 +172,16 @@ export default function CompanyTeamPanel({ companyId, companyName, focusJobId }:
           </div>
         </div>
         {role === 'operations' && <p className="text-sm text-text-secondary">{data.jobs.filter(j => j.runs[0]?.status === 'failed').length} responsibilities have a failed latest run · {data.jobs.filter(j => j.monthlyBudgetMicros > 0 && j.spentThisMonthMicros >= j.monthlyBudgetMicros).length} have reached their monthly budget. Operations advises every member; budget changes stay your decision.</p>}
+        {selected.playbook && selected.playbook.craft.length > 0 && <details className="text-sm">
+          <summary className="cursor-pointer text-text-secondary">How {selected.name} works and what counts as done</summary>
+          <div className="mt-2 grid gap-4 sm:grid-cols-2">
+            <div><h5 className="text-[11px] uppercase tracking-wider text-text-secondary">Method</h5><ul className="mt-1 list-disc space-y-1 pl-5">{selected.playbook.craft.map(line => <li key={line}>{line}</li>)}</ul></div>
+            <div><h5 className="text-[11px] uppercase tracking-wider text-text-secondary">Not finished until</h5><ul className="mt-1 list-disc space-y-1 pl-5">{selected.playbook.bar.map(line => <li key={line}>{line}</li>)}</ul>
+              <h5 className="mt-3 text-[11px] uppercase tracking-wider text-text-secondary">Avoids</h5><p className="mt-1">{selected.playbook.avoids.join(' · ')}</p>
+              <h5 className="mt-3 text-[11px] uppercase tracking-wider text-text-secondary">Where their interns look first</h5><p className="mt-1">{selected.playbook.sources}</p></div>
+          </div>
+          <p className="mt-2 text-xs text-text-secondary">Your guidance below is added on top of this for {companyName}.</p>
+        </details>}
         {guiding && <form className="space-y-3 border-t border-border pt-3" onSubmit={e => { e.preventDefault(); void act({ action: 'profile', role, remit, lessons }).then(ok => { if (ok) { setGuiding(false); setNotice(''); } }); }}>
           <label className="block text-xs">What {selected.name} is responsible for, and what good looks like<textarea required minLength={10} maxLength={2000} value={remit} onChange={e => setRemit(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background p-2 text-sm" rows={3} /></label>
           <label className="block text-xs">Lessons and preferences to carry into future work<textarea maxLength={4000} value={lessons} onChange={e => setLessons(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background p-2 text-sm" rows={4} placeholder="What should this member repeat or change?" /></label>

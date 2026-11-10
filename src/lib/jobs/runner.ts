@@ -452,7 +452,8 @@ export async function executeJobRun(runId: string): Promise<void> {
   const profile = viewer ? await getCompanyProfile(viewer, String(job.companyId)) : null;
   if (!viewer || !profile) return fail('The company is no longer accessible.');
   // Asked once and kept with the responsibility: a scheduled run reuses the answers instead of asking again.
-  const advice = renderAdvice(await teamAdviceForJob(job, viewer, { save: (teamAdvice) => Job.updateOne({ _id: job._id }, { $set: { teamAdvice } }) }));
+  let adviceCost = 0;
+  const advice = renderAdvice(await teamAdviceForJob(job, viewer, { onCost: (micros) => { adviceCost += micros; }, save: (teamAdvice) => Job.updateOne({ _id: job._id }, { $set: { teamAdvice } }) }));
   if (advice) activeDesign.instructions += `\n\n${advice}`;
   const excludedProspects = activeDesign.skill === 'signature_outreach'
     ? (await listCompanyProfiles(viewer)).filter(company => company.relationship === 'owned' || company.relationship === 'internal').map(company => company.domain).filter((domain): domain is string => Boolean(domain))
@@ -579,7 +580,8 @@ export async function executeJobRun(runId: string): Promise<void> {
   try { done = activeDesign.skill === 'casino_discovery' ? await discoveryMemory(job) : activeDesign.skill === 'link_building' ? await linkOpportunityMemory(job._id) : await earlierRecords(job._id, run._id); }
   catch(error) { return fail(error instanceof Error ? error.message : 'Could not verify discovery inventory.'); }
   let prospectContext = activeDesign.skill === 'link_building' ? await linkProspectContext(job).catch(error => { console.error('[link-building] candidate queue unavailable', { jobId: String(job._id), error }); return 'The saved candidate queue could not be loaded. Research real directories and forums; never invent an opportunity.'; }) : '';
-  let cost = 0;
+  // What asking teammates cost belongs to this run, so it counts against the monthly budget.
+  let cost = adviceCost;
   const usedModels: string[] = [];
   const recordStep = (stage: ModelStep['stage'], note: string, choice: { model: string; free: boolean }, source: ModelStep['source'], fallback: boolean, costMicros: number | null, error?: string) => {
     modelPath.push({ stage, note, member: TEAM[teamRoleFor(job)].name, model: choice.model, free: choice.free, source, level, fallback, costMicros, ...(error ? { error: stepText(error) } : {}), reason: modelStepReason({ stage, level, free: choice.free, source, fallback }) });

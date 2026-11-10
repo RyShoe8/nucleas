@@ -59,12 +59,15 @@ describe('a member answering with an intern', () => {
     const intern = chat.mock.calls[0][0] as ChatInput;
     expect(intern).toMatchObject({ model: 'free-research', toolProfile: 'full', forceToolLoop: true });
     expect(intern.userText).toContain('Where should the price sit?');
+    expect(intern.userText).toContain('Baymard and Nielsen Norman Group');
     expect(intern.userText).toContain('Frugal Gambler');
 
     const member = engine.mock.calls[0][0] as EngineInput;
     expect(member.need).toBe('plan');
     expect(member.system).toContain('Own the checkout experience.');
     expect(member.system).toContain('Never hide the price.');
+    expect(member.system).toContain('Specify every state');
+    expect(member.system).toContain('Text contrast of at least 4.5:1');
     expect(member.user).toContain('Rivals show the price first');
     expect(member.user).toContain('Name: Frugal Gambler');
     expect(member.user).toContain('value-seeking players');
@@ -140,5 +143,39 @@ describe('the shared board', () => {
     ].join('\n'))).toEqual([{ fact: 'Sweepstakes sign-ups rose 12% after a free-coin offer (Source).', url: 'https://example.com/study' }]);
     expect(splitPlanPoint('Do this.\n**PLAN:** Lead with the free offer.')).toEqual({ advice: 'Do this.', point: 'Lead with the free offer.' });
     expect(splitPlanPoint('No plan line here.')).toEqual({ advice: 'No plan line here.', point: null });
+  });
+});
+
+describe('each member is a specialist', () => {
+  it('runs each member on the kind of model their field needs', async () => {
+    engine.mockResolvedValue({ text: 'Answer.', model: 'm', usedFallback: false });
+    await askMembers(viewer, companyId, [{ member: 'engineering', question: 'Is the checkout safe to cache?' }, { member: 'support', question: 'What do customers ask most?' }, { member: 'operations', question: 'Where is spend wasted?' }], 'Checkout work.');
+    const needs = Object.fromEntries(engine.mock.calls.map(([call]) => [/You are (\w+)/.exec((call as EngineInput).system)![1], (call as EngineInput).need]));
+    expect(needs).toEqual({ Engineering: 'code', Support: 'write', Operations: 'review' });
+  });
+
+  it('gives every active member a method, a bar and their own sources', async () => {
+    const { PLAYBOOKS, playbookText } = await import('./teamPlaybooks');
+    for (const role of ['marketing', 'design', 'engineering', 'creative', 'support', 'operations'] as const) {
+      expect(PLAYBOOKS[role].craft.length).toBeGreaterThanOrEqual(4);
+      expect(PLAYBOOKS[role].bar.length).toBeGreaterThanOrEqual(3);
+      expect(PLAYBOOKS[role].sources.length).toBeGreaterThan(40);
+      expect(playbookText(role, 'compact').length).toBeLessThan(playbookText(role, 'full').length);
+    }
+    expect(playbookText('tester')).toBe('');
+  });
+});
+
+describe('what asking the team costs', () => {
+  it('reports every charge to the work it is part of, and keeps it out of what is stored', async () => {
+    chat.mockResolvedValue({ role: 'assistant', text: 'Findings\n- Rivals show the price first ([Baymard](https://baymard.com/checkout)).', costMicros: 0 });
+    engine.mockResolvedValueOnce({ text: '{"consult":[{"member":"design","question":"Where should the price sit?"}]}', model: 'paid-plan', usedFallback: false, costMicros: 400 })
+      .mockResolvedValueOnce({ text: 'Above the button.', model: 'paid-plan', usedFallback: false, costMicros: 2600 });
+    let charged = 0;
+    const save = vi.fn(async (_advice: { items: object[] }) => undefined);
+    const items = await teamAdviceForJob({ _id: new Types.ObjectId(), companyId: new Types.ObjectId(companyId), request: 'Launch a checkout promotion.' }, viewer, { save, onCost: (micros) => { charged += micros; } });
+    expect(charged).toBe(3000);
+    expect(items[0]!.costMicros).toBe(2600);
+    expect(save.mock.calls[0]![0].items[0]).not.toHaveProperty('costMicros');
   });
 });

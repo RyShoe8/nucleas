@@ -213,7 +213,8 @@ export async function proposeCodeChange(
   );
   const memberContext = await companyTeamContext({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(input.companyId), teamRole: input.teamRole ?? 'engineering', request: input.request });
   input.onProgress?.('Checking whether a teammate should weigh in');
-  const advice = await consultTeammates(viewer, input.companyId, input.teamRole ?? 'engineering', `Code change requested: ${input.request}`, { level: input.level, signal: input.signal, interactive: true }).catch(() => [] as MemberAdvice[]);
+  let adviceCost = 0;
+  const advice = await consultTeammates(viewer, input.companyId, input.teamRole ?? 'engineering', `Code change requested: ${input.request}`, { level: input.level, signal: input.signal, interactive: true, onCost: (micros) => { adviceCost += micros; } }).catch(() => [] as MemberAdvice[]);
   const background = [memberContext, renderAdvice(advice), recent?.length ? renderTimeline(recent) : '', rejected].filter(Boolean).join('\n\n');
   // With a admin account for the site the request names, look at the page as it is now (read-only, time-boxed).
   const startedAt = Date.now();
@@ -235,7 +236,7 @@ export async function proposeCodeChange(
     budgetMs: 600_000 - (Date.now() - startedAt),
     ...(observedPage ? { observedPage } : {}),
   });
-  const costMicros = turn.costMicros ?? 0;
+  const costMicros = (turn.costMicros ?? 0) + adviceCost;
   if (!turn.plan) {
     return { ok: false, reason: 'no_plan', costMicros, message: turn.text || 'The planner did not produce a plan.' };
   }

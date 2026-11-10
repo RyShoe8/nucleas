@@ -335,7 +335,9 @@ export async function runDesign(viewer: CompanyViewer, jobId: string, options: {
   if (!job) return;
   const previous = jobDesignSchema.safeParse(job.design);
   options.onProgress?.('Checking whether a teammate should weigh in');
-  const advice = await teamAdviceForJob(job, viewer, { signal: options.signal, save: (teamAdvice) => Job.updateOne({ _id: job._id }, { $set: { teamAdvice } }) });
+  let adviceCost = 0;
+  const advice = await teamAdviceForJob(job, viewer, { signal: options.signal, onCost: (micros) => { adviceCost += micros; }, save: (teamAdvice) => Job.updateOne({ _id: job._id }, { $set: { teamAdvice } }) });
+  if (adviceCost) await Job.updateOne({ _id: job._id }, { $inc: { designCostMicros: adviceCost } });
   const result = await designJob(viewer, {
     companyId: String(job.companyId),
     request: [job.request, await companyTeamContext(job), renderAdvice(advice)].filter(Boolean).join('\n\n'),

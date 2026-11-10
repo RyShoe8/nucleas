@@ -210,9 +210,9 @@ function paidFor(models: AvailableModel[], need: Need): AvailableModel[] {
 export const MAX_BACKUPS = 3;
 
 /**
- * Paid stand-ins for a task at a level: the strongest remaining models within the level's price ceiling.
- * When nothing else fits under the ceiling, the single cheapest capable model, the same rule the first
- * pick follows, so a level is never left with no stand-in just because prices moved.
+ * Paid stand-ins for a task at a level: the strongest remaining models priced within the level's
+ * ceiling per 1M tokens. A stand-in never costs more per token than the level allows: when nothing
+ * else fits under the ceiling there is no stand-in, and the call fails rather than overspend.
  */
 export function backupsFrom(models: AvailableModel[], need: Need, level: CostLevel, ceilings: PriceCeilings = DEFAULT_PRICE_CEILINGS, taken: (ModelChoice | null)[] = []): ModelChoice[] {
   if (level === 'free') return [];
@@ -220,8 +220,7 @@ export function backupsFrom(models: AvailableModel[], need: Need, level: CostLev
   const rest = paidFor(models, need).filter((m) => !used.has(`${m.profileId}:${m.model}`));
   const ceiling = ceilings[level];
   const affordable = rankByPower(rest.filter((m) => ceiling === null || (m.blendedPricePer1M ?? Infinity) <= ceiling), need);
-  const picks = affordable.length ? affordable : [...rest].sort((a, b) => (a.blendedPricePer1M ?? Infinity) - (b.blendedPricePer1M ?? Infinity)).slice(0, 1);
-  return picks.slice(0, MAX_BACKUPS).map((m) => choice(m)!);
+  return affordable.slice(0, MAX_BACKUPS).map((m) => choice(m)!);
 }
 
 export function selectFrom(models: AvailableModel[], need: Need, level: CostLevel, ceilings: PriceCeilings = DEFAULT_PRICE_CEILINGS): Omit<Selection, 'source'> {

@@ -13,6 +13,7 @@ import { approvedMarketingPlan, marketingPlanContext } from '@/lib/jobs/marketin
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { CompanyTeam } from '@/lib/models/CompanyTeam';
 import { TEAM, TEAM_ROLES, teamRoleFor, type TeamRole } from './teamRoles';
+import { PLAYBOOKS, playbookText } from './teamPlaybooks';
 import { addToBoard, evidenceFromFindings, splitPlanPoint, teamBoardContext } from './teamBoard';
 
 /**
@@ -41,6 +42,8 @@ export interface MemberAdvice {
   research?: string;
   researchModel?: string;
   sources?: string[];
+  /** What this member and their intern cost for this question. Not stored. */
+  costMicros?: number;
 }
 export interface StoredAdvice {
   at: Date;
@@ -52,6 +55,8 @@ export interface ConsultOptions {
   /** A person is waiting: interns get less time. */
   interactive?: boolean;
   onProgress?: (text: string) => void;
+  /** Told about every charge, so the work this is part of counts it against its own budget. */
+  onCost?: (micros: number) => void;
 }
 
 /** Who a member is for this company: remit, how they think, and the guidance a manager wrote for them. */
@@ -63,7 +68,7 @@ export async function memberProfiles(organizationId: Types.ObjectId | string, co
     const own = saved.find((profile) => profile.role === role);
     return [role, [
       `You are ${TEAM[role].name} on this company's team. ${own?.remit ?? TEAM[role].remit}`,
-      `How you work: ${TEAM[role].process}`,
+      playbookText(role, 'full'),
       own?.lessons ? `Guidance your manager gave you for this company (preferences, not facts): ${own.lessons.slice(0, 1500)}` : '',
     ].filter(Boolean).join('\n')];
   }));
@@ -128,7 +133,7 @@ export function validConsults(raw: unknown, asker: TeamRole | null, max = MAX_CO
 }
 
 /** A free model with search and the browser goes and looks. Returns nothing when no free model is set up or it found nothing. */
-export async function internResearch(viewer: CompanyViewer, assignment: string, options: ConsultOptions = {}): Promise<{ findings: string; model: string; sources: string[] } | null> {
+export async function internResearch(viewer: CompanyViewer, assignment: string, options: ConsultOptions = {}): Promise<{ findings: string; model: string; sources: string[]; costMicros: number } | null> {
   const organizationId = String(viewer.organizationId);
   const settings = await readEngineSettings(organizationId);
   const choice = (await selectModel(organizationId, 'research', 'free', { settings })).primary;
@@ -155,9 +160,10 @@ export async function internResearch(viewer: CompanyViewer, assignment: string, 
     signal: options.signal ? AbortSignal.any([options.signal, limit]) : limit,
     onProgress: options.onProgress,
   }).catch(() => null);
+  if (turn?.costMicros) options.onCost?.(turn.costMicros);
   if (!turn || turn.role !== 'assistant' || !turn.text.trim() || /^BLOCKED/i.test(turn.text.trim())) return null;
   const findings = turn.text.trim().slice(0, 4000);
-  return { findings, model: choice.model, sources: [...new Set(linksInText(findings).map((link) => link.url))].slice(0, 12) };
+  return { findings, model: choice.model, sources: [...new Set(linksInText(findings).map((link) => link.url))].slice(0, 12), costMicros: turn.costMicros ?? 0 };
 }
 
 /**
@@ -174,12 +180,13 @@ export async function askMembers(viewer: CompanyViewer, companyId: string | null
     const research = await internResearch(viewer, [
       `Your specialist is ${name} (${TEAM[ask.member].remit})`,
       `They need to answer: ${ask.question}`,
+      `Look first in the places this field trusts: ${PLAYBOOKS[ask.member].sources}.`,
       `\n# What it is for\n${situation.slice(0, 2000)}`,
       brief ? `\n# The company (so you look for what fits it)\n${brief.slice(0, INTERN_CONTEXT_CHARS)}` : '',
     ].join('\n'), options).catch(() => null);
     options.onProgress?.(`${name} is weighing in`);
     const answer = await askEngine({
-      organizationId, userId: viewer.userId, need: 'plan', level: options.level, signal: options.signal, interactive: options.interactive,
+      organizationId, userId: viewer.userId, need: PLAYBOOKS[ask.member].need, level: options.level, signal: options.signal, interactive: options.interactive,
       system: advisorPrompt(profiles.get(ask.member)!),
       user: [
         `Question for you: ${ask.question}`,
@@ -189,11 +196,12 @@ export async function askMembers(viewer: CompanyViewer, companyId: string | null
       ].join('\n'),
       maxTokens: 900, attemptTimeoutMs: 75_000,
     }).catch(() => null);
+    if (answer?.costMicros) options.onCost?.(answer.costMicros);
     if (!answer) return null;
     // What the intern read and the point the member adds go onto the team's shared board, for every later piece of work.
     const { advice, point } = splitPlanPoint(answer.text);
     if (companyId) await addToBoard(viewer.organizationId, companyId, { member: ask.member, about: ask.question, evidence: research ? evidenceFromFindings(research.findings) : [], point });
-    return { member: ask.member, question: ask.question, advice: advice.slice(0, 1900), model: answer.model, ...(research ? { research: research.findings.slice(0, 2900), researchModel: research.model, sources: research.sources } : {}) };
+    return { member: ask.member, question: ask.question, advice: advice.slice(0, 1900), model: answer.model, costMicros: (answer.costMicros ?? 0) + (research?.costMicros ?? 0), ...(research ? { research: research.findings.slice(0, 2900), researchModel: research.model, sources: research.sources } : {}) };
   }));
   return answers.filter((answer): answer is MemberAdvice => answer !== null);
 }
@@ -203,7 +211,7 @@ export async function consultTeammates(viewer: CompanyViewer, companyId: string,
   const others = ACTIVE_ROLES.filter((role) => role !== owner);
   const ownerProfile = (await memberProfiles(viewer.organizationId, companyId, [owner])).get(owner)!;
   const decision = await askEngine({
-    organizationId: String(viewer.organizationId), userId: viewer.userId, need: 'plan', level: options.level, signal: options.signal, interactive: options.interactive,
+    organizationId: String(viewer.organizationId), userId: viewer.userId, need: PLAYBOOKS[owner].need, level: options.level, signal: options.signal, interactive: options.interactive,
     system: [
       ownerProfile,
       'You have been given the task below. Before starting, decide whether a teammate knows something you need.',
@@ -216,6 +224,7 @@ export async function consultTeammates(viewer: CompanyViewer, companyId: string,
     user: task.slice(0, 6000),
     maxTokens: 500, attemptTimeoutMs: 45_000,
   }).catch(() => null);
+  if (decision?.costMicros) options.onCost?.(decision.costMicros);
   if (!decision) return [];
   return askMembers(viewer, companyId, validConsults(extractJson(decision.text), owner), task, options);
 }
@@ -242,8 +251,8 @@ export async function teamAdviceForJob(job: AdvisedDoc, viewer: CompanyViewer, o
   try {
     const d = job.design && typeof job.design === 'object' ? (job.design as { title?: string; instructions?: string }) : {};
     const task = [d.title ? `Task: ${d.title}` : '', job.request ? `Request: ${job.request}` : '', d.instructions ? `Brief: ${d.instructions.slice(0, 3000)}` : ''].filter(Boolean).join('\n');
-    const items = await consultTeammates(viewer, String(job.companyId), teamRoleFor(job), task, { level: job.level ?? undefined, signal: options.signal, onProgress: options.onProgress });
-    await options.save({ at: new Date(), items });
+    const items = await consultTeammates(viewer, String(job.companyId), teamRoleFor(job), task, { level: job.level ?? undefined, signal: options.signal, onProgress: options.onProgress, onCost: options.onCost });
+    await options.save({ at: new Date(), items: items.map(({ costMicros: _cost, ...item }) => item) });
     return items;
   } catch (error) {
     console.error('[team] could not ask teammates', { jobId: String(job._id), error });
