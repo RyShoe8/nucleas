@@ -153,8 +153,8 @@ export function judgePrompt(input: JudgeInput): { system: string; user: string }
       `Page title: ${input.page.title}`,
       `Page description: ${input.page.description}`,
       `Public form controls parsed from the page HTML (no hidden values): ${JSON.stringify(input.page.controls ?? [])}`,
-      ...(input.supporting ?? []).map(page => `Official supporting page: ${page.finalUrl}\n${page.title}\n${page.text.slice(0, 1500)}\n…\n${page.text.slice(-2500)}`),
-      `Page text (opening, submission-policy excerpts, ending):\n${[input.page.text.slice(0, 1800), ...relevant, input.page.text.slice(-2500)].join('\n…\n')}`,
+      ...(input.supporting ?? []).map(page => `Official supporting page: ${page.finalUrl}\n${page.title}\n${page.text.slice(0, 1500)}\n…\n${page.text.slice(-4500)}`),
+      `Page text (opening, submission-policy excerpts, ending):\n${[input.page.text.slice(0, 1800), ...relevant, input.page.text.slice(-4500)].join('\n…\n')}`,
     ].join('\n'),
   };
 }

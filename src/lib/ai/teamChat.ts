@@ -1098,7 +1098,7 @@ export async function attemptOrchestratedIdeReply(input: {
       // The checks the Critic asks for are run by Nucleas itself against the repository: a Worker with no tools would guess.
       const lookups = interactionMode === 'plan' && planFiles ? safely(() => repoLookups(planFiles, [...gate.jobs, gate.reason ?? ''], evidencePack?.terms ?? []), '') : '';
       if (interactionMode === 'plan' && lookups && !workerRead) {
-        workerTurn = { ...workerTurn, text: [WORKER_UNREAD_NOTE, workerTurn.text.replace(WORKER_UNREAD_NOTE, '').trim().slice(0, 2500), '', lookups].join('\n') };
+        workerTurn = { ...workerTurn, text: [WORKER_UNREAD_NOTE, workerTurn.text.replace(WORKER_UNREAD_NOTE, '').trim().slice(0, 4500), '', lookups].join('\n') };
         assistantStages.push(workerTurn);
         continue;
       }
