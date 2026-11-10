@@ -47,7 +47,15 @@ export default function AiBudgetsModule() {
             const itemCapMicros = dollarsToMicros(item);
             if (itemCapMicros <= 0) throw new Error('Set a cap above $0 for a single piece of work.');
             if (itemCapMicros > limitMicros) throw new Error('The cap on a single piece of work cannot be more than the monthly budget.');
-            if (limitMicros > view.ceilingMicros) throw new Error(`The most this organization can be given in a month is ${usd(view.ceilingMicros)}.`);
+            // The platform keeps its own ceiling above every organization. An administrator raising the budget past it
+            // raises that ceiling too, so there is one number to set; anyone else is told who can.
+            if (limitMicros > view.ceilingMicros) {
+                const current = await fetch('/api/admin/ai', { cache: 'no-store' });
+                const platform = (await current.json().catch(() => ({}))) as { settings?: { revision: number; value: Record<string, unknown> }; error?: string };
+                if (!current.ok || !platform.settings) throw new Error(`Your organization is limited to ${usd(view.ceilingMicros)} a month. A platform administrator can raise that.`);
+                const raised = await fetch('/api/admin/ai', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revision: platform.settings.revision, value: { ...platform.settings.value, organizationLimitMicros: limitMicros, projectLimitMicros: limitMicros } }) });
+                if (!raised.ok) throw new Error(((await raised.json().catch(() => ({}))) as { error?: string }).error ?? `Could not raise the monthly limit (${raised.status}).`);
+            }
             const res = await fetch('/api/ai/budgets', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revision: view.settings.revision, value: { limitMicros, itemCapMicros, paused: view.settings.value.paused } }) });
             const body = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(body.error ?? `Unable to save budgets (${res.status}).`);
