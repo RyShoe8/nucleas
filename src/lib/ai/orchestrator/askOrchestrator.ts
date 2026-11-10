@@ -202,8 +202,9 @@ export function factSheet(results: { company: string; tool: string; result: Reco
     }
     if (tool === 'company_metrics' && Array.isArray(result.metrics)) {
       lines.push(`${company} metrics (last 7 complete days vs the 7 before; current values for snapshots):`);
-      for (const m of result.metrics as { label: string; unit: string; kind: string; last7OrCurrent: number; previous: number | null; changePct: number | null }[]) {
-        const fmt = (v: number | null) => (v === null ? 'n/a' : m.unit === 'USD cents' ? money(v) : new Intl.NumberFormat('en-US').format(Math.round(v)));
+      for (const m of result.metrics as { label: string; unit: string; kind: string; last7OrCurrent: number | null; previous: number | null; changePct: number | null }[]) {
+        const currency = m.unit === 'USD cents' ? 'USD' : /^([A-Z]{3}) minor units$/.exec(m.unit)?.[1];
+        const fmt = (v: number | null) => (v === null ? 'n/a' : currency === 'USD' ? money(v) : currency ? new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(v / 100) : m.unit.endsWith('minor units') ? 'unavailable (currency not recorded)' : new Intl.NumberFormat('en-US').format(Math.round(v)));
         lines.push(`  - ${m.label}: ${fmt(m.last7OrCurrent)} (previous ${fmt(m.previous)}${m.changePct === null ? '' : `, ${m.changePct >= 0 ? '+' : ''}${m.changePct}%`})`);
       }
       if (Array.isArray(result.notableChanges) && result.notableChanges.length) lines.push(`  Notable: ${(result.notableChanges as string[]).join('; ')}`);
@@ -490,7 +491,7 @@ export async function runAskOrchestrator(
         ? `I looked into **${company.name}** to set this up. A few things only you can decide are below — answer them and I'll finish the design.`
         : job.status === 'proposed'
           ? `Here's the job I designed for **${company.name}**: **${job.design?.title}**. Choose review or automatic completion and approve it to start a dry run; nothing runs for real until you accept the sample.`
-          : `I couldn't finish designing this job: ${job.error ?? 'unknown error'}`;
+          : `I couldn't finish preparing this responsibility: ${job.error ?? 'unknown error'}`;
     return { role: job.status === 'failed' ? 'status' : 'assistant', text, stages, invocationIds: [], costMicros, runId: planTurn.runId, job };
   }
 

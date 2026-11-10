@@ -80,7 +80,7 @@ function createLauncher() {
         fs.mkdirSync(path.join(__dirname, 'release'), { recursive: true });
         fs.writeFileSync(path.join(__dirname, 'release/launcher-preview.png'), capture.toPNG());
         openModule({ moduleId: 'work' });
-        openModule({ moduleId: 'growth' });
+        openModule({ moduleId: 'team' });
         openModule({ moduleId: 'work' });
         if (windows.size !== 2) throw new Error('Native windows failed to deduplicate');
         fs.writeFileSync(path.join(__dirname, 'release/smoke-test.json'), JSON.stringify({ apps: count, nativeWindows: windows.size, duplicateFocused: true }));

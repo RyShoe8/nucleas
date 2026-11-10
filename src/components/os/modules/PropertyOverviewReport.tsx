@@ -12,7 +12,7 @@ type TemplatePages = { pages: Page[]; total: number; loading: boolean; error?: s
 export default function PropertyOverviewButton({ companyId, companyName, canManage }: { companyId: string; companyName: string; canManage: boolean }) {
   const wm = useWindowManager();
   const [open, setOpen] = useState(false);
-  const started = () => { setOpen(false); window.dispatchEvent(new Event('nucleas:jobs-changed')); wm.open('jobs'); };
+  const started = () => { setOpen(false); window.dispatchEvent(new Event('nucleas:jobs-changed')); wm.open('team', { payload: { companyId, companyName } }); };
   return <><button type="button" onClick={(event) => { event.stopPropagation(); setOpen(true); }} className="ui-button flex-shrink-0">Company overview</button>{open ? <PropertyOverviewModal companyId={companyId} companyName={companyName} canManage={canManage} onClose={() => setOpen(false)} onStarted={started} /> : null}</>;
 }
 

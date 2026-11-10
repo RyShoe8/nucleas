@@ -2,6 +2,7 @@ import { createElement } from 'react';
 import ModuleRegistry from '@/lib/os/moduleRegistry';
 import type { ModuleDefinition } from '@/lib/os/types';
 import dynamic from 'next/dynamic';
+const TeamModule = dynamic(() => import('./TeamModule'));
 const WorkModule = dynamic(() => import('./WorkModule'));
 const GrowthModule = dynamic(() => import('./GrowthModule'));
 const SettingsModule = dynamic(() => import('./SettingsModule'));
@@ -42,8 +43,18 @@ export function registerOsModules(): void {
 
     const definitions: ModuleDefinition[] = [
         {
+            id: 'team',
+            title: 'Team',
+            icon: '◈',
+            defaultSize: { width: 1040, height: 760 },
+            minSize: { width: 480, height: 360 },
+            canPopout: true,
+            permissions: 'member',
+            render: (ctx) => createElement(TeamModule, ctx),
+        },
+        {
             id: 'work',
-            title: 'Work',
+            title: 'Review & work',
             icon: '▤',
             defaultSize: { width: 1000, height: 720 },
             minSize: { width: 480, height: 360 },
@@ -59,6 +70,7 @@ export function registerOsModules(): void {
             minSize: { width: 480, height: 360 },
             canPopout: true,
             permissions: 'member',
+            launcherHidden: true,
             render: () => createElement(GrowthModule),
         },
         {
@@ -95,7 +107,7 @@ export function registerOsModules(): void {
             id: 'company',
             title: 'Company',
             icon: '🏢',
-            defaultSize: { width: 760, height: 640 },
+            defaultSize: { width: 1040, height: 760 },
             minSize: { width: 480, height: 360 },
             canPopout: true,
             permissions: 'member',
@@ -150,7 +162,7 @@ export function registerOsModules(): void {
             id: 'building',
             title: 'Building',
             icon: '🏗️',
-            defaultSize: { width: 760, height: 640 },
+            defaultSize: { width: 1040, height: 760 },
             minSize: { width: 440, height: 320 },
             canPopout: true,
             permissions: 'member',
@@ -181,7 +193,7 @@ export function registerOsModules(): void {
         },
         {
             id: 'jobs',
-            title: 'All jobs',
+            title: 'All responsibilities',
             icon: '🗂️',
             defaultSize: { width: 800, height: 660 },
             minSize: { width: 460, height: 320 },

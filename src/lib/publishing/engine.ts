@@ -1,3 +1,4 @@
+import { companyTeamContext } from '@/lib/companies/teamContext';
 import { readEventRoundup } from './eventRoundup';
 import { dealForKey, emailOffers, hasSeveralOffers, isBestOffer, sourceItemId, type EmailOffers } from './dealOffers';
 import { applyAdminFieldRules, fillWithoutCallingFree, paidOfferCalledFree, withDealAmounts, withDefaultEndDate, type DealAmounts } from './adminRules';
@@ -112,7 +113,7 @@ function publicDealProblem(item: { bestDeal?: DealMetrics | null; subject?: stri
   return null;
 }
 
-type JobLike = { _id: Types.ObjectId; organizationId: Types.ObjectId; companyId: Types.ObjectId; createdByUserId: Types.ObjectId; level?: CostLevel | null; publishing?: unknown };
+type JobLike = { teamRole?: string | null; request?: string; design?: unknown; _id: Types.ObjectId; organizationId: Types.ObjectId; companyId: Types.ObjectId; createdByUserId: Types.ObjectId; level?: CostLevel | null; publishing?: unknown };
 
 export function readConfig(job: { publishing?: unknown }): PublishingConfig | null {
   const parsed = publishingConfigSchema.safeParse(job.publishing);
@@ -215,7 +216,8 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
 // ---------- Drafting ----------
 
 async function approvedPersona(job: JobLike): Promise<string | null> {
-  return (await brandVoiceContext(job.organizationId, job.companyId)) || null;
+  const [voice, team] = await Promise.all([brandVoiceContext(job.organizationId, job.companyId), companyTeamContext(job)]);
+  return voice ? [voice, team].filter(Boolean).join('\n\n') : null;
 }
 
 /** failures: each model that gave no answer and why, so a card can say why it could not be filled. */

@@ -51,7 +51,7 @@ function RunningJob({ job, onChange }: { job: JobView; onChange: (job: JobView) 
                 {lines.length > RECENT_LINES ? (
                     <button type="button" className="underline" onClick={() => setShowAll(!showAll)}>{showAll ? 'Show recent' : `Show all ${lines.length}`}</button>
                 ) : null}
-                <button type="button" className="underline" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? 'Hide job' : 'Open job'}</button>
+                <button type="button" className="underline" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? 'Hide' : 'Open'}</button>
             </div>
             {open ? <div className="mt-2"><JobCard job={job} onChange={onChange} headerShownAbove /></div> : null}
         </li>

@@ -368,7 +368,7 @@ export default function AssistantModule() {
                                         job={t.job}
                                         compact
                                         onChange={(next) => setTurns((list) => (list ?? []).map((x) => (x.job?.id === next.id ? { ...x, job: next } : x)))}
-                                        onOpenJobs={() => wm.open('jobs')}
+                                        onOpenJobs={() => wm.open('team', { payload: { companyId: t.job!.companyId, companyName: t.job!.companyName } })}
                                     />
                                 </div>
                             ) : null}

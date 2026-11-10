@@ -79,3 +79,7 @@
  .headerActions { gap: 8px; }
  .appSwitches button { max-width: 130px; }
 }
+
+.appDescription { color: #9da3b8; font-size: 10px; line-height: 1.4; }
+.apps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.app:first-child, .app:nth-child(2) { background: linear-gradient(145deg, #b5a5ff14, #ffffff04); border-color: #b5a5ff30; }

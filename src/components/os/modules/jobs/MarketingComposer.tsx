@@ -51,7 +51,7 @@ export default function MarketingComposer({ companyId, companyName, onCreated, r
                 placeholder={`What should Nucleas do for ${companyName}? e.g. “When something new is published on our site, post it to Facebook and Bluesky” or “Add the best deals from our email to our admin.”`}
             />
             {/^(?:frugal\s*gambler)(?:\.club)?$/i.test(companyName.trim()) ? <details className="text-xs text-text-secondary">
-                <summary className="cursor-pointer">Specialized jobs</summary>
+                <summary className="cursor-pointer">Specialized responsibilities</summary>
                 <button type="button" className="ui-button mt-2" disabled={busy} onClick={() => void discovery()}>Casino / sports betting discovery</button>
             </details> : null}
         </div>

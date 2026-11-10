@@ -183,7 +183,7 @@ describe('total revenue', () => {
   it('sums payment and ad revenue and reports each change once', async () => {
     const { withTotalRevenue } = await import('./query');
     const mk = (key: string, current: number, previous: number): MetricView => ({
-      key, label: key, unit: 'money', kind: 'daily', series: [{ date: '2026-09-27', value: current }], current, previous, change: (current - previous) / previous, lastDay: null,
+      key, label: key, currency: 'USD', unit: 'money', kind: 'daily', series: [{ date: '2026-09-27', value: current }], current, previous, change: (current - previous) / previous, lastDay: null,
     });
     const both = withTotalRevenue([mk('revenue_net', 20_000, 10_000), mk('ad_revenue', 10_000, 10_000)]);
     expect(both[0]).toMatchObject({ key: 'revenue_total', label: 'Revenue (all sources)', current: 30_000, previous: 20_000, change: 0.5 });

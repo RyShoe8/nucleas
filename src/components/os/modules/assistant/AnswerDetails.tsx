@@ -70,7 +70,7 @@ function nameStep(stage: AnswerStage): Pick<AnswerStep, 'name' | 'detail' | 'war
       return { name: 'Reviewed the answer', detail: plainNote };
     }
     case 'job':
-      return { name: 'Designed a job', detail: plainNote };
+      return { name: 'Prepared a responsibility', detail: plainNote };
     case 'code':
       return { name: 'Planned a code change', detail: plainNote };
     default:

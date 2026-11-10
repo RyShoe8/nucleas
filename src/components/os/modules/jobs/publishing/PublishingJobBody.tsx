@@ -163,7 +163,7 @@ export default function PublishingJobBody({ job, onChange, readyShownAbove = fal
     const view = job.publishing;
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
-    if (!view) return <p className="text-xs text-red-400">This job&rsquo;s publishing settings are missing.</p>;
+    if (!view) return <p className="text-xs text-red-400">This responsibility&rsquo;s publishing settings are missing.</p>;
 
     const act = async (action: string) => {
         setBusy(action);
@@ -211,7 +211,7 @@ export default function PublishingJobBody({ job, onChange, readyShownAbove = fal
                     {job.canManage ? <div className="flex flex-wrap gap-2">
                         <button type="button" className="ui-button-primary" disabled={busy !== null} onClick={() => void act('approve')}>{busy === 'approve' ? 'Starting dry run…' : failedSample ? 'Retry dry run' : 'Approve and run a dry run'}</button>
                         <button type="button" className="ui-button" disabled={busy !== null} onClick={() => void act('reject')}>Reject</button>
-                    </div> : <p className="text-xs text-text-secondary">A manager or administrator must approve this job.</p>}
+                    </div> : <p className="text-xs text-text-secondary">A manager or administrator must approve this responsibility.</p>}
                     <p className="text-xs text-text-secondary">The dry run previews existing content without posting or saving anything externally. Review the sample before switching the job on. Manual destinations remain manual.</p>
                 </section>
             ) : null}

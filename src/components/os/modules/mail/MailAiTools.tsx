@@ -46,7 +46,7 @@ export default function MailAiTools({ thread, note, draftInto, compact }: AiTool
             return note({ kind: 'error', text: res.error });
         }
         setChoosingCompany(false);
-        note({ kind: 'info', text: `Job started${res.data.title ? `: ${res.data.title}` : ''}. Nucleas is designing it; find it in Jobs and approve it there.` });
+        note({ kind: 'info', text: `Handed to your team${res.data.title ? `: ${res.data.title}` : ''}. A plan is being prepared; find it under the company’s Team and approve it there.` });
     };
 
     if (compact) {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import type { ModuleRenderContext } from '@/lib/os/types';
 import { RELATIONSHIP_LABEL, type OsCompanyDetail, type OsConnection } from './companyTypes';
+import CompanyTeamPanel from './CompanyTeamPanel';
 import CompanySnapshot from './CompanySnapshot';
 import { setAssistantFocus } from '@/lib/os/assistantFocus';
 import CompanyActivity from './CompanyActivity';
@@ -18,6 +19,7 @@ import type { SocialNetwork } from '@/lib/models/Project';
 
 export default function CompanyModule({ payload }: ModuleRenderContext) {
     const companyId = payload?.companyId;
+    const [section, setSection] = useState(payload?.section ?? 'performance');
     const [detail, setDetail] = useState<OsCompanyDetail | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [activityKey, setActivityKey] = useState(0);
@@ -107,15 +109,20 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                 </div>
             </header>
 
-            <CompanySnapshot
+            <nav aria-label="Company workspace" className="sticky top-0 z-10 flex gap-1 rounded-xl border border-border bg-background p-1">
+                {[['performance', 'Performance'], ['team', 'Team'], ['activity', 'Activity'], ['setup', 'Setup']].map(([id, label]) => <button key={id} aria-pressed={section === id} onClick={() => setSection(id)} className={`flex-1 rounded-lg px-3 py-2 text-sm ${section === id ? 'bg-primary/15 text-primary font-medium' : 'text-text-secondary hover:bg-background-card'}`}>{label}</button>)}
+            </nav>
+            {section === 'team' && <CompanyTeamPanel key={company.id} companyId={company.id} companyName={company.name} />}
+            {section === 'performance' && <CompanySnapshot
+                key={company.id}
                 companyId={company.id}
                 connections={connections.filter((c) => c.status === 'connected')}
                 aiCitations={detail.stats?.aiCitations ?? 0}
                 aiCitationSeries={detail.stats?.aiCitationSeries ?? []}
                 onActivity={() => setActivityKey((k) => k + 1)}
-            />
-            <details className="ui-card p-3">
-            <summary className="cursor-pointer text-sm font-medium">Connections and setup</summary>
+            />}
+            {section === 'setup' && <section className="ui-card p-3">
+            <h3 className="text-sm font-medium">Connections and setup</h3>
             <div className="mt-3 space-y-4">
             <ProjectsSection projects={projects} />
             <CodeRepositories companyId={company.id} compact />
@@ -123,11 +130,11 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
             <WebsiteConnectionPanel companyId={company.id} domain={company.domain} />
             <IntegrationsSummary companyId={company.id} companyName={company.name} connections={connections} />
             </div>
-            </details>
-            <details className="ui-card p-3">
-                <summary className="cursor-pointer text-sm font-medium">Recent activity</summary>
+            </section>}
+            {section === 'activity' && <section className="ui-card p-3">
+                <h3 className="text-sm font-medium">Recent activity</h3>
                 <div className="mt-3 space-y-4"><CompanyChanges companyId={company.id} /><CompanyActivity companyId={company.id} refreshKey={activityKey} /></div>
-            </details>
+            </section>}
         </div>
     );
 }

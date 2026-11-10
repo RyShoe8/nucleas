@@ -1,3 +1,5 @@
+import { companyTeamContext } from '@/lib/companies/teamContext';
+import { TEAM, teamRoleFor } from '@/lib/companies/teamRoles';
 import { datasetAssignment, leadBrief, leadsNeedingCheck, leadsToFinish, openedPages, researchExclusions, researchReserve, saveScoutBatch, saveScreened, rememberQualificationGap } from './researchEvidence';
 import 'server-only';
 import { changedMethod, planResearch, scoutSources, strategyBrief, type ResearchStrategy } from '@/lib/ai/orchestrator/researchStrategy';
@@ -437,6 +439,8 @@ export async function executeJobRun(runId: string): Promise<void> {
     return;
   }
   const activeDesign = currentDesign(design.data);
+  const specialistContext = await companyTeamContext(job);
+  activeDesign.instructions += `\n\n${specialistContext}`;
   await progress(run._id, owner, 'Preparing company, project, and model context', { stage: 'preparing', percent: 8 });
 
   const spent = await monthSpendMicros(job._id);
@@ -574,7 +578,7 @@ export async function executeJobRun(runId: string): Promise<void> {
   let cost = 0;
   const usedModels: string[] = [];
   const recordStep = (stage: ModelStep['stage'], note: string, choice: { model: string; free: boolean }, source: ModelStep['source'], fallback: boolean, costMicros: number | null, error?: string) => {
-    modelPath.push({ stage, note, model: choice.model, free: choice.free, source, level, fallback, costMicros, ...(error ? { error: stepText(error) } : {}), reason: modelStepReason({ stage, level, free: choice.free, source, fallback }) });
+    modelPath.push({ stage, note, member: TEAM[teamRoleFor(job)].name, model: choice.model, free: choice.free, source, level, fallback, costMicros, ...(error ? { error: stepText(error) } : {}), reason: modelStepReason({ stage, level, free: choice.free, source, fallback }) });
     if (costMicros === null && !choice.free) costUnknown = true;
   };
   let researchPercent = 28;

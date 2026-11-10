@@ -27,7 +27,7 @@ const GROUPS: Group[] = [
         test: (j) => j.status === 'needs_answers' || j.status === 'proposed' || j.runs.some((r) => r.status === 'needs_review') || Boolean(j.publishing?.ready.length) || j.opportunities.some(o => linkNeedsAction(o.status)),
     },
     { key: 'working', label: 'Working', test: (j) => jobIsBusy(j) || j.status === 'testing' },
-    { key: 'set', label: 'Configured jobs', test: (j) => ['ready', 'active', 'paused'].includes(j.status) },
+    { key: 'set', label: 'Ongoing responsibilities', test: (j) => ['ready', 'active', 'paused'].includes(j.status) },
     { key: 'done', label: 'Done', test: (j) => j.status === 'done' },
     { key: 'failed', label: 'Failed', test: (j) => j.status === 'failed' },
 ];
@@ -85,7 +85,7 @@ function CompanyWork({ jobs, items, names, selected, createdId, onChange }: {
             <button type="button" aria-expanded={isOpen} onClick={() => toggle(key, signal, isOpen)} className="ui-card-interactive flex w-full items-center gap-3 px-3 py-3 text-left">
                 <span aria-hidden="true">{isOpen ? '▾' : '▸'}</span><strong className="min-w-0 flex-1 truncate text-sm">{company.name}</strong>
                 {count > 0 && <span className="text-xs text-amber-300">{count} need attention</span>}
-                <span className="text-xs tabular-nums text-text-secondary">{active} active {active === 1 ? 'job' : 'jobs'}</span>
+                <span className="text-xs tabular-nums text-text-secondary">{active} active {active === 1 ? 'responsibility' : 'responsibilities'}</span>
             </button>
             {isOpen && <ul className="ml-3 mt-2 space-y-2 border-l border-border pl-3">
                 {ordered.map(({ job, signal: reason }) => {
@@ -99,7 +99,7 @@ function CompanyWork({ jobs, items, names, selected, createdId, onChange }: {
                     </li>;
                 })}
                 <ActivityRows items={company.activity} showCompany={false} />
-                {!ordered.length && !company.activity.length && <li className="text-sm text-text-secondary">No jobs yet.</li>}
+                {!ordered.length && !company.activity.length && <li className="text-sm text-text-secondary">No responsibilities yet.</li>}
             </ul>}
         </section>;
     })}</div>;
@@ -198,7 +198,7 @@ function NewJob({ onCreated, onCancel, placeholder, initialCompanyId, initialKin
                         onInboxWatch={(brief) => onInboxWatch?.(companyId, brief)}
                         renderLinkBuilding={(done) => <NewJob placeholder={placeholder} initialCompanyId={companyId} initialKind="link_building" companyLocked onCancel={done} onCreated={(j) => { done(); onCreated(j); }} />}
                     />
-                ) : <p className="text-xs text-text-secondary">Choose the company this job is for.</p>}
+                ) : <p className="text-xs text-text-secondary">Choose the company this responsibility is for.</p>}
                 {onCancel ? <button type="button" onClick={onCancel} className="ui-button">Cancel</button> : null}
             </div>
         );
@@ -236,7 +236,7 @@ function NewJob({ onCreated, onCancel, placeholder, initialCompanyId, initialKin
                     <label className="space-y-1 col-span-2 sm:col-span-3"><span className="text-text-secondary">Optional exclusions</span><input value={exclusions} onChange={(e) => setExclusions(e.target.value)} placeholder="Sites, categories, or tactics to exclude" className="ui-control block w-full" /></label>
                 </div>
             ) : (
-                <textarea value={request} onChange={(e) => setRequest(e.target.value)} placeholder={placeholder} className="ui-control w-full h-24 resize-y" aria-label="Job request" />
+                <textarea value={request} onChange={(e) => setRequest(e.target.value)} placeholder={placeholder} className="ui-control w-full h-24 resize-y" aria-label="Responsibility request" />
             )}
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
             <button
@@ -245,7 +245,7 @@ function NewJob({ onCreated, onCancel, placeholder, initialCompanyId, initialKin
                 onClick={() => void create()}
                 className="ui-button-primary"
             >
-                {busy ? 'Starting…' : kind === 'link_building' ? 'Configure link building' : 'Design this job'}
+                {busy ? 'Starting…' : kind === 'link_building' ? 'Configure link building' : 'Prepare a plan'}
             </button>
             {onCancel ? <button type="button" onClick={onCancel} className="ui-button ml-2">Cancel</button> : null}
         </div>
@@ -398,10 +398,10 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                     { label: 'Brand assets', disabled: company === 'all', onClick: () => { setShowAssets(true); setShowOverview(false); setShowInboxes(false); } },
                 ]} /> : null}
                 <button type="button" disabled={marketing && company === 'all'} onClick={() => { setCreating((v) => !v); setShowOverview(false); setShowInboxes(false); setShowAssets(false); }} className="ui-button-primary">
-                    {creating ? 'Cancel new job' : 'New job'}
+                    {creating ? 'Cancel' : 'New responsibility'}
                 </button>
             </div>
-            <p className="border-b border-border px-3 py-2 text-xs text-text-secondary">{marketing ? 'Review and manage marketing work here. These are the same jobs shown in All jobs.' : title === 'Content' ? 'Content jobs also appear in All jobs. Create articles and update posts from the other Content tabs.' : 'All work in one place. Open an item to review results or manage its settings.'}</p>
+            <p className="border-b border-border px-3 py-2 text-xs text-text-secondary">{marketing ? 'Review and manage marketing work here. The same responsibilities appear under each company’s Team.' : title === 'Content' ? 'Content responsibilities also appear under each company’s Team. Create articles and update posts from the other Content tabs.' : 'All work in one place. Open an item to review results or manage its settings.'}</p>
 
             {showOverview && title === 'Marketing' && company !== 'all' ? (
                 <div className="flex-1 overflow-y-auto p-3">
@@ -431,7 +431,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                         )}
                     </div>
                 ) : null}
-                {marketing && company === 'all' ? <p className="text-xs text-text-secondary">Choose a company to start a marketing job.</p> : null}
+                {marketing && company === 'all' ? <p className="text-xs text-text-secondary">Choose a company to give Marketing a responsibility.</p> : null}
                 {!marketing && creating ? (
                     <NewJob
                         key={`${company}-${initialKind ?? ''}`}
@@ -449,7 +449,7 @@ export default function JobsModule({ categories, title = 'Jobs', initialCompanyI
                 ) : null}
                 {inView.length === 0 && !creating && !marketing && !(['you', 'working', 'set', 'failed'] as const).some((g) => activityFor(activity, g, company, categories).length) ? (
                     <p className="text-sm text-text-secondary">
-                        No {title === 'Jobs' ? '' : `${title.toLowerCase()} `}jobs yet. Describe work with New job, or ask Nucleas (&ldquo;every day, …&rdquo;, &ldquo;research … and add it to …&rdquo;).
+                        No {title === 'Jobs' ? '' : `${title.toLowerCase()} `}responsibilities yet. Describe an outcome with New responsibility, or ask Nucleas (&ldquo;every day, …&rdquo;, &ldquo;research … and add it to …&rdquo;).
                     </p>
                 ) : null}
                 {workView ? <CompanyWork jobs={inView.filter((job) => !isRunningJob(job))} items={(activity?.items ?? []).filter((item) => item.group !== 'working')} names={new Map(companies)} selected={company} createdId={open} onChange={replace} /> : GROUPS.map((g) => {

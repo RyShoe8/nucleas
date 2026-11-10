@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import {
+  editResponsibility,
   answerQuestions,
   approveJob,
   updateJobBudget,
@@ -74,6 +75,7 @@ async function performAction(request: NextRequest, { params }: Context) {
     postedUrl?: unknown;
     settings?: unknown;
     title?: unknown;
+    instructions?: unknown;
     body?: unknown;
   };
   const note = typeof body.note === 'string' ? body.note : undefined;
@@ -103,6 +105,9 @@ async function performAction(request: NextRequest, { params }: Context) {
     case 'accept_run':
     case 'reject_run':
       result = await decideRun(viewer, id, typeof body.runId === 'string' ? body.runId : '', body.action === 'accept_run' ? 'accept' : 'reject', note);
+      break;
+    case 'edit_work':
+      result = await editResponsibility(viewer, id, { title: body.title, instructions: body.instructions });
       break;
     case 'rename':
       result = await renameJob(viewer, id, body.title);

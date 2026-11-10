@@ -1,3 +1,4 @@
+import { TEAM_ROLES } from '@/lib/companies/teamRoles';
 import mongoose, { Schema, type InferSchemaType, type Model } from 'mongoose';
 
 /**
@@ -18,6 +19,8 @@ const jobSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, required: true },
     companyId: { type: Schema.Types.ObjectId, ref: 'Client', required: true },
+    /** Durable company specialist; older jobs resolve from their field without changing schedules. */
+    teamRole: { type: String, enum: TEAM_ROLES },
     /** Project whose property/strategy this first-party skill operates on. */
     projectId: { type: Schema.Types.ObjectId, ref: 'Project' },
     createdByUserId: { type: Schema.Types.ObjectId, ref: 'User', required: true },

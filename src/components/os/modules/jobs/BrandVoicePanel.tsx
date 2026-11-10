@@ -44,7 +44,7 @@ export default function BrandVoicePanel({ companyId, onCreated }: { companyId: s
         if (!created.ok || !result.job) throw new Error(result.error || 'Could not create Voice job.');
         onCreated(result.job);
         window.dispatchEvent(new Event('nucleas:jobs-changed'));
-      } else setMessage('Voice approved. Content and social drafting jobs will use it.');
+      } else setMessage('Voice approved. Your team will use it for content and social drafts.');
     } catch (e) { setError(e instanceof Error ? e.message : 'Voice request failed.'); }
     finally { setBusy(false); }
   }
@@ -53,7 +53,7 @@ export default function BrandVoicePanel({ companyId, onCreated }: { companyId: s
   if (loading) return <p className="text-sm text-text-secondary">Loading Voice…</p>;
   return <div className="space-y-3">
     <p className="text-xs text-text-secondary">Voice runs only when requested. Generate a new draft when the brand changes.</p>
-    <p className="text-xs text-text-secondary">Build a persona from the Company Overview, website, and writing samples. Accept the generated job result, then edit and approve the persona here for content and social drafts.</p>
+    <p className="text-xs text-text-secondary">Build a persona from the Company Overview, website, and writing samples. Accept the generated result, then edit and approve the persona here for content and social drafts.</p>
     <label className="block space-y-1"><span className="ui-kicker">Brand writing samples</span><textarea aria-label="Brand writing samples" value={voice.examples} maxLength={16000} onChange={(e) => setVoice({ ...voice, examples: e.target.value })} placeholder="Paste your own articles or posts, including source URLs. Third-party emails are content sources, not your brand voice." className="ui-control w-full h-32 resize-y" /></label>
     <label className="block space-y-1"><span className="ui-kicker">Persona · {voice.status} · revision {voice.revision}</span><textarea aria-label="Brand persona" value={voice.persona} maxLength={20000} onChange={(e) => setVoice({ ...voice, persona: e.target.value, status: 'draft' })} placeholder="Generate a persona or write your brand’s voice guidelines here." className="ui-control w-full h-64 resize-y" /></label>
     {voice.sources.length ? <p className="text-xs text-text-secondary whitespace-pre-wrap">Sources: {voice.sources.join('\n')}</p> : null}

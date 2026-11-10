@@ -1,6 +1,7 @@
 'use client';
 
 import { visibleInterval } from '@/lib/os/visibleInterval';
+import { TEAM } from '@/lib/companies/teamRoles';
 import { askText } from '@/lib/os/askText';
 import { useEffect, useState } from 'react';
 import Modal from '@/components/ui/Modal';
@@ -91,6 +92,7 @@ export interface JobRunView {
 }
 
 export interface JobView {
+    teamRole?: import('@/lib/companies/teamRoles').TeamRole;
     id: string;
     companyId: string;
     projectId: string | null;
@@ -226,6 +228,7 @@ export function jobFacts(job: JobView, options: { showCompany: boolean }): JobFa
     const d = job.design;
     const facts: JobFact[] = [];
     if (options.showCompany) facts.push({ label: 'Company', value: job.companyName });
+    if (job.teamRole) facts.push({ label: 'Owner', value: TEAM[job.teamRole].name });
     if (d) facts.push({ label: 'Schedule', value: scheduleLabel(d.schedule) });
     if (d && d.schedule.kind !== 'once') {
         facts.push({ label: 'Last checked', value: job.lastRunAt ? new Date(job.lastRunAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Not yet' });
@@ -439,7 +442,7 @@ function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => vo
                     className="h-6 w-20 px-1 rounded border border-border bg-background-elevated text-xs"
                     aria-label="Monthly budget in dollars"
                 />
-                <span className="text-text-secondary">{manual ? 'spending cap only; never schedules a run' : 'the job pauses when it is reached'}</span>
+                <span className="text-text-secondary">{manual ? 'spending cap only; never schedules a run' : 'work pauses when it is reached'}</span>
             </label>
             )}
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
@@ -451,7 +454,7 @@ function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => vo
                     type="button"
                     className={BUTTON}
                     disabled={busy !== null}
-                    onClick={() => window.confirm('Reject this job?') && void act({ action: 'reject' }, 'reject')}
+                    onClick={() => window.confirm('Reject this plan?') && void act({ action: 'reject' }, 'reject')}
                 >
                     Reject
                 </button>
@@ -545,7 +548,7 @@ function ModelPath({ run }: { run: JobRunView }) {
                         <span className="font-mono text-xs">{step.model}</span>
                         <span className={`ml-2 rounded border px-1.5 py-0.5 text-[10px] ${step.free ? 'border-border text-text-secondary' : 'border-primary/40 text-primary'}`}>{step.free ? 'Free' : 'Paid'}</span>
                         <span className="ml-2 text-xs text-text-secondary">{step.costMicros === null ? (step.free ? '' : 'cost unknown') : usd(step.costMicros)}</span>
-                        <p className="text-xs text-text-secondary">{step.reason}</p>
+                        <p className="text-xs text-text-secondary">{step.member ? `${step.member} · ` : ''}{step.reason}</p>
                         {step.assignment && <p className="whitespace-pre-line break-words text-xs"><strong>Assignment</strong> · {step.assignment}</p>}
                         {step.tools?.length ? <p className="text-xs"><strong>Tools used</strong> · {step.tools.join(', ')}</p> : null}
                         {step.outcome && <p className="whitespace-pre-line break-words text-xs"><strong>{step.stage === 'plan' ? 'Instructions sent to worker' : 'Result'}</strong> · {step.outcome}</p>}
@@ -644,7 +647,7 @@ function RunBlock({ job, run, onChange, onView }: { job: JobView; run: JobRunVie
                         <span className="font-medium text-text-primary">{run.progressState.label}</span>
                         <span className="tabular-nums text-text-secondary">{run.progressState.percent}%</span>
                     </div>
-                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-background-elevated" aria-label={`Job progress: ${run.progressState.percent}%`}>
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-background-elevated" aria-label={`Progress: ${run.progressState.percent}%`}>
                         <div className="h-full rounded-full bg-primary transition-[width] duration-700 ease-out" style={{ width: `${run.progressState.percent}%` }} />
                     </div>
                     <div className="mt-2 flex items-center justify-between gap-3 text-[10px] text-text-secondary">
@@ -862,7 +865,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
         || (job.status === 'testing' && !job.runs.some((r) => r.status === 'running'));
 
     const renameButton = d && job.canManage && !compact ? (
-        <button type="button" aria-label="Rename job" title="Rename" className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-background-elevated hover:text-text-primary" onClick={() => setRenaming(d.title)}>
+        <button type="button" aria-label="Rename responsibility" title="Rename" className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-background-elevated hover:text-text-primary" onClick={() => setRenaming(d.title)}>
             <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
         </button>
     ) : null;
@@ -890,13 +893,13 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                                 })();
                             }}
                         >
-                            <input autoFocus value={renaming} maxLength={120} aria-label="Job name" className="ui-control min-w-0 flex-1" onChange={(e) => setRenaming(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setRenaming(null); }} />
+                            <input autoFocus value={renaming} maxLength={120} aria-label="Responsibility name" className="ui-control min-w-0 flex-1" onChange={(e) => setRenaming(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setRenaming(null); }} />
                             <button type="submit" className={PRIMARY} disabled={busy === 'rename'}>Save</button>
                             <button type="button" className={BUTTON} onClick={() => setRenaming(null)}>Cancel</button>
                         </form>
                     ) : (
                         headerShownAbove ? null : <div className="flex items-center gap-1 font-medium leading-snug">
-                            <span className="min-w-0 break-words">{d?.title ?? 'New job'}</span>
+                            <span className="min-w-0 break-words">{d?.title ?? 'New responsibility'}</span>
                             {renameButton}
                         </div>
                     )}
@@ -907,12 +910,12 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                 {!headerShownAbove || (job.status === 'proposed' && failedAttempt) ? <JobStatusBadge status={job.status} label={job.status === 'proposed' && failedAttempt ? 'Dry run failed' : undefined} /> : null}
             </div>
 
-            {d?.skill === 'social_media' ? <p className="text-xs text-text-secondary">Evergreen ideas from existing content. This job does not watch new publications. For new items with separate Facebook, Bluesky and Reddit drafts, create a new-item publishing job in Marketing.</p> : null}
+            {d?.skill === 'social_media' ? <p className="text-xs text-text-secondary">Evergreen ideas from existing content. This responsibility does not watch new publications. For new items with separate Facebook, Bluesky and Reddit drafts, create a new-item publishing job in Marketing.</p> : null}
 
             {d?.skill === 'ai_citations' ? <p className="text-xs text-text-secondary">Find one researched suggestion each day to help {job.companyName} get mentioned in AI answers. Results are saved here for you to review; this job does not publish social posts or change your website.</p> : null}
 
             {d?.skill === 'social_publish' && !compact ? <PublishingJobBody job={job} onChange={update} readyShownAbove={readyShownAbove} /> : <>
-            {job.status === 'designing' ? <p className="text-xs text-sky-400">Nucleas is investigating {job.companyName} and designing this job…</p> : null}
+            {job.status === 'designing' ? <p className="text-xs text-sky-400">Nucleas is investigating {job.companyName} and preparing a plan…</p> : null}
             {job.status === 'failed' || job.error ? <p className="text-xs text-red-400">{job.error}</p> : null}
 
             {job.status === 'needs_answers' ? (
@@ -931,7 +934,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
             {/* The design is the decision while approving; afterwards it is reference, kept under Details. */}
             {d && job.status === 'proposed' ? <DesignSummary job={job} /> : null}
             {job.status === 'proposed' && job.canManage ? <Approve job={job} onChange={update} /> : null}
-            {job.status === 'proposed' && !job.canManage ? <p className="text-[11px] text-text-secondary">A manager or administrator approves jobs.</p> : null}
+            {job.status === 'proposed' && !job.canManage ? <p className="text-[11px] text-text-secondary">A manager or administrator approves responsibilities.</p> : null}
 
             {reviewRun ? <RunBlock job={job} run={reviewRun} onChange={update} onView={setResultRun} /> : null}
             {!compact && d?.skill === 'link_building' ? <OpportunityTracker job={job} onChange={update} /> : null}
@@ -955,7 +958,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
             {!compact && job.canManage && d && !manualArtifact(d.skill) && <div className="text-xs">
                 {budgetEdit === null ? <button className={BUTTON} type="button" onClick={() => setBudgetEdit(String(job.monthlyBudgetMicros / 1_000_000))}>Edit monthly budget</button> :
                     <form className="flex flex-wrap items-center gap-2" onSubmit={event => { event.preventDefault(); void act('budget', { monthlyBudgetUsd: Number(budgetEdit) }); }}>
-                        <label>Monthly job budget $ <input className="ui-control w-24" type="number" min="0.01" max="1000" step="0.01" required value={budgetEdit} onChange={event => setBudgetEdit(event.target.value)} /></label>
+                        <label>Monthly budget $ <input className="ui-control w-24" type="number" min="0.01" max="1000" step="0.01" required value={budgetEdit} onChange={event => setBudgetEdit(event.target.value)} /></label>
                         <button className={PRIMARY} disabled={busy !== null}>Save budget</button>
                         <button className={BUTTON} type="button" onClick={() => setBudgetEdit(null)}>Cancel</button>
                         <p className="w-full text-text-secondary">Spent this month {usd(job.spentThisMonthMicros)}. A cap below current spending stops further runs until the next month or a budget increase.</p>
@@ -993,11 +996,11 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
                         Archive job
                     </button>
                 ) : null}
-                {!compact && job.canManage && canArchive ? <p className="w-full text-[11px] text-text-secondary">Archiving removes the entire job from this list and stops its scheduled runs.</p> : null}
+                {!compact && job.canManage && canArchive ? <p className="w-full text-[11px] text-text-secondary">Archiving removes the entire responsibility from this list and stops its scheduled runs.</p> : null}
                 </div></details> : null}
                 {compact && onOpenJobs ? (
                     <button type="button" className={BUTTON} onClick={onOpenJobs}>
-                        Open in Jobs
+                        Open in Team
                     </button>
                 ) : null}
                 {!compact && d && !['proposed', 'needs_answers', 'designing'].includes(job.status) ? (
@@ -1009,11 +1012,11 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
             </div>
             {!compact && (job.status === 'ready' || job.status === 'active') && d && d.schedule.kind !== 'once' ? (
                 <p className="text-[11px] text-text-secondary">
-                    {job.nextRunAt ? `Next scheduled run: ${new Date(job.nextRunAt).toLocaleString()}` : 'Scheduling resumes when this job is active.'}
+                    {job.nextRunAt ? `Next scheduled run: ${new Date(job.nextRunAt).toLocaleString()}` : 'Scheduling resumes when this responsibility is active.'}
                 </p>
             ) : null}
             </>}
-            <Modal isOpen={Boolean(resultRun)} onClose={() => setResultRun(null)} title={`${d?.title ?? 'Job'} results`} maxWidth="5xl" appearance="theme">
+            <Modal isOpen={Boolean(resultRun)} onClose={() => setResultRun(null)} title={`${d?.title ?? 'Work'} results`} maxWidth="5xl" appearance="theme">
                 {resultRun ? <Results job={job} run={resultRun} /> : null}
             </Modal>
         </div>

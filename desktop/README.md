@@ -21,7 +21,7 @@ The floating launcher is bundled locally. App windows load `https://nucleas.app/
 - Reopening the same app and context focuses its existing window. Company-specific windows retain their context.
 - Window bounds survive restarts and are brought back on-screen when a monitor is removed.
 - The catalog is generated from the existing module registry during every desktop build.
-- Work combines Jobs, Build and Tools. Growth combines Marketing and Content. Settings combines AI Engine, Budgets and Spend. Existing deep links and original modules still work.
+- The launcher leads with Companies, then Team (delegate to and guide each company’s specialists), then Review & work (Responsibilities, Build and Tools). Growth (Marketing and Content) is reached from a team member and no longer has its own launcher tile. Settings combines AI Engine, Budgets and Spend. Existing deep links and original modules still work.
 
 ## Build and verify
 

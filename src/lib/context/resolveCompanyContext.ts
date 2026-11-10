@@ -97,13 +97,15 @@ export async function resolveCompanyContext(
   const metrics = await getCompanyMetrics(viewer, companyId, { now });
   if (metrics && metrics.metrics.length) {
     const lines = metrics.metrics.map((m) => {
+      const value = (n: number | null) => m.unit === 'money' ? m.warning || !m.currency || n === null ? 'unavailable (currency not established)' : new Intl.NumberFormat('en-US', { style: 'currency', currency: m.currency }).format(n / 100) : fmt(m.unit, n);
+      const coverage = m.coverage ? `; ${m.coverage.observed}/${m.coverage.days} days recorded, ${m.coverage.start} to ${m.coverage.end}${m.coverage.observed < m.coverage.days ? '; PARTIAL total, missing days are unknown' : ''}` : ''; 
       const change = m.change === null ? '' : `, ${m.change >= 0 ? '+' : ''}${Math.round(m.change * 100)}% vs prior`;
       return m.kind === 'daily'
-        ? `- ${m.label}: ${fmt(m.unit, m.current)} last 7 days (prior 7: ${fmt(m.unit, m.previous)}${change})${m.stage ? ` [stage: ${m.stage}]` : ''}`
-        : `- ${m.label}: ${fmt(m.unit, m.current)} now (week ago: ${fmt(m.unit, m.previous)}${change})`;
+        ? `- ${m.label}: ${value(m.current)} last 7 days${coverage} (prior 7: ${value(m.previous)}${change})${m.stage ? ` [stage: ${m.stage}]` : ''}`
+        : `- ${m.label}: ${value(m.current)} as of ${m.asOf ?? 'unknown date'} (period start: ${value(m.previous)}${change})`;
     });
     if (metrics.changes.length) lines.push('', 'Notable changes:', ...metrics.changes.map((c) => `- ${c}`));
-    lines.push(`(Data through the last complete day; last synced ${metrics.lastSyncedAt ?? 'never'}.)`);
+    lines.push(`(Daily observations may be incomplete; last synced ${metrics.lastSyncedAt ?? 'never'}.)`);
     sections.push({ key: 'metrics', title: 'Performance (stored daily metrics)', body: lines.join('\n') });
     sources.push('metrics');
   }
@@ -234,6 +236,7 @@ export async function resolvePortfolioContext(
     const parts = Object.entries(row.metrics).map(([key, m]) => {
       const label = key.replace(/_/g, ' ');
       const change = m.change === null ? '' : ` ${m.change >= 0 ? '+' : ''}${Math.round(m.change * 100)}%`;
+      // Today rows only carry money that is established as USD, so the shared formatter is safe here.
       return `${label} ${fmt(m.unit, m.current)}${change}`;
     });
     return `- ${c.name} (${rel}${c.domain ? `, ${c.domain}` : ''}): ${parts.join('; ')}${row.changes[0] ? `. Note: ${row.changes[0]}` : ''}`;

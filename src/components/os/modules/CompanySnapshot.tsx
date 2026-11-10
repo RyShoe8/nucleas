@@ -5,6 +5,7 @@ import { useOsAuth } from '@/hooks/os/useOsAuth';
 import { SOCIAL_PLATFORMS } from '@/lib/metrics/social';
 import { revenueMetricVisible } from '@/lib/metrics/revenueVisibility';
 import type { OsConnection } from './companyTypes';
+import { periodDates, type PeriodCoverage } from '@/lib/metrics/period';
 import ServiceDataPanel from './ServiceDataPanel';
 
 /** Mirrors the server InvocationView fields the UI needs. */
@@ -37,6 +38,12 @@ export async function invoke(companyId: string, capabilityId: string, input: unk
 }
 
 export interface OsMetric {
+    coverage?: PeriodCoverage;
+    source?: string;
+    asOf?: string;
+    updatedAt?: string;
+    currency?: string;
+    warning?: string;
     key: string;
     label: string;
     unit: 'count' | 'money' | 'percent' | 'position';
@@ -67,24 +74,21 @@ export function ChangeBadge({ change }: { change: number | null }) {
     );
 }
 
-export function Sparkline({ series, label }: { series: { value: number }[]; label: string }) {
-    if (series.length === 0) return null;
-    const w = 120;
-    const h = 28;
-    const drawable = series.length === 1 ? [series[0], series[0]] : series;
-    const min = Math.min(...drawable.map((point) => point.value));
-    const max = Math.max(...drawable.map((point) => point.value));
-    const range = max - min;
-    const points = drawable.map((point, index) => {
-        const x = (index / (drawable.length - 1)) * w;
-        const normalized = range === 0 ? 0.5 : (point.value - min) / range;
-        return `${x.toFixed(1)},${(h - normalized * (h - 2) - 1).toFixed(1)}`;
-    }).join(' ');
-    return (
-        <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none" role="img" aria-label={`${label}, last ${series.length} days`} className="text-primary">
-            <polyline points={points} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-        </svg>
-    );
+export function Sparkline({ series, label, start, end }: { series: { value: number; date?: string }[]; label: string; start?: string; end?: string }) {
+    if (!series.length) return null;
+    const dates = series.map((p, i) => p.date ? Date.parse(p.date + 'T00:00:00Z') : i);
+    const first = start ? Date.parse(start + 'T00:00:00Z') : dates[0];
+    const last = end ? Date.parse(end + 'T00:00:00Z') : dates.at(-1)!;
+    const min = Math.min(...series.map(p => p.value));
+    const max = Math.max(...series.map(p => p.value));
+    const points = series.map((p, i) => ({ x: last === first ? 60 : ((dates[i] - first) / (last - first)) * 120, y: max === min ? 14 : 27 - (p.value - min) / (max - min) * 26 }));
+    return <svg viewBox="-2 0 124 28" width="100%" height={40} role="img" aria-label={`${label}; ${start ?? series[0].date ?? ''} to ${end ?? series.at(-1)?.date ?? ''}; ${series.length} observations`} className="text-primary">
+        <title>{label}: missing dates are gaps, not zero</title>
+        {points.map((p, i) => <g key={series[i].date ?? i}>
+            {i > 0 && (!series[i].date || dates[i] - dates[i - 1] === 86400000) && <line x1={points[i - 1].x} y1={points[i - 1].y} x2={p.x} y2={p.y} stroke="currentColor" strokeWidth="1.5" />}
+            <circle cx={p.x} cy={p.y} r="1.4" fill="currentColor"><title>{series[i].date}: {series[i].value}</title></circle>
+        </g>)}
+    </svg>;
 }
 
 interface MetricSlot {
@@ -100,7 +104,7 @@ const METRIC_GROUPS: { title: string; metrics: MetricSlot[] }[] = [
         metrics: [
             { key: 'sessions', label: 'Sessions', unit: 'count', kind: 'daily' },
             { key: 'new_visitors', label: 'New visitors', unit: 'count', kind: 'daily' },
-            { key: 'total_visitors', label: 'Total visitors', unit: 'count', kind: 'daily' },
+            { key: 'total_visitors', label: 'Daily visitors (sum)', unit: 'count', kind: 'daily' },
             { key: 'search_clicks', label: 'Search clicks', unit: 'count', kind: 'daily' },
             { key: 'search_impressions', label: 'Search impressions', unit: 'count', kind: 'daily' },
             { key: 'ai_citations', label: 'AI citations', unit: 'count', kind: 'snapshot' },
@@ -134,19 +138,23 @@ const METRIC_GROUPS: { title: string; metrics: MetricSlot[] }[] = [
 const REVENUE_KEYS = new Set(METRIC_GROUPS.find(group => group.title === 'Revenue')!.metrics.map(slot => slot.key));
 
 function MetricCard({ m, slot }: { m?: OsMetric; slot: MetricSlot }) {
-    return (
-        <div className="rounded-md border border-border p-2.5 min-w-0">
-            <div className="flex items-baseline justify-between gap-2">
-                <span className="text-[11px] text-text-secondary truncate">{slot.label}</span>
-                <ChangeBadge change={m?.change ?? null} />
-            </div>
-            <div className="text-lg font-semibold tabular-nums leading-tight">{formatMetric(m?.unit ?? slot.unit, m?.current)}</div>
-            <div className="text-[10px] text-text-secondary">
-                {!m ? (REVENUE_KEYS.has(slot.key) ? 'Waiting for first sync' : 'Connect a data source') : m.kind === 'daily' ? `last 7 days${m.lastDay ? ` · ${formatMetric(m.unit, m.lastDay.value)} on ${m.lastDay.date.slice(5)}` : ''}` : 'current'}
-            </div>
-            {m?.series.length ? <Sparkline series={m.series} label={slot.label} /> : null}
-        </div>
-    );
+    const c = m?.coverage;
+    const value = !m ? '–' : m.unit === 'money' ? m.currency && !m.warning ? new Intl.NumberFormat('en-US', { style: 'currency', currency: m.currency }).format(m.current / 100) : '–' : formatMetric(m.unit, m.current);
+    return <div className="rounded-xl border border-border bg-background-card/40 p-3 min-w-0 space-y-1">
+        <div className="flex items-baseline justify-between gap-2"><span className="text-xs text-text-secondary">{slot.label}</span><ChangeBadge change={m?.warning ? null : m?.change ?? null} /></div>
+        <div className="text-2xl font-semibold tabular-nums">{value}</div>
+        <p className="text-[11px] text-text-secondary">{!m ? 'No observations for this period' : c ? `${c.start} → ${c.end}` : `Latest observation${m.asOf ? ` · ${m.asOf}` : ''}`}</p>
+        {c && <p className={`text-[11px] ${c.observed < c.days ? 'text-amber-300' : 'text-text-secondary'}`}>{c.observed}/{c.days} days recorded{c.observed < c.days ? ' · partial total' : ''}</p>}
+        {m?.series.length && !m.warning ? <Sparkline series={m.series} label={slot.label} start={c?.start} end={c?.end} /> : null}
+        {m && <details className="text-[11px] text-text-secondary"><summary className="cursor-pointer">Source & accuracy</summary>
+            <p>{m.source ?? 'Company evidence'}{m.updatedAt ? ` · stored ${new Date(m.updatedAt).toLocaleString()}` : ''}</p>
+            {m.warning && <p className="text-amber-300">{m.warning}</p>}
+            {c && <p>Comparison: {c.previousStart} → {c.previousEnd}. {c.previousObserved}/{c.days} days recorded. Change requires two complete periods and a nonzero baseline. Missing dates are never zero.</p>}
+            {slot.key === 'total_visitors' && <p>Sum of daily visitors, not distinct people over the period. Returning visitors can count on multiple days.</p>}
+            {m.source === 'gsc' && <p>Search Console reporting is delayed; recent days may not have arrived.</p>}
+            {m.kind === 'snapshot' && <p>A point-in-time measurement, not a period total.</p>}
+        </details>}
+    </div>;
 }
 
 function MetricGroup({ title, slots, metrics }: { title: string; slots: MetricSlot[]; metrics: Map<string, OsMetric> }) {
@@ -198,6 +206,8 @@ export default function CompanySnapshot({
     const has = (provider: string) => connections.some((c) => c.provider === provider);
     const hasPerformanceConnection = ['ga4', 'gsc', 'brevo', 'stripe', 'adsense', 'admanager', 'ahrefs', 'mercury', 'signups'].some(has);
     const [data, setData] = useState<{ lastSyncedAt: string | null; metrics: OsMetric[]; changes: string[] } | null>(null);
+    const [period, setPeriod] = useState(7);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
     const [serviceBusiness, setServiceBusiness] = useState(false);
     const [syncing, setSyncing] = useState(false);
@@ -206,16 +216,13 @@ export default function CompanySnapshot({
     const [cash, setCash] = useState<string | null>(null);
 
     useEffect(() => {
-        let cancelled = false;
-        void (async () => {
-            const res = await fetch(`/api/os/companies/${companyId}/metrics?days=28`);
-            const body = (await res.json().catch(() => null)) as { lastSyncedAt: string | null; metrics: OsMetric[]; changes: string[] } | null;
-            if (!cancelled && res.ok && body) setData(body);
-        })();
-        return () => {
-            cancelled = true;
-        };
-    }, [companyId, reloadKey]);
+        const controller = new AbortController();
+        void fetch(`/api/os/companies/${companyId}/metrics?period=${period}`, { signal: controller.signal })
+            .then(async res => { if (!res.ok) throw new Error(`Could not load metrics (${res.status}).`); return res.json(); })
+            .then(body => { if (!controller.signal.aborted) { setData(body); setLoadError(null); } })
+            .catch(error => { if (!controller.signal.aborted) setLoadError(error.message); });
+        return () => controller.abort();
+    }, [companyId, period, reloadKey]);
 
     const syncNow = async () => {
         setSyncing(true);
@@ -255,20 +262,25 @@ export default function CompanySnapshot({
         setCash(formatMetric('money', Math.round(out.totalAvailable * 100)));
     };
 
-    const citationPrevious = aiCitationSeries.at(-8)?.value ?? null;
+    const citationDates = periodDates(period, new Date());
     const citationMetric: OsMetric = {
-        key: 'ai_citations', label: 'AI citations', unit: 'count', kind: 'snapshot', series: aiCitationSeries,
+        key: 'ai_citations', label: 'AI citations', unit: 'count', kind: 'snapshot', series: aiCitationSeries.filter(row => row.date >= citationDates[0] && row.date <= citationDates.at(-1)!), source: 'Company citation evidence',
         current: aiCitations,
-        previous: citationPrevious,
-        change: citationPrevious && citationPrevious > 0 ? (aiCitations - citationPrevious) / citationPrevious : null,
+        previous: null,
+        change: null,
         lastDay: null,
     };
     const metrics = new Map([...(data?.metrics ?? []), citationMetric].map((metric) => [metric.key, metric]));
 
     return (
         <section className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+                <div><h3 className="font-medium">Company performance</h3><p className="text-xs text-text-secondary">Completed reporting days · compare with the preceding equal period. Source timezones may differ.</p></div>
+                <label className="text-xs">Timeframe <select aria-label="Performance timeframe" value={period} onChange={e => { setData(null); setLoadError(null); setPeriod(Number(e.target.value)); }} className="ml-2 rounded-lg border border-border bg-background-card p-2">{[7, 14, 28, 90].map(days => <option value={days} key={days}>{days} days</option>)}</select></label>
+            </div>
+            {loadError && <p role="alert" className="text-sm text-amber-300">{loadError} <button onClick={() => setReloadKey(k => k + 1)} className="underline">Retry</button></p>}
             {hasPerformanceConnection ? <div className="flex items-center justify-end gap-2">
-                    <span className="text-[11px] text-text-secondary">Synced {timeAgo(data?.lastSyncedAt ?? null)}</span>
+                    <span className="text-[11px] text-text-secondary">Last successful sync {timeAgo(data?.lastSyncedAt ?? null)}</span>
                     {auth.isManagerOrAdmin ? (
                         <button
                             type="button"
@@ -292,14 +304,14 @@ export default function CompanySnapshot({
                 </ul>
             ) : null}
 
-            <ServiceDataPanel companyId={companyId} onEnabled={setServiceBusiness} />
+            <ServiceDataPanel period={period} companyId={companyId} onEnabled={setServiceBusiness} />
             {METRIC_GROUPS.map((group) => {
                 if (serviceBusiness && group.title === 'Audience') return null;
                 const slots = group.title === 'Revenue' ? group.metrics.filter(slot => revenueMetricVisible(slot.key, connections) && (!serviceBusiness || !['subscriber_revenue', 'mrr', 'yrr'].includes(slot.key))) : group.metrics;
                 return slots.length ? <MetricGroup key={group.title} title={group.title} slots={slots} metrics={metrics} /> : null;
             })}
             <MetricGroup title="Social" slots={[...SOCIAL_PLATFORMS, { id: 'other', label: 'Other social' }].map(({ id, label }) => ({ key: `social_sessions_${id}`, label: `${label} visits`, unit: 'count', kind: 'daily' }))} metrics={metrics} />
-            {hasPerformanceConnection && data === null ? <p className="text-xs text-text-secondary">Loading connected performance data…</p> : data && data.metrics.length === 0 && hasPerformanceConnection ? <p className="text-xs text-text-secondary">No connected performance history yet. The first sync backfills 90 days{auth.isManagerOrAdmin ? '; use Sync now to start it.' : '.'}</p> : null}
+            {hasPerformanceConnection && data === null && !loadError ? <p className="text-xs text-text-secondary">Loading connected performance data…</p> : data && data.metrics.length === 0 && hasPerformanceConnection ? <p className="text-xs text-text-secondary">No connected performance history yet. The first sync backfills 90 days{auth.isManagerOrAdmin ? '; use Sync now to start it.' : '.'}</p> : null}
 
             {has('ahrefs') || (has('mercury') && auth.isManagerOrAdmin) ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

@@ -207,7 +207,7 @@ export default function WatchForm({ watch, mailboxes, onSaved, onCancel, initial
                         <div className="space-y-2 rounded border border-border p-3">
                             <label className="flex items-center gap-2 text-xs">
                                 <input type="checkbox" disabled={Boolean(watch?.socialJobId)} checked={watch?.socialJobId ? false : autoPosts} onChange={(e) => setAutoPosts(e.target.checked)} />
-                                {watch?.socialJobId ? 'Social posts are managed by the Marketing job (one queue)' : 'Legacy: draft social posts here instead of using a Marketing job'}
+                                {watch?.socialJobId ? 'Social posts are managed by Marketing (one queue)' : 'Legacy: draft social posts here instead of giving them to Marketing'}
                             </label>
                             <label className="flex items-center gap-2 text-xs">
                                 <input type="checkbox" checked={digestOn} onChange={(e) => setDigestOn(e.target.checked)} />

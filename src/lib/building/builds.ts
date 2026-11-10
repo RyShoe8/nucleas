@@ -1,3 +1,4 @@
+import { companyTeamContext } from '@/lib/companies/teamContext';
 import 'server-only';
 import { Types } from 'mongoose';
 import { BuildRequest, type BuildStatus } from '@/lib/models/BuildRequest';
@@ -27,6 +28,7 @@ const OPEN_STATUSES: BuildStatus[] = ['proposed', 'queued', 'building', 'ready',
 const BUILD_TIMEOUT_MS = 12 * 60 * 1000;
 
 export interface BuildView {
+  teamRole?: 'design' | 'engineering';
   id: string;
   companyId: string;
   companyName: string;
@@ -60,6 +62,7 @@ export interface BuildView {
 }
 
 type BuildDoc = {
+  teamRole?: 'design' | 'engineering';
   _id: Types.ObjectId;
   organizationId: Types.ObjectId;
   companyId: Types.ObjectId;
@@ -100,6 +103,7 @@ type BuildDoc = {
 function toView(doc: BuildDoc, companyName: string, canManage: boolean): BuildView {
   const r = doc.result;
   return {
+    teamRole: doc.teamRole ?? 'engineering',
     id: String(doc._id),
     companyId: String(doc.companyId),
     companyName,
@@ -187,7 +191,7 @@ export type ProposeResult =
  */
 export async function proposeCodeChange(
   viewer: CompanyViewer,
-  input: { companyId: string; request: string; level: CostLevel; signal?: AbortSignal; onProgress?: (text: string) => void }
+  input: { companyId: string; request: string; level: CostLevel; teamRole?: 'design' | 'engineering'; signal?: AbortSignal; onProgress?: (text: string) => void }
 ): Promise<ProposeResult> {
   const target = await resolveCompanyRepository(viewer, input.companyId);
   if (!target) {
@@ -203,7 +207,8 @@ export async function proposeCodeChange(
       .lean<BuildDoc[]>()
       .catch(() => [] as BuildDoc[])
   );
-  const background = [recent?.length ? renderTimeline(recent) : '', rejected].filter(Boolean).join('\n\n');
+  const memberContext = await companyTeamContext({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(input.companyId), teamRole: input.teamRole ?? 'engineering', request: input.request });
+  const background = [memberContext, recent?.length ? renderTimeline(recent) : '', rejected].filter(Boolean).join('\n\n');
   // With a admin account for the site the request names, look at the page as it is now (read-only, time-boxed).
   const startedAt = Date.now();
   const { observePageForRequest } = await import('@/lib/companies/adminAccount');
@@ -235,6 +240,7 @@ export async function proposeCodeChange(
     createdByUserId: new Types.ObjectId(viewer.userId),
     status: 'proposed',
     request: input.request.slice(0, 6000),
+    teamRole: input.teamRole ?? 'engineering',
     title: (turn.plan.title || 'Code change').slice(0, 200),
     summary: (turn.plan.summary || '').slice(0, 2000),
     steps: turn.plan.steps.slice(0, 40).map((s) => s.slice(0, 500)),

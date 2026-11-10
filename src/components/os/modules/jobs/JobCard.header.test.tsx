@@ -18,13 +18,13 @@ const count = (html: string, text: string) => html.split(text).length - 1;
 describe('the job card header', () => {
   it('shows the name when nothing above it does', () => {
     expect(count(render(false), 'Tailnote signature spotlight')).toBeGreaterThan(0);
-    expect(render(false)).toContain('Rename job');
+    expect(render(false)).toContain('Rename responsibility');
   });
 
   it('does not repeat the name when the row above shows it, and can still be renamed', () => {
     const html = render(true);
     expect(html).not.toContain('font-medium leading-snug');
-    expect(html).toContain('Rename job');
+    expect(html).toContain('Rename responsibility');
     expect(html).toContain('Schedule');
     expect(html).not.toContain('Company</dt>');
   });

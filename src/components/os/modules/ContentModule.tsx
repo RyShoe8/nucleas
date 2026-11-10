@@ -10,7 +10,7 @@ type Tab = 'articles' | 'updates' | 'jobs';
 const TABS: { id: Tab; label: string }[] = [
     { id: 'articles', label: 'Articles' },
     { id: 'updates', label: 'Update posts' },
-    { id: 'jobs', label: 'Content jobs' },
+    { id: 'jobs', label: 'Content responsibilities' },
 ];
 
 /** Content: articles written in a company's Voice and the content jobs Nucleas runs. Mailbox watches live in Marketing → Inboxes. */

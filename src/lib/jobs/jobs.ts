@@ -1,3 +1,5 @@
+import { teamRoleFor, type TeamRole } from '@/lib/companies/teamRoles';
+import { companyTeamContext } from '@/lib/companies/teamContext';
 import { PublishDelivery, PublishItem } from '@/lib/models/Publishing';
 import { importCasinoDrafts } from '@/lib/casinoDiscovery/service';
 import { retryDatabaseRead, retryIdempotentWrite } from '@/lib/db/retryRead';
@@ -64,6 +66,7 @@ export interface JobRunView {
 }
 
 export interface JobView {
+  teamRole?: TeamRole;
   id: string;
   companyId: string;
   projectId: string | null;
@@ -94,6 +97,7 @@ export interface JobView {
 }
 
 type JobLean = {
+  teamRole?: TeamRole;
   _id: Types.ObjectId;
   understanding?: ConfirmedUnderstanding;
   organizationId: Types.ObjectId;
@@ -168,6 +172,7 @@ async function toView(job: JobLean, company: { name: string; subreddit?: string 
   const parsed = jobDesignSchema.safeParse(job.design);
   const design = parsed.success ? parsed.data : null;
   return {
+    teamRole: teamRoleFor(job),
     id: String(job._id),
     companyId: String(job.companyId),
     projectId: job.projectId ? String(job.projectId) : null,
@@ -247,7 +252,7 @@ export type CreateResult = { ok: true; job: JobView } | { ok: false; status: 400
 /** Creates a job from a request and designs it (Nucleas investigates, then designs or asks). */
 export async function createJob(
   viewer: CompanyViewer,
-  input: { companyId: string; request: string; level?: CostLevel; signal?: AbortSignal; onProgress?: ProgressFn; background?: boolean; understanding?: ConfirmedUnderstanding }
+  input: { companyId: string; request: string; teamRole?: TeamRole; level?: CostLevel; signal?: AbortSignal; onProgress?: ProgressFn; background?: boolean; understanding?: ConfirmedUnderstanding }
 ): Promise<CreateResult> {
   const request = input.request.trim();
   if (request.length < 10 || request.length > 6000) return { ok: false, status: 400, error: 'Describe the job in 10–6000 characters.' };
@@ -259,6 +264,7 @@ export async function createJob(
     companyId: new Types.ObjectId(input.companyId),
     createdByUserId: new Types.ObjectId(viewer.userId),
     status: 'designing',
+    ...(input.teamRole ? { teamRole: input.teamRole } : {}),
     request,
     ...(input.understanding ? { understanding: input.understanding } : {}),
     level,
@@ -325,7 +331,7 @@ export async function runDesign(viewer: CompanyViewer, jobId: string, options: {
   const previous = jobDesignSchema.safeParse(job.design);
   const result = await designJob(viewer, {
     companyId: String(job.companyId),
-    request: job.request,
+    request: `${job.request}\n\n${await companyTeamContext(job)}`,
     understanding: job.understanding,
     level: job.level ?? 'low',
     answers: job.answers,
@@ -520,6 +526,30 @@ export async function renameJob(viewer: CompanyViewer, id: string, title: unknow
   if (!found.job.design) return { ok: false, status: 409, error: 'This job has no design yet, so it has no name to change.' };
   await Job.updateOne({ _id: found.job._id, organizationId: viewer.organizationId }, { $set: { 'design.title': name }, $push: { events: event(viewer, 'renamed', name) } });
   return done(viewer, id);
+}
+
+/** Editing the brief invalidates approval, but never rewrites historical results. */
+export async function editResponsibility(viewer: CompanyViewer, id: string, input: { title?: unknown; instructions?: unknown }): Promise<ActionResult> {
+  const found = await managed(viewer, id);
+  if (!found.ok) return found;
+  const parsed = jobDesignSchema.safeParse(found.job.design);
+  if (!parsed.success) return { ok: false, status: 409, error: 'Wait for the first plan before editing this responsibility.' };
+  if (parsed.data.skill === 'social_publish' || parsed.data.skill === 'property_overview') return { ok: false, status: 409, error: 'Use this responsibility’s source and publishing settings to edit its configuration.' };
+  const changed = jobDesignSchema.safeParse({ ...parsed.data, title: input.title, instructions: input.instructions });
+  if (!changed.success) return { ok: false, status: 400, error: changed.error.issues[0].message };
+  const result = await aiTransaction(async session => {
+    const current = await Job.findOne({ _id: found.job._id, organizationId: viewer.organizationId }).session(session).lean();
+    if (!current || !['proposed', 'ready', 'active', 'paused', 'done', 'failed'].includes(current.status)) return false;
+    const pending = await JobRun.exists({ jobId: current._id, status: { $in: ['running', 'needs_review'] } }).session(session);
+    if (pending) return false;
+    const update = await Job.updateOne({ _id: current._id, updatedAt: found.job.updatedAt }, {
+      $set: { design: changed.data, status: 'proposed' },
+      $unset: { nextRunAt: '', completion: '', completedAt: '', error: '' },
+      $push: { events: event(viewer, 'responsibility_edited', 'Brief edited. New approval and dry run required; historical results retained.') },
+    }, { session });
+    return update.modifiedCount === 1;
+  });
+  return result ? done(viewer, id) : { ok: false, status: 409, error: 'Finish reviewing or running work first, then refresh and edit. The brief was not changed.' };
 }
 
 export function pauseJob(viewer: CompanyViewer, id: string): Promise<ActionResult> {

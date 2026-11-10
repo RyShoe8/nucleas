@@ -147,7 +147,7 @@ export default function JobComposer({ companyId, companyName, onCreated, renderL
                 </div>
                 <p className="text-sm leading-relaxed">{u.summary}</p>
                 {image ? <section className="space-y-2">
-                    <p className="text-xs text-emerald-300">Image uploaded and attached to this job.</p>
+                    <p className="text-xs text-emerald-300">Image uploaded and attached to this responsibility.</p>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={image.url} alt={image.alt} className="max-h-48 max-w-full rounded" />
                     <button type="button" className="ui-button" disabled={Boolean(busy)} onClick={() => { setImage(null); setUnderstanding(null); setAnswers({}); }}>Remove image and edit request</button>
@@ -190,7 +190,7 @@ export default function JobComposer({ companyId, companyName, onCreated, renderL
                     ) : blocked ? (
                         buildTitle ? <span role="status">Review “{buildTitle}” in Building. After the capability ships, reopen this request.</span> : <button type="button" className="ui-button-primary" disabled={Boolean(busy)} onClick={planMissingCapability}>{busy ?? 'Plan missing capabilities in Building'}</button>
                     ) : (
-                        <button type="button" className="ui-button-primary" disabled={Boolean(busy)} onClick={() => void proceed()}>{busy ?? (u.kind === 'custom' ? 'Yes, design this job' : u.kind === 'inbox_watch' || u.kind === 'digest' ? 'Yes, set up the inbox rule' : u.kind === 'marketing_plan' ? 'Yes, generate it' : 'Yes, continue')}</button>
+                        <button type="button" className="ui-button-primary" disabled={Boolean(busy)} onClick={() => void proceed()}>{busy ?? (u.kind === 'custom' ? 'Yes, prepare the plan' : u.kind === 'inbox_watch' || u.kind === 'digest' ? 'Yes, set up the inbox rule' : u.kind === 'marketing_plan' ? 'Yes, generate it' : 'Yes, continue')}</button>
                     )}
                     <button type="button" className="ui-button" disabled={Boolean(busy)} onClick={() => { setUnderstanding(null); setAnswers({}); }}>Not quite: change the request</button>
                     {!u.questions.length && answeredAny ? <span className="text-[11px] text-text-secondary">Updated with your answers.</span> : null}
@@ -210,7 +210,7 @@ export default function JobComposer({ companyId, companyName, onCreated, renderL
                 }}
                 placeholder={placeholder ?? `What should Nucleas do for ${companyName}? e.g. “When something new is published on our site, post it to Facebook and Bluesky” or “Every Monday, report last week’s ad revenue per site.”`}
                 className="ui-control h-16 w-full resize-y"
-                aria-label="Describe a job"
+                aria-label="Describe a responsibility"
             />
             {allowImage ? <PublishingImagePicker companyId={companyId} image={image} onChange={setImage} onBusy={setUploading} /> : null}
             {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}

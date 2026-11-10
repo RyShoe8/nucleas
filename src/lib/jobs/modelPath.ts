@@ -2,6 +2,7 @@ export type ModelPathLevel = 'free' | 'low' | 'medium' | 'high';
 
 /** One model call in a run: which model, why the engine chose it, and what it cost. */
 export interface ModelStep {
+  member?: string;
   stage: 'plan' | 'work' | 'review';
   /** What this call did, e.g. "First attempt" or "Format retry". */
   note: string;

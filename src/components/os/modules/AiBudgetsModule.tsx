@@ -47,7 +47,7 @@ export default function AiBudgetsModule() {
 
     return <div className="h-full overflow-y-auto p-4 space-y-4 text-sm text-text-primary">
         <h2 className="font-semibold">AI budgets</h2>
-        <p>These shared limits apply across Nucleas. Individual jobs can have smaller monthly budgets.</p>
+        <p>These shared limits apply across Nucleas. Individual responsibilities can have smaller monthly budgets.</p>
         <p className="text-xs text-text-secondary">A reservation is an internal hold, not a provider charge. With a $1 hold and a confirmed $0.04 cost, $0.04 becomes spent and $0.96 is released. If usage cannot be confirmed, the hold stays pending until reconciled. Available budget is the monthly limit minus spending and pending holds.</p>
         {error ? <div role="alert" className="space-y-2 text-red-400"><p>{error}</p><button type="button" className="ui-button" disabled={busy} onClick={() => void load()}>Reload budgets</button></div> : null}
         {message ? <p role="status">{message}</p> : null}

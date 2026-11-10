@@ -297,13 +297,13 @@ async function runRoutedAction(toolSet: ExtraToolSet, decision: RouteDecision, o
   }
   if (!out.ok) {
     // A company without code connected, for example: say so plainly rather than guess.
-    return out.error ? `I couldn't ${decision.route === 'code_change' ? 'plan that code change' : 'set up that job'}: ${out.error}` : null;
+    return out.error ? `I couldn't ${decision.route === 'code_change' ? 'plan that code change' : 'set that up for your team'}: ${out.error}` : null;
   }
   if (decision.route === 'code_change') {
     return `I planned this change for ${decision.company}: **${out.planned}**\n\n${out.summary ?? ''}\n\nReview the plan below to approve, edit or reject it.`.replace(/\n{3,}/g, '\n\n');
   }
   const questions = out.questions ?? [];
   return questions.length
-    ? `I started designing this job for ${decision.company}: **${out.title ?? 'New job'}**. Nucleas needs a few answers first:\n${questions.map((q) => `- ${q}`).join('\n')}\n\nAnswer them on the card below.`
-    : `I designed this job for ${decision.company}: **${out.title ?? 'New job'}**. Review it below to approve it.`;
+    ? `I started preparing this responsibility for ${decision.company}: **${out.title ?? 'New responsibility'}**. Nucleas needs a few answers first:\n${questions.map((q) => `- ${q}`).join('\n')}\n\nAnswer them on the card below.`
+    : `I prepared this responsibility for ${decision.company}: **${out.title ?? 'New responsibility'}**. Review it below to approve it.`;
 }

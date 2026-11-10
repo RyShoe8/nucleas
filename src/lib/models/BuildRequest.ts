@@ -22,6 +22,7 @@ const eventSchema = new Schema(
 const buildSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, required: true },
+    teamRole: { type: String, enum: ['design', 'engineering'] },
     companyId: { type: Schema.Types.ObjectId, ref: 'Client', required: true },
     projectId: { type: Schema.Types.ObjectId, ref: 'Project', required: true },
     createdByUserId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
