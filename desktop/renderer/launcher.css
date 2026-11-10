@@ -3,3 +3,7 @@
 .apps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .app-description { color: #9da3b8; font-size: 10px; line-height: 1.4; }
 .app:first-child, .app:nth-child(2) { background: linear-gradient(145deg, #b5a5ff14, #ffffff04); border-color: #b5a5ff30; }
+.ask-row { display: flex; gap: 8px; align-items: stretch; }
+.ask-row .ask { flex: 1; min-width: 0; }
+.voice { width: 58px; border-radius: 18px; display: grid; place-items: center; color: #d3c9ff; background: linear-gradient(145deg, #393052, #252b43); border: 1px solid #b5a8ff40; transition: transform .15s, background .15s; }
+.voice:hover { transform: translateY(-2px); background: linear-gradient(145deg, #4a3b6c, #323951); }

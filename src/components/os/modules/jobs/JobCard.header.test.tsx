@@ -37,18 +37,19 @@ describe('the job card header', () => {
   it('labels each detail instead of running them together', () => {
     const job = { companyName: 'Tailnote', completion: 'review', lastRunAt: null, monthlyBudgetMicros: 10_100_000, spentThisMonthMicros: 1_470_000, design: { skill: 'signature_outreach', schedule: { kind: 'weekly', weekdays: [1, 3, 5], time: '09:00', timezone: 'America/Chicago' } } } as unknown as JobView;
     const facts = jobFacts(job, { showCompany: true });
-    expect(facts.map((fact) => fact.label)).toEqual(['Company', 'Schedule', 'Last checked', 'Results', 'This month']);
+    expect(facts.map((fact) => fact.label)).toEqual(['Company', 'Schedule', 'Last checked', 'Results', 'Spent this month']);
     expect(facts.find((fact) => fact.label === 'Last checked')?.value).toBe('Not yet');
     expect(facts.find((fact) => fact.label === 'Results')?.value).toBe('You review');
-    expect(facts.find((fact) => fact.label === 'This month')).toMatchObject({ value: '$1.47 of $10.10' });
-    expect(facts.find((fact) => fact.label === 'This month')?.used).toBeCloseTo(0.146, 2);
+    // What was spent, with no per-responsibility budget beside it.
+    expect(facts.find((fact) => fact.label === 'Spent this month')).toMatchObject({ value: '$1.47' });
+    expect(facts.find((fact) => fact.label === 'Spent this month')?.used).toBeUndefined();
     expect(jobFacts(job, { showCompany: false }).map((fact) => fact.label)).not.toContain('Company');
   });
 
-  it('does not show a budget where it would only be noise, and caps the bar when over budget', () => {
+  it('does not show spending where it would only be noise', () => {
     const base = { companyName: 'T', monthlyBudgetMicros: 1_000_000, spentThisMonthMicros: 3_000_000, design: { schedule: { kind: 'once' } } };
-    expect(jobFacts({ ...base, design: { ...base.design, skill: 'social_publish' } } as unknown as JobView, { showCompany: false }).map((fact) => fact.label)).not.toContain('This month');
-    expect(jobFacts(base as unknown as JobView, { showCompany: false }).find((fact) => fact.label === 'This month')?.used).toBe(1);
+    expect(jobFacts({ ...base, design: { ...base.design, skill: 'social_publish' } } as unknown as JobView, { showCompany: false }).map((fact) => fact.label)).not.toContain('Spent this month');
+    expect(jobFacts(base as unknown as JobView, { showCompany: false }).find((fact) => fact.label === 'Spent this month')?.value).toBe('$3.00');
   });
 
   it('draws the rename icon as an icon, centred in its button', () => {

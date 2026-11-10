@@ -1,3 +1,4 @@
+import { withItemCap } from '@/lib/ai/control/itemCap';
 import { companyTeamContext } from '@/lib/companies/teamContext';
 import { readEventRoundup } from './eventRoundup';
 import { dealForKey, emailOffers, hasSeveralOffers, isBestOffer, sourceItemId, type EmailOffers } from './dealOffers';
@@ -580,7 +581,12 @@ export async function takeBaseline(job: JobLike, deps: PublishDeps = {}): Promis
  * One run of a publishing job (a dry run or an hourly check). The caller holds the run's lease;
  * every write below is guarded by it or is idempotent.
  */
-export async function runPublishing(run: { _id: Types.ObjectId; dryRun: boolean }, owner: string, job: JobLike, deps: PublishDeps = {}): Promise<void> {
+/** One run: every paid call it makes counts toward the cap on a single piece of work. */
+export async function runPublishing(...args: Parameters<typeof runPublishingUncapped>): ReturnType<typeof runPublishingUncapped> {
+  return withItemCap('run', () => runPublishingUncapped(...args));
+}
+
+async function runPublishingUncapped(run: { _id: Types.ObjectId; dryRun: boolean }, owner: string, job: JobLike, deps: PublishDeps = {}): Promise<void> {
   const fail = async (error: string) => {
     const failed = await finishRun(run._id, owner, 'failed', { error });
     if (failed && run.dryRun) await Job.updateOne({ _id: job._id, status: 'testing' }, { $set: { status: 'proposed' } });

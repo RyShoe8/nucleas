@@ -94,6 +94,7 @@ export interface JobRunView {
 export interface JobView {
     teamRole?: import('@/lib/companies/teamRoles').TeamRole;
     teamAdvice?: import('@/lib/companies/teamConsult').MemberAdvice[];
+    teamLog?: (import('@/lib/companies/teamConsult').TeamEvent & { at: string })[];
     id: string;
     companyId: string;
     projectId: string | null;
@@ -239,8 +240,8 @@ export function jobFacts(job: JobView, options: { showCompany: boolean }): JobFa
     if (d?.skill !== 'social_publish') {
         if (manualArtifact(d?.skill)) {
             if (job.spentThisMonthMicros) facts.push({ label: 'Spent', value: usd(job.spentThisMonthMicros) });
-        } else if (job.monthlyBudgetMicros) {
-            facts.push({ label: 'This month', value: `${usd(job.spentThisMonthMicros)} of ${usd(job.monthlyBudgetMicros)}`, used: Math.min(1, job.spentThisMonthMicros / job.monthlyBudgetMicros) });
+        } else if (job.spentThisMonthMicros) {
+            facts.push({ label: 'Spent this month', value: usd(job.spentThisMonthMicros) });
         }
     }
     return facts;
@@ -399,7 +400,6 @@ function DesignSummary({ job }: { job: JobView }) {
 function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => void }) {
     const manual = manualArtifact(job.design?.skill);
     const [completion, setCompletion] = useState<'review' | 'automatic'>(job.design?.recommendedCompletion ?? 'review');
-    const [budget, setBudget] = useState(String((job.monthlyBudgetMicros || 2_000_000) / 1_000_000));
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const retrying = job.runs.some((run) => run.dryRun && run.status === 'failed');
@@ -429,26 +429,10 @@ function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => vo
                     </span>
                 </label>
             ))}
-            {manual ? (
-                <p className="text-xs text-text-secondary">No spending cap: this is generated once and reviewed, so there is no monthly budget. The cost is shown with the result.</p>
-            ) : (
-            <label className="flex items-center gap-2 text-xs">
-                Monthly budget $
-                <input
-                    type="number"
-                    min="0.1"
-                    step="0.5"
-                    value={budget}
-                    onChange={(e) => setBudget(e.target.value)}
-                    className="h-6 w-20 px-1 rounded border border-border bg-background-elevated text-xs"
-                    aria-label="Monthly budget in dollars"
-                />
-                <span className="text-text-secondary">{manual ? 'spending cap only; never schedules a run' : 'work pauses when it is reached'}</span>
-            </label>
-            )}
+            <p className="text-xs text-text-secondary">Spending is limited by your organization&rsquo;s monthly budget and the cap on any single piece of work, both set in AI budgets. The cost is shown with each result.</p>
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
             <div className="flex gap-2">
-                <button type="button" className={PRIMARY} disabled={busy !== null} onClick={() => void act({ action: 'approve', completion: manual ? 'review' : completion, ...(manual ? {} : { monthlyBudgetUsd: Number(budget) }) }, 'approve')}>
+                <button type="button" className={PRIMARY} disabled={busy !== null} onClick={() => void act({ action: 'approve', completion: manual ? 'review' : completion }, 'approve')}>
                     {busy === 'approve' ? 'Starting…' : manual ? retrying ? 'Retry generation' : 'Generate draft' : retrying ? 'Retry dry run' : 'Approve and run a dry run'}
                 </button>
                 <button
@@ -825,7 +809,6 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [resultRun, setResultRun] = useState<JobRunView | null>(null);
-    const [budgetEdit, setBudgetEdit] = useState<string | null>(null);
     const [renaming, setRenaming] = useState<string | null>(null);
     const update = (next: JobView) => {
         setJob(next);
@@ -852,8 +835,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
         const res = await post(job.id, { action, ...extra });
         setBusy(null);
         if (res.error || !res.job) return setError(res.error ?? 'Failed');
-        update(res.job);
-        if (action === 'budget') setBudgetEdit(null);
+        update(res.job);
     };
 
     const d = job.design;
@@ -956,15 +938,6 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
             ) : null}
 
             {!compact && d && d.schedule.kind !== 'once' && ['ready', 'active'].includes(job.status) && job.nextRunAt ? <p className="text-sm text-emerald-300">Schedule enabled · Next run {new Date(job.nextRunAt).toLocaleString()}. Each new result will appear here.</p> : null}
-            {!compact && job.canManage && d && !manualArtifact(d.skill) && <div className="text-xs">
-                {budgetEdit === null ? <button className={BUTTON} type="button" onClick={() => setBudgetEdit(String(job.monthlyBudgetMicros / 1_000_000))}>Edit monthly budget</button> :
-                    <form className="flex flex-wrap items-center gap-2" onSubmit={event => { event.preventDefault(); void act('budget', { monthlyBudgetUsd: Number(budgetEdit) }); }}>
-                        <label>Monthly budget $ <input className="ui-control w-24" type="number" min="0.01" max="1000" step="0.01" required value={budgetEdit} onChange={event => setBudgetEdit(event.target.value)} /></label>
-                        <button className={PRIMARY} disabled={busy !== null}>Save budget</button>
-                        <button className={BUTTON} type="button" onClick={() => setBudgetEdit(null)}>Cancel</button>
-                        <p className="w-full text-text-secondary">Spent this month {usd(job.spentThisMonthMicros)}. A cap below current spending stops further runs until the next month or a budget increase.</p>
-                    </form>}
-            </div>}
             {error ? <p className="text-xs text-red-400">{error}</p> : null}
             <div className="flex flex-wrap gap-2">
                 {!compact && job.canManage && (job.status === 'ready' || job.status === 'active') && job.deliveryRunnable ? (

@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TEAM, TEAM_ROLES, type TeamRole } from '@/lib/companies/teamRoles';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
+import { isQuestion } from '@/lib/ai/orchestrator/responseRouting';
+import TeamAnswer, { askTeam, type TeamQuestion } from './TeamAnswer';
 import { visibleInterval } from '@/lib/os/visibleInterval';
 import BuildCard, { type BuildView } from './building/BuildCard';
 import ResponsibilityEditor from './jobs/ResponsibilityEditor';
@@ -30,6 +32,26 @@ function SharedBoard({ board }: { board?: Board }) {
 }
 type Advice = NonNullable<JobView['teamAdvice']>;
 type Row = { id: string; title: string; role: TeamRole; stage: Stage; line: string; advice: Advice; job?: TeamJob; build?: TeamBuild };
+
+type LogEntry = NonNullable<JobView['teamLog']>[number];
+
+/** The team's exchange on one piece of work, as it happens: who asked whom, what an intern read, the facts used, the answer. */
+function LiveExchange({ log, live }: { log: LogEntry[]; live: boolean }) {
+  if (!log.length) return live ? <p className="text-sm text-text-secondary">Starting…</p> : null;
+  const name = (role?: TeamRole) => (role ? TEAM[role]?.name ?? role : '');
+  return <div className="rounded-lg border border-border p-3">
+    <h5 className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-text-secondary">{live && <span className="h-2 w-2 rounded-full bg-sky-400 animate-pulse" aria-hidden />}{live ? 'Happening now' : 'How the team got here'}</h5>
+    <ol className="mt-2 space-y-2.5 text-sm" aria-live={live ? 'polite' : undefined}>{log.map((entry, index) => <li key={index} className="flex gap-3">
+      <time className="w-14 shrink-0 pt-0.5 text-[11px] tabular-nums text-text-secondary" dateTime={entry.at}>{new Date(entry.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</time>
+      <div className="min-w-0 flex-1">
+        {(entry.kind === 'ask' || entry.kind === 'answer') && <p className="text-xs font-medium">{name(entry.from)}{entry.to ? <span className="text-text-secondary"> → {name(entry.to)}</span> : null}</p>}
+        <p className={`whitespace-pre-wrap break-words ${entry.kind === 'ask' || entry.kind === 'answer' ? '' : 'text-text-secondary'}`}>{entry.text}</p>
+        {entry.facts?.length ? <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs">{entry.facts.map((fact, i) => <li key={i}>{fact}</li>)}</ul> : null}
+        {entry.sources?.length ? <p className="mt-1 text-xs text-text-secondary">Pages read: {entry.sources.map((url) => <a key={url} href={url} target="_blank" rel="noreferrer" className="mr-2 underline">{host(url)}</a>)}</p> : null}
+      </div>
+    </li>)}</ol>
+  </div>;
+}
 
 /** Who the owner asked before starting, what each said, and what their intern read on the web. */
 function Consulted({ owner, advice }: { owner: TeamRole; advice: Advice }) {
@@ -81,7 +103,10 @@ export default function CompanyTeamPanel({ companyId, companyName, focusJobId }:
   const [filter, setFilter] = useState('');
   const [request, setRequest] = useState('');
   const [assignee, setAssignee] = useState<TeamRole | 'auto'>('auto');
+  const [questions, setQuestions] = useState<TeamQuestion[]>([]);
 
+  // While the team is working on something, refresh every few seconds so the exchange reads live.
+  const working = Boolean(data?.jobs.some(job => jobStage(job).group === 'moving') || data?.builds.some(build => buildStage(build.status).group === 'moving'));
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
       const response = await fetch(`/api/os/companies/${companyId}/team`, { signal });
@@ -93,9 +118,9 @@ export default function CompanyTeamPanel({ companyId, companyName, focusJobId }:
   useEffect(() => {
     const controller = new AbortController();
     void load(controller.signal);
-    const stop = visibleInterval(() => { void load(controller.signal); }, 30_000);
+    const stop = visibleInterval(() => { void load(controller.signal); }, working ? 4_000 : 30_000);
     return () => { controller.abort(); stop(); };
-  }, [load]);
+  }, [load, working]);
   useEffect(() => {
     if (focusJobId && data) document.getElementById(`work-${focusJobId}`)?.scrollIntoView({ block: 'center' });
     // Only on first load of a focused item.
@@ -114,13 +139,28 @@ export default function CompanyTeamPanel({ companyId, companyName, focusJobId }:
     finally { setBusy(false); }
   }
   async function handOff() {
+    // A question gets an answer with the reasoning behind it. Only work to be done becomes a responsibility to approve.
+    if (isQuestion(request)) {
+      const id = `q-${Date.now()}`;
+      const question = request.trim();
+      const asked = assignee === 'auto' ? question : `${question}\n\n(Bring in ${TEAM[assignee].name} in particular.)`;
+      const patch = (change: (item: TeamQuestion) => TeamQuestion) => setQuestions(list => list.map(item => item.id === id ? change(item) : item));
+      setQuestions(list => [{ id, question, status: 'working', startedAt: Date.now(), progress: [] }, ...list]);
+      setRequest(''); setNotice(''); setError('');
+      void askTeam(companyId, asked, line => patch(item => ({ ...item, progress: [...item.progress, line].slice(-14) })))
+        .then(({ reply, error: failure }) => patch(item => reply?.text && reply.role !== 'status'
+          ? { ...item, status: 'done', text: reply.text, stages: reply.stages, evidence: reply.evidence, contextSources: reply.contextSources, costMicros: reply.costMicros }
+          : { ...item, status: 'failed', error: failure ?? reply?.text ?? 'The team could not answer. Ask again.' }))
+        .catch(() => patch(item => ({ ...item, status: 'failed', error: 'The question did not reach the team. Ask again.' })));
+      return;
+    }
     const result = await act({ action: 'delegate', request, ...(assignee === 'auto' ? {} : { role: assignee }) });
     if (!result) return;
     const owner = TEAM[result.role ?? (assignee === 'auto' ? 'marketing' : assignee)].name;
     setRequest(''); setRole('all');
     const id = result.job?.id ?? result.build?.id;
     if (id) setExpanded(old => ({ ...old, [id]: true }));
-    setNotice(`${owner} has it and is preparing a plan. It appears below; nothing runs until you approve it.`);
+    setNotice(`${owner} has it. Watch the work below as it happens; nothing runs until you approve the plan.`);
   }
 
   const rows = useMemo<Row[]>(() => {
@@ -139,16 +179,21 @@ export default function CompanyTeamPanel({ companyId, companyName, focusJobId }:
   return <section className="space-y-5">
     {error && <p role="alert" className="text-amber-300 text-sm">{error} <button className="underline" onClick={() => void load()}>Retry</button></p>}
     {!data ? <p className="text-sm text-text-secondary">Loading team…</p> : <>
-      {data.canManage && <form className="rounded-2xl border border-primary/40 bg-primary/5 p-4 space-y-3" onSubmit={e => { e.preventDefault(); void handOff(); }}>
-        <label className="block"><span className="text-base font-semibold">What do you need done for {companyName}?</span>
-          <textarea required minLength={10} maxLength={6000} value={request} onChange={e => setRequest(e.target.value)} rows={3} placeholder="Describe the outcome, any constraints, and how often it should happen. For example: every weekday, find three new sites worth a guest post and draft the pitch." className="mt-2 w-full rounded-xl border border-border bg-background p-3 text-sm" /></label>
+      {<form className="rounded-2xl border border-primary/40 bg-primary/5 p-4 space-y-3" onSubmit={e => { e.preventDefault(); if (!data.canManage && !isQuestion(request)) { setError('Only a manager can hand work to the team. You can ask the team a question.'); return; } void handOff(); }}>
+        <label className="block"><span className="text-base font-semibold">Ask {companyName}&rsquo;s team, or give them work</span>
+          <textarea id="team-request" required minLength={10} maxLength={6000} value={request} onChange={e => setRequest(e.target.value)} rows={3} placeholder="Describe work to be done, or ask a question. Work: every weekday, find three new sites worth a guest post and draft the pitch. Question: what is the one thing we should do to get more subscribers?" className="mt-2 w-full rounded-xl border border-border bg-background p-3 text-sm" /></label>
         <div className="flex flex-wrap items-center gap-2">
           <label className="text-xs text-text-secondary">Who takes it <select aria-label="Who takes it" value={assignee} onChange={e => setAssignee(e.target.value as TeamRole | 'auto')} className="ml-1 rounded-lg border border-border bg-background-card p-2 text-sm text-text-primary"><option value="auto">Nucleas picks the right member</option>{TEAM_ROLES.filter(r => TEAM[r].active).map(r => <option key={r} value={r}>{TEAM[r].name}</option>)}</select></label>
-          <button disabled={busy} className="ui-button-primary ml-auto">{busy ? 'Handing off…' : 'Hand off'}</button>
+          <button disabled={busy} className="ui-button-primary ml-auto">{busy ? 'Handing off…' : isQuestion(request) ? 'Ask the team' : 'Hand off'}</button>
         </div>
         <p className="text-xs text-text-secondary">{STEPS.join(' → ')}. The member asks teammates where their field matters, each with an intern searching the web, then writes a plan. You approve it, it does one test run for you to check, then it runs on its own. Nothing is posted or changed before your approval.</p>
         {notice && <p role="status" className="text-sm text-emerald-300">{notice}</p>}
       </form>}
+
+      {questions.map(item => <TeamAnswer key={item.id} item={item} companyName={companyName} canManage={data.canManage}
+        onHandOff={task => { setRequest(task); document.getElementById('team-request')?.focus(); }}
+        onFollowUp={() => document.getElementById('team-request')?.focus()}
+        onDismiss={() => setQuestions(list => list.filter(other => other.id !== item.id))} />)}
 
       <div className="flex flex-wrap gap-2" role="group" aria-label="Team members">
         {(['all', ...data.members.map(m => m.role)] as const).map(key => {
@@ -171,7 +216,7 @@ export default function CompanyTeamPanel({ companyId, companyName, focusJobId }:
             {data.canManage && <button type="button" className="ui-button" aria-expanded={guiding} onClick={() => { setRemit(selected.remit); setLessons(selected.lessons); setGuiding(!guiding); }}>{guiding ? 'Close guidance' : 'Guide'}</button>}
           </div>
         </div>
-        {role === 'operations' && <p className="text-sm text-text-secondary">{data.jobs.filter(j => j.runs[0]?.status === 'failed').length} responsibilities have a failed latest run · {data.jobs.filter(j => j.monthlyBudgetMicros > 0 && j.spentThisMonthMicros >= j.monthlyBudgetMicros).length} have reached their monthly budget. Operations advises every member; budget changes stay your decision.</p>}
+        {role === 'operations' && <p className="text-sm text-text-secondary">{data.jobs.filter(j => j.runs[0]?.status === 'failed').length} responsibilities have a failed latest run. Operations advises every member; budget changes stay your decision.</p>}
         {selected.playbook && selected.playbook.craft.length > 0 && <details className="text-sm">
           <summary className="cursor-pointer text-text-secondary">How {selected.name} works and what counts as done</summary>
           <div className="mt-2 grid gap-4 sm:grid-cols-2">
@@ -207,7 +252,7 @@ export default function CompanyTeamPanel({ companyId, companyName, focusJobId }:
               <span className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium ${row.stage.action ? 'bg-amber-300 text-black' : 'border border-border text-text-secondary'}`}>{row.stage.action ?? (opened ? 'Close' : 'Open')}</span>
             </button>
             {opened && <div className="border-t border-border p-3 space-y-3">
-              <Consulted owner={row.role} advice={row.advice} />
+              {row.job?.teamLog?.length || row.stage.group === 'moving' ? <LiveExchange log={row.job?.teamLog ?? []} live={row.stage.group === 'moving'} /> : <Consulted owner={row.role} advice={row.advice} />}
               {row.job && <>
                 {data.canManage && <label className="block text-xs">Owner <select aria-label={`Owner for ${row.title}`} disabled={busy} value={row.role} onChange={e => void act({ action: 'assign', role: e.target.value, jobId: row.id })} className="ml-2 rounded border border-border bg-background-card p-1">{TEAM_ROLES.filter(r => TEAM[r].active).map(r => <option value={r} key={r}>{TEAM[r].name}</option>)}</select></label>}
                 <ResponsibilityEditor job={row.job} onSaved={() => void load()} />

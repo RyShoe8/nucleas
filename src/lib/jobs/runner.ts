@@ -1,5 +1,7 @@
+import { withItemCap } from '@/lib/ai/control/itemCap';
 import { companyTeamContext } from '@/lib/companies/teamContext';
 import { renderAdvice, teamAdviceForJob } from '@/lib/companies/teamConsult';
+import { teamLogWriter } from './jobs';
 import { TEAM, teamRoleFor } from '@/lib/companies/teamRoles';
 import { datasetAssignment, leadBrief, leadsNeedingCheck, leadsToFinish, openedPages, researchExclusions, researchReserve, saveScoutBatch, saveScreened, rememberQualificationGap } from './researchEvidence';
 import 'server-only';
@@ -382,7 +384,12 @@ async function earlierRecords(jobId: Types.ObjectId, excludeRun: Types.ObjectId)
 }
 
 /** Executes a run that is in 'running'. Safe to call once per run; the caller claimed it. */
-export async function executeJobRun(runId: string): Promise<void> {
+/** One run: every paid call it makes counts toward the cap on a single piece of work. */
+export async function executeJobRun(...args: Parameters<typeof executeJobRunUncapped>): ReturnType<typeof executeJobRunUncapped> {
+  return withItemCap('run', () => executeJobRunUncapped(...args));
+}
+
+async function executeJobRunUncapped(runId: string): Promise<void> {
   const claim = await claimJobRunExecution(runId);
   if (!claim) return;
   const { run, owner } = claim;
@@ -446,14 +453,13 @@ export async function executeJobRun(runId: string): Promise<void> {
 
   const spent = await monthSpendMicros(job._id);
   // Voice and Marketing plan have no spending cap: they are generated once and reviewed, not scheduled.
-  if (!manualArtifact(design.data.skill) && spent >= (job.monthlyBudgetMicros ?? 0)) return fail(`This job has reached its monthly budget ($${((job.monthlyBudgetMicros ?? 0) / 1_000_000).toFixed(2)}).`);
 
   const viewer = await loadCompanyViewer(String(job.createdByUserId));
   const profile = viewer ? await getCompanyProfile(viewer, String(job.companyId)) : null;
   if (!viewer || !profile) return fail('The company is no longer accessible.');
   // Asked once and kept with the responsibility: a scheduled run reuses the answers instead of asking again.
   let adviceCost = 0;
-  const advice = renderAdvice(await teamAdviceForJob(job, viewer, { onCost: (micros) => { adviceCost += micros; }, save: (teamAdvice) => Job.updateOne({ _id: job._id }, { $set: { teamAdvice } }) }));
+  const advice = renderAdvice(await teamAdviceForJob(job, viewer, { onEvent: teamLogWriter(job._id), onCost: (micros) => { adviceCost += micros; }, save: (teamAdvice) => Job.updateOne({ _id: job._id }, { $set: { teamAdvice } }) }));
   if (advice) activeDesign.instructions += `\n\n${advice}`;
   const excludedProspects = activeDesign.skill === 'signature_outreach'
     ? (await listCompanyProfiles(viewer)).filter(company => company.relationship === 'owned' || company.relationship === 'internal').map(company => company.domain).filter((domain): domain is string => Boolean(domain))
@@ -610,7 +616,6 @@ export async function executeJobRun(runId: string): Promise<void> {
   const runStarted = Date.now();
   const doWork = async (choice: typeof worker, correction?: string, researchRetry = false, compact = false, scouting = false) => {
     if (level === 'free' && !choice.free) return { requestId: 'free-level-only', role: 'status' as const, text: 'This job is set to the Free level, so it uses free models only.' };
-    if (strategic && spent + cost >= (job.monthlyBudgetMicros ?? 0)) throw new Error('Research stopped at the monthly budget.');
     if (workCalls >= maxWorkCalls) return { requestId: 'attempt-limit', role: 'status' as const, text: `Stopped after ${maxWorkCalls} work calls. ${modelPath.filter((step) => step.error).slice(-2).map((step) => `${step.model}: ${step.error}`).join(' ') || 'No more work calls are allowed for this run.'}` };
     workCalls += 1;
     onProgress(compact ? `Retrying within ${shortModel(choice.model)}'s context limit` : correction ? `${researchRetry ? 'Re-researching' : 'Fixing the result format'} with ${shortModel(choice.model)}` : `Researching with ${shortModel(choice.model)}`);
@@ -676,7 +681,6 @@ export async function executeJobRun(runId: string): Promise<void> {
   };
 
   const chooseStrategy = async (history: string) => {
-    if (spent + cost >= (job.monthlyBudgetMicros ?? 0)) throw new Error('Research stopped at the monthly budget.');
     const plan = await selectModel(org, 'plan', level, { models, settings });
     const planner = plan.primary;
     if (!planner) throw new Error('No research planner is available.');
@@ -1092,7 +1096,7 @@ export async function executeJobRun(runId: string): Promise<void> {
           await recheckLinks();
           return issues;
         },
-        stop: () => !planner || Date.now() >= researchEnds || cost >= RESEARCH_METHOD.followUpSpendLimitMicros || (Boolean(job.monthlyBudgetMicros) && spent + cost >= (job.monthlyBudgetMicros ?? 0)),
+        stop: () => !planner || Date.now() >= researchEnds || cost >= RESEARCH_METHOD.followUpSpendLimitMicros,
         openPages: async (urls) => {
           await progress(run._id, owner, `Opening ${urls.length} page${urls.length === 1 ? '' : 's'} the research named`, { stage: 'validating', percent: 70 });
           const found = await checkPages(urls, { signal: AbortSignal.timeout(RESEARCH_METHOD.linkOpeningMs) });

@@ -1148,7 +1148,7 @@ describe('real runs', () => {
     expect(lastWorkCall.userText).toContain('Deadlock');
   });
 
-  it('refuses to run a delivery method that still needs its setup, and stops at the monthly budget', async () => {
+  it('refuses to run a delivery method that still needs its setup, and no longer stops a run over a per-responsibility budget', async () => {
     const needsSetup = await ready({ ...DESIGN, schedule: { kind: 'daily' }, delivery: { method: 'intake_endpoint', detail: 'Signed endpoint', setupSteps: ['Merge the pull request adding /api/nucleas/intake'] } });
     expect(await runNow(admin, needsSetup)).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('Merge the pull request') });
 
@@ -1156,7 +1156,8 @@ describe('real runs', () => {
     await Job.updateOne({ _id: id }, { $set: { monthlyBudgetMicros: 100 } });
     const run = await runNow(admin, id);
     await executeJobRun(run.runId!);
-    expect((await getJob(admin, id))?.runs[0]).toMatchObject({ status: 'failed', error: expect.stringContaining('monthly budget') });
+    // Spending is limited by the organization budget and the cap on a single piece of work, not by the responsibility.
+    expect((await getJob(admin, id))?.runs[0]?.error ?? '').not.toContain('monthly budget');
   });
 
   it('the sweep fails runs and designs stuck for too long', async () => {

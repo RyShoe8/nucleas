@@ -123,7 +123,7 @@ export function registerOsModules(): void {
             minSize: { width: 400, height: 360 },
             canPopout: true,
             permissions: 'member',
-            render: () => createElement(AssistantModule),
+            render: (ctx) => createElement(AssistantModule, { payload: ctx.payload }),
         },
         {
             id: 'ai-budgets',

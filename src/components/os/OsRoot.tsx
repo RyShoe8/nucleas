@@ -51,7 +51,7 @@ export default function OsRoot({ children }: OsRootProps) {
  * Inner layer that wires intent confirmation + voice. Must live inside
  * WindowManagerProvider so it can read window state for voice context.
  */
-export function OsIntentLayer({ children }: { children: ReactNode }) {
+export function OsIntentLayer({ children, voiceControls = true }: { children: ReactNode; voiceControls?: boolean }) {
     const auth = useOsAuth();
     const wm = useWindowManager();
     const [paletteOpen, setPaletteOpen] = useState(false);
@@ -189,7 +189,7 @@ export function OsIntentLayer({ children }: { children: ReactNode }) {
                     nlError={paletteNlError}
                 />
                 ) : null}
-                <VoiceOverlay />
+                <VoiceOverlay controls={voiceControls} />
             </VoiceProvider>
         </IntentConfirmationProvider>
     );

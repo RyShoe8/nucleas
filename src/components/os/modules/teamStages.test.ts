@@ -51,3 +51,25 @@ describe('the activity timeline', () => {
     expect(days[1].rows.map(r => [r.id, r.count])).toEqual([['yesterday', 1]]);
   });
 });
+
+describe('a question in the hand-off box', () => {
+  it('is answered rather than turned into work awaiting approval', async () => {
+    const { isQuestion } = await import('@/lib/ai/orchestrator/responseRouting');
+    expect(isQuestion('what is the one thing we should do to get more subscribers to tailnote')).toBe(true);
+    expect(isQuestion('Should we raise the price?')).toBe(true);
+    expect(isQuestion('How do we get more sign-ups from search')).toBe(true);
+    expect(isQuestion('Every weekday, find three new sites worth a guest post and draft the pitch.')).toBe(false);
+    expect(isQuestion('What new casinos launched? Check every day and add them to the catalog.')).toBe(false);
+    expect(isQuestion('Write a welcome email for new subscribers')).toBe(false);
+  });
+});
+
+describe('handing an answer to the team', () => {
+  it('pulls the single recommended action out of an answer, without its links or formatting', async () => {
+    const { recommendedAction } = await import('./TeamAnswer');
+    const answer = '**Recommendation:** Put the signature generator on the home page above the fold, with [one field](https://tailnote.io) to start.\n\n**Why this**\n- Marketing: 62% of visits end on the home page.';
+    expect(recommendedAction(answer)).toBe('Put the signature generator on the home page above the fold, with one field to start.');
+    expect(recommendedAction('**Recommendation**\nRaise the free limit to five signatures.\n\n**Why this**')).toBe('Raise the free limit to five signatures.');
+    expect(recommendedAction('Sessions were 2,100 last week.')).toBeNull();
+  });
+});

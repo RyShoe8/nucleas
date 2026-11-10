@@ -172,6 +172,14 @@ else {
       'launcher:state': state, 'launcher:hide': () => launcher.hide(),
       'launcher:compact': value => { compact = Boolean(value); launcher.setSize(440, compact ? 92 : 600); launcher.setBounds(bounds(launcher.getBounds())); broadcast(); },
       'update:check': checkUpdates, 'update:install': installUpdate,
+      // Voice starts from the main window and runs in Ask: open or focus it, then tell it to listen once its page is ready.
+      'voice:start': () => {
+        openModule({ moduleId: 'assistant' });
+        const ask = windows.get('assistant:{}');
+        if (!ask) return;
+        const tell = () => { if (!ask.isDestroyed()) ask.webContents.send('voice:start'); };
+        if (ask.webContents.isLoading()) ask.webContents.once('did-finish-load', () => setTimeout(tell, 2500)); else tell();
+      },
     })) ipcMain.handle(channel, (event, value) => { if (!localSender(event)) throw new Error('Not allowed'); return handler(value); });
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;

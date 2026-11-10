@@ -45,7 +45,11 @@ export const defaultPlatformAiSettings: PlatformAiSettings = {
   dailyRequestLimit: 48, minimumIntervalSeconds: 300, maxOutputTokens: 3072,
   freePoolLimitMicros: 0, freePoolRemainingMicros: 0,
 };
-export const aiBudgetSettingsSchema = z.object({ limitMicros: micros.nullable(), paused: z.boolean().default(false) }).strict();
+/**
+ * An organization's two spending limits. limitMicros: its monthly budget (null = the platform's ceiling).
+ * itemCapMicros: the most any single question, run, plan or code change may spend (null = the default).
+ */
+export const aiBudgetSettingsSchema = z.object({ limitMicros: micros.nullable(), itemCapMicros: micros.nullable().default(null), paused: z.boolean().default(false) }).strict();
 export type AiBudgetSettings = z.infer<typeof aiBudgetSettingsSchema>;
 
 // Decimal parsing avoids floating-point drift and rejects exponent/negative input.

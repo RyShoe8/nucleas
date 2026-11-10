@@ -74,21 +74,57 @@ export function ChangeBadge({ change }: { change: number | null }) {
     );
 }
 
-export function Sparkline({ series, label, start, end }: { series: { value: number; date?: string }[]; label: string; start?: string; end?: string }) {
+const DAY_MS = 86_400_000;
+
+/** Which days get a label under a chart: every day for a week, then every few, always the first and the last. */
+export function dayTicks(firstMs: number, lastMs: number): { ms: number; label: string; major: boolean }[] {
+    const days = Math.max(0, Math.round((lastMs - firstMs) / DAY_MS));
+    const step = days <= 7 ? 1 : days <= 14 ? 2 : days <= 31 ? 7 : 14;
+    const out: { ms: number; label: string; major: boolean }[] = [];
+    for (let i = 0; i <= days; i++) {
+        const ms = firstMs + i * DAY_MS;
+        // Count back from the last day so the most recent day is always labelled; drop a label that would crowd the first.
+        const major = i === 0 || i === days || ((days - i) % step === 0 && i >= Math.ceil(step / 2));
+        const date = new Date(ms);
+        const label = days <= 7
+            ? date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', timeZone: 'UTC' })
+            : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+        out.push({ ms, label, major });
+    }
+    return out;
+}
+
+export function Sparkline({ series, label, start, end, format }: { series: { value: number; date?: string }[]; label: string; start?: string; end?: string; format?: (value: number) => string }) {
     if (!series.length) return null;
+    const show = format ?? ((value: number) => new Intl.NumberFormat('en-US').format(Math.round(value)));
+    const dated = series.every(p => p.date);
     const dates = series.map((p, i) => p.date ? Date.parse(p.date + 'T00:00:00Z') : i);
     const first = start ? Date.parse(start + 'T00:00:00Z') : dates[0];
     const last = end ? Date.parse(end + 'T00:00:00Z') : dates.at(-1)!;
     const min = Math.min(...series.map(p => p.value));
     const max = Math.max(...series.map(p => p.value));
-    const points = series.map((p, i) => ({ x: last === first ? 60 : ((dates[i] - first) / (last - first)) * 120, y: max === min ? 14 : 27 - (p.value - min) / (max - min) * 26 }));
-    return <svg viewBox="-2 0 124 28" width="100%" height={40} role="img" aria-label={`${label}; ${start ?? series[0].date ?? ''} to ${end ?? series.at(-1)?.date ?? ''}; ${series.length} observations`} className="text-primary">
-        <title>{label}: missing dates are gaps, not zero</title>
-        {points.map((p, i) => <g key={series[i].date ?? i}>
-            {i > 0 && (!series[i].date || dates[i] - dates[i - 1] === 86400000) && <line x1={points[i - 1].x} y1={points[i - 1].y} x2={p.x} y2={p.y} stroke="currentColor" strokeWidth="1.5" />}
-            <circle cx={p.x} cy={p.y} r="1.4" fill="currentColor"><title>{series[i].date}: {series[i].value}</title></circle>
-        </g>)}
-    </svg>;
+    // Position across the chart as a share of its width, so the day labels underneath line up with the points above.
+    const across = (ms: number) => last === first ? 50 : ((ms - first) / (last - first)) * 100;
+    const points = series.map((p, i) => ({ x: across(dates[i]), y: max === min ? 20 : 37 - (p.value - min) / (max - min) * 34 }));
+    const ticks = dated && last > first ? dayTicks(first, last) : [];
+    const edge = (x: number) => x < 8 ? 'translate-x-0' : x > 92 ? '-translate-x-full' : '-translate-x-1/2';
+    return <figure className="text-primary" aria-label={`${label}; ${start ?? series[0].date ?? ''} to ${end ?? series.at(-1)?.date ?? ''}; ${series.length} observations`}>
+        <div className="flex justify-between text-[10px] tabular-nums text-text-secondary"><span>High {show(max)}</span><span>Low {show(min)}</span></div>
+        <div className="mx-1">
+            <svg viewBox="0 0 100 40" width="100%" height={56} preserveAspectRatio="none" role="img" aria-label={`${label} by day`} className="block overflow-visible">
+                <title>{label}: a missing day is a gap, not zero</title>
+                {ticks.map(tick => <line key={tick.ms} x1={across(tick.ms)} x2={across(tick.ms)} y1={tick.major ? 0 : 37} y2={40} stroke="currentColor" strokeOpacity={tick.major ? 0.18 : 0.3} strokeWidth="1" vectorEffect="non-scaling-stroke" />)}
+                <line x1="0" x2="100" y1="40" y2="40" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                {points.map((p, i) => i > 0 && (!series[i].date || dates[i] - dates[i - 1] === DAY_MS)
+                    ? <line key={`l${i}`} x1={points[i - 1].x} y1={points[i - 1].y} x2={p.x} y2={p.y} stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                    : null)}
+                {points.map((p, i) => <line key={`p${i}`} x1={p.x} y1={p.y} x2={p.x} y2={p.y} stroke="currentColor" strokeWidth="5" strokeLinecap="round" vectorEffect="non-scaling-stroke"><title>{series[i].date ? `${series[i].date}: ` : ''}{show(series[i].value)}</title></line>)}
+            </svg>
+            {ticks.length > 0 && <div className="relative mt-0.5 h-3.5 text-[10px] text-text-secondary" aria-hidden>
+                {ticks.filter(tick => tick.major).map(tick => <span key={tick.ms} className={`absolute top-0 whitespace-nowrap ${edge(across(tick.ms))}`} style={{ left: `${across(tick.ms)}%` }}>{tick.label}</span>)}
+            </div>}
+        </div>
+    </figure>;
 }
 
 interface MetricSlot {
@@ -145,7 +181,7 @@ function MetricCard({ m, slot }: { m?: OsMetric; slot: MetricSlot }) {
         <div className="text-2xl font-semibold tabular-nums">{value}</div>
         <p className="text-[11px] text-text-secondary">{!m ? 'No observations for this period' : c ? `${c.start} → ${c.end}` : `Latest observation${m.asOf ? ` · ${m.asOf}` : ''}`}</p>
         {c && <p className={`text-[11px] ${c.observed < c.days ? 'text-amber-300' : 'text-text-secondary'}`}>{c.observed}/{c.days} days recorded{c.observed < c.days ? ' · partial total' : ''}</p>}
-        {m?.series.length && !m.warning ? <Sparkline series={m.series} label={slot.label} start={c?.start} end={c?.end} /> : null}
+        {m?.series.length && !m.warning ? <Sparkline series={m.series} label={slot.label} start={c?.start} end={c?.end} format={(value) => m.unit === 'money' && m.currency ? new Intl.NumberFormat('en-US', { style: 'currency', currency: m.currency, maximumFractionDigits: 0 }).format(value / 100) : formatMetric(m.unit, value)} /> : null}
         {m && <details className="text-[11px] text-text-secondary"><summary className="cursor-pointer">Source & accuracy</summary>
             <p>{m.source ?? 'Company evidence'}{m.updatedAt ? ` · stored ${new Date(m.updatedAt).toLocaleString()}` : ''}</p>
             {m.warning && <p className="text-amber-300">{m.warning}</p>}

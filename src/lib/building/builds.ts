@@ -1,3 +1,4 @@
+import { withItemCap } from '@/lib/ai/control/itemCap';
 import { companyTeamContext } from '@/lib/companies/teamContext';
 import { consultTeammates, renderAdvice, type MemberAdvice } from '@/lib/companies/teamConsult';
 import 'server-only';
@@ -193,7 +194,12 @@ export type ProposeResult =
  * Plans a code change for a company by reading its repository (the same planner → worker →
  * reviewer run the IDE uses in Plan mode), and records the plan for approval.
  */
-export async function proposeCodeChange(
+/** One code change plan: every paid call it makes counts toward the cap on a single piece of work. */
+export async function proposeCodeChange(...args: Parameters<typeof proposeCodeChangeUncapped>): ReturnType<typeof proposeCodeChangeUncapped> {
+  return withItemCap('code change plan', () => proposeCodeChangeUncapped(...args));
+}
+
+async function proposeCodeChangeUncapped(
   viewer: CompanyViewer,
   input: { companyId: string; request: string; level: CostLevel; teamRole?: 'design' | 'engineering'; signal?: AbortSignal; onProgress?: (text: string) => void }
 ): Promise<ProposeResult> {
@@ -377,7 +383,12 @@ async function recordBuildRun(doc: BuildDoc, input: { model: string; ok: boolean
 }
 
 /** Claims a queued build and runs it in the build service. Safe to call more than once. */
-export async function runBuild(id: string): Promise<void> {
+/** One build: every paid call it makes counts toward the cap on a single piece of work. */
+export async function runBuild(...args: Parameters<typeof runBuildUncapped>): ReturnType<typeof runBuildUncapped> {
+  return withItemCap('build', () => runBuildUncapped(...args));
+}
+
+async function runBuildUncapped(id: string): Promise<void> {
   const doc = await BuildRequest.findOneAndUpdate(
     { _id: new Types.ObjectId(id), status: 'queued' },
     { $set: { status: 'building', startedAt: new Date(), error: null }, $inc: { attempts: 1 }, $push: { events: event(null, 'started') } },

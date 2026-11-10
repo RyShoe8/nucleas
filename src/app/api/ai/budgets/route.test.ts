@@ -18,6 +18,6 @@ describe('budget pause mutation', () => {
   });
   it('passes explicit pause state and expected revision to the audited save', async () => {
     expect((await PUT(request({ limitMicros: null, paused: true }))).status).toBe(200);
-    expect(mocks.save).toHaveBeenCalledWith({ userId: 'manager', organizationId: 'org' }, 2, { limitMicros: null, paused: true });
+    expect(mocks.save).toHaveBeenCalledWith({ userId: 'manager', organizationId: 'org' }, 2, { limitMicros: null, itemCapMicros: null, paused: true });
   });
 });

@@ -1,6 +1,7 @@
-import { teamRoleFor, type TeamRole } from '@/lib/companies/teamRoles';
+import { withItemCap } from '@/lib/ai/control/itemCap';
+import { TEAM, teamRoleFor, type TeamRole } from '@/lib/companies/teamRoles';
 import { companyTeamContext } from '@/lib/companies/teamContext';
-import { renderAdvice, teamAdviceForJob, type MemberAdvice } from '@/lib/companies/teamConsult';
+import { renderAdvice, teamAdviceForJob, type MemberAdvice, type TeamEvent } from '@/lib/companies/teamConsult';
 import { PublishDelivery, PublishItem } from '@/lib/models/Publishing';
 import { importCasinoDrafts } from '@/lib/casinoDiscovery/service';
 import { retryDatabaseRead, retryIdempotentWrite } from '@/lib/db/retryRead';
@@ -70,6 +71,8 @@ export interface JobView {
   teamRole?: TeamRole;
   /** Teammates the owner asked before starting, and what they said. */
   teamAdvice?: MemberAdvice[];
+  /** The team's exchange as it happens, newest last. */
+  teamLog?: (TeamEvent & { at: string })[];
   id: string;
   companyId: string;
   projectId: string | null;
@@ -102,6 +105,7 @@ export interface JobView {
 type JobLean = {
   teamRole?: TeamRole;
   teamAdvice?: { at?: Date; items?: MemberAdvice[] };
+  teamLog?: (TeamEvent & { at: Date })[];
   _id: Types.ObjectId;
   understanding?: ConfirmedUnderstanding;
   organizationId: Types.ObjectId;
@@ -178,6 +182,7 @@ async function toView(job: JobLean, company: { name: string; subreddit?: string 
   return {
     teamRole: teamRoleFor(job),
     teamAdvice: job.teamAdvice?.items ?? [],
+    teamLog: (job.teamLog ?? []).map((entry) => ({ ...entry, at: new Date(entry.at).toISOString() })),
     id: String(job._id),
     companyId: String(job.companyId),
     projectId: job.projectId ? String(job.projectId) : null,
@@ -329,15 +334,33 @@ export async function createTemplateJob(
   return view ? { ok: true, job: view } : { ok: false, status: 404, error: 'Job not found.' };
 }
 
+/** Appends to the responsibility's live exchange, in order, without ever failing the work. Keeps the latest 80 entries. */
+export function teamLogWriter(jobId: Types.ObjectId): (event: TeamEvent) => void {
+  let queue: Promise<unknown> = Promise.resolve();
+  return (event) => {
+    const entry = { ...event, text: event.text.slice(0, 2300), facts: event.facts?.slice(0, 8), sources: event.sources?.slice(0, 8), at: new Date() };
+    queue = queue.then(() => Job.updateOne({ _id: jobId }, { $push: { teamLog: { $each: [entry], $slice: -80 } } })).catch((error) => console.error('[team] could not record the exchange', error));
+  };
+}
+
 /** Designs (or redesigns with the person's answers) a job that is in 'designing'. */
-export async function runDesign(viewer: CompanyViewer, jobId: string, options: { signal?: AbortSignal; onProgress?: ProgressFn } = {}): Promise<void> {
+/** One plan: every paid call it makes counts toward the cap on a single piece of work. */
+export async function runDesign(...args: Parameters<typeof runDesignUncapped>): ReturnType<typeof runDesignUncapped> {
+  return withItemCap('plan', () => runDesignUncapped(...args));
+}
+
+async function runDesignUncapped(viewer: CompanyViewer, jobId: string, options: { signal?: AbortSignal; onProgress?: ProgressFn } = {}): Promise<void> {
   const job = await Job.findById(jobId).lean<JobLean>();
   if (!job) return;
   const previous = jobDesignSchema.safeParse(job.design);
   options.onProgress?.('Checking whether a teammate should weigh in');
   let adviceCost = 0;
-  const advice = await teamAdviceForJob(job, viewer, { signal: options.signal, onCost: (micros) => { adviceCost += micros; }, save: (teamAdvice) => Job.updateOne({ _id: job._id }, { $set: { teamAdvice } }) });
+  const owner = teamRoleFor(job);
+  const note = teamLogWriter(job._id);
+  note({ kind: 'progress', from: owner, text: `${TEAM[owner].name} has this and is starting on the plan.` });
+  const advice = await teamAdviceForJob(job, viewer, { signal: options.signal, onEvent: note, onCost: (micros) => { adviceCost += micros; }, save: (teamAdvice) => Job.updateOne({ _id: job._id }, { $set: { teamAdvice } }) });
   if (adviceCost) await Job.updateOne({ _id: job._id }, { $inc: { designCostMicros: adviceCost } });
+  note({ kind: 'progress', from: owner, text: `${TEAM[owner].name} is writing the plan from the request, the company context${advice.length ? ` and what ${advice.map((item) => TEAM[item.member].name).join(' and ')} advised` : ''}.` });
   const result = await designJob(viewer, {
     companyId: String(job.companyId),
     request: [job.request, await companyTeamContext(job), renderAdvice(advice)].filter(Boolean).join('\n\n'),
@@ -346,8 +369,9 @@ export async function runDesign(viewer: CompanyViewer, jobId: string, options: {
     answers: job.answers,
     previous: previous.success ? { design: previous.data, questions: previous.data.questions } : undefined,
     signal: options.signal,
-    onProgress: options.onProgress,
+    onProgress: (text) => { note({ kind: 'progress', from: owner, text }); options.onProgress?.(text); },
   });
+  note({ kind: 'progress', from: owner, text: result.ok ? `${TEAM[owner].name} finished the plan. It is waiting for you.` : `${TEAM[owner].name} could not finish the plan: ${result.error}` });
   if (!result.ok) {
     await Job.updateOne({ _id: job._id }, { $set: { status: 'failed', error: result.error }, $inc: { designCostMicros: result.costMicros }, $push: { events: event(null, 'design_failed', result.error) } });
     return;

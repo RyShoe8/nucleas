@@ -15,6 +15,7 @@ If npm is configured to skip dependency install scripts, run `node desktop/node_
 
 The floating launcher is bundled locally. App windows load `https://nucleas.app/os/desktop`; deploy that route from this change before using the app windows in production. Sign in once in an app window using the normal Nucleas login. All app windows share an isolated persistent cookie profile. Your browser login is not imported.
 
+- The microphone in the launcher starts voice: it opens Ask and listens there. Other app windows do not show a microphone.
 - Alt+Space toggles the launcher. The tray remains available if another app owns that shortcut.
 - Drag the header to position the launcher. Collapse it to a compact strip or hide it to the tray.
 - Apps are independent native windows with normal minimize, maximize, Snap and taskbar behavior.

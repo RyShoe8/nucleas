@@ -1,3 +1,4 @@
+import { itemCapRefusal, recordItemSpend } from '@/lib/ai/control/itemCap';
 import 'server-only';
 import { randomUUID } from 'crypto';
 import { Types } from 'mongoose';
@@ -192,7 +193,13 @@ import { contextBudgetChars, contextWindowFor, contextWindowFromProviderMessage,
  * Governed IDE chat via a company credential (Direct or AI Team Worker binding).
  * Runs the image/browse tool loop when the host supports tools.
  */
-export async function attemptCompanyCredentialChat(input: {
+export async function attemptCompanyCredentialChat(input: Parameters<typeof chatUncapped>[0]): Promise<TeamChatTurn> {
+  const turn = await chatUncapped(input);
+  recordItemSpend(turn?.costMicros);
+  return turn;
+}
+
+async function chatUncapped(input: {
   systemPrompt: string;
   organizationId: string;
   projectId: Types.ObjectId;
@@ -246,6 +253,9 @@ export async function attemptCompanyCredentialChat(input: {
   }
 
   const freeCredential = isFreeCredential({ provider: profile.provider, tier: profile.tier });
+  // The cap on a single piece of work stops further paid calls. Free models carry on.
+  const capped = freeCredential ? null : await itemCapRefusal(String(input.organizationId));
+  if (capped) return statusTurn(capped, 'budget_exhausted', undefined, { costMicros: 0, reservedMicros: 0, noProviderFee: false });
   const lockToken = randomUUID();
   let runId: Types.ObjectId;
   let policy: Awaited<ReturnType<typeof getPipelineInferencePolicy>>;

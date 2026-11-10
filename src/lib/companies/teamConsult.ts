@@ -49,12 +49,27 @@ export interface StoredAdvice {
   at: Date;
   items: MemberAdvice[];
 }
+/** One step of the team's exchange, reported the moment it happens. */
+export interface TeamEvent {
+  kind: 'thinking' | 'ask' | 'searching' | 'found' | 'answer' | 'nobody' | 'plan' | 'progress';
+  from: TeamRole;
+  to?: TeamRole;
+  text: string;
+  /** Sourced facts an intern brought back. */
+  facts?: string[];
+  sources?: string[];
+}
+
 export interface ConsultOptions {
   level?: CostLevel;
   signal?: AbortSignal;
   /** A person is waiting: interns get less time. */
   interactive?: boolean;
   onProgress?: (text: string) => void;
+  /** Told about each step of the exchange as it happens, so a person can watch it. */
+  onEvent?: (event: TeamEvent) => void;
+  /** Who is asking, when a member is. */
+  asker?: TeamRole;
   /** Told about every charge, so the work this is part of counts it against its own budget. */
   onCost?: (micros: number) => void;
 }
@@ -177,6 +192,8 @@ export async function askMembers(viewer: CompanyViewer, companyId: string | null
   const answers = await Promise.all(asks.map(async (ask): Promise<MemberAdvice | null> => {
     const name = TEAM[ask.member].name;
     options.onProgress?.(`${name}'s intern is searching the web`);
+    if (options.asker) options.onEvent?.({ kind: 'ask', from: options.asker, to: ask.member, text: ask.question });
+    options.onEvent?.({ kind: 'searching', from: ask.member, text: `${name}'s intern is searching the web and opening pages. Looking first at: ${PLAYBOOKS[ask.member].sources}.` });
     const research = await internResearch(viewer, [
       `Your specialist is ${name} (${TEAM[ask.member].remit})`,
       `They need to answer: ${ask.question}`,
@@ -185,6 +202,10 @@ export async function askMembers(viewer: CompanyViewer, companyId: string | null
       brief ? `\n# The company (so you look for what fits it)\n${brief.slice(0, INTERN_CONTEXT_CHARS)}` : '',
     ].join('\n'), options).catch(() => null);
     options.onProgress?.(`${name} is weighing in`);
+    {
+      const found = research ? evidenceFromFindings(research.findings) : [];
+      options.onEvent?.({ kind: 'found', from: ask.member, text: research ? `${name}'s intern read ${research.sources.length} page${research.sources.length === 1 ? '' : 's'} and brought back ${found.length} sourced fact${found.length === 1 ? '' : 's'}. ${name} is now weighing them against the company's details and plan.` : `${name}'s intern found nothing usable on the web. ${name} is answering from the company's details and plan, and will say what should be checked.`, facts: found.map((item) => item.fact), sources: research?.sources });
+    }
     const answer = await askEngine({
       organizationId, userId: viewer.userId, need: PLAYBOOKS[ask.member].need, level: options.level, signal: options.signal, interactive: options.interactive,
       system: advisorPrompt(profiles.get(ask.member)!),
@@ -201,6 +222,8 @@ export async function askMembers(viewer: CompanyViewer, companyId: string | null
     // What the intern read and the point the member adds go onto the team's shared board, for every later piece of work.
     const { advice, point } = splitPlanPoint(answer.text);
     if (companyId) await addToBoard(viewer.organizationId, companyId, { member: ask.member, about: ask.question, evidence: research ? evidenceFromFindings(research.findings) : [], point });
+    options.onEvent?.({ kind: 'answer', from: ask.member, to: options.asker, text: advice.slice(0, 1900) });
+    if (point) options.onEvent?.({ kind: 'plan', from: ask.member, text: `Added to the team's working plan: ${point}` });
     return { member: ask.member, question: ask.question, advice: advice.slice(0, 1900), model: answer.model, costMicros: (answer.costMicros ?? 0) + (research?.costMicros ?? 0), ...(research ? { research: research.findings.slice(0, 2900), researchModel: research.model, sources: research.sources } : {}) };
   }));
   return answers.filter((answer): answer is MemberAdvice => answer !== null);
@@ -209,6 +232,7 @@ export async function askMembers(viewer: CompanyViewer, companyId: string | null
 /** The owner reads the task and decides which teammates, if any, to ask and what to ask them. */
 export async function consultTeammates(viewer: CompanyViewer, companyId: string, owner: TeamRole, task: string, options: ConsultOptions = {}): Promise<MemberAdvice[]> {
   const others = ACTIVE_ROLES.filter((role) => role !== owner);
+  options.onEvent?.({ kind: 'thinking', from: owner, text: `${TEAM[owner].name} is reading the request and deciding whether a teammate's field matters to it.` });
   const ownerProfile = (await memberProfiles(viewer.organizationId, companyId, [owner])).get(owner)!;
   const decision = await askEngine({
     organizationId: String(viewer.organizationId), userId: viewer.userId, need: PLAYBOOKS[owner].need, level: options.level, signal: options.signal, interactive: options.interactive,
@@ -226,7 +250,9 @@ export async function consultTeammates(viewer: CompanyViewer, companyId: string,
   }).catch(() => null);
   if (decision?.costMicros) options.onCost?.(decision.costMicros);
   if (!decision) return [];
-  return askMembers(viewer, companyId, validConsults(extractJson(decision.text), owner), task, options);
+  const asks = validConsults(extractJson(decision.text), owner);
+  if (!asks.length) options.onEvent?.({ kind: 'nobody', from: owner, text: `${TEAM[owner].name} judged this to sit within their own field and is not asking a teammate.` });
+  return askMembers(viewer, companyId, asks, task, { ...options, asker: owner });
 }
 
 export function renderAdvice(items: MemberAdvice[]): string {
@@ -251,7 +277,7 @@ export async function teamAdviceForJob(job: AdvisedDoc, viewer: CompanyViewer, o
   try {
     const d = job.design && typeof job.design === 'object' ? (job.design as { title?: string; instructions?: string }) : {};
     const task = [d.title ? `Task: ${d.title}` : '', job.request ? `Request: ${job.request}` : '', d.instructions ? `Brief: ${d.instructions.slice(0, 3000)}` : ''].filter(Boolean).join('\n');
-    const items = await consultTeammates(viewer, String(job.companyId), teamRoleFor(job), task, { level: job.level ?? undefined, signal: options.signal, onProgress: options.onProgress, onCost: options.onCost });
+    const items = await consultTeammates(viewer, String(job.companyId), teamRoleFor(job), task, { level: job.level ?? undefined, signal: options.signal, onProgress: options.onProgress, onCost: options.onCost, onEvent: options.onEvent });
     await options.save({ at: new Date(), items: items.map(({ costMicros: _cost, ...item }) => item) });
     return items;
   } catch (error) {

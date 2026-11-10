@@ -1,3 +1,4 @@
+import { withItemCap } from '@/lib/ai/control/itemCap';
 import 'server-only';
 import { changedMethod, planResearch, researchStrategy, scoutSources, strategyBrief, strategyInstructions } from './researchStrategy';
 import { NEWS_SLIDES_PROMPT } from '@/lib/ai/answerSlides';
@@ -242,7 +243,7 @@ function plannerPrompt(context: PortfolioContext, toolCatalog: string, today: st
     `- actions: only when the user explicitly asks for a change; at most ${MAX_ACTIONS}.`,
     '- job: only for work that repeats or keeps watching ("every day…", "weekly…", "let me know when…"), work that acts outside this chat (adds to a catalog or site, publishes, sends, outreach such as earning backlinks), or when the user asks for a job. Restate the full request (what, for which company, how often, where results should go if said). Nucleas designs the job, asks what it must, and a person approves it. Leave fetch, research and actions empty when you set it. A one-time request for information is NEVER a job, however large: "find", "list", "rank", "compare", "research" and "build me a list" are answered right here with research or deepResearch. A change to site code is a codeChange.',
     '- codeChange: when the user asks to change, fix, add to or plan an edit of a company website or app (its code), OR reports something wrong on it that code would fix ("X shows up where it should not", "remove the listing under Y", a page URL plus a problem), and that company has a code repository listed below. Restate the full request so it stands alone, including any URL, what is wrong and what they want instead. It is planned against the repository and waits for approval; nothing is changed yet. Leave fetch, research and actions empty when you set it. Never answer such a report from guesses about the code.',
-    `- team: the company's specialists. Bring one in whenever the answer needs judgement in their field: advice, a recommendation, a plan, a critique, a "should we" or "how do we" question. Bring in several (at most ${MAX_TEAM}) when the question crosses fields, for example a redesign that affects sign-ups needs design and marketing, and a new feature needs engineering and design. Give each the exact question for them. Each member has an intern who searches the web for them first. Leave team empty only for plain lookups of a fact or figure. Members: ${ACTIVE_ROLES.map((role) => `${role} (${TEAM[role].remit})`).join('; ')}`,
+    `- team: the company's specialists. Bring one in whenever the answer needs judgement in their field: advice, a recommendation, a plan, a critique, a "should we" or "how do we" question. Bring in several (at most ${MAX_TEAM}) when the question crosses fields, for example a redesign that affects sign-ups needs design and marketing, and a new feature needs engineering and design. Give each the exact question for them. Each member has an intern who searches the web for them first. For "what should we do", "should we" and "how do we" questions always bring in the member whose field it is, and also request the company figures the answer will turn on (fetch). Leave team empty only for plain lookups of a fact or figure. Members: ${ACTIVE_ROLES.map((role) => `${role} (${TEAM[role].remit})`).join('; ')}`,
     '- review: true only when the answer recommends business decisions for these companies or compares them; false for lookups and general questions.',
     '- Prefer a reasonable assumption over a question: infer missing details (market, time frame, company) from the portfolio and conversation, and put the assumption in the outline so the answer states it. Use kind "clarify" only when no sensible answer is possible without it.',
     '- Outline exactly what the user asked for. Do not add requirements, verification checklists or extra sections they did not ask for.',
@@ -276,6 +277,8 @@ function writerPrompt(today: string): string {
     '- If "# Site size" is given and the user asked to sort by size, sort by that rank, show it in a column named for what it is, and do not say a ranking is unavailable.',
     '- If a table could not reach the number asked for, give what was verified and say in one line how many were found. Never pad it. Say what any ranking is based on, and mark unknown values as unknown rather than guessing.',
     '- If "# Your team\'s input" is given, build the answer on it. Say which member a recommendation comes from ("Design recommends…"), keep the links they cite, and where members disagree say so and give your own call. Do not add a separate section that just repeats each member.',
+    '- When the user asks what to do, whether to do something, which option to pick, or for a recommendation, write a decision brief with these bold labels in this order. **Recommendation**: one sentence naming the single action, with no list of alternatives hedged into it. **Why this**: two to four arguments; each is a claim followed by the specific fact or figure behind it and its source link, and names the team member who made it. **What it takes**: the first concrete steps, which team member would do each, and the rough effort. **What I considered instead**: one line each for the next-best options and why they lose here. **What would change my mind**: the evidence that is missing or uncertain. Then one closing line offering to hand the recommended action to the named team member.',
+    '- A recommendation must rest on this company: its own numbers, audience, product and approved plan. Quote the figure when one exists. Advice that would fit any company is a failure; if the facts given do not support a specific recommendation, say which fact is missing rather than filling the gap with general practice.',
     '- Be concise.',
     NEWS_SLIDES_PROMPT,
     '- Speak to the user directly. Never mention the prompt, the outline, "the provided facts" or "the research provided"; say "I found" or cite the source instead.',
@@ -338,7 +341,12 @@ function researchWork(toolsUsed: string[] | undefined): string | undefined {
   return searches || pages ? `${counted(searches, 'web search', 'web searches')}, ${counted(pages, 'page', 'pages')} opened` : undefined;
 }
 
-export async function runAskOrchestrator(
+/** One question: every paid call it makes counts toward the cap on a single piece of work. */
+export async function runAskOrchestrator(...args: Parameters<typeof runAskOrchestratorUncapped>): ReturnType<typeof runAskOrchestratorUncapped> {
+  return withItemCap('question', () => runAskOrchestratorUncapped(...args));
+}
+
+async function runAskOrchestratorUncapped(
   viewer: CompanyViewer,
   input: {
     text: string;

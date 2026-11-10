@@ -9,6 +9,11 @@ const ACTS = /\b(?:add|import|save|upload|put|load)\b[^.?!]{0,80}?\b(?:to|into|i
 const QUESTION = /\?\s*$|^\s*(?:what|how|who|whom|which|why|when|where|is|are|was|were|does|did|can|could|should|would|will)\b/i;
 const ASKS_FOR_JOB = /\b(?:create|make|set up|start|open|add|design|schedule)\s+(?:\w+\s+){0,3}jobs?\b|\bas an? (?:\w+\s+)?job\b/i;
 
+/** True when the text asks for an answer or advice rather than for work to be set up: "what should we do to…", "how do we…". */
+export function isQuestion(text: string): boolean {
+  return QUESTION.test(text.trim()) && !requestNeedsJob(text);
+}
+
 /** True when a request belongs in a job. Checked in code, so a model cannot turn a question into something awaiting approval. */
 export function requestNeedsJob(text: string): boolean {
   return [REPEATS, WATCHES, ASKS_FOR_JOB].some((pattern) => pattern.test(text)) || (ACTS.test(text) && !QUESTION.test(text));

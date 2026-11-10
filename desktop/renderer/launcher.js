@@ -29,6 +29,7 @@ function render(state) {
   }));
 }
 $('ask').onclick = () => open('assistant');
+$('voice').onclick = async () => { try { await api.startVoice(); $('error').hidden = true; } catch { $('error').textContent = 'Could not start voice. Open Ask and try again.'; $('error').hidden = false; } };
 $('search').oninput = () => { if (current) render(current); };
 $('search').onkeydown = event => { if (event.key === 'Enter') $('apps').querySelector('button')?.click(); };
 $('compact').onclick = () => api.compact(!current?.compact);

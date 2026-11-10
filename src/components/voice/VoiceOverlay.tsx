@@ -38,7 +38,8 @@ export function VoiceButton() {
     );
 }
 
-export default function VoiceOverlay() {
+/** controls: the floating microphone and wake-word buttons. Windows that are not the place to talk leave them out; confirmations and the listening panel still work. */
+export default function VoiceOverlay({ controls = true }: { controls?: boolean } = {}) {
     const intentCtx = useIntentConfirmation();
     const voice = useVoice();
 
@@ -69,8 +70,8 @@ export default function VoiceOverlay() {
                 onCancel={handleModalCancel}
                 onPatchSlots={intentCtx.patchPendingSlots}
             />
-            <VoiceButton />
-            {voice.enabled && voice.wakeWordSupported && (
+            {controls ? <VoiceButton /> : null}
+            {controls && voice.enabled && voice.wakeWordSupported && (
                 <button
                     type="button"
                     onClick={voice.toggleWakeWord}

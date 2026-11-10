@@ -23,7 +23,7 @@ import {
     type CostChoice,
     type DirectSelection,
 } from '@/components/ai/EngineControls';
-import { getAssistantFocus, setAssistantFocus, subscribeAssistantFocus } from '@/lib/os/assistantFocus';
+import { getAssistantFocus, setAssistantFocus, subscribeAssistantFocus, subscribePendingAsk, takePendingAsk } from '@/lib/os/assistantFocus';
 
 interface Turn {
     id: string;
@@ -146,7 +146,7 @@ const ACTION_TONE: Record<string, string> = {
  * Portfolio-wide AI conversation. Works out which company a question is about; an optional focus
  * (set from a company window) is a starting point, not a limit.
  */
-export default function AssistantModule() {
+export default function AssistantModule({ payload }: { payload?: Record<string, string> }) {
     const focus = useSyncExternalStore(subscribeAssistantFocus, getAssistantFocus, () => null);
     const wm = useWindowManager();
     const [turns, setTurns] = useState<Turn[] | null>(null);
@@ -242,6 +242,30 @@ export default function AssistantModule() {
             setBusy(false);
         }
     };
+
+    // A question handed over from another screen (the Team hand-off box, or a desktop window's link) is asked once.
+    const sendLatest = useRef(send);
+    useEffect(() => { sendLatest.current = send; });
+    const askedId = useRef<string | null>(null);
+    useEffect(() => {
+        const take = () => {
+            const ask = takePendingAsk();
+            if (!ask || askedId.current === ask.id) return;
+            askedId.current = ask.id;
+            void sendLatest.current(ask.text);
+        };
+        take();
+        return subscribePendingAsk(take);
+    }, []);
+    const handedQuestion = payload?.ask;
+    const handedCompanyId = payload?.companyId;
+    const handedCompanyName = payload?.companyName;
+    useEffect(() => {
+        if (!handedQuestion || askedId.current === `payload:${handedQuestion}`) return;
+        askedId.current = `payload:${handedQuestion}`;
+        if (handedCompanyId && handedCompanyName) setAssistantFocus({ companyId: handedCompanyId, companyName: handedCompanyName });
+        void sendLatest.current(handedQuestion);
+    }, [handedQuestion, handedCompanyId, handedCompanyName]);
 
     const suggestions = focus
         ? [`How is ${focus.companyName} doing this week?`, 'What changed recently, and what might explain it?', 'What should we focus on next to grow?']
