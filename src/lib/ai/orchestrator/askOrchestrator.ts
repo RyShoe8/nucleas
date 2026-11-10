@@ -708,7 +708,7 @@ export async function runAskOrchestrator(
           },
           follow: async (task) => {
             say(`Following up with ${shortModel(followUpChoice.model)}: ${task.slice(0, 120)}`);
-            assignment = `${task}\n\nThis helps answer: ${input.text}\n\nAlready found, do not repeat:\n${research.join('\n\n').slice(-2500)}`;
+            assignment = `${task}\n\nThis helps answer: ${input.text}\n\nAlready found, do not repeat:\n${research.join('\n\n').slice(-4500)}`;
             const followUp = await runResearch(followUpChoice, researchEnds);
             const work = researchWork(followUp.toolsUsed);
             stages.push({ stage: 'research', model: followUpChoice.model, free: followUpChoice.free, costMicros: addCost(followUp), note: `Follow-up: ${task.slice(0, 200)}${work ? ` (${work})` : ''}` });
@@ -745,7 +745,7 @@ export async function runAskOrchestrator(
     say(`Asking ${teamAsks.map((ask) => TEAM[ask.member].name).join(', ')}`);
     const named = (name?: string) => (name ? input.context.companies.find((c) => c.name.toLowerCase() === name.trim().toLowerCase()) : undefined);
     const company = named(teamAsks.find((ask) => ask.company)?.company) ?? named(plan.fetch[0]?.company) ?? (input.context.companies.length === 1 ? input.context.companies[0] : undefined);
-    const situation = [`The person asked: ${input.text}`, facts ? `\n# Figures Nucleas has\n${facts.slice(0, 2500)}` : '', research.length ? `\n# Research gathered so far\n${research.join('\n\n').slice(0, 2500)}` : ''].join('\n');
+    const situation = [`The person asked: ${input.text}`, facts ? `\n# Figures Nucleas has\n${facts.slice(0, 4500)}` : '', research.length ? `\n# Research gathered so far\n${research.join('\n\n').slice(0, 4500)}` : ''].join('\n');
     teamInput = await askMembers(viewer, company?.id ?? null, teamAsks.map((ask) => ({ member: ask.member, question: ask.ask })), situation, { level: input.level, signal: input.signal, interactive: true, onProgress: input.onProgress }).catch(() => []);
     for (const ask of teamAsks) {
       const answer = teamInput.find((item) => item.member === ask.member);

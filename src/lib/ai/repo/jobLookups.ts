@@ -59,6 +59,6 @@ export function repoLookups(files: Map<string, string>, requests: string[], term
     }
   }
   return lines.length
-    ? ['Repository lookups run by Nucleas for these checks (facts from the code, not model claims):', ...lines].join('\n').slice(0, 2500)
+    ? ['Repository lookups run by Nucleas for these checks (facts from the code, not model claims):', ...lines].join('\n').slice(0, 4500)
     : '';
 }

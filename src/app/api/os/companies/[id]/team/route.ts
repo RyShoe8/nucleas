@@ -9,6 +9,7 @@ import { Job } from '@/lib/models/Job';
 import { listBuilds, proposeCodeChange } from '@/lib/building/builds';
 import { readEngineSettings } from '@/lib/ai/engine/select';
 import { createJob, listJobs, runDesign } from '@/lib/jobs/jobs';
+import { readBoard } from '@/lib/companies/teamBoard';
 
 export const maxDuration = 800;
 const edit = z.discriminatedUnion('action', [
@@ -22,12 +23,13 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (viewer instanceof NextResponse) return viewer;
   const { id } = await params;
   if (!await getCompanyProfile(viewer, id)) return NextResponse.json({ error: 'Company not found.' }, { status: 404 });
-  const [profiles, jobs, builds] = await Promise.all([
+  const [profiles, jobs, builds, board] = await Promise.all([
     CompanyTeam.find({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(id) }).select('role remit lessons updatedAt').lean(),
     listJobs(viewer, { companyId: id }),
     listBuilds(viewer),
+    readBoard(viewer.organizationId, id),
   ]);
-  return NextResponse.json({ canManage: isCompanyManager(viewer), members: TEAM_ROLES.map(role => {
+  return NextResponse.json({ board, canManage: isCompanyManager(viewer), members: TEAM_ROLES.map(role => {
     const saved = profiles.find(p => p.role === role);
     return { role, ...TEAM[role], remit: saved?.remit ?? TEAM[role].remit, lessons: saved?.lessons ?? '', updatedAt: saved?.updatedAt?.toISOString() ?? null };
   }), builds: builds.filter(build => build.companyId === id), jobs: jobs.map(job => ({ ...job, teamRole: teamRoleFor(job) })) }, { headers: { 'Cache-Control': 'no-store' } });

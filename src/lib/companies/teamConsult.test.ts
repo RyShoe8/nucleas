@@ -17,6 +17,8 @@ vi.mock('@/lib/context/resolveCompanyContext', () => ({
   resolveCompanyContext: async () => ({ sections: [{ key: 'company', title: 'Company', body: 'Name: Frugal Gambler' }, { key: 'activity', title: 'Recent changes', body: 'noise' }] }),
   renderContext: (ctx: { sections: { title: string; body: string }[] }) => ctx.sections.map((s) => `## ${s.title}\n${s.body}`).join('\n\n'),
 }));
+const board = vi.fn(async (..._args: unknown[]) => undefined);
+vi.mock('./teamBoard', async (original) => ({ ...(await original<typeof import('./teamBoard')>()), addToBoard: (...args: unknown[]) => board(...args), teamBoardContext: async () => '## The team\'s working plan\n- Marketing: lead with free coins' }));
 vi.mock('@/lib/jobs/marketingPlans', () => ({ approvedMarketingPlan: async () => ({ plan: true }), marketingPlanContext: () => '{"audience":"value-seeking players"}' }));
 
 import { askMembers, consultTeammates, renderAdvice, teamAdviceForJob, validConsults } from './teamConsult';
@@ -29,6 +31,7 @@ type ChatInput = { model: string; toolProfile: string; forceToolLoop: boolean; u
 beforeEach(() => {
   engine.mockReset();
   chat.mockReset();
+  board.mockClear();
   chat.mockResolvedValue({ role: 'assistant', text: 'Findings\n- Rivals show the price first ([Baymard](https://baymard.com/checkout)).' });
 });
 
@@ -50,7 +53,7 @@ describe('choosing teammates to ask', () => {
 
 describe('a member answering with an intern', () => {
   it('sends a free model to browse first, then answers with those findings, the company and its marketing plan', async () => {
-    engine.mockResolvedValue({ text: 'Put the price above the button.', model: 'paid-plan', usedFallback: false });
+    engine.mockResolvedValue({ text: 'Put the price above the button.\nPLAN: Show the price before the buy button on every checkout page.', model: 'paid-plan', usedFallback: false });
     const [answer] = await askMembers(viewer, companyId, [{ member: 'design', question: 'Where should the price sit?' }], 'Redesigning checkout.');
 
     const intern = chat.mock.calls[0][0] as ChatInput;
@@ -66,6 +69,15 @@ describe('a member answering with an intern', () => {
     expect(member.user).toContain('Name: Frugal Gambler');
     expect(member.user).toContain('value-seeking players');
     expect(member.user).not.toContain('noise');
+    expect(member.user).toContain('lead with free coins');
+    expect(intern.userText).toContain('lead with free coins');
+
+    // What the intern read and the member's plan point go onto the shared board.
+    expect(board).toHaveBeenCalledWith(expect.anything(), companyId, expect.objectContaining({
+      member: 'design',
+      point: 'Show the price before the buy button on every checkout page.',
+      evidence: [{ fact: 'Rivals show the price first (Baymard).', url: 'https://baymard.com/checkout' }],
+    }));
 
     expect(answer).toMatchObject({ member: 'design', advice: 'Put the price above the button.', researchModel: 'free-research', sources: ['https://baymard.com/checkout'] });
   });
@@ -113,5 +125,20 @@ describe('the owner asking teammates', () => {
     engine.mockRejectedValue(new Error('down'));
     const save = vi.fn(async () => undefined);
     expect(await teamAdviceForJob({ _id: new Types.ObjectId(), companyId: new Types.ObjectId(companyId), request: 'Anything at all.' }, viewer, { save })).toEqual([]);
+  });
+});
+
+describe('the shared board', () => {
+  it('takes only facts that link to the page they came from', async () => {
+    const { evidenceFromFindings, splitPlanPoint } = await import('./teamBoard');
+    expect(evidenceFromFindings([
+      'Findings',
+      '- Sweepstakes sign-ups rose 12% after a free-coin offer ([Source](https://example.com/study)).',
+      '- An unsourced claim that sounds convincing.',
+      '- Same page again, different wording ([Source](https://example.com/study)).',
+      'A paragraph with a link https://example.com/other that is not a finding.',
+    ].join('\n'))).toEqual([{ fact: 'Sweepstakes sign-ups rose 12% after a free-coin offer (Source).', url: 'https://example.com/study' }]);
+    expect(splitPlanPoint('Do this.\n**PLAN:** Lead with the free offer.')).toEqual({ advice: 'Do this.', point: 'Lead with the free offer.' });
+    expect(splitPlanPoint('No plan line here.')).toEqual({ advice: 'No plan line here.', point: null });
   });
 });

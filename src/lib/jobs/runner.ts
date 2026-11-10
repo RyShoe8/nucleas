@@ -553,7 +553,7 @@ export async function executeJobRun(runId: string): Promise<void> {
         } catch { return false; }
       }).slice(0, 8);
       const supportingPages = await Promise.all(firstPartyLinks.map((link) => webFetch(link).catch(() => null)));
-      facts.push(`# Live first-party homepage (${page.url})\nTitle: ${page.title ?? ''}\n${page.text.slice(0, 2_500)}\nVerified links:\n${page.links.slice(0, 15).join('\n')}`);
+      facts.push(`# Live first-party homepage (${page.url})\nTitle: ${page.title ?? ''}\n${page.text.slice(0, 4_500)}\nVerified links:\n${page.links.slice(0, 15).join('\n')}`);
       for (const supporting of supportingPages) if (supporting) {
         const supportingUrl = normalizedUrl(supporting.url);
         if (supportingUrl) verifiedPropertyUrls.add(supportingUrl);
