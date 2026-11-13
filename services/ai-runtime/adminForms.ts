@@ -336,15 +336,47 @@ export async function postIntakeJson(input: AdminSession & { path: string; body:
   })()`));
 }
 
+/** Letters and digits only, lower case: "Sweep-Shark" and "sweepshark" are the same name. */
+const plainName = (text: string) => text.toLowerCase().replace(/&/g, 'and').replace(/[^\p{L}\p{N}]/gu, '');
+
+/**
+ * What a list adds after a name, which is not part of the name: "Stackr (Draft)", "Stackr - stackr.com",
+ * "Stackr | Sweepstakes". Only a clearly separated tail is dropped, so "Stackr Rewards" stays a different name.
+ */
+function withoutDecoration(label: string): string {
+  return label.replace(/\s*[([][^)\]]*[)\]]\s*$/u, '').replace(/\s+[-–—|·•:]\s+.+$/u, '').trim() || label.trim();
+}
+
+/** A casino's brand without what people add or leave off: "The", "Casino", and a web ending such as ".com" or ".us". */
+function casinoBrand(text: string): string {
+  return plainName(withoutDecoration(text).trim().replace(/^the\s+/i, '').replace(/\.(?:com|us|net|io|gg|co|org|club|bet|casino)$/i, '').replace(/\s+casinos?$/i, ''));
+}
+
+/**
+ * The one choice that is this value, or nothing. Tried from strictest to most forgiving, and at every
+ * step two candidates mean no answer: a deal must never be filed under a casino that is only similar.
+ *   1. the same name;
+ *   2. the same name once a list's decoration is removed;
+ *   3. for a casino field, the same brand ("Stackr", "Stackr Casino", "Stackr.com", "The Stackr").
+ */
 export function uniqueChoiceLabel(labels: string[], value: string, fieldLabel: string): string | undefined {
-  const normalize = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
-  const choices = labels.map(label => label.trim()).filter(Boolean);
-  const exact = choices.filter(label => normalize(label) === normalize(value));
-  if (exact.length) return exact.length === 1 ? exact[0] : undefined;
+  const choices = [...new Set(labels.map(label => label.replace(/\s+/g, ' ').trim()).filter(Boolean))];
+  const only = (hits: string[]) => (hits.length === 1 ? hits[0] : undefined);
+  const exact = choices.filter(label => plainName(label) === plainName(value));
+  if (exact.length) return only(exact);
+  const undecorated = choices.filter(label => plainName(withoutDecoration(label)) === plainName(withoutDecoration(value)));
+  if (undecorated.length) return only(undecorated);
   if (!/^casino\s*\*?$/i.test(fieldLabel.trim())) return undefined;
-  const brand = (text: string) => normalize(text.trim().replace(/\s+casinos?$/i, ''));
-  const aliases = choices.filter(label => brand(value) && brand(label) === brand(value));
-  return aliases.length === 1 ? aliases[0] : undefined;
+  return casinoBrand(value) ? only(choices.filter(label => casinoBrand(label) === casinoBrand(value))) : undefined;
+}
+
+/** Why no choice was picked, in words a person can act on: what was looked for and what the site offered. */
+export function noChoiceReason(labels: string[], value: string, fieldLabel: string): string {
+  const choices = [...new Set(labels.map(label => label.replace(/\s+/g, ' ').trim()).filter(Boolean))];
+  if (!choices.length) return `The site has no "${value}" in its ${fieldLabel.replace(/\s*\*$/, '')} list. Add it on the site first, or correct the name.`;
+  const same = choices.filter(label => casinoBrand(label) === casinoBrand(value) || plainName(withoutDecoration(label)) === plainName(withoutDecoration(value)));
+  if (same.length > 1) return `The site lists "${value}" more than once (${same.slice(0, 4).join('; ')}), so it is not clear which to use. Remove or rename the duplicate on the site.`;
+  return `The site has no "${value}". The closest it offered: ${choices.slice(0, 6).join('; ')}${choices.length > 6 ? '; …' : ''}.`;
 }
 
 const FORM_SETTLE_MS = 3000;
@@ -391,20 +423,24 @@ export async function fillAdminForm(
           const search = control.locator('input').first();
           if (await search.count()) { await search.fill(String(value), { timeout: 5000 }); await page.waitForTimeout(600); }
           let label: string | undefined;
-          for (let attempt = 0; attempt < 12; attempt++) {
-            if (attempt === 6 && await search.count()) {
-              // Remote searches may distinguish "SweepShark" from "Sweep Shark".
-              // Search a shared leading word, but still require an exact normalized choice.
-              const words = String(value).replace(/([a-z])([A-Z])/g, '$1 $2').trim().split(/\s+/);
-              await search.fill(words.length > 1 ? words[0] : String(value).replace(/\s+/g, ''), { timeout: 5000 });
+          // Every choice the site showed for any of the searches, so a failure can say what was on offer.
+          const offered = new Set<string>();
+          for (let attempt = 0; attempt < 18; attempt++) {
+            if ((attempt === 6 || attempt === 12) && await search.count()) {
+              // Remote searches may distinguish "SweepShark" from "Sweep Shark", and "Stackr Casino" from "Stackr".
+              // Search a shared leading word, then the first few letters, but still require one certain choice.
+              const words = String(value).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^the\s+/i, '').trim().split(/\s+/);
+              const wider = attempt === 6 ? (words.length > 1 ? words[0] : String(value).replace(/\s+/g, '')) : words[0].slice(0, 4);
+              await search.fill(wider, { timeout: 5000 });
             }
             const labels = await control.locator('[role="option"]').allTextContents();
+            for (const text of labels) if (text.trim()) offered.add(text.replace(/\s+/g, ' ').trim());
             label = uniqueChoiceLabel(labels, String(value), field.label);
             if (label) break;
             await page.waitForTimeout(500);
           }
-          if (!label) throw new Error('No unique matching choice was returned by the site.');
-          await control.getByRole('option', { name: label, exact: true }).click({ timeout: 5000 });
+          if (!label) throw new Error(noChoiceReason([...offered], String(value), field.label));
+          await control.getByRole('option', { name: label, exact: true }).first().click({ timeout: 5000 });
         }
         else if (field.type === 'select') await control.selectOption({ value: String(value) }, { timeout: 5000 }).catch(() => control.selectOption({ label: String(value) }, { timeout: 5000 }));
         else {
@@ -415,7 +451,7 @@ export async function fillAdminForm(
           await control.fill(String(value), { timeout: 5000 });
         }
       } catch (error) {
-        errors.push(`${field.label}: could not be filled (${error instanceof Error ? error.message.split('\n')[0]!.slice(0, 120) : 'unknown'})`);
+        errors.push(`${field.label}: could not be filled (${error instanceof Error ? error.message.split('\n')[0]!.slice(0, 400) : 'unknown'})`);
       }
     }
     };
