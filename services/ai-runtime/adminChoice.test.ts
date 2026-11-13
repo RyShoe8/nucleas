@@ -22,6 +22,10 @@ describe('a casino named a little differently on the site', () => {
     expect(uniqueChoiceLabel(['Hello Millions - hellomillions.com'], 'Hello Millions', 'Casino')).toBe('Hello Millions - hellomillions.com');
     expect(uniqueChoiceLabel(['Lucky & Wild'], 'Lucky and Wild', 'Casino')).toBe('Lucky & Wild');
     expect(uniqueChoiceLabel(['  Stackr\n  '], 'stackr', 'Casino')).toBe('Stackr');
+    // The two that failed on the live site: the email calls it one thing, the site another.
+    expect(uniqueChoiceLabel(['Moon Spin', 'Moozi', 'Modo Casino'], 'Moonspin Social Casino', 'Casino')).toBe('Moon Spin');
+    expect(uniqueChoiceLabel(['Ruby Sweeps', 'SweepShark', 'SweepsRoyal'], 'Sweet Sweets', 'Casino')).toBeUndefined();
+    expect(uniqueChoiceLabel(['Ruby Sweeps'], 'Ruby Sweeps Casino', 'Casino')).toBe('Ruby Sweeps');
   });
 
   it('prefers the exact name, and never guesses between two that are only similar', () => {

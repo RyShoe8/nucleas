@@ -349,7 +349,7 @@ function withoutDecoration(label: string): string {
 
 /** A casino's brand without what people add or leave off: "The", "Casino", and a web ending such as ".com" or ".us". */
 function casinoBrand(text: string): string {
-  return plainName(withoutDecoration(text).trim().replace(/^the\s+/i, '').replace(/\.(?:com|us|net|io|gg|co|org|club|bet|casino)$/i, '').replace(/\s+casinos?$/i, ''));
+  return plainName(withoutDecoration(text).trim().replace(/^the\s+/i, '').replace(/\.(?:com|us|net|io|gg|co|org|club|bet|casino)$/i, '').replace(/(?:\s+(?:social|sweepstakes|online))?\s+casinos?$/i, ''));
 }
 
 /**
