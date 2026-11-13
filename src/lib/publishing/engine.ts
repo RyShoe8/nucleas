@@ -216,6 +216,14 @@ async function factsFor(job: JobLike, config: PublishingConfig, entry: SourceEnt
 
 // ---------- Drafting ----------
 
+/** The brand Voice alone, without the team member context that follows it. Filling in a form needs the wording, not the playbook. */
+const TEAM_CONTEXT_START = '\n\n# Company team member:';
+function voiceOnly(persona: string | null | undefined): string | null {
+  if (!persona) return null;
+  const cut = persona.indexOf(TEAM_CONTEXT_START);
+  return (cut >= 0 ? persona.slice(0, cut) : persona).trim() || null;
+}
+
 async function approvedPersona(job: JobLike): Promise<string | null> {
   const [voice, team] = await Promise.all([brandVoiceContext(job.organizationId, job.companyId), companyTeamContext(job)]);
   return voice ? [voice, team].filter(Boolean).join('\n\n') : null;
@@ -256,7 +264,7 @@ async function prepareAdmin(target: AdminTarget, config: PublishingConfig, facts
   const before = failures?.length ?? 0;
   const withRules = (values: Record<string, string | boolean>) => withDealAmounts(target.fields, applyAdminFieldRules(config, values, facts.dealValuePct, facts.link, !facts.lesserOffer), facts.dealAmounts);
   const filled = await fillWithoutCallingFree(
-    (notes) => fillValues(target, { title: facts.title, description: facts.description, extra: [...facts.extra, ...notes], link: facts.link }, { companyName: context.companyName, noun: config.source.noun, brief: config.brief, persona: context.persona, strategy: context.strategy }, write),
+    (notes) => fillValues(target, { title: facts.title, description: facts.description, extra: [...facts.extra, ...notes], link: facts.link }, { companyName: context.companyName, noun: config.source.noun, brief: config.brief, persona: voiceOnly(context.persona), strategy: context.strategy }, write),
     (answer) => paidOfferCalledFree(target.fields, withRules(answer.values), facts.dealAmounts),
     facts.dealAmounts,
   );
