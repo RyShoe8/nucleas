@@ -24,6 +24,7 @@ interface Spend {
     totals: { costMicros: number; runs: number; unknownCostRuns: number; inputTokens: number; outputTokens: number };
     byDay: { date: string; costMicros: number; runs: number }[];
     bySource: Row[];
+    byJob?: { key: string; label: string; detail?: string; costMicros: number; runs: number }[];
     byModel: Row[];
     byUser: Row[];
     search: { braveQueries: number; googleQueries: number; estimatedMicros: number };
@@ -148,7 +149,7 @@ function DailyBars({ days, period }: { days: Spend['byDay']; period: string }) {
     );
 }
 
-function Breakdown({ title, rows, total }: { title: string; rows: Row[]; total: number }) {
+function Breakdown({ title, rows, total, noTokens = false }: { title: string; rows: Row[]; total: number; /** Rows priced from recorded costs, without token counts. */ noTokens?: boolean }) {
     if (rows.length === 0) return null;
     return (
         <section>
@@ -162,7 +163,7 @@ function Breakdown({ title, rows, total }: { title: string; rows: Row[]; total: 
                                 {r.detail ? <div className="text-[10px] text-text-secondary">{r.detail}</div> : null}
                             </td>
                             <td className="py-1.5 px-2 text-right tabular-nums text-text-secondary text-xs">{nf.format(r.runs)} runs</td>
-                            <td className="py-1.5 px-2 text-right tabular-nums text-text-secondary text-xs whitespace-nowrap" title={tokenDetail(r)}>{tokenLabel(r)}</td>
+                            <td className="py-1.5 px-2 text-right tabular-nums text-text-secondary text-xs whitespace-nowrap" title={noTokens ? undefined : tokenDetail(r)}>{noTokens ? '' : tokenLabel(r)}</td>
                             <td className="py-1.5 px-2 text-right tabular-nums">{usd(r.costMicros)}</td>
                             <td className="py-1.5 pl-2 w-20">
                                 <div className="h-1.5 rounded bg-background-card overflow-hidden">
@@ -256,6 +257,7 @@ export default function AiSpendModule() {
                     </section>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        {data.byJob?.length ? <Breakdown title="By job" rows={data.byJob.map((row) => ({ ...row, inputTokens: 0, outputTokens: 0, unknownTokenRuns: 0 }))} total={data.totals.costMicros} noTokens /> : null}
                         <Breakdown title="By source" rows={data.bySource} total={data.totals.costMicros} />
                         <Breakdown title="By person" rows={data.byUser} total={data.totals.costMicros} />
                         <Breakdown title="By model" rows={data.byModel} total={data.totals.costMicros} />

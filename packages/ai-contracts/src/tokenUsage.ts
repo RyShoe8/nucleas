@@ -30,3 +30,18 @@ export function readTokenUsage(body: unknown) {
     outputTokens: outputTokens ?? (total !== null && inputTokens !== null && total >= inputTokens ? total - inputTokens : null),
   };
 }
+
+/**
+ * Prompt-cache tokens, when the host reports them: read from the cache (billed at a fraction of the
+ * input price) and written to it (billed above it). Both are already counted in the input tokens.
+ */
+export function readCacheUsage(body: unknown): { cacheReadTokens: number; cacheWriteTokens: number } {
+  const root = fields(body);
+  const choice = fields(Array.isArray(root.choices) ? root.choices[0] : null);
+  const usage = fields(root.usage ?? choice.usage ?? fields(root.response).usage);
+  const details = fields(usage.prompt_tokens_details ?? usage.input_tokens_details);
+  return {
+    cacheReadTokens: count(details.cached_tokens, usage.cache_read_input_tokens) ?? 0,
+    cacheWriteTokens: count(details.cache_write_tokens, usage.cache_creation_input_tokens) ?? 0,
+  };
+}

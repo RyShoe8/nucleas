@@ -9,6 +9,8 @@ import User from '@/lib/models/User';
 import { freeChatLedgerProjectId } from '@/lib/ide/freeChat';
 import { assistantLedgerProjectId } from '@/lib/ai/company/assistantLedger';
 import { getOrgAiSpend, isValidPeriod } from './spendReport';
+import { Job, JobRun } from '@/lib/models/Job';
+import { CompanyAssistantTurn } from '@/lib/models/CompanyAssistantTurn';
 
 let replica: MongoMemoryReplSet;
 const org = String(new Types.ObjectId());
@@ -25,7 +27,7 @@ afterAll(async () => {
   await replica?.stop();
 });
 
-function run(fields: { projectId: Types.ObjectId; user: Types.ObjectId; costMicros?: number; model?: string; createdAt: string; organizationId?: string; status?: string }) {
+function run(fields: { projectId: Types.ObjectId; user: Types.ObjectId; costMicros?: number; model?: string; createdAt: string; organizationId?: string; status?: string; cacheReadTokens?: number }) {
   return AiRun.collection.insertOne({
     organizationId: fields.organizationId ?? org,
     projectId: fields.projectId,
@@ -39,13 +41,14 @@ function run(fields: { projectId: Types.ObjectId; user: Types.ObjectId; costMicr
     inputTokens: 100,
     outputTokens: 50,
     ...(fields.costMicros === undefined ? {} : { costMicros: fields.costMicros }),
+    ...(fields.cacheReadTokens ? { cacheReadTokens: fields.cacheReadTokens } : {}),
     createdAt: new Date(fields.createdAt),
     updatedAt: new Date(fields.createdAt),
   });
 }
 
 beforeEach(async () => {
-  await Promise.all([AiRun.deleteMany({}), AiBudgetReservation.deleteMany({}), AiRunEvent.deleteMany({}), AiBudget.deleteMany({}), AiSearchApiUsage.deleteMany({}), Project.deleteMany({}), Client.deleteMany({}), User.collection.deleteMany({})]);
+  await Promise.all([AiRun.deleteMany({}), AiBudgetReservation.deleteMany({}), AiRunEvent.deleteMany({}), AiBudget.deleteMany({}), AiSearchApiUsage.deleteMany({}), Job.collection.deleteMany({}), JobRun.collection.deleteMany({}), CompanyAssistantTurn.collection.deleteMany({}), Project.deleteMany({}), Client.deleteMany({}), User.collection.deleteMany({})]);
   await User.collection.insertMany([
     { _id: ryan, name: 'Ryan', email: 'ryan@example.com' },
     { _id: sam, name: 'Sam', email: 'sam@example.com' },
@@ -100,6 +103,27 @@ describe('organization AI spend', () => {
       ['Sam', 750_000],
     ]);
     expect(spend.search.braveQueries + spend.search.googleQueries).toBe(15);
+  });
+
+  it('breaks spending down by job from the costs job runs and Ask answers already record, and shows cache use by model', async () => {
+    const orgId = new Types.ObjectId(org);
+    const linkJob = await Job.collection.insertOne({ organizationId: orgId, design: { name: 'Find review sites', skill: 'link_building' }, request: 'x' });
+    const postJob = await Job.collection.insertOne({ organizationId: orgId, design: { name: 'New game posts', skill: 'social_publish' }, request: 'y' });
+    const jobRun = (jobId: Types.ObjectId, costMicros: number, createdAt: string) => JobRun.collection.insertOne({ organizationId: orgId, jobId, costMicros, createdAt: new Date(createdAt) });
+    await jobRun(linkJob.insertedId, 3_000_000, '2026-09-03T10:00:00Z');
+    await jobRun(linkJob.insertedId, 1_000_000, '2026-09-04T10:00:00Z');
+    await jobRun(postJob.insertedId, 500_000, '2026-09-04T10:00:00Z');
+    await jobRun(postJob.insertedId, 9_000_000, '2026-08-04T10:00:00Z');
+    await CompanyAssistantTurn.collection.insertOne({ organizationId: orgId, role: 'assistant', costMicros: 2_000_000, createdAt: new Date('2026-09-05T10:00:00Z') });
+    await run({ projectId: assistantLedgerProjectId(org), user: ryan, costMicros: 1, model: 'anthropic/claude-sonnet-5.5', cacheReadTokens: 40, createdAt: '2026-09-03T10:00:00Z' });
+
+    const spend = await getOrgAiSpend(org, '2026-09', new Date('2026-09-28T12:00:00Z'));
+    expect(spend.byJob.map((row) => [row.label, row.detail, row.costMicros, row.runs])).toEqual([
+      ['Find review sites', 'link building', 4_000_000, 2],
+      ['Ask', 'answers in Ask Nucleas', 2_000_000, 1],
+      ['New game posts', 'social publish', 500_000, 1],
+    ]);
+    expect(spend.byModel.find((row) => row.key === 'anthropic/claude-sonnet-5.5')?.detail).toBe('40% of input read from cache');
   });
 
   it('returns an empty month cleanly and validates periods', async () => {

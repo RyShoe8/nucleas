@@ -21,3 +21,10 @@ it.each([
 ])('reads counts from %j', (body, inputTokens, outputTokens) => {
   expect(readTokenUsage(body)).toEqual({ inputTokens, outputTokens });
 });
+
+it('reads prompt-cache tokens from OpenRouter and Anthropic usage shapes', async () => {
+  const { readCacheUsage } = await import('./tokenUsage');
+  expect(readCacheUsage({ usage: { prompt_tokens: 10339, prompt_tokens_details: { cached_tokens: 10318, cache_write_tokens: 0 } } })).toEqual({ cacheReadTokens: 10318, cacheWriteTokens: 0 });
+  expect(readCacheUsage({ usage: { input_tokens: 20, cache_read_input_tokens: 900, cache_creation_input_tokens: 300 } })).toEqual({ cacheReadTokens: 900, cacheWriteTokens: 300 });
+  expect(readCacheUsage({ usage: { prompt_tokens: 5 } })).toEqual({ cacheReadTokens: 0, cacheWriteTokens: 0 });
+});

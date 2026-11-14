@@ -6,6 +6,8 @@ import Client from '@/lib/models/Client';
 import { freeChatLedgerProjectId } from '@/lib/ide/freeChat';
 import { assistantLedgerProjectId } from '@/lib/ai/company/assistantLedger';
 import { estimateSearchApiMicros } from '@/lib/ai/pricing/searchApiRates';
+import { Job, JobRun } from '@/lib/models/Job';
+import { CompanyAssistantTurn } from '@/lib/models/CompanyAssistantTurn';
 
 /**
  * Organization-wide AI spend for one UTC month. Costs are the settled amounts recorded on each AI
@@ -31,6 +33,11 @@ export interface OrgAiSpend {
   totals: { costMicros: number; runs: number; unknownCostRuns: number; inputTokens: number; outputTokens: number };
   byDay: { date: string; costMicros: number; runs: number }[];
   bySource: SpendRow[];
+  /**
+   * By job, from the cost each job run already records (the job card's "Spent this month"), plus Ask from
+   * the cost on each answer. A view of the same spending, not added to the totals.
+   */
+  byJob: { key: string; label: string; detail?: string; costMicros: number; runs: number }[];
   byModel: SpendRow[];
   byUser: SpendRow[];
   search: { braveQueries: number; googleQueries: number; estimatedMicros: number };
@@ -45,7 +52,7 @@ export function isValidPeriod(period: string): boolean {
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(period);
 }
 
-type Group = { _id: unknown; costMicros: number; runs: number; inputTokens: number; outputTokens: number; unknownTokenRuns: number };
+type Group = { _id: unknown; costMicros: number; runs: number; inputTokens: number; outputTokens: number; unknownTokenRuns: number; cacheReadTokens?: number };
 
 export async function getOrgAiSpend(organizationId: string, period: string, now = new Date()): Promise<OrgAiSpend> {
   const { start, end } = monthBounds(period);
@@ -84,12 +91,13 @@ export async function getOrgAiSpend(organizationId: string, period: string, now 
           inputTokens: { $sum: { $ifNull: ['$inputTokens', 0] } },
           outputTokens: { $sum: { $ifNull: ['$outputTokens', 0] } },
           unknownTokenRuns: { $sum: { $cond: [{ $and: [{ $eq: ['$status', 'completed'] }, { $eq: [{ $type: '$inputTokens' }, 'missing'] }, { $eq: [{ $type: '$outputTokens' }, 'missing'] }] }, 1, 0] } },
+          cacheReadTokens: { $sum: { $ifNull: ['$cacheReadTokens', 0] } },
         },
       },
       { $sort: { costMicros: -1, runs: -1 } },
     ]);
 
-  const [days, sources, models, users] = await Promise.all([
+  const [days, sources, models, users, byJob] = await Promise.all([
     AiRun.aggregate<Pick<Group, '_id' | 'costMicros' | 'runs'>>([
       { $match: match },
       { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, costMicros: { $sum: costExpr }, runs: { $sum: 1 } } },
@@ -98,6 +106,7 @@ export async function getOrgAiSpend(organizationId: string, period: string, now 
     group('$projectId'),
     group('$model'),
     group('$createdByUserId'),
+    spendByJob(organizationId, start, end),
   ]);
 
   // Label sources: Ask Nucleas and Free Chat ledgers, otherwise the project (and its company).
@@ -151,8 +160,34 @@ export async function getOrgAiSpend(organizationId: string, period: string, now 
     totals: totalsRow ?? { costMicros: 0, runs: 0, unknownCostRuns: 0, inputTokens: 0, outputTokens: 0 },
     byDay: days.map((d) => ({ date: String(d._id), costMicros: d.costMicros, runs: d.runs })),
     bySource,
-    byModel: models.map((m) => ({ key: String(m._id ?? 'unknown'), label: m._id ? String(m._id) : 'Unknown model', ...usage(m) })),
+    byJob,
+    byModel: models.map((m) => ({ key: String(m._id ?? 'unknown'), label: m._id ? String(m._id) : 'Unknown model', ...(m.cacheReadTokens ? { detail: `${Math.round((m.cacheReadTokens / Math.max(1, m.inputTokens)) * 100)}% of input read from cache` } : {}), ...usage(m) })),
     byUser: users.map((u) => ({ key: String(u._id), label: userName.get(String(u._id)) ?? 'Unknown', ...usage(u) })),
     search: { braveQueries, googleQueries, estimatedMicros: estimateSearchApiMicros({ braveQueries, googleCseQueries: googleQueries, dayOfMonth }) },
   };
+}
+
+/** Each job's spend this month from its runs' recorded costs, and Ask's from its answers, largest first. */
+async function spendByJob(organizationId: string, start: Date, end: Date): Promise<OrgAiSpend['byJob']> {
+  if (!Types.ObjectId.isValid(organizationId)) return [];
+  const org = new Types.ObjectId(organizationId);
+  const [runs, ask] = await Promise.all([
+    JobRun.aggregate<{ _id: Types.ObjectId; costMicros: number; runs: number }>([
+      { $match: { organizationId: org, createdAt: { $gte: start, $lt: end } } },
+      { $group: { _id: '$jobId', costMicros: { $sum: { $ifNull: ['$costMicros', 0] } }, runs: { $sum: 1 } } },
+    ]),
+    CompanyAssistantTurn.aggregate<{ costMicros: number; runs: number }>([
+      { $match: { organizationId: org, role: 'assistant', createdAt: { $gte: start, $lt: end } } },
+      { $group: { _id: null, costMicros: { $sum: { $ifNull: ['$costMicros', 0] } }, runs: { $sum: 1 } } },
+    ]),
+  ]);
+  const jobs = await Job.find({ _id: { $in: runs.map((row) => row._id) } }).select('design request').lean<{ _id: Types.ObjectId; design?: { name?: string; skill?: string }; request?: string }[]>();
+  const byId = new Map(jobs.map((job) => [String(job._id), job]));
+  const rows: OrgAiSpend['byJob'] = runs.map((row) => {
+    const job = byId.get(String(row._id));
+    const name = job?.design?.name || job?.request?.slice(0, 60) || 'Deleted job';
+    return { key: String(row._id), label: name, ...(job?.design?.skill ? { detail: job.design.skill.replaceAll('_', ' ') } : {}), costMicros: row.costMicros, runs: row.runs };
+  });
+  if (ask[0]?.runs) rows.push({ key: 'ask', label: 'Ask', detail: 'answers in Ask Nucleas', costMicros: ask[0].costMicros, runs: ask[0].runs });
+  return rows.filter((row) => row.costMicros > 0).sort((a, b) => b.costMicros - a.costMicros);
 }

@@ -1,4 +1,23 @@
-import { readTokenUsage } from '../../ai-contracts/src/tokenUsage';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { readCacheUsage, readTokenUsage } from '../../ai-contracts/src/tokenUsage';
+
+/** Prompt-cache tokens the calls made inside one scope used, so the caller can price and record them. */
+export interface CacheTally { readTokens: number; writeTokens: number }
+const cacheTallies = new AsyncLocalStorage<CacheTally>();
+
+/** Runs work with a fresh tally of the prompt-cache tokens its model calls report. */
+export function withCacheTally<T>(work: (tally: CacheTally) => Promise<T>): Promise<T> {
+  const tally: CacheTally = { readTokens: 0, writeTokens: 0 };
+  return cacheTallies.run(tally, () => work(tally));
+}
+
+function tallyCache(body: unknown): void {
+  const tally = cacheTallies.getStore();
+  if (!tally) return;
+  const usage = readCacheUsage(body);
+  tally.readTokens += usage.cacheReadTokens;
+  tally.writeTokens += usage.cacheWriteTokens;
+}
 export { readTokenUsage } from '../../ai-contracts/src/tokenUsage';
 import {
   modelRequestSchema,
@@ -56,6 +75,11 @@ export type GatewayConfiguration = {
    * tools (measured by the free model checks).
    */
   toolMode?: 'native' | 'prompted';
+  /**
+   * The host caches prompts when asked (Claude through OpenRouter). Tool loops resend the whole
+   * conversation every round, so later rounds read it back at a tenth of the input price.
+   */
+  promptCache?: boolean;
   /**
    * Ask the host for a server-sent-events stream and assemble it locally. Bytes keep arriving, so a
    * reverse proxy's read timeout (nginx's default is 60s) doesn't cut off a slow reasoning model, and
@@ -515,6 +539,7 @@ export async function invokeModel(
       throw await httpGatewayError(response, config.bearerToken);
     }
     const parsed = responseSchema.parse(config.stream ? await readStreamedCompletion(response, 512000, timer.touch) : await readBoundedJson(response, 512000));
+    tallyCache(parsed);
     const choice = parsed.choices[0]!;
     const visible = visibleAssistantText(choice.message);
     // Plain chat: accept truncated replies when there is visible text. Ignore unexpected
@@ -628,6 +653,7 @@ export async function invokeModelWithTools(
       messages: input.messages,
       ...completionLimitBody(config.model, input.maxOutputTokens),
       tools: input.tools,
+      ...(config.promptCache ? { cache_control: { type: 'ephemeral' } } : {}),
       ...streamBody(config),
     };
     const send = (extra: Record<string, unknown>) =>
@@ -716,6 +742,7 @@ export async function invokeModelWithTools(
       throw await httpGatewayError(response, config.bearerToken);
     }
     const parsed = responseSchema.parse(config.stream ? await readStreamedCompletion(response, 512000, timer.touch) : await readBoundedJson(response, 512000));
+    tallyCache(parsed);
     const choice = parsed.choices[0]!;
     let toolCalls = parseToolCalls(choice.message.tool_calls);
     let visible = visibleAssistantText(choice.message);

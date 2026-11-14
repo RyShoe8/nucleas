@@ -23,6 +23,7 @@ import { aiTransaction } from '@/lib/ai/control/transaction';
 import { classifyProbeFailure } from '@/lib/ai/probeDiagnostics';
 import { isFreeCredential } from '@/lib/ai/rolePipeline/modelMeta';
 import { gatewayFromModelProfile } from '@/lib/ai/rolePipeline/profiles';
+import { withCacheTally, type CacheTally } from '@nucleas/ai-core/gateway';
 import { runIdeToolLoop, type ExtraToolSet } from '@/lib/ai/tools/runToolLoop';
 import type { IdeToolProfile } from '@/lib/ai/tools/definitions';
 import { imageSearch, webSearch } from '@/lib/ai/tools/webSearch';
@@ -91,8 +92,26 @@ async function settleChatCostMicros(input: {
   profileId?: string;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  /** Prompt-cache tokens, already inside inputTokens: reads cost a tenth of the input price, writes a quarter more. */
+  cache?: CacheTally;
 }): Promise<number | null> {
   if (input.noProviderFee) return 0;
+  const { inputTokens, outputTokens } = input;
+  const full = await fullPriceMicros(input);
+  if (full === null || !input.cache || !(input.cache.readTokens || input.cache.writeTokens)) return full;
+  const perInput = await priceTokens({ model: input.model, provider: input.provider, profileId: input.profileId, free: false, inputTokens: 1_000_000, outputTokens: 0 }).catch(() => null)
+    ?? estimateCostMicros({ model: input.model, inputTokens: 1_000_000, outputTokens: 0 });
+  if (!perInput || typeof inputTokens !== 'number' || typeof outputTokens !== 'number') return full;
+  return withCachePricing(full, perInput, input.cache);
+}
+
+/** A full-price cost adjusted for prompt-cache tokens: reads cost a tenth of the input price, writes 1.25 times. */
+export function withCachePricing(fullMicros: number, inputMicrosPerMillion: number, cache: CacheTally): number {
+  const adjust = (-0.9 * cache.readTokens + 0.25 * cache.writeTokens) * inputMicrosPerMillion / 1_000_000;
+  return Math.max(0, Math.round(fullMicros + adjust));
+}
+
+async function fullPriceMicros(input: { model: string; provider?: string; profileId?: string; inputTokens?: number | null; outputTokens?: number | null }): Promise<number | null> {
   const { inputTokens, outputTokens } = input;
   if (typeof inputTokens === 'number' && typeof outputTokens === 'number' && Number.isSafeInteger(inputTokens) && Number.isSafeInteger(outputTokens) && inputTokens >= 0 && outputTokens >= 0) {
     const priced = await priceTokens({ model: input.model, provider: input.provider, profileId: input.profileId, free: false, inputTokens, outputTokens }).catch(() => null);
@@ -194,7 +213,7 @@ import { contextBudgetChars, contextWindowFor, contextWindowFromProviderMessage,
  * Runs the image/browse tool loop when the host supports tools.
  */
 export async function attemptCompanyCredentialChat(input: Parameters<typeof chatUncapped>[0]): Promise<TeamChatTurn> {
-  const turn = await chatUncapped(input);
+  const turn = await withCacheTally((tally) => chatUncapped(input, tally));
   recordItemSpend(turn?.costMicros);
   return turn;
 }
@@ -240,7 +259,7 @@ async function chatUncapped(input: {
   onProgress?: ProgressFn;
   /** Caller-scoped tools (company capabilities). Presence always selects the tool loop. */
   extraTools?: ExtraToolSet;
-}): Promise<TeamChatTurn> {
+}, tally: CacheTally): Promise<TeamChatTurn> {
   let gateway: GatewayConfiguration;
   let profile: Awaited<ReturnType<typeof gatewayFromModelProfile>>['profile'];
   try {
@@ -373,6 +392,8 @@ async function chatUncapped(input: {
               ...(args.result?.inputTokens != null ? { inputTokens: args.result.inputTokens } : {}),
               ...(args.result?.outputTokens != null ? { outputTokens: args.result.outputTokens } : {}),
               ...(args.result?.latencyMs != null ? { latencyMs: args.result.latencyMs } : {}),
+              ...(tally.readTokens ? { cacheReadTokens: tally.readTokens } : {}),
+              ...(tally.writeTokens ? { cacheWriteTokens: tally.writeTokens } : {}),
               ...(args.actualMicros !== null ? { costMicros: args.actualMicros } : {}),
             },
             $inc: { revision: 1 },
@@ -1023,6 +1044,7 @@ async function chatUncapped(input: {
         actualMicros: await settleChatCostMicros({
           provider: profile.provider ?? undefined,
           profileId: input.modelProfileId,
+          cache: tally,
           noProviderFee,
           model: gateway.model,
           inputTokens: loop.inputTokens,
@@ -1043,6 +1065,7 @@ async function chatUncapped(input: {
           costMicros: await settleChatCostMicros({
           provider: profile.provider ?? undefined,
           profileId: input.modelProfileId,
+          cache: tally,
             noProviderFee,
             model: gateway.model,
             inputTokens: loop.inputTokens,
@@ -1058,6 +1081,7 @@ async function chatUncapped(input: {
     const settled = await settleChatCostMicros({
           provider: profile.provider ?? undefined,
           profileId: input.modelProfileId,
+          cache: tally,
       noProviderFee,
       model: gateway.model,
       inputTokens: loop.inputTokens,
@@ -1103,6 +1127,7 @@ async function chatUncapped(input: {
       ? await settleChatCostMicros({
           provider: profile.provider ?? undefined,
           profileId: input.modelProfileId,
+          cache: tally,
           noProviderFee,
           model: gateway.model,
           inputTokens: errorUsage.inputTokens,

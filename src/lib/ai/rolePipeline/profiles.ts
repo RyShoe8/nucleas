@@ -107,6 +107,8 @@ export async function gatewayFromModelProfile(
     // incremental bytes while a local model works, matching Rogly's documented client example and
     // preventing nginx from terminating a healthy long generation before Nucleas's idle timeout.
     stream: free,
+    // Claude through OpenRouter caches prompts on request; Anthropic's own OpenAI-format endpoint ignores it.
+    ...(!free && /(^|\.)openrouter\.ai$/i.test(hostOf(row.endpoint)) && /^anthropic\//i.test(model) ? { promptCache: true } : {}),
   };
   validateGatewayConfiguration(gateway);
   // Free models take tools the way the model checks found works best (native or described in the prompt).
@@ -124,4 +126,12 @@ export async function gatewayFromModelProfile(
       provider,
     },
   };
+}
+
+function hostOf(endpoint: string): string {
+  try {
+    return new URL(endpoint).hostname;
+  } catch {
+    return '';
+  }
 }

@@ -55,6 +55,8 @@ const runSchema = new Schema({
   objectiveId: Schema.Types.ObjectId, planId: Schema.Types.ObjectId,
   currentArtifactId: Schema.Types.ObjectId, currentReviewId: Schema.Types.ObjectId,
   failureCode: String, inputTokens: Number, outputTokens: Number, latencyMs: Number,
+  /** Input tokens read from and written to the provider's prompt cache (already counted in inputTokens). */
+  cacheReadTokens: Number, cacheWriteTokens: Number,
   costMicros: Number,
 }, { timestamps: true });
 runSchema.index({ organizationId: 1, projectId: 1, createdAt: -1 });
