@@ -17,6 +17,7 @@ import PublishingJobBody, { loadPeople } from './publishing/PublishingJobBody';
 import { NotifyPicker } from './publishing/Pickers';
 import { Approve, DesignSummary, OpportunityTracker, Questions, Results, RunBlock, SeoBriefEditor, csv, jobIsBusy, post, scheduleLabel, usd, type JobRunView, type JobView } from './JobCard';
 import { jobLine, memberName, memberOf, modeLine, queueFor, type QueueItem } from './workQueue';
+import { fetchJob } from './jobApi';
 
 /**
  * The Work window: what needs you first, as one list across every job, then each company's team members
@@ -119,7 +120,7 @@ function TodoTab({ job, focus, onChange, onViewRun }: { job: JobView; focus?: Qu
     const d = job.design;
     const publishing = d?.skill === 'social_publish';
     const reviewRun = job.runs.find((r) => r.status === 'needs_review' || r.status === 'running') ?? (job.runs[0]?.status === 'failed' ? job.runs[0] : undefined);
-    const refresh = () => { void fetch(`/api/os/jobs/${job.id}`, { cache: 'no-store' }).then((r) => r.json()).then((body: { job?: JobView }) => { if (body.job) onChange(body.job); }); };
+    const refresh = () => { void fetchJob(job.id).then((fresh) => { if (fresh) onChange(fresh); }); };
     // A publishing job being set up keeps its own step-by-step flow: approve, trial posts, switch on.
     if (publishing && ['proposed', 'testing', 'designing'].includes(job.status)) return <PublishingJobBody job={job} onChange={onChange} />;
     const waiting = queueFor(job).length;
@@ -169,8 +170,8 @@ export function SettingsTab({ job, onChange }: { job: JobView; onChange: (job: J
         const res = await fetch(`/api/os/companies/${job.companyId}/team`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'assign', role, jobId: job.id }) }).catch(() => null);
         setBusy(null);
         if (!res?.ok) return setError('Could not change the owner.');
-        const fresh = (await fetch(`/api/os/jobs/${job.id}`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({}))) as { job?: JobView };
-        if (fresh.job) onChange(fresh.job);
+        const fresh = await fetchJob(job.id);
+        if (fresh) onChange(fresh);
         window.dispatchEvent(new Event('nucleas:jobs-changed'));
     };
     const d = job.design;

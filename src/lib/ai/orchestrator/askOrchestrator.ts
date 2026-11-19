@@ -346,6 +346,16 @@ export async function runAskOrchestrator(...args: Parameters<typeof runAskOrches
   return withItemCap('question', () => runAskOrchestratorUncapped(...args));
 }
 
+/** A tool's answer as data. A tool that returns plain text (or broken JSON) is kept as text rather than failing the whole answer. */
+function toolResult(raw: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : { value: parsed };
+  } catch {
+    return { text: raw.slice(0, 20_000) };
+  }
+}
+
 async function runAskOrchestratorUncapped(
   viewer: CompanyViewer,
   input: {
@@ -560,7 +570,7 @@ async function runAskOrchestratorUncapped(
     if (!allowed.has(job.tool) || writeTools.has(job.tool)) continue;
     say(describeToolCall(job.tool, JSON.stringify({ company: job.company })));
     const raw = await tools.toolSet.execute(job.tool, JSON.stringify({ company: job.company, ...(job.days ? { days: job.days } : {}) }), { runId });
-    fetched.push({ company: job.company, tool: job.tool, result: JSON.parse(raw) as Record<string, unknown> });
+    fetched.push({ company: job.company, tool: job.tool, result: toolResult(raw) });
   }
   let actionsRun = 0;
   for (const action of plan.actions) {
@@ -568,7 +578,7 @@ async function runAskOrchestratorUncapped(
     actionsRun += 1;
     say(describeToolCall(action.tool, JSON.stringify({ company: action.company })));
     const raw = await tools.toolSet.execute(action.tool, JSON.stringify({ company: action.company }), { runId });
-    fetched.push({ company: action.company, tool: action.tool, result: JSON.parse(raw) as Record<string, unknown> });
+    fetched.push({ company: action.company, tool: action.tool, result: toolResult(raw) });
   }
   const research: string[] = [];
   const researchNotes: string[] = [];

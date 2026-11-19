@@ -6,15 +6,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { MANUAL_ONLY, PLATFORM_LABEL, platformsFor, sourceLabel, type PublishPlatform } from '@/lib/publishing/config';
 import type { JobRunView, JobView } from '../JobCard';
 import ReadyPostCard from './ReadyPostCard';
+import { postJobAction as post } from '../jobApi';
 import RotationEditor from './RotationEditor';
 import { manualPostText } from '@/lib/publishing/compose';
 import { ChannelPicker, NotifyPicker, type ChannelChoice } from './Pickers';
 
-async function post(jobId: string, body: Record<string, unknown>): Promise<{ job?: JobView; error?: string }> {
-    const res = await fetch(`/api/os/jobs/${jobId}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    const data = (await res.json().catch(() => ({}))) as { job?: JobView; error?: string };
-    return res.ok ? data : { error: data.error ?? `Failed (${res.status})` };
-}
 
 let peopleCache: Promise<{ userId: string; name: string }[]> | null = null;
 export function loadPeople() {

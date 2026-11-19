@@ -6,12 +6,8 @@ import { PLATFORM_RULES, manualPostText } from '@/lib/publishing/compose';
 import { PLATFORM_LABEL, MANUAL_ONLY } from '@/lib/publishing/config';
 import type { DeliveryView } from '@/lib/publishing/engine';
 import type { JobView } from '../JobCard';
+import { postJobAction as act } from '../jobApi';
 
-async function act(jobId: string, body: Record<string, unknown>): Promise<{ job?: JobView; error?: string }> {
-    const res = await fetch(`/api/os/jobs/${jobId}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    const data = (await res.json().catch(() => ({}))) as { job?: JobView; error?: string };
-    return res.ok ? data : { error: data.error ?? `Failed (${res.status})` };
-}
 
 /** Where a person goes to post this by hand, prefilled where the platform allows it. */
 function openUrl(delivery: DeliveryView, subreddit: string | null): string | null {

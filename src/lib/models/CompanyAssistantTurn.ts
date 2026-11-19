@@ -44,6 +44,8 @@ const turnSchema = new Schema(
   { timestamps: true }
 );
 turnSchema.index({ organizationId: 1, userId: 1, createdAt: -1 });
+// AI Spend totals a month of Ask answers for the whole organization.
+turnSchema.index({ organizationId: 1, createdAt: -1 });
 turnSchema.index({ organizationId: 1, companyIds: 1, role: 1 });
 
 export type CompanyAssistantTurnDoc = InferSchemaType<typeof turnSchema>;

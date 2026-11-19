@@ -62,6 +62,8 @@ const runSchema = new Schema({
 runSchema.index({ organizationId: 1, projectId: 1, createdAt: -1 });
 runSchema.index({ organizationId: 1, projectId: 1, createdAt: -1, _id: -1 });
 runSchema.index({ organizationId: 1, status: 1, createdAt: -1, _id: -1 });
+// AI Spend reads a month of runs for the whole organization.
+runSchema.index({ organizationId: 1, createdAt: -1 });
 
 const acknowledgementSchema = new Schema({
   organizationId: { type: String, required: true }, userId: { type: Schema.Types.ObjectId, required: true },

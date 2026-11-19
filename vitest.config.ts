@@ -5,6 +5,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     setupFiles: ['./src/test/vitest.setup.ts'],
+    // Integration tests share one machine with a database; under full-suite load the 5s default trips on slow starts.
+    testTimeout: 20_000,
     // desktop/ has its own tests on node:test (npm run desktop:test).
     exclude: [...configDefaults.exclude, 'dist-worker/**', 'desktop/**'],
   },

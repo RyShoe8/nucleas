@@ -125,9 +125,16 @@ export default function OfficeModule() {
     useEffect(() => {
         let cancelled = false;
         void fetch('/api/os/jobs', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((body: { jobs?: JobView[] } | null) => { if (!cancelled && body?.jobs) setJobs(body.jobs); }).catch(() => undefined);
-        void fetch('/api/os/today', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((body: { rows?: TodayMetrics[] } | null) => { if (!cancelled && body?.rows) setToday(body.rows); }).catch(() => undefined);
         return () => { cancelled = true; };
     }, [reloadKey]);
+    // The wall numbers are last-7-day totals: they change slowly, so they refresh every five minutes, not with the jobs.
+    useEffect(() => {
+        let cancelled = false;
+        const load = () => { void fetch('/api/os/today', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((body: { rows?: TodayMetrics[] } | null) => { if (!cancelled && body?.rows) setToday(body.rows); }).catch(() => undefined); };
+        load();
+        const stop = visibleInterval(load, 5 * 60_000);
+        return () => { cancelled = true; stop(); };
+    }, []);
     useEffect(() => {
         window.addEventListener('nucleas:jobs-changed', reload);
         const stop = visibleInterval(reload, 20_000);

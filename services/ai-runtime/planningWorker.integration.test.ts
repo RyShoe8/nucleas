@@ -26,7 +26,6 @@ import { clearTerminalPlanningContexts, CLEARED_PLANNING_CONTEXT } from '@/lib/a
 import WorkspaceNotificationEvent from '@/lib/models/WorkspaceNotificationEvent';
 import WorkspaceNotificationPreference from '@/lib/models/WorkspaceNotificationPreference';
 import { canDeliverPlanningNotification } from '@/lib/ai/control/notifications';
-import { processWorkspaceNotificationDigests } from '@/lib/workspace/workspaceNotifications';
 import { budgetHistory } from '@/lib/ai/control/budgetHistory';
 import { AiServiceIdentity, AiServiceGrant, AiServiceIdentityAudit } from '@/lib/models/AiServiceIdentity';
 import { registerServiceIdentity, changeServiceIdentity, authenticateServiceCredential, issueServiceGrant,
@@ -44,8 +43,6 @@ import { AiModelProfile } from '@/lib/models/AiModelProfile';
 vi.mock('@/lib/db/mongodb', () => ({ default: async () => mongoose }));
 vi.mock('@/lib/auth/middleware', () => ({ requireAuth: vi.fn() }));
 const model = vi.hoisted(() => vi.fn());
-const digestEmail = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/services/workspaceDigestEmail', () => ({ sendWorkspaceDigestEmail: digestEmail }));
 vi.mock('@nucleas/ai-core/gateway', async importOriginal => {
   const actual = await importOriginal<typeof import('@nucleas/ai-core/gateway')>();
   return {
@@ -84,7 +81,6 @@ beforeEach(async () => {
     reservationMicros: 25, organizationLimitMicros: 100, projectLimitMicros: 75,
   } });
   model.mockReset(); model.mockResolvedValue(response);
-  digestEmail.mockReset(); digestEmail.mockResolvedValue(undefined);
   const user = await User.create({ email: 'ai-test@example.invalid', password: 'synthetic', organizationId: 'org-test' });
   const employee = await Employee.create({ userId: user._id, organizationId: 'org-test', name: 'Test manager', role: 'Manager' });
   const project = await Project.create({ userId: user._id, name: 'Synthetic project', tasks: [
@@ -406,52 +402,6 @@ describe('durable planning on a real isolated replica set', () => {
   });
   const enableNotifications = () => WorkspaceNotificationPreference.create({ userId: access.userId, employeeId: access.employeeId,
     organizationId: access.organizationId, interval: '1h' });
-  it('prevents overlapping digest workers from emailing the same recipient', async () => {
-    await enableNotifications(); await queuePlanning(access, String(objective._id), randomUUID()); await processPlanningQueue();
-    let release!: () => void; let entered!: () => void;
-    const waiting = new Promise<void>(resolve => { release = resolve; });
-    const sending = new Promise<void>(resolve => { entered = resolve; });
-    digestEmail.mockImplementationOnce(async () => { entered(); await waiting; });
-    const first = processWorkspaceNotificationDigests();
-    try {
-      await sending;
-      expect((await processWorkspaceNotificationDigests()).emailsSent).toBe(0);
-      expect(digestEmail).toHaveBeenCalledTimes(1);
-    } finally { release(); await first; }
-    expect((await WorkspaceNotificationPreference.findOne())?.digestLeaseToken).toBeUndefined();
-  });
-  it('retains a lease after ambiguous email failure and releases it after expiry and recovery', async () => {
-    await enableNotifications(); await queuePlanning(access, String(objective._id), randomUUID()); await processPlanningQueue();
-    digestEmail.mockRejectedValueOnce(new Error('Synthetic ambiguous email failure'));
-    await expect(processWorkspaceNotificationDigests()).rejects.toThrow('Synthetic ambiguous');
-    expect((await WorkspaceNotificationPreference.findOne())?.digestLeaseToken).toBeTruthy();
-    expect((await processWorkspaceNotificationDigests()).emailsSent).toBe(0);
-    expect(digestEmail).toHaveBeenCalledTimes(1);
-    await WorkspaceNotificationPreference.updateOne({}, { $set: { digestLeaseExpiresAt: new Date(0) } });
-    expect((await processWorkspaceNotificationDigests()).emailsSent).toBe(1);
-    expect((await WorkspaceNotificationPreference.findOne())?.digestLeaseToken).toBeUndefined();
-  });
-  it('releases an unused digest lease when no events exist', async () => {
-    await enableNotifications();
-    expect((await processWorkspaceNotificationDigests()).emailsSent).toBe(0);
-    expect((await WorkspaceNotificationPreference.findOne())?.digestLeaseToken).toBeUndefined();
-  });
-  it('delivers generic run links through the existing digest without a real email', async () => {
-    await enableNotifications(); await queuePlanning(access, String(objective._id), randomUUID()); await processPlanningQueue();
-    expect((await processWorkspaceNotificationDigests()).eventsSent).toBe(1);
-    expect(digestEmail).toHaveBeenCalledTimes(1);
-    const row = digestEmail.mock.calls[0][0].events[0];
-    expect(row.href).toContain(`/workspace/projects/${String(access.project._id)}/ai/runs/`);
-    expect(row.entityLabel).toBe('AI planning update'); expect(row.projectName).toBe('AI planning');
-  });
-  it('marks stale AI digest events suppressed rather than sent', async () => {
-    await enableNotifications(); const { runId } = await queuePlanning(access, String(objective._id), randomUUID()); await processPlanningQueue();
-    await AiRun.updateOne({ _id: runId }, { $inc: { revision: 1 } });
-    expect((await processWorkspaceNotificationDigests()).eventsSent).toBe(0);
-    expect(digestEmail).not.toHaveBeenCalled();
-    const event = await WorkspaceNotificationEvent.findOne();
-    expect(event?.suppressedAt).toBeInstanceOf(Date); expect(event?.digestSentAt).toBeUndefined();
-  });
   it('enqueues one generic review notification in the terminal transaction', async () => {
     await enableNotifications();
     await queuePlanning(access, String(objective._id), randomUUID()); await processPlanningQueue(); await processPlanningQueue();

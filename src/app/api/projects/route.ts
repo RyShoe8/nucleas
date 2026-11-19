@@ -266,34 +266,6 @@ export async function POST(request: NextRequest) {
 
     const project = await Project.create(projectData);
 
-    void import('@/lib/workspace/workspaceNotifications').then(({ notifyProjectChange, notifyTaskChange }) => {
-      const organizationId = user.organizationId!;
-      const actorUserId = session.userId;
-      const actorEmployeeId = currentUserEmployee?._id?.toString() ?? null;
-
-      void notifyProjectChange({
-        project,
-        actorUserId,
-        actorEmployeeId,
-        organizationId,
-        isNew: true,
-        changeLabel: 'New project assigned',
-      }).catch((err) => console.error('[workspaceNotifications] project_new', err));
-
-      for (const [index, task] of (project.tasks ?? []).entries()) {
-        void notifyTaskChange({
-          project,
-          task,
-          taskIndex: index,
-          actorUserId,
-          actorEmployeeId,
-          organizationId,
-          isNew: true,
-          changeLabel: 'New task assigned',
-        }).catch((err) => console.error('[workspaceNotifications] task_new', err));
-      }
-    });
-
     return NextResponse.json(project, { status: 201 });
   } catch (error) {
     console.error('Error creating project:', error);

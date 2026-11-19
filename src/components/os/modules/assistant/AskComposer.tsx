@@ -151,7 +151,7 @@ export default function AskComposer({
     const remove = (p: Pending) => {
         setFiles((list) => list.filter((x) => x.id !== p.id));
         if (p.ref) {
-            void fetch('/api/os/assistant/upload', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pathname: p.ref.pathname }) });
+            void fetch('/api/os/assistant/upload', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pathname: p.ref.pathname }) }).catch(() => undefined);
         }
     };
 

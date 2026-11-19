@@ -15,6 +15,7 @@ import PublishingJobBody from './publishing/PublishingJobBody';
 import CasinoDiscoveryPanel from './CasinoDiscoveryPanel';
 import ReadyPostCard from './publishing/ReadyPostCard';
 import { linkNeedsAction } from './linkAttention';
+import { fetchJob } from './jobApi';
 
 // ---------- Types (mirror the server's JobView) ----------
 
@@ -269,11 +270,8 @@ function JobFacts({ facts }: { facts: JobFact[] }) {
 const BUTTON = 'ui-button';
 const PRIMARY = 'ui-button-primary';
 
-export async function post(id: string, body: Record<string, unknown>): Promise<{ job?: JobView; error?: string }> {
-    const res = await fetch(`/api/os/jobs/${id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    const data = (await res.json().catch(() => ({}))) as { job?: JobView; error?: string };
-    return res.ok ? data : { error: data.error ?? `Failed (${res.status})` };
-}
+export { postJobAction as post } from './jobApi';
+import { postJobAction as post } from './jobApi';
 
 export function csv(fields: JobField[], runs: JobRunView[]): string {
     const esc = (v: unknown) => `"${String(Array.isArray(v) ? v.join('; ') : v ?? '').replace(/"/g, '""')}"`;
@@ -814,9 +812,8 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
     useEffect(() => {
         if (!busyNow) return;
         const stopPolling = visibleInterval(async () => {
-            const res = await fetch(`/api/os/jobs/${job.id}`, { cache: 'no-store' });
-            const body = (await res.json().catch(() => ({}))) as { job?: JobView };
-            if (body.job) update(body.job);
+            const fresh = await fetchJob(job.id);
+            if (fresh) update(fresh);
         }, 4000);
         return stopPolling;
         // eslint-disable-next-line react-hooks/exhaustive-deps -- poll while busy
@@ -914,8 +911,8 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
 
             {reviewRun ? <RunBlock job={job} run={reviewRun} onChange={update} onView={setResultRun} /> : null}
             {!compact && d?.skill === 'link_building' ? <OpportunityTracker job={job} onChange={update} /> : null}
-            {!compact && d?.skill === 'signature_outreach' ? job.publishing?.ready.map((delivery) => <ReadyPostCard key={delivery.id} jobId={job.id} delivery={delivery} subreddit={null} formUrl={null} onChange={() => { void fetch(`/api/os/jobs/${job.id}`, { cache: 'no-store' }).then(response => response.json()).then(body => { if (body.job) update(body.job); }); }} />) : null}
-            {!compact && d?.skill === 'casino_discovery' ? <CasinoDiscoveryPanel job={job} onChange={() => { void fetch(`/api/os/jobs/${job.id}`, { cache: 'no-store' }).then(response => response.json()).then(body => { if (body.job) update(body.job); }); }} /> : null}
+            {!compact && d?.skill === 'signature_outreach' ? job.publishing?.ready.map((delivery) => <ReadyPostCard key={delivery.id} jobId={job.id} delivery={delivery} subreddit={null} formUrl={null} onChange={() => { void fetchJob(job.id).then((fresh) => { if (fresh) update(fresh); }); }} />) : null}
+            {!compact && d?.skill === 'casino_discovery' ? <CasinoDiscoveryPanel job={job} onChange={() => { void fetchJob(job.id).then((fresh) => { if (fresh) update(fresh); }); }} /> : null}
             {!compact && d?.skill === 'seo_brief' ? <SeoBriefEditor job={job} /> : null}
             {!compact && d?.skill === 'marketing_plan' ? <MarketingPlanEditor companyId={job.companyId} updatedAt={job.updatedAt} /> : null}
             {/* Link building shows only its current opportunity (above), not every earlier run. */}

@@ -128,6 +128,8 @@ runSchema.index({ organizationId: 1, researchSkill: 1, finishedAt: -1 }, { parti
 runSchema.index({ jobId: 1, createdAt: -1 });
 runSchema.index({ organizationId: 1, status: 1, updatedAt: -1 });
 runSchema.index({ status: 1, leaseExpiresAt: 1 });
+// AI Spend's by-job view reads a month of runs for the whole organization.
+runSchema.index({ organizationId: 1, createdAt: -1 });
 
 export type JobRunDoc = InferSchemaType<typeof runSchema>;
 export const JobRun: Model<JobRunDoc> = (mongoose.models.JobRun as Model<JobRunDoc> | undefined) ?? mongoose.model<JobRunDoc>('JobRun', runSchema);

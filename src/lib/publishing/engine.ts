@@ -1140,7 +1140,7 @@ export interface DeliveryView {
   screenshot: string | null;
 }
 
-type DeliveryLean = { heldFor?: 'reddit'; holdUntil?: Date; researched?: ResearchedFact[]; _id: Types.ObjectId; itemId: Types.ObjectId; platform: string; status: DeliveryView['status']; title?: string; body: string; link?: string; assets?: { kind: 'image' | 'video'; url: string }[]; postedUrl?: string; postedAt?: Date; error?: string; createdAt: Date; values?: Record<string, string | boolean>; screenshot?: string };
+type DeliveryLean = { organizationId: Types.ObjectId; companyId: Types.ObjectId; heldFor?: 'reddit'; holdUntil?: Date; researched?: ResearchedFact[]; _id: Types.ObjectId; itemId: Types.ObjectId; platform: string; status: DeliveryView['status']; title?: string; body: string; link?: string; assets?: { kind: 'image' | 'video'; url: string }[]; postedUrl?: string; postedAt?: Date; error?: string; createdAt: Date; values?: Record<string, string | boolean>; screenshot?: string };
 
 export interface PublishingView {
   image?: PublishingConfig['image'];
@@ -1199,9 +1199,9 @@ export async function publishingView(job: { _id: Types.ObjectId; publishing?: un
     // Posts waiting for the Reddit card are handled through it, so they are not a second thing to do.
     if (delivery.heldFor === 'reddit' && delivery.status === 'ready') continue;
     if (delivery.platform === 'reddit' && config.redditDealPolicy && delivery.status === 'ready') {
-      const full = await PublishDelivery.findById(delivery._id).lean();
-      if (full && !redditHistory) redditHistory = await redditDealHistory(full);
-      if (redditSelected || !full || await redditDealBlock(full, config.redditDealPolicy.timezone, new Date(), undefined, redditHistory)) { heldReddit += 1; continue; }
+      // The card is already loaded in full; only the deal history is read, once for all of them.
+      if (!redditHistory) redditHistory = await redditDealHistory(delivery);
+      if (redditSelected || await redditDealBlock(delivery, config.redditDealPolicy.timezone, new Date(), undefined, redditHistory)) { heldReddit += 1; continue; }
       redditSelected = true;
     }
     visibleReady.push(delivery);

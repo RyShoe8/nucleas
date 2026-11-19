@@ -176,7 +176,18 @@ function runView(r: RunLean): JobRunView {
   };
 }
 
-async function toView(job: JobLean, company: { name: string; subreddit?: string }, canManage: boolean, runs: RunLean[]): Promise<JobView> {
+/** This month's run spending for many jobs at once (the list view). */
+async function monthSpendByJob(ids: Types.ObjectId[]): Promise<Map<string, number>> {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const rows = await JobRun.aggregate<{ _id: Types.ObjectId; total: number }>([
+    { $match: { jobId: { $in: ids }, createdAt: { $gte: start } } },
+    { $group: { _id: '$jobId', total: { $sum: { $ifNull: ['$costMicros', 0] } } } },
+  ]);
+  return new Map(rows.map((row) => [String(row._id), row.total]));
+}
+
+async function toView(job: JobLean, company: { name: string; subreddit?: string }, canManage: boolean, runs: RunLean[], runSpendMicros?: number): Promise<JobView> {
   const parsed = jobDesignSchema.safeParse(job.design);
   const design = parsed.success ? parsed.data : null;
   return {
@@ -195,7 +206,7 @@ async function toView(job: JobLean, company: { name: string; subreddit?: string 
     completion: job.completion ?? null,
     level: job.level ?? null,
     monthlyBudgetMicros: job.monthlyBudgetMicros ?? 0,
-    spentThisMonthMicros: (await monthSpendMicros(job._id)) + (job.createdAt >= new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)) ? job.designCostMicros ?? 0 : 0),
+    spentThisMonthMicros: (runSpendMicros ?? (await monthSpendMicros(job._id))) + (job.createdAt >= new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)) ? job.designCostMicros ?? 0 : 0),
     deliveryLabel: design ? DELIVERY_LABEL[design.delivery.method] : null,
     deliveryRunnable: design ? deliveryRunnable(design) : false,
     createdAt: job.createdAt.toISOString(),
@@ -205,8 +216,9 @@ async function toView(job: JobLean, company: { name: string; subreddit?: string 
     error: job.error ?? null,
     runs: runs.map(runView),
     canManage,
-    opportunities: design?.skill === 'link_building' ? await listLinkOpportunities(job._id) : [],
-    publishing: design?.skill === 'social_publish' || design?.skill === 'casino_discovery' || design?.skill === 'signature_outreach' ? await publishingView(job) : null,
+    // One job's extras failing to load must not take the whole Work list down with it.
+    opportunities: design?.skill === 'link_building' ? await listLinkOpportunities(job._id).catch((error: unknown) => { console.error('[jobs] link opportunities unavailable', { jobId: String(job._id), error }); return []; }) : [],
+    publishing: design?.skill === 'social_publish' || design?.skill === 'casino_discovery' || design?.skill === 'signature_outreach' ? await publishingView(job).catch((error: unknown) => { console.error('[jobs] publishing view unavailable', { jobId: String(job._id), error }); return null; }) : null,
   };
 }
 
@@ -233,16 +245,19 @@ export async function listJobs(viewer: CompanyViewer, options: { includeClosed?:
     .sort({ updatedAt: -1 })
     .limit(200)
     .lean<JobLean[]>();
-  const runs = await JobRun.find({ jobId: { $in: jobs.map((j) => j._id) } })
-    .sort({ createdAt: -1 })
-    .lean<RunLean[]>();
-  const byJob = new Map<string, RunLean[]>();
-  for (const r of runs) {
-    const list = byJob.get(String(r.jobId)) ?? [];
-    if (list.length < 5) byJob.set(String(r.jobId), [...list, r]);
-  }
+  const ids = jobs.map((j) => j._id);
+  // Only each job's five newest runs leave the database, and this month's spend for every job in one query:
+  // an hourly job has thousands of runs, and this list is reloaded every few seconds.
+  const [recent, spend] = await Promise.all([
+    JobRun.aggregate<{ _id: Types.ObjectId; runs: RunLean[] }>([
+      { $match: { jobId: { $in: ids } } },
+      { $group: { _id: '$jobId', runs: { $topN: { n: 5, sortBy: { createdAt: -1 }, output: '$$ROOT' } } } },
+    ]),
+    monthSpendByJob(ids),
+  ]);
+  const byJob = new Map(recent.map((row) => [String(row._id), row.runs]));
   const canManage = isCompanyManager(viewer);
-  return Promise.all(jobs.map((j) => toView(j, byCompany.get(String(j.companyId)) ?? { name: 'Company' }, canManage, byJob.get(String(j._id)) ?? [])));
+  return Promise.all(jobs.map((j) => toView(j, byCompany.get(String(j.companyId)) ?? { name: 'Company' }, canManage, byJob.get(String(j._id)) ?? [], spend.get(String(j._id)) ?? 0)));
 }
 
 export async function getJob(viewer: CompanyViewer, id: string): Promise<JobView | null> {
