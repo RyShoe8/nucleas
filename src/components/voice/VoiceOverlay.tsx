@@ -42,10 +42,11 @@ export function VoiceButton({ inline = false }: { inline?: boolean }) {
 export function InlineVoiceControls() {
     const voice = useVoice();
     if (!voice.enabled) return null;
-    return <div className="flex flex-wrap items-center gap-2">
+    // Sits in the message row beside the attach button, not on a row of its own.
+    return <div className="flex shrink-0 items-end gap-1 self-end">
         <VoiceButton inline />
         {voice.wakeWordSupported && <button type="button" onClick={voice.toggleWakeWord} aria-pressed={voice.wakeWordEnabled}
-            className="min-h-11 sm:min-h-0 rounded border border-border px-2 py-1 text-[11px] text-text-secondary" title="Say Nucleas to activate voice">
+            className="hidden sm:block h-8 whitespace-nowrap rounded border border-border px-2 text-[11px] text-text-secondary hover:text-text-primary" title="Say Nucleas to activate voice">
             Wake: {voice.wakeWordEnabled ? (voice.isWakeArmed ? 'armed' : 'on') : 'off'}
         </button>}
     </div>;

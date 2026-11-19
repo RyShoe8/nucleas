@@ -17,7 +17,7 @@ import { listAvailableModels } from '@/lib/ai/engine/catalog';
 import { webSearch } from '@/lib/ai/tools/webSearch';
 import { formatResearchResultContext } from '@/lib/ai/tools/serverBrowseAssist';
 import { companiesWithRepositories } from '@/lib/building/companyCode';
-import { proposeCodeChange, type BuildView } from '@/lib/building/builds';
+import { startCodeChange, type BuildView } from '@/lib/building/builds';
 import { describeToolCall, shortModel, type ProgressFn } from '@/lib/ai/progress';
 import { createJob, type JobView } from '@/lib/jobs/jobs';
 import { requestNeedsJob } from './responseRouting';
@@ -139,6 +139,13 @@ export function shouldOverrideToCodeChange(plan: AskPlan, text: string): boolean
  * (the page address, the exact names). The user's own words go along with it, so the page can be opened and
  * the names searched exactly as written.
  */
+/** How a missing Nucleas ability is planned: check first, pick the right shape, and keep it as small as the need. */
+export const GAP_PLAN_GUIDE = [
+  'First check whether Nucleas already does this (a setting, button, window or Ask tool). If it does, say where in the summary and plan only what would make it easy to find.',
+  'Then choose the shape that fits the need: when the user wants to do something themselves, a control in the window where that data already lives, saved through its existing API route (for example a field in a company\'s About section saved by PATCH /api/os/companies/[id]); when Ask must read or report something, an Ask tool built like the others in src/lib/ai/company/companyTools.ts with its results described in factSheet (src/lib/ai/orchestrator/askOrchestrator.ts).',
+  'Plan the smallest change that fully meets the need: extend existing models, routes and components before adding new ones, and do not change shared runtimes (capabilities, jobs, metrics sync) unless nothing else can work. Keep the existing permission rules (managers change company settings), record a change in the company activity, and add tests for the new behavior.',
+].join(' ');
+
 export function codeChangeRequest(restated: string, original: string): string {
   const text = original.trim();
   if (!text || restated.includes(text.slice(0, 60)) || restated.length + text.length > 5000) return restated;
@@ -251,6 +258,8 @@ function plannerPrompt(context: PortfolioContext, toolCatalog: string, today: st
     'Rules:',
     '- scope: "company" for questions about these businesses, "general" for anything else (world knowledge, how-to, industry questions), "mixed" when both are needed.',
     '- capabilityGap: when the answer needs information or an action that none of the tools above, research, the company context or the team can provide, set capabilityGap instead of answering from unrelated data. need: what is missing, in plain words ("a list of every scheduled job"). proposal: the tool Nucleas would build for itself to answer it: what it reads or does, for which companies, and what it returns. Nucleas then plans that tool as a change to its own code and shows the user the plan before anything is built. Leave fetch, research and actions empty when you set it. Never use it when an existing tool, research or the company context can answer.',
+    '- Questions about using Nucleas itself ("how do I…", "where do I…", "can I…" change or see something in Nucleas): nothing above lists Nucleas\'s own screens and settings, so never describe a menu, setting or path you have not been shown, and never send the user to "the platform", "settings" or "an administrator". Set capabilityGap: need = what the user cannot do yet, in their words; proposal = the smallest way to let them (usually a setting or button in the window where that thing already lives, saved through its existing route). Nucleas checks the code first and says so if it already exists.',
+    '- A short follow-up such as "yes, build me a plan" or "do it" continues the previous turn: restate that earlier need in full (company, what, why) in capabilityGap, codeChange or job, so it stands alone.',
     '- Questions about Nucleas itself — the jobs or responsibilities it runs, what is scheduled, active, paused, waiting for approval or waiting for the user — are answered from the nucleas_jobs tool: fetch it once with company "all" (or the one company asked about). Never say Nucleas cannot see its own jobs.',
     `- research: up to ${MAX_RESEARCH} web searches when the answer depends on current or external facts (news, rankings, prices, competitors, recent events). Omit for timeless knowledge.`,
     '- deepResearch: when the answer needs several rounds of searching where later searches depend on earlier findings (e.g. building a list of sites, comparing competitors, investigating a market). Give one clear research question and a strategy object. Use research instead for single lookups.',
@@ -555,10 +564,10 @@ async function runAskOrchestratorUncapped(
     const request = input.attachments
       ? `${restated}\n\nAttached by the user:\n${input.attachments}`.slice(0, 6000)
       : restated;
-    say(`Planning the code change for ${company.name} (${repos.get(company.id)})`);
-    const proposal = await proposeCodeChange(viewer, { companyId: company.id, request, level: input.level, signal: input.signal, onProgress: input.onProgress });
-    costMicros += proposal.costMicros;
-    stages.push({ stage: 'code', costMicros: proposal.costMicros, note: proposal.ok ? `planned against ${proposal.build.repository.fullName}` : proposal.message.slice(0, 120) });
+    say(`Starting the plan for ${company.name} (${repos.get(company.id)})`);
+    // Planning reads the repository and can take many minutes, so it runs in the background.
+    const proposal = await startCodeChange(viewer, { companyId: company.id, request, level: input.level });
+    stages.push({ stage: 'code', costMicros: 0, note: proposal.ok ? `planning against ${proposal.build.repository.fullName}` : proposal.message.slice(0, 120) });
     if (!proposal.ok) {
       return { role: 'status', text: `I couldn't plan that change for ${company.name}: ${proposal.message}`, stages, invocationIds: [], costMicros, runId: planTurn.runId };
     }
@@ -566,9 +575,8 @@ async function runAskOrchestratorUncapped(
     return {
       role: 'assistant',
       text: [
-        `I planned this change for **${company.name}** (${b.repository.fullName}): **${b.title}**`,
-        b.summary,
-        'Approve it to queue the build, edit the plan first, or reject it. Nothing changes in the repository until you open a pull request from Building.',
+        `I'm drafting a plan for this change to **${company.name}** (${b.repository.fullName}). Reading the code takes a few minutes, so it carries on without you waiting here.`,
+        'It will appear in Building (and on the card below) ready to review. Approve it to queue the build, edit it first, or reject it. Nothing changes in the repository until you open a pull request.',
       ]
         .filter(Boolean)
         .join('\n\n'),
@@ -598,15 +606,15 @@ async function runAskOrchestratorUncapped(
     }
     const [companyId, fullName] = own;
     const request = [
-      `Give Nucleas the ability to answer this request from a user in Ask: "${input.text.slice(0, 1500)}"`,
-      `What is missing: ${gap.need}`,
-      `The tool to build: ${gap.proposal}`,
-      'Build it the way the existing Ask tools are built (src/lib/ai/company/companyTools.ts), so the Ask planner can choose it and the writer sees its results (factSheet in src/lib/ai/orchestrator/askOrchestrator.ts). Keep it read-only unless the request needs a change, scope it to the companies the user can access, and add tests.',
+      `A user asked Nucleas in Ask: "${input.text.slice(0, 1500)}"`,
+      `What they cannot do yet: ${gap.need}`,
+      `Suggested approach: ${gap.proposal}`,
+      GAP_PLAN_GUIDE,
     ].join('\n\n');
-    say(`Planning a new tool for Nucleas (${fullName})`);
-    const proposal = await proposeCodeChange(viewer, { companyId, request, level: input.level, signal: input.signal, onProgress: input.onProgress });
-    costMicros += proposal.costMicros;
-    stages.push({ stage: 'code', costMicros: proposal.costMicros, note: proposal.ok ? `planned a new tool against ${proposal.build.repository.fullName}` : proposal.message.slice(0, 120) });
+    say(`Starting a plan for a new Nucleas tool (${fullName})`);
+    // Planning reads the repository and can take many minutes, so it runs in the background.
+    const proposal = await startCodeChange(viewer, { companyId, request, level: input.level });
+    stages.push({ stage: 'code', costMicros: 0, note: proposal.ok ? `planning a new tool against ${proposal.build.repository.fullName}` : proposal.message.slice(0, 120) });
     if (!proposal.ok) {
       return { role: 'assistant', text: `I don't have a tool for that yet: ${gap.need}. I tried to plan building it (${gap.proposal}) but couldn't: ${proposal.message}`, stages, invocationIds: [], costMicros, runId: planTurn.runId };
     }
@@ -615,9 +623,9 @@ async function runAskOrchestratorUncapped(
       role: 'assistant',
       text: [
         `I don't have a tool for that yet: ${gap.need}.`,
-        `I'd need to build one for myself, so I planned it as a change to Nucleas (${b.repository.fullName}): **${b.title}**`,
-        b.summary,
-        'Read the plan, then approve it to build, edit it first, or reject it. Nothing changes until you open the pull request from Building, and once it ships, ask me again.',
+        `I'd need to build one for myself: ${gap.proposal}`,
+        `I'm drafting that plan as a change to Nucleas (${b.repository.fullName}). Reading the code takes a few minutes, so it carries on in the background and appears in Building (and on the card below) ready to review.`,
+        'Approve it to build, edit it first, or reject it. Nothing changes until you open the pull request from Building, and once it ships, ask me again.',
       ].filter(Boolean).join('\n\n'),
       stages, invocationIds: [], costMicros, runId: planTurn.runId,
       build: b,

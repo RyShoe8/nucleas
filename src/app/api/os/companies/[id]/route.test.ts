@@ -112,6 +112,24 @@ describe('company production domain', () => {
     expect(mocks.refetch).not.toHaveBeenCalled();
   });
 
+  it('changes a company between client, our business and operating company, and logs it', async () => {
+    const stored: Record<string, unknown> = {};
+    const company = { domain: 'x.com', save: mocks.save, get: (k: string) => stored[k], set: (k: string, v: unknown) => { stored[k] = v; } };
+    mocks.findCompany.mockResolvedValue(company);
+    const send = (relationship: unknown) => PATCH(new NextRequest(`https://os.nucleas.test/api/os/companies/${companyId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ relationship }) }), { params: Promise.resolve({ id: companyId }) });
+    // A company saved before the field existed counts as a client.
+    expect(await (await send('owned')).json()).toEqual({ relationship: 'owned' });
+    expect(stored.relationship).toBe('owned');
+    expect(mocks.activity).toHaveBeenCalledWith(expect.objectContaining({ title: 'Company type changed', detail: 'Client → Our business' }));
+    mocks.activity.mockClear();
+    await send('owned');
+    expect(mocks.activity).not.toHaveBeenCalled();
+    expect((await send('partner')).status).toBe(400);
+    mocks.role = 'User';
+    expect((await send('client')).status).toBe(403);
+    expect(stored.relationship).toBe('owned');
+  });
+
   it('reports whether the company has an approved Voice', async () => {
     const get = async () => (await (await GET(new NextRequest(`https://os.nucleas.test/api/os/companies/${companyId}`), { params: Promise.resolve({ id: companyId }) })).json()).voiceStatus;
     expect(await get()).toBe('none');

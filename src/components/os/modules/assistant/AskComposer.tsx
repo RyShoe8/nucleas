@@ -230,7 +230,6 @@ export default function AskComposer({
                     </ul>
                 ) : null}
                 {notice ? <p className="text-[11px] text-amber-400">{notice}</p> : null}
-                <InlineVoiceControls />
                 <div className="flex gap-2 items-stretch">
                     <button
                         type="button"
@@ -242,6 +241,7 @@ export default function AskComposer({
                     >
                         📎
                     </button>
+                    <InlineVoiceControls />
                     <input
                         ref={inputRef}
                         type="file"

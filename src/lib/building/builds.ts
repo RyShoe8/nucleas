@@ -2,6 +2,7 @@ import { withItemCap } from '@/lib/ai/control/itemCap';
 import { companyTeamContext } from '@/lib/companies/teamContext';
 import { consultTeammates, renderAdvice, type MemberAdvice } from '@/lib/companies/teamConsult';
 import 'server-only';
+import { after } from 'next/server';
 import { Types } from 'mongoose';
 import { BuildRequest, type BuildStatus } from '@/lib/models/BuildRequest';
 import { AiIdeExecutionArtifact } from '@/lib/models/AiIdeExecutionArtifact';
@@ -25,9 +26,13 @@ import { applyFilePatch, parsePatch, PatchError } from './applyPatch';
  * approved plans queue and build in the isolated build service; a manager opens the pull request.
  */
 
-const OPEN_STATUSES: BuildStatus[] = ['proposed', 'queued', 'building', 'ready', 'failed'];
+const OPEN_STATUSES: BuildStatus[] = ['planning', 'proposed', 'queued', 'building', 'ready', 'failed'];
 /** Longest a build may run before the sweep marks it failed (the build service stops at 4 minutes). */
 const BUILD_TIMEOUT_MS = 12 * 60 * 1000;
+/** Planning runs after the reply, inside the same 800 s function; anything still planning after this was cut off. */
+const PLANNING_TIMEOUT_MS = 16 * 60 * 1000;
+/** Time the background planner may spend, leaving room for the reply that started it and for saving. */
+const BACKGROUND_PLAN_BUDGET_MS = 600_000;
 
 export interface BuildView {
   teamRole?: 'design' | 'engineering';
@@ -190,6 +195,60 @@ export type ProposeResult =
   | { ok: true; build: BuildView; costMicros: number }
   | { ok: false; reason: 'no_repository' | 'no_plan'; message: string; costMicros: number };
 
+type ProposeInput = { companyId: string; request: string; level: CostLevel; teamRole?: 'design' | 'engineering'; signal?: AbortSignal; onProgress?: (text: string) => void };
+
+/** Runs work after the response is sent (Next's after); outside a request (scripts, tests) it simply starts it. */
+function inBackground(task: () => Promise<void>): void {
+  const run = () => task().catch((error) => console.error('[building] background planning failed', error instanceof Error ? error.message : 'unknown'));
+  try {
+    after(run);
+  } catch {
+    void run();
+  }
+}
+
+/**
+ * Starts planning a code change without waiting for it: the build appears at once as "planning" and
+ * becomes "proposed" (ready to review in Building) when the plan is done. Planning reads the repository
+ * and can take many minutes, longer than a reply may wait, so Ask and the team never block on it.
+ */
+export async function startCodeChange(viewer: CompanyViewer, input: Omit<ProposeInput, 'signal' | 'onProgress'>): Promise<ProposeResult> {
+  const target = await resolveCompanyRepository(viewer, input.companyId);
+  if (!target) {
+    return { ok: false, reason: 'no_repository', costMicros: 0, message: 'This company has no GitHub repository connected. Connect one in its Integrations window (Code repository), then ask again.' };
+  }
+  const firstLine = input.request.split('\n').map((l) => l.trim()).find(Boolean) ?? 'Code change';
+  const doc = await BuildRequest.create({
+    organizationId: viewer.organizationId,
+    companyId: new Types.ObjectId(input.companyId),
+    projectId: target.projectId,
+    createdByUserId: new Types.ObjectId(viewer.userId),
+    status: 'planning',
+    request: input.request.slice(0, 6000),
+    teamRole: input.teamRole ?? 'engineering',
+    title: firstLine.length > 120 ? `${firstLine.slice(0, 117)}…` : firstLine,
+    summary: 'Nucleas is reading the repository and drafting the plan. It will be ready to review here in a few minutes.',
+    planMarkdown: '_The plan is being drafted._',
+    repository: { owner: target.repository.owner, repo: target.repository.repo, defaultBranch: target.repository.defaultBranch },
+    level: input.level,
+    events: [event(viewer, 'planning')],
+  });
+  const id = doc._id as Types.ObjectId;
+  inBackground(() => withItemCap('code change plan', async () => {
+    const outcome = await draftPlan(viewer, input, target, Date.now(), BACKGROUND_PLAN_BUDGET_MS).catch((error: unknown) => ({ ok: false as const, costMicros: 0, message: error instanceof Error ? error.message : 'Planning failed.' }));
+    if (outcome.ok) {
+      await BuildRequest.updateOne({ _id: id, status: 'planning' }, { $set: { status: 'proposed', ...outcome.fields }, $push: { events: event(null, 'proposed') } });
+    } else {
+      await BuildRequest.updateOne({ _id: id, status: 'planning' }, {
+        $set: { status: 'discarded', planCostMicros: outcome.costMicros, error: `The plan could not be drafted: ${outcome.message}`.slice(0, 1000), finishedAt: new Date() },
+        $push: { events: event(null, 'planning_failed', outcome.message) },
+      });
+    }
+  }));
+  const profile = await getCompanyProfile(viewer, input.companyId);
+  return { ok: true, costMicros: 0, build: toView(doc.toObject() as unknown as BuildDoc, profile?.name ?? 'Company', isCompanyManager(viewer)) };
+}
+
 /**
  * Plans a code change for a company by reading its repository (the same planner → worker →
  * reviewer run the IDE uses in Plan mode), and records the plan for approval.
@@ -199,14 +258,41 @@ export async function proposeCodeChange(...args: Parameters<typeof proposeCodeCh
   return withItemCap('code change plan', () => proposeCodeChangeUncapped(...args));
 }
 
-async function proposeCodeChangeUncapped(
-  viewer: CompanyViewer,
-  input: { companyId: string; request: string; level: CostLevel; teamRole?: 'design' | 'engineering'; signal?: AbortSignal; onProgress?: (text: string) => void }
-): Promise<ProposeResult> {
+async function proposeCodeChangeUncapped(viewer: CompanyViewer, input: ProposeInput): Promise<ProposeResult> {
   const target = await resolveCompanyRepository(viewer, input.companyId);
   if (!target) {
     return { ok: false, reason: 'no_repository', costMicros: 0, message: 'This company has no GitHub repository connected. Connect one in its Integrations window (Code repository), then ask again.' };
   }
+  const drafted = await draftPlan(viewer, input, target, null, 600_000);
+  if (!drafted.ok) return { ok: false, reason: 'no_plan', costMicros: drafted.costMicros, message: drafted.message };
+  const doc = await BuildRequest.create({
+    organizationId: viewer.organizationId,
+    companyId: new Types.ObjectId(input.companyId),
+    projectId: target.projectId,
+    createdByUserId: new Types.ObjectId(viewer.userId),
+    status: 'proposed',
+    request: input.request.slice(0, 6000),
+    teamRole: input.teamRole ?? 'engineering',
+    ...drafted.fields,
+    repository: { owner: target.repository.owner, repo: target.repository.repo, defaultBranch: target.repository.defaultBranch },
+    level: input.level,
+    events: [event(viewer, 'proposed')],
+  });
+  const profile = await getCompanyProfile(viewer, input.companyId);
+  return { ok: true, costMicros: drafted.costMicros, build: toView(doc.toObject() as unknown as BuildDoc, profile?.name ?? 'Company', isCompanyManager(viewer)) };
+}
+
+type RepoTarget = NonNullable<Awaited<ReturnType<typeof resolveCompanyRepository>>>;
+type Drafted =
+  | { ok: true; costMicros: number; fields: { title: string; summary: string; steps: string[]; planMarkdown: string; planCostMicros: number; teamAdvice: { at: Date; items: MemberAdvice[] } } }
+  | { ok: false; costMicros: number; message: string };
+
+/**
+ * The planner → worker → reviewer run the IDE uses in Plan mode, with the company's context.
+ * `startedAt` null means the budget counts from when the planner itself starts (the older, waiting path);
+ * otherwise it counts from `startedAt`, so teammate advice and page checks come out of the same budget.
+ */
+async function draftPlan(viewer: CompanyViewer, input: ProposeInput, target: RepoTarget, startedAt: number | null, budgetMs: number): Promise<Drafted> {
   // The planner also sees what changed recently for the company (commits, builds, actions).
   const { companyTimeline, renderTimeline } = await import('@/lib/companies/activityLog');
   const recent = await companyTimeline(viewer, input.companyId, { limit: 15 }).catch(() => null);
@@ -223,7 +309,7 @@ async function proposeCodeChangeUncapped(
   const advice = await consultTeammates(viewer, input.companyId, input.teamRole ?? 'engineering', `Code change requested: ${input.request}`, { level: input.level, signal: input.signal, interactive: true, onCost: (micros) => { adviceCost += micros; } }).catch(() => [] as MemberAdvice[]);
   const background = [memberContext, renderAdvice(advice), recent?.length ? renderTimeline(recent) : '', rejected].filter(Boolean).join('\n\n');
   // With a admin account for the site the request names, look at the page as it is now (read-only, time-boxed).
-  const startedAt = Date.now();
+  const budgetFrom = startedAt ?? Date.now();
   const { observePageForRequest } = await import('@/lib/companies/adminAccount');
   const observedPage = await observePageForRequest(viewer, input.companyId, input.request, { signal: input.signal, onProgress: input.onProgress }).catch(() => null);
   const turn = await attemptOrchestratedIdeReply({
@@ -238,34 +324,24 @@ async function proposeCodeChangeUncapped(
     interactionMode: 'plan',
     level: input.level,
     signal: input.signal,
-    // The Ask route is cut off at 800 s (Vercel Pro, Fluid Compute); this leaves room for the Ask planner that runs before this and for saving the result.
-    budgetMs: 600_000 - (Date.now() - startedAt),
+    // The route is cut off at 800 s (Vercel Pro, Fluid Compute); this leaves room for the reply that started it and for saving the result.
+    budgetMs: budgetMs - (Date.now() - budgetFrom),
     ...(observedPage ? { observedPage } : {}),
   });
   const costMicros = (turn.costMicros ?? 0) + adviceCost;
-  if (!turn.plan) {
-    return { ok: false, reason: 'no_plan', costMicros, message: turn.text || 'The planner did not produce a plan.' };
-  }
-  const doc = await BuildRequest.create({
-    organizationId: viewer.organizationId,
-    companyId: new Types.ObjectId(input.companyId),
-    projectId: target.projectId,
-    createdByUserId: new Types.ObjectId(viewer.userId),
-    status: 'proposed',
-    request: input.request.slice(0, 6000),
-    teamRole: input.teamRole ?? 'engineering',
-    teamAdvice: { at: new Date(), items: advice },
-    title: (turn.plan.title || 'Code change').slice(0, 200),
-    summary: (turn.plan.summary || '').slice(0, 2000),
-    steps: turn.plan.steps.slice(0, 40).map((s) => s.slice(0, 500)),
-    planMarkdown: turn.plan.markdown.slice(0, 40_000),
-    repository: { owner: target.repository.owner, repo: target.repository.repo, defaultBranch: target.repository.defaultBranch },
-    level: input.level,
-    planCostMicros: costMicros,
-    events: [event(viewer, 'proposed')],
-  });
-  const profile = await getCompanyProfile(viewer, input.companyId);
-  return { ok: true, costMicros, build: toView(doc.toObject() as unknown as BuildDoc, profile?.name ?? 'Company', isCompanyManager(viewer)) };
+  if (!turn.plan) return { ok: false, costMicros, message: turn.text || 'The planner did not produce a plan.' };
+  return {
+    ok: true,
+    costMicros,
+    fields: {
+      teamAdvice: { at: new Date(), items: advice },
+      title: (turn.plan.title || 'Code change').slice(0, 200),
+      summary: (turn.plan.summary || '').slice(0, 2000),
+      steps: turn.plan.steps.slice(0, 40).map((s) => s.slice(0, 500)),
+      planMarkdown: turn.plan.markdown.slice(0, 40_000),
+      planCostMicros: costMicros,
+    },
+  };
 }
 
 export async function linkAssistantTurn(buildId: string, turnId: Types.ObjectId): Promise<void> {
@@ -452,6 +528,11 @@ async function runBuildUncapped(id: string): Promise<void> {
 
 /** Cron: starts builds that are still waiting (e.g. the approving request ended early) and times out stuck ones. */
 export async function sweepBuilds(options: { maxToStart?: number } = {}): Promise<{ started: number; timedOut: number }> {
+  // Planning that outlived its function was cut off; say so rather than leaving it "planning" forever.
+  await BuildRequest.updateMany(
+    { status: 'planning', createdAt: { $lt: new Date(Date.now() - PLANNING_TIMEOUT_MS) } },
+    { $set: { status: 'discarded', error: 'The plan could not be drafted: planning was cut off before it finished. Ask again to retry.', finishedAt: new Date() }, $push: { events: event(null, 'planning_timed_out') } }
+  );
   const stuck = await BuildRequest.updateMany(
     { status: 'building', startedAt: { $lt: new Date(Date.now() - BUILD_TIMEOUT_MS) } },
     { $set: { status: 'failed', error: 'The build timed out.', finishedAt: new Date() }, $push: { events: event(null, 'timed_out') } }

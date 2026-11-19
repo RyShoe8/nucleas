@@ -7,6 +7,7 @@ import BuildCard, { StatusBadge, type BuildStatus, type BuildView } from './buil
 /** Groups in queue order: what is running, what needs a person, then history. */
 const GROUPS: { key: string; label: string; statuses: BuildStatus[] }[] = [
     { key: 'active', label: 'Building now', statuses: ['building', 'queued'] },
+    { key: 'planning', label: 'Planning', statuses: ['planning'] },
     { key: 'review', label: 'Ready for review', statuses: ['ready'] },
     { key: 'failed', label: 'Failed', statuses: ['failed'] },
     { key: 'approval', label: 'Awaiting approval', statuses: ['proposed'] },
@@ -52,7 +53,7 @@ export default function BuildingModule() {
     }, [showClosed, reloadKey]);
 
     // Poll while anything is running so progress shows without a manual refresh.
-    const running = builds?.some((b) => b.status === 'queued' || b.status === 'building') ?? false;
+    const running = builds?.some((b) => b.status === 'planning' || b.status === 'queued' || b.status === 'building') ?? false;
     useEffect(() => {
         if (!running) return;
         const stopPolling = visibleInterval(load, 8000);

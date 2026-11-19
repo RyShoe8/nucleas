@@ -6,7 +6,7 @@ import { getCompanyProfile, isCompanyManager } from '@/lib/companies/companyProf
 import { TEAM, TEAM_ROLES, teamRoleFor } from '@/lib/companies/teamRoles';
 import { CompanyTeam } from '@/lib/models/CompanyTeam';
 import { Job } from '@/lib/models/Job';
-import { listBuilds, proposeCodeChange } from '@/lib/building/builds';
+import { listBuilds, startCodeChange } from '@/lib/building/builds';
 import { readEngineSettings } from '@/lib/ai/engine/select';
 import { createJob, listJobs, runDesign } from '@/lib/jobs/jobs';
 import { readBoard } from '@/lib/companies/teamBoard';
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!result.matchedCount) return NextResponse.json({ error: 'Responsibility not found in this company.' }, { status: 404 });
   } else if (role === 'engineering' || role === 'design') {
     const settings = await readEngineSettings(String(viewer.organizationId));
-    const result = await proposeCodeChange(viewer, { companyId: id, request: body.request, level: settings.defaultCostLevel, teamRole: role });
+    const result = await startCodeChange(viewer, { companyId: id, request: body.request, level: settings.defaultCostLevel, teamRole: role });
     if (!result.ok) return NextResponse.json({ error: result.message }, { status: 409 });
     return NextResponse.json({ ok: true, role, build: result.build });
   } else {

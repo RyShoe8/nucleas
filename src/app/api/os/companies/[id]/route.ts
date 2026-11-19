@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Types } from 'mongoose';
 import Project from '@/lib/models/Project';
-import Client from '@/lib/models/Client';
+import Client, { type CompanyRelationship } from '@/lib/models/Client';
+
+const RELATIONSHIP_NAME: Record<CompanyRelationship, string> = { client: 'Client', owned: 'Our business', internal: 'Operating company' };
 import { getCompanyProfile, isCompanyManager } from '@/lib/companies/companyProfile';
 import { listCompanyConnections } from '@/lib/integrations/connections';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
@@ -101,7 +103,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       return NextResponse.json({ error: 'Request body must be valid JSON.' }, { status: 400 });
     }
     const has = (key: string) => Boolean(body) && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, key);
-    if (!has('domain') && !has('subreddit') && !has('websites')) {
+    if (!has('domain') && !has('subreddit') && !has('websites') && !has('relationship')) {
       return NextResponse.json({ error: 'Nothing to update.' }, { status: 400 });
     }
     const fields = body as { domain?: unknown; subreddit?: unknown };
@@ -122,10 +124,17 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       websites = cleaned;
     }
     if (subreddit && !subreddit.ok) return NextResponse.json({ error: subreddit.error }, { status: 400 });
+    // Client, our business, or the operating company: decides which list it sits in and where its profile comes from.
+    let relationship: CompanyRelationship | null = null;
+    if (has('relationship')) {
+      const raw = (body as { relationship?: unknown }).relationship;
+      if (raw !== 'client' && raw !== 'owned' && raw !== 'internal') return NextResponse.json({ error: 'Choose client, owned or internal.' }, { status: 400 });
+      relationship = raw;
+    }
 
     const company = await Client.findOne({ _id: id, organizationId: viewer.organizationId });
     if (!company) return NextResponse.json({ error: 'Company not found' }, { status: 404 });
-    const result: { domain?: string | null; subreddit?: string | null; websites?: string[] } = {};
+    const result: { domain?: string | null; subreddit?: string | null; websites?: string[]; relationship?: CompanyRelationship } = {};
     const activities: { title: string; detail?: string }[] = [];
 
     if (domain?.ok) {
@@ -151,6 +160,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       if (previous !== subreddit.subreddit) {
         activities.push({ title: subreddit.subreddit ? 'Subreddit set' : 'Subreddit cleared', detail: subreddit.subreddit ? `r/${subreddit.subreddit}` : previous ? `r/${previous}` : undefined });
       }
+    }
+    if (relationship) {
+      // Older companies have no stored value and count as clients.
+      const previous = ((company.get('relationship') as CompanyRelationship | undefined) ?? 'client');
+      company.set('relationship', relationship);
+      result.relationship = relationship;
+      if (previous !== relationship) activities.push({ title: 'Company type changed', detail: `${RELATIONSHIP_NAME[previous]} → ${RELATIONSHIP_NAME[relationship]}` });
     }
     await company.save();
     // Per-site numbers need the new list of websites applied to past days too.

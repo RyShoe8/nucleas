@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { useTitleSlot } from '@/lib/os/titleSlot';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import type { ModuleRenderContext } from '@/lib/os/types';
-import { RELATIONSHIP_LABEL, type OsCompanyDetail, type OsConnection } from './companyTypes';
+import { RELATIONSHIP_LABEL, type OsCompanyDetail, type OsCompanySummary, type OsConnection } from './companyTypes';
 import CompanyTeamPanel from './CompanyTeamPanel';
 import CompanySwitcher from './CompanySwitcher';
 import CompanyAbout from './CompanyAbout';
@@ -127,6 +127,15 @@ export default function CompanyModule({ payload, windowId }: ModuleRenderContext
                             setActivityKey((key) => key + 1);
                         }}
                     />
+                    <RelationshipEditor
+                        companyId={company.id}
+                        relationship={company.relationship}
+                        canManage={detail.canManage}
+                        onSaved={() => {
+                            void load();
+                            setActivityKey((key) => key + 1);
+                        }}
+                    />
                     <WebsitesEditor
                         companyId={company.id}
                         websites={websites}
@@ -160,6 +169,34 @@ export default function CompanyModule({ payload, windowId }: ModuleRenderContext
             </div>
             </section>}
             {section === 'activity' && <CompanyTimeline key={company.id} companyId={company.id} refreshKey={activityKey} onOpenJob={(jobId) => { setFocusJobId(jobId); setSection('team'); }} />}
+        </div>
+    );
+}
+
+/** Whether this is a client, one of our own businesses, or the operating company. */
+function RelationshipEditor({ companyId, relationship, canManage, onSaved }: { companyId: string; relationship: OsCompanySummary['relationship']; canManage: boolean; onSaved: () => void }) {
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const change = async (next: OsCompanySummary['relationship']) => {
+        if (next === relationship || saving) return;
+        if (!window.confirm(`Change this company to "${RELATIONSHIP_LABEL[next]}"? It moves to that list, and for our own businesses the profile and team come from its linked hub project when it has one. Nothing is deleted; you can change it back.`)) return;
+        setSaving(true);
+        setError(null);
+        const res = await fetch(`/api/os/companies/${companyId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ relationship: next }) }).catch(() => null);
+        setSaving(false);
+        if (!res?.ok) return setError(((await res?.json().catch(() => ({}))) as { error?: string } | undefined)?.error ?? 'Could not change the company type.');
+        onSaved();
+    };
+    return (
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+            <label className="text-text-secondary" htmlFor={`relationship-${companyId}`}>Type</label>
+            {canManage ? (
+                <select id={`relationship-${companyId}`} className="ui-control py-0.5 text-xs" value={relationship} disabled={saving} onChange={(e) => void change(e.target.value as OsCompanySummary['relationship'])}>
+                    {(['client', 'owned', 'internal'] as const).map((value) => <option key={value} value={value}>{RELATIONSHIP_LABEL[value]}</option>)}
+                </select>
+            ) : <span>{RELATIONSHIP_LABEL[relationship]}</span>}
+            {saving ? <span className="text-text-secondary">Saving…</span> : null}
+            {error ? <span role="alert" className="text-red-400">{error}</span> : null}
         </div>
     );
 }

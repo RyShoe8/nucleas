@@ -22,7 +22,7 @@ vi.mock('@/lib/ai/tools/serverBrowseAssist', () => ({
 }));
 
 const propose = vi.fn();
-vi.mock('@/lib/building/builds', () => ({ proposeCodeChange: (...args: unknown[]) => propose(...args) }));
+vi.mock('@/lib/building/builds', () => ({ startCodeChange: (...args: unknown[]) => propose(...args) }));
 const createJob = vi.fn();
 vi.mock('@/lib/jobs/jobs', () => ({ createJob: (...args: unknown[]) => createJob(...args) }));
 
@@ -553,7 +553,8 @@ describe('code changes', () => {
     expect(plannerSystem).toContain('- Frugal Gambler: RyShoe8/frugalgambler');
     expect(propose).toHaveBeenCalledWith(admin, expect.objectContaining({ companyId, request: "Add a FAQ page linked from the footer\n\nThe user's exact message:\nPlan a FAQ page for Frugal Gambler", level: 'low' }));
     expect(answer.build).toMatchObject({ id: 'b1', status: 'proposed' });
-    expect(answer.text).toContain('Add a FAQ page');
+    // Planning runs in the background; the reply says so instead of waiting for it.
+    expect(answer.text).toContain("I'm drafting a plan for this change to **Frugal Gambler**");
     expect(answer.stages.map((s) => s.stage)).toEqual(['plan', 'code']);
     expect(chat).toHaveBeenCalledTimes(1);
   });
@@ -582,8 +583,10 @@ describe('code changes', () => {
       const answer = await ask('Show every scheduled job by company');
       expect(propose).toHaveBeenCalledWith(admin, expect.objectContaining({ companyId: String(company._id), request: expect.stringContaining('A read-only tool listing each job') }));
       expect(answer.text).toContain("I don't have a tool for that yet: a list of every scheduled job.");
-      expect(answer.text).toContain('Add a jobs tool to Ask');
+      expect(answer.text).toContain("I'm drafting that plan as a change to Nucleas (RyShoe8/nucleas)");
       expect(answer.build).toMatchObject({ id: 'n1', status: 'proposed' });
+      // The code planner checks the ability is not already there and keeps the change small.
+      expect(propose).toHaveBeenCalledWith(admin, expect.objectContaining({ request: expect.stringContaining('First check whether Nucleas already does this') }));
       await Client.deleteOne({ _id: company._id });
       await Project.deleteOne({ _id: project._id });
     });

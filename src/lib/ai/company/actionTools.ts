@@ -4,7 +4,7 @@ import type { CompanyProfile, CompanyViewer } from '@/lib/companies/companyProfi
 import type { CostLevel } from '@/lib/ai/engine/select';
 import type { ExtraToolSet } from '@/lib/ai/tools/runToolLoop';
 import type { ProgressFn } from '@/lib/ai/progress';
-import { proposeCodeChange, type BuildView } from '@/lib/building/builds';
+import { startCodeChange, type BuildView } from '@/lib/building/builds';
 import { createJob, type JobView } from '@/lib/jobs/jobs';
 import { companiesWithRepositories } from '@/lib/building/companyCode';
 import { matchCompany } from './companyTools';
@@ -84,11 +84,11 @@ export async function withActionTools(
     if (name === 'plan_code_change') {
       if (results.build) return JSON.stringify({ ok: false, error: 'A code change was already planned in this reply.' });
       if (!repos.has(company.id)) return JSON.stringify({ ok: false, error: `${company.name} has no repository connected.` });
-      options.onProgress?.(`Planning the code change for ${company.name} (${repos.get(company.id)})`);
-      const proposal = await proposeCodeChange(options.viewer, { companyId: company.id, request, level: options.level, signal: options.signal, onProgress: options.onProgress });
+      options.onProgress?.(`Starting the plan for ${company.name} (${repos.get(company.id)})`);
+      const proposal = await startCodeChange(options.viewer, { companyId: company.id, request, level: options.level });
       if (!proposal.ok) return JSON.stringify({ ok: false, error: proposal.message });
       results.build = proposal.build;
-      return JSON.stringify({ ok: true, planned: proposal.build.title, summary: proposal.build.summary, next: 'The plan is shown to the user to approve, edit or reject. Tell them briefly what it will change.' });
+      return JSON.stringify({ ok: true, planning: proposal.build.title, next: 'The plan is being drafted in the background and will appear in Building in a few minutes for the user to approve, edit or reject. Tell them that; do not describe the plan as finished.' });
     }
 
     if (results.job) return JSON.stringify({ ok: false, error: 'A job was already designed in this reply.' });

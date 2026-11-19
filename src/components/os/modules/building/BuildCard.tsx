@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { visibleInterval } from '@/lib/os/visibleInterval';
 import IdeChatMarkdown from '@/components/ide/IdeChatMarkdown';
 
-export type BuildStatus = 'proposed' | 'rejected' | 'queued' | 'building' | 'ready' | 'failed' | 'pr_opened' | 'discarded';
+export type BuildStatus = 'planning' | 'proposed' | 'rejected' | 'queued' | 'building' | 'ready' | 'failed' | 'pr_opened' | 'discarded';
 
 export interface BuildView {
     teamAdvice?: import('@/lib/companies/teamConsult').MemberAdvice[];
@@ -40,6 +41,7 @@ export interface BuildView {
 }
 
 export const STATUS_LABEL: Record<BuildStatus, string> = {
+    planning: 'Planning',
     proposed: 'Awaiting approval',
     rejected: 'Rejected',
     queued: 'Queued',
@@ -51,6 +53,7 @@ export const STATUS_LABEL: Record<BuildStatus, string> = {
 };
 
 export const STATUS_TONE: Record<BuildStatus, string> = {
+    planning: 'text-sky-400 border-sky-400/40',
     proposed: 'text-amber-400 border-amber-400/40',
     rejected: 'text-text-secondary border-border',
     queued: 'text-sky-400 border-sky-400/40',
@@ -96,6 +99,19 @@ export default function BuildCard({
     onOpenBuilding?: () => void;
 }) {
     const [busy, setBusy] = useState<BuildAction | null>(null);
+    // A plan drafted in the background: check back until it is ready, so the card in Ask fills in by itself.
+    const planning = build.status === 'planning';
+    const onChangeRef = useRef(onChange);
+    useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+    useEffect(() => {
+        if (!planning) return;
+        return visibleInterval(() => {
+            void fetch(`/api/os/builds/${build.id}`, { cache: 'no-store' })
+                .then((res) => (res.ok ? res.json() : null))
+                .then((body: { build?: BuildView } | null) => { if (body?.build && body.build.status !== 'planning') onChangeRef.current(body.build); })
+                .catch(() => undefined);
+        }, 15000);
+    }, [planning, build.id]);
     const [error, setError] = useState<string | null>(null);
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(build.planMarkdown);

@@ -30,7 +30,7 @@ import { AiModelCatalogSnapshot, AiPricingRegistryCache } from '@/lib/ai/engine/
 import { encryptModelSecret } from '@/lib/ai/modelSecrets';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { getCompanyCode, setProjectRepository } from './companyCode';
-import { approveBuild, editPlan, getBuild, listBuilds, openPullRequest, proposeCodeChange, rejectBuild, runBuild, sweepBuilds } from './builds';
+import { approveBuild, editPlan, getBuild, listBuilds, openPullRequest, proposeCodeChange, rejectBuild, runBuild, startCodeChange, sweepBuilds } from './builds';
 
 let replica: MongoMemoryReplSet;
 const org = new Types.ObjectId();
@@ -110,6 +110,39 @@ describe('proposing and deciding', () => {
     mocks.plan.mockResolvedValue({ requestId: 'p', role: 'status', text: 'Repository is unavailable.', costMicros: 0 });
     expect(await proposeCodeChange(admin, { companyId, request: 'x change', level: 'low' })).toMatchObject({ ok: false, reason: 'no_plan', message: 'Repository is unavailable.' });
     expect(await BuildRequest.countDocuments()).toBe(0);
+  });
+
+  it('starts planning in the background: the build shows at once and becomes a plan to review', async () => {
+    expect(await startCodeChange(admin, { companyId, request: 'Add a FAQ page', level: 'low' })).toMatchObject({ ok: false, reason: 'no_repository' });
+    await connectRepo();
+    let finish: (value: unknown) => void = () => {};
+    mocks.plan.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const started = await startCodeChange(admin, { companyId, request: 'Add a FAQ page' + String.fromCharCode(10) + 'with five questions', level: 'low' });
+    if (!started.ok) throw new Error(started.message);
+    // Returned before the planner finished, so a reply never waits on it; it cannot be approved yet.
+    expect(started.build).toMatchObject({ status: 'planning', title: 'Add a FAQ page' });
+    expect(await approveBuild(admin, started.build.id)).toMatchObject({ ok: false, status: 409 });
+    expect((await listBuilds(admin)).map((b) => b.status)).toEqual(['planning']);
+
+    finish({ requestId: 'p', role: 'assistant', text: 'Planned.', costMicros: 1200, plan: PLAN });
+    await vi.waitFor(async () => expect((await getBuild(admin, started.build.id))?.status).toBe('proposed'));
+    expect(await getBuild(admin, started.build.id)).toMatchObject({ title: 'Add a FAQ page', planMarkdown: PLAN.markdown, steps: PLAN.steps });
+  });
+
+  it('closes a background plan that fails or is cut off, saying why', async () => {
+    await connectRepo();
+    mocks.plan.mockResolvedValue({ requestId: 'p', role: 'status', text: 'Repository is unavailable.', costMicros: 0 });
+    const failed = await startCodeChange(admin, { companyId, request: 'x change', level: 'low' });
+    if (!failed.ok) throw new Error(failed.message);
+    await vi.waitFor(async () => expect((await getBuild(admin, failed.build.id))?.status).toBe('discarded'));
+    expect((await getBuild(admin, failed.build.id))?.error).toContain('Repository is unavailable.');
+
+    mocks.plan.mockReturnValue(new Promise(() => {}));
+    const stuck = await startCodeChange(admin, { companyId, request: 'y change', level: 'low' });
+    if (!stuck.ok) throw new Error(stuck.message);
+    await BuildRequest.collection.updateOne({ _id: new Types.ObjectId(stuck.build.id) }, { $set: { createdAt: new Date(Date.now() - 20 * 60_000) } });
+    await sweepBuilds();
+    expect(await getBuild(admin, stuck.build.id)).toMatchObject({ status: 'discarded', error: expect.stringContaining('cut off') });
   });
 
   it('only managers decide; approve (with edits) queues once; rejected plans stay rejected', async () => {

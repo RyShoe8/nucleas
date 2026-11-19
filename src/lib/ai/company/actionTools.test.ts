@@ -3,7 +3,7 @@ import { Types } from 'mongoose';
 
 vi.mock('server-only', () => ({}));
 const mocks = vi.hoisted(() => ({ propose: vi.fn(), createJob: vi.fn() }));
-vi.mock('@/lib/building/builds', () => ({ proposeCodeChange: (...a: unknown[]) => mocks.propose(...a) }));
+vi.mock('@/lib/building/builds', () => ({ startCodeChange: (...a: unknown[]) => mocks.propose(...a) }));
 vi.mock('@/lib/jobs/jobs', () => ({ createJob: (...a: unknown[]) => mocks.createJob(...a) }));
 vi.mock('@/lib/building/companyCode', () => ({ companiesWithRepositories: async () => new Map([['pb', 'RyShoe8/playbound']]) }));
 vi.mock('./companyTools', () => ({
@@ -36,7 +36,7 @@ describe('action tools for any Ask model', () => {
     mocks.propose.mockResolvedValue({ ok: true, costMicros: 0, build: { id: 'b1', title: 'Remove OpenHV under OpenRA', summary: 'Drop the duplicate listing.' } });
     const { toolSet, results } = await withActionTools(base, { viewer, companies, level: 'medium' });
     const out = JSON.parse(await toolSet.execute('plan_code_change', JSON.stringify({ company: 'Playbound.club', request: 'On /admin/connect/game-servers remove the OpenHV listing under OpenRA' }), ctx));
-    expect(out).toMatchObject({ ok: true, planned: 'Remove OpenHV under OpenRA' });
+    expect(out).toMatchObject({ ok: true, planning: 'Remove OpenHV under OpenRA' });
     expect(mocks.propose).toHaveBeenCalledWith(viewer, expect.objectContaining({ companyId: 'pb', level: 'medium' }));
     expect(results.build).toMatchObject({ id: 'b1' });
     // One per reply.

@@ -2,11 +2,11 @@ import mongoose, { Schema, type InferSchemaType, type Model } from 'mongoose';
 
 /**
  * A code change for one company, from plan to pull request.
- *   proposed → (edited) → approved into the queue (queued) → building → ready | failed
+ *   planning (drafted in the background) → proposed → (edited) → approved into the queue (queued) → building → ready | failed
  *   ready → pr_opened; any open state → rejected / discarded.
  * Approval, retries and pull requests are human actions; the build itself never pushes.
  */
-export const BUILD_STATUSES = ['proposed', 'rejected', 'queued', 'building', 'ready', 'failed', 'pr_opened', 'discarded'] as const;
+export const BUILD_STATUSES = ['planning', 'proposed', 'rejected', 'queued', 'building', 'ready', 'failed', 'pr_opened', 'discarded'] as const;
 export type BuildStatus = (typeof BUILD_STATUSES)[number];
 
 const eventSchema = new Schema(
