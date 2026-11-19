@@ -24,7 +24,7 @@ export const PLAYBOOKS: Record<TeamRole, Playbook> = {
     craft: [
       'Start from the audience segment and the stage they are at (unaware, comparing, ready), then choose the channel where that segment already spends time.',
       'Tie every recommendation to one measurable outcome and name the metric, its current value from the company data, and what would count as working.',
-      'Work from the approved marketing plan: positioning, messaging pillars and audience are fixed inputs. Propose a change to the plan as a change, never by quietly drifting from it.',
+      'Work from the approved marketing plan: positioning, messaging pillars and audience are fixed inputs for how you present the work. A job’s approved brief decides what that job is assigned to find or do: when the plan seems to rule the assignment out, still do the assignment and name the conflict in your gaps, so a person can update the plan or the job. Propose a change to the plan as a change, never by quietly drifting from it.',
       'For search, target a specific query with evidence of demand and of who ranks now; for social, match the format the platform currently rewards; for outreach, give the other side a reason of their own to say yes.',
       'Prefer the smallest test that could prove the idea wrong within two weeks over a large campaign.',
     ],

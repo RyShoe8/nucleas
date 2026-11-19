@@ -1,7 +1,7 @@
 import { itemCapRefusal, recordItemSpend } from '@/lib/ai/control/itemCap';
 import 'server-only';
 import { randomUUID } from 'crypto';
-import { Types } from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 import {
   GatewayError,
   invokeModel,
@@ -206,16 +206,68 @@ import { companyChatAdmissionMessage } from '@/lib/ai/companyChatAdmission';
 import { recordModelFailure, recordModelSuccess } from '@/lib/ai/engine/health';
 import type { RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 import { describeToolCall, type ProgressFn } from '@/lib/ai/progress';
-import { contextBudgetChars, contextWindowFor, contextWindowFromProviderMessage, outputBudgetTokens, priceTokens, recordObservedContextWindow } from '@/lib/ai/engine/catalog';
+import { backupsFrom, readEngineSettings, type CostLevel, type Need } from '@/lib/ai/engine/select';
+import { contextBudgetChars, contextWindowFor, contextWindowFromProviderMessage, listAvailableModels, outputBudgetTokens, priceTokens, recordObservedContextWindow, type AvailableModel } from '@/lib/ai/engine/catalog';
 
 /**
  * Governed IDE chat via a company credential (Direct or AI Team Worker binding).
  * Runs the image/browse tool loop when the host supports tools.
  */
-export async function attemptCompanyCredentialChat(input: Parameters<typeof chatUncapped>[0]): Promise<TeamChatTurn> {
-  const turn = await withCacheTally((tally) => chatUncapped(input, tally));
-  recordItemSpend(turn?.costMicros);
-  return turn;
+export async function attemptCompanyCredentialChat(input: Parameters<typeof chatUncapped>[0] & { standIn?: StandInOptions | false }): Promise<TeamChatTurn> {
+  const once = async (call: Parameters<typeof chatUncapped>[0]) => {
+    const turn = await withCacheTally((tally) => chatUncapped(call, tally));
+    recordItemSpend(turn?.costMicros);
+    return turn;
+  };
+  const first = await once(input);
+  if (input.standIn === false || !providerRefusedAccount(first) || mongoose.connection.readyState !== 1) return first;
+  // The provider refused the account before any work (out of credits, bad key). The credential is now
+  // benched for later calls; this call moves to the best model for the same task from another provider.
+  const failedProviders = new Set<string>();
+  const failedProfiles = new Set([input.modelProfileId]);
+  const models = await listAvailableModels().catch(() => [] as AvailableModel[]);
+  const provider = (profileId: string) => models.find((m) => m.profileId === profileId)?.provider;
+  const original = provider(input.modelProfileId);
+  if (original) failedProviders.add(original);
+  // A free model failing never starts paying; only a paid call moves to another paid one.
+  if (!models.find((m) => m.profileId === input.modelProfileId && m.model === input.model) || models.find((m) => m.profileId === input.modelProfileId)?.free) return first;
+  const settings = await readEngineSettings(input.organizationId).catch(() => null);
+  if (!settings) return first;
+  const need = input.standIn?.need ?? needOf(input);
+  const level = input.standIn?.level ?? settings.defaultCostLevel;
+  const candidates = backupsFrom(models.filter((m) => !failedProfiles.has(m.profileId)), need, level, settings.priceCeilings, [])
+    .filter((choice) => !failedProviders.has(provider(choice.profileId) ?? ''));
+  let last = first;
+  for (const choice of candidates) {
+    if (input.signal?.aborted || failedProviders.has(provider(choice.profileId) ?? '')) continue;
+    const turn = await once({ ...input, modelProfileId: choice.profileId, model: choice.model });
+    if (!providerRefusedAccount(turn)) {
+      console.warn(`[companyChat] ${input.model} was refused by its provider; ${choice.model} (${choice.label}) answered instead`);
+      return { ...turn, model: turn.model ?? choice.model, standInFor: input.model };
+    }
+    failedProviders.add(provider(choice.profileId) ?? choice.profileId);
+    last = turn;
+  }
+  return last === first ? first : { ...last, text: `${first.text} Nucleas also tried ${candidates.map((c) => c.model).join(', ')}, which failed too.` };
+}
+
+/** Which task a stand-in has to be good at, from how the call is made. */
+type StandInOptions = { need?: Need; level?: CostLevel };
+function needOf(input: { toolProfile?: IdeToolProfile; includeRepoTools?: boolean; forcePlain?: boolean; extraTools?: ExtraToolSet; includeImageTool?: boolean }): Need {
+  if (input.toolProfile === 'repo' || (input.includeRepoTools !== false && !input.forcePlain)) return 'code';
+  if (!input.forcePlain || input.extraTools) return 'research';
+  return 'write';
+}
+
+/**
+ * The provider refused the account itself before doing anything: out of credits, an unpaid bill, a bad
+ * key. Another provider can do the same work; a rate limit or a timeout is left to the usual retries.
+ */
+export function providerRefusedAccount(turn: TeamChatTurn | undefined): boolean {
+  if (!turn || turn.role !== 'status' || (turn.costMicros ?? 0) > 0) return false;
+  const status = /httpStatus=(\d{3})/.exec(turn.debugHint ?? '')?.[1];
+  if (status === '401' || status === '402') return true;
+  return /\b(credits?|prepayment|quota|billing|insufficient (balance|funds)|payment required)\b/i.test(turn.text) && /\b40[123]\b|depleted|exceeded|insufficient|required/i.test(turn.text);
 }
 
 async function chatUncapped(input: {

@@ -32,11 +32,12 @@ const host = (value: string) => new URL(value).hostname.toLowerCase().replace(/^
 
 export function researchExclusions(inventory: string, owned: string[]) {
   const excluded = new Set(owned.map(domain => domain.toLowerCase().replace(/^www\./, '')));
-  const data = extractJson(inventory) as { existingCatalog?: { website_url?: string; login_url?: string }[]; previousCandidates?: { domain: string }[] } | null;
-  for (const row of data?.existingCatalog ?? []) {
+  type Site = { website_url?: string; login_url?: string };
+  const data = extractJson(inventory) as { fullCatalog?: Site[]; existingCatalog?: Site[]; candidateQueue?: { domain: string }[]; dontAddList?: { domain: string }[]; previousCandidates?: { domain: string }[] } | null;
+  for (const row of [...(data?.fullCatalog ?? []), ...(data?.existingCatalog ?? [])]) {
     for (const address of [row.website_url, row.login_url]) if (address && isSafePublicHttpsUrl(address)) excluded.add(host(address));
   }
-  for (const row of data?.previousCandidates ?? []) excluded.add(row.domain);
+  for (const row of [...(data?.candidateQueue ?? []), ...(data?.dontAddList ?? []), ...(data?.previousCandidates ?? [])]) excluded.add(row.domain);
   return excluded;
 }
 

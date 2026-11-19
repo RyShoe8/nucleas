@@ -69,6 +69,8 @@ export type TeamChatTurn = {
   evidence?: AnswerEvidence;
   /** The model that actually served this stage (after any automatic switch). */
   model?: string;
+  /** Set when the chosen model's provider refused the account (no credits) and this model answered instead. */
+  standInFor?: string;
   /** This answer came from the tool-less compact retry after an upstream error. */
   compactRecovery?: boolean;
   /** Tools each stage called during the whole run, for spotting a model that never looked at the code. */

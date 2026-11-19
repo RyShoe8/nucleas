@@ -21,7 +21,7 @@ export interface EngineAnswer {
   costMicros?: number;
 }
 
-type AskInput = { organizationId: string; userId: string; system: string; user: string; maxTokens: number; signal?: AbortSignal; attemptTimeoutMs?: number; onFailure?: (failure: EngineFailure) => void; onCost?: (micros: number) => void };
+type AskInput = { organizationId: string; userId: string; system: string; user: string; maxTokens: number; signal?: AbortSignal; attemptTimeoutMs?: number; onFailure?: (failure: EngineFailure) => void; onCost?: (micros: number) => void; onStandIn?: (model: string) => void };
 
 /** The shared AI budget said no. Another paid model would be refused the same way, so nothing else is tried. */
 export function budgetRefusal(reason: string): boolean {
@@ -71,6 +71,7 @@ async function run(choice: ModelChoice, input: AskInput): Promise<string | null>
   });
   if (turn === undefined) return null;
   if (turn?.costMicros) input.onCost?.(turn.costMicros);
+  if (turn?.standInFor && turn.model) input.onStandIn?.(turn.model);
   if (turn && turn.role === 'assistant' && turn.text.trim()) return turn.text.trim();
   const reason = signal?.aborted ? timedOut() : turn?.role === 'assistant' ? 'The model returned an empty answer.' : `${turn?.text ?? 'No answer.'}${turn?.failureCategory ? ` (${turn.failureCategory}${turn.debugHint ? `: ${turn.debugHint}` : ''})` : ''}`;
   input.onFailure?.({ model: choice.model, reason: reason.slice(0, 300) });
@@ -101,8 +102,10 @@ export async function askEngine(input: { organizationId: string; userId: string;
   // Remember why each model failed: a credential with no credits takes its other models out too.
   const failures = new Map<string, string>();
   let spent = 0;
-  const tracked: AskInput = { ...input, onFailure: (failure) => { failures.set(failure.model, failure.reason); input.onFailure?.(failure); }, onCost: (micros) => { spent += micros; } };
-  const answered = (text: string, choice: ModelChoice, usedFallback: boolean): EngineAnswer => ({ text, model: choice.model, usedFallback, ...(spent ? { costMicros: spent } : {}) });
+  // Another provider answered for the chosen model (it ran out of credits): report the one that answered.
+  let standIn: string | null = null;
+  const tracked: AskInput = { ...input, onFailure: (failure) => { failures.set(failure.model, failure.reason); input.onFailure?.(failure); }, onCost: (micros) => { spent += micros; }, onStandIn: (model) => { standIn = model; } };
+  const answered = (text: string, choice: ModelChoice, usedFallback: boolean): EngineAnswer => ({ text, model: standIn ?? choice.model, usedFallback: usedFallback || Boolean(standIn), ...(spent ? { costMicros: spent } : {}) });
   const refused = () => [...failures.values()].some(budgetRefusal);
   const text = await run(pick.primary, tracked);
   if (text) return answered(text, pick.primary, false);

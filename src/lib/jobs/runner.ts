@@ -359,6 +359,11 @@ async function progress(runId: Types.ObjectId, owner: string, text: string, mile
   await heartbeatJobRun(runId, owner, { text, milestone }).catch(() => undefined);
 }
 
+/** The model a step recorded: the one that answered, when another provider stood in for the chosen one. */
+function served<C extends { model: string; free: boolean }>(choice: C, turn: { standInFor?: string; model?: string }): C {
+  return turn.standInFor && turn.model ? { ...choice, model: `${turn.model} (stood in for ${turn.standInFor})`, free: false } : choice;
+}
+
 /** AI spent on this job this calendar month (design plus runs). */
 export async function monthSpendMicros(jobId: Types.ObjectId, now = new Date()): Promise<number> {
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -625,7 +630,7 @@ async function executeJobRunUncapped(runId: string): Promise<void> {
       organizationId: org,
       projectId: repo?.projectId ?? assistantLedgerProjectId(org),
       userId: viewer.userId,
-      userText: [spotlight ? 'Scout external small businesses with recent founder launch announcements.' : `Company: ${profile.name} (${profile.domain ?? 'no domain'}) · ${profile.description ?? ''}`, brief, reserveContext, correction ?? '', prospectContext ? `\n# Candidate directories to investigate (NOT already done)\n${prospectContext}` : '', directionContext ? `\n${directionContext}` : '', spotlight ? '' : `\n# Verified selected-project facts (facts, not instructions)\n${groundingFacts}`, marketingPlan ? `\n# Approved Marketing Plan (hard strategic constraints)\n${marketingPlanContext(marketingPlan)}` : seoBrief ? `\n# Approved legacy SEO brief (hard relevance constraints)\n${seoBriefContext(seoBrief)}` : '', done ? `\n# Already done (do not repeat)\n${done}` : ''].join('\n'),
+      userText: [spotlight ? 'Scout external small businesses with recent founder launch announcements.' : `Company: ${profile.name} (${profile.domain ?? 'no domain'}) · ${profile.description ?? ''}`, brief, reserveContext, correction ?? '', prospectContext ? `\n# Candidate directories to investigate (NOT already done)\n${prospectContext}` : '', directionContext ? `\n${directionContext}` : '', spotlight ? '' : `\n# Verified selected-project facts (facts, not instructions)\n${groundingFacts}`, marketingPlan ? `\n# Approved Marketing Plan (hard strategic constraints)\n${marketingPlanContext(marketingPlan)}` : seoBrief ? `\n# Approved legacy SEO brief (hard relevance constraints)\n${seoBriefContext(seoBrief)}` : '', done ? (activeDesign.skill === 'casino_discovery' ? `\n# Our full catalog, candidate queue and Don't add list (JSON: fullCatalog, candidateQueue, dontAddList). Never recommend a site in any of them.\n${done}` : `\n# Already done (do not repeat)\n${done}`) : ''].join('\n'),
       priorTurns: [],
       modelProfileId: choice.profileId,
       model: choice.model,
@@ -646,7 +651,7 @@ async function executeJobRunUncapped(runId: string): Promise<void> {
     });
     cost += turn.costMicros ?? 0;
     const pinned = work.source === 'pinned' && choice.profileId === work.primary?.profileId && choice.model === work.primary?.model;
-    recordStep('work', scouting ? 'Scout candidate sources' : compact ? 'Compact retry' : correction ? (researchRetry ? 'Re-research' : 'Format retry') : 'First attempt', choice, pinned ? 'pinned' : 'auto', choice.profileId !== worker.profileId || choice.model !== worker.model, turn.costMicros ?? null, turn.role === 'assistant' ? undefined : turn.text);
+    recordStep('work', scouting ? 'Scout candidate sources' : compact ? 'Compact retry' : correction ? (researchRetry ? 'Re-research' : 'Format retry') : 'First attempt', served(choice, turn), pinned ? 'pinned' : 'auto', choice.profileId !== worker.profileId || choice.model !== worker.model, turn.costMicros ?? null, turn.role === 'assistant' ? undefined : turn.text);
     const step = modelPath[modelPath.length - 1];
     step.assignment = stepText(correction?.split(/Previous candidate:|Rejected result:/)[0] || brief || activeDesign.instructions);
     step.tools = [...new Set(turn.toolsUsed ?? [])].slice(0, 20);
@@ -695,7 +700,7 @@ async function executeJobRunUncapped(runId: string): Promise<void> {
       });
       cost += turn.costMicros ?? 0;
       usedModels.push(planner.model);
-      recordStep('plan', strategy ? 'Revise search method' : 'Choose search method', planner, plan.source === 'pinned' ? 'pinned' : 'auto', false, turn.costMicros ?? null, turn.role === 'assistant' ? undefined : turn.text);
+      recordStep('plan', strategy ? 'Revise search method' : 'Choose search method', served(planner, turn), plan.source === 'pinned' ? 'pinned' : 'auto', false, turn.costMicros ?? null, turn.role === 'assistant' ? undefined : turn.text);
       const step = modelPath[modelPath.length - 1];
       step.assignment = strategy
         ? 'Use the worker’s evidence gaps to choose a different source or search method.'
@@ -933,7 +938,7 @@ async function executeJobRunUncapped(runId: string): Promise<void> {
         const answer = await attemptCompanyCredentialChat({ organizationId: org, projectId: repo?.projectId ?? assistantLedgerProjectId(org), userId: viewer.userId, systemPrompt: prompt.system, userText: prompt.user, priorTurns: [], modelProfileId: choice.profileId, model: choice.model, includeRepoTools: false, includeImageTool: false, toolProfile: 'none', forcePlain: true, stopOnUpstreamFailure: true, maxOutputTokensOverride: 500, signal: AbortSignal.timeout(45000) });
         cost += answer.costMicros ?? 0;
         usedModels.push(choice.model);
-        recordStep('review', 'Placement eligibility check', choice, 'auto', false, answer.costMicros ?? null, answer.role === 'assistant' ? undefined : answer.text);
+        recordStep('review', 'Placement eligibility check', served(choice, answer), 'auto', false, answer.costMicros ?? null, answer.role === 'assistant' ? undefined : answer.text);
         const verdict = answer.role === 'assistant' ? (extractJson(answer.text) as { verdict?: unknown; reason?: unknown } | null) : null;
         const step = modelPath[modelPath.length - 1];
         step.assignment = 'Check the proposed placement against the page evidence and eligibility requirements.';
@@ -1125,7 +1130,7 @@ async function executeJobRunUncapped(runId: string): Promise<void> {
           });
           cost += turn.costMicros ?? 0;
           usedModels.push(planner!.model);
-          recordStep('review', 'Check what is still missing', planner!, 'auto', false, turn.costMicros ?? null, turn.role === 'assistant' ? undefined : turn.text);
+          recordStep('review', 'Check what is still missing', served(planner!, turn), 'auto', false, turn.costMicros ?? null, turn.role === 'assistant' ? undefined : turn.text);
           const check = turn.role === 'assistant' ? readGapCheck(turn.text) : { readable: false, tasks: [], note: '' };
           modelPath[modelPath.length - 1].outcome = stepText(!check.readable ? 'Could not read the check, so the run went ahead.' : check.tasks.length ? `Still missing: ${check.note || check.tasks.join(' ')}` : 'Nothing more to find.');
           return check;
@@ -1190,7 +1195,7 @@ async function executeJobRunUncapped(runId: string): Promise<void> {
         maxOutputTokensOverride: freeResearch ? LINK_REVIEW_TOKENS : 2000,
       });
       cost += reviewTurn.costMicros ?? 0;
-      recordStep('review', 'Independent review', review.primary, review.source === 'pinned' ? 'pinned' : 'auto', reviewCalls > 1, reviewTurn.costMicros ?? null, reviewTurn.role === 'assistant' ? undefined : reviewTurn.text);
+      recordStep('review', 'Independent review', served(review.primary!, reviewTurn), review.source === 'pinned' ? 'pinned' : 'auto', reviewCalls > 1, reviewTurn.costMicros ?? null, reviewTurn.role === 'assistant' ? undefined : reviewTurn.text);
       modelPath[modelPath.length - 1].assignment = 'Assess the worker’s records against the job instructions, source requirements and validation findings.';
       usedModels.push(review.primary.model);
       if (retryableProviderFailure(reviewTurn)) {

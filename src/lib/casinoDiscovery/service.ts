@@ -16,7 +16,8 @@ import { upstreamContext } from '@/lib/companies/upstreamContext';
 export async function discoveryMemory(job: {organizationId:Types.ObjectId;companyId:Types.ObjectId}) {
  const [inventory,candidates] = await Promise.all([(await casinoIntake(job.organizationId,job.companyId)).inventory(), CasinoCandidate.find({organizationId:job.organizationId,companyId:job.companyId}).select('domain name status').lean()]);
  if(!inventory.casinos)throw new Error('The site inventory could not be verified; discovery must not guess which sites are new.');
- return JSON.stringify({existingCatalog:inventory.casinos,previousCandidates:candidates.map(row=>({domain:row.domain,name:row.name,status:row.status}))});
+ const row=(item:{domain:string;name:string;status:string})=>({domain:item.domain,name:item.name,status:item.status});
+ return JSON.stringify({fullCatalog:inventory.casinos,candidateQueue:candidates.filter(item=>item.status!=='rejected').map(row),dontAddList:candidates.filter(item=>item.status==='rejected').map(row)});
 }
 export async function saveCandidates(job: { _id:Types.ObjectId;organizationId:Types.ObjectId;companyId:Types.ObjectId },runId:Types.ObjectId,output:JobRunOutput,reviewPassed:boolean) {
  const inventory=await (await casinoIntake(job.organizationId,job.companyId)).inventory();
