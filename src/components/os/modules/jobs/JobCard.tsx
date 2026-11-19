@@ -216,7 +216,7 @@ export function JobLastChecked({ job }: { job: JobView }) {
     return <span> · Last checked <time dateTime={job.lastRunAt} title={date.toLocaleString()}>{label}</time></span>;
 }
 
-const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(micros < 100_000 ? 3 : 2)}`;
+export const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(micros < 100_000 ? 3 : 2)}`;
 
 export interface JobFact {
     label: string;
@@ -269,13 +269,13 @@ function JobFacts({ facts }: { facts: JobFact[] }) {
 const BUTTON = 'ui-button';
 const PRIMARY = 'ui-button-primary';
 
-async function post(id: string, body: Record<string, unknown>): Promise<{ job?: JobView; error?: string }> {
+export async function post(id: string, body: Record<string, unknown>): Promise<{ job?: JobView; error?: string }> {
     const res = await fetch(`/api/os/jobs/${id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     const data = (await res.json().catch(() => ({}))) as { job?: JobView; error?: string };
     return res.ok ? data : { error: data.error ?? `Failed (${res.status})` };
 }
 
-function csv(fields: JobField[], runs: JobRunView[]): string {
+export function csv(fields: JobField[], runs: JobRunView[]): string {
     const esc = (v: unknown) => `"${String(Array.isArray(v) ? v.join('; ') : v ?? '').replace(/"/g, '""')}"`;
     const rows = runs.flatMap((r) => (r.output?.records ?? []).map((rec) => [...fields.map((f) => esc(rec.values[f.key])), esc(rec.sources.join(' '))].join(',')));
     return [[...fields.map((f) => esc(f.label)), esc('Sources')].join(','), ...rows].join('\n');
@@ -283,7 +283,7 @@ function csv(fields: JobField[], runs: JobRunView[]): string {
 
 // ---------- Pieces ----------
 
-function Questions({ job, onChange }: { job: JobView; onChange: (j: JobView) => void }) {
+export function Questions({ job, onChange }: { job: JobView; onChange: (j: JobView) => void }) {
     const questions = job.design?.questions ?? [];
     const [answers, setAnswers] = useState<Record<string, { option?: string; text?: string }>>(() =>
         Object.fromEntries(questions.map((q) => [q.id, { option: q.recommended }]))
@@ -347,7 +347,7 @@ export function briefLead(instructions: string, max = 320): string {
 }
 
 /** The plan as a person reads it: what will happen and what you get, then the reasoning and rules one click away. */
-function DesignSummary({ job }: { job: JobView }) {
+export function DesignSummary({ job }: { job: JobView }) {
     const d = job.design;
     if (!d) return null;
     const required = d.fields.filter((f) => f.required);
@@ -390,7 +390,7 @@ function DesignSummary({ job }: { job: JobView }) {
     );
 }
 
-function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => void }) {
+export function Approve({ job, onChange }: { job: JobView; onChange: (j: JobView) => void }) {
     const manual = manualArtifact(job.design?.skill);
     const [completion, setCompletion] = useState<'review' | 'automatic'>(job.design?.recommendedCompletion ?? 'review');
     const [busy, setBusy] = useState<string | null>(null);
@@ -539,7 +539,7 @@ function ModelPath({ run }: { run: JobRunView }) {
     );
 }
 
-function Results({ job, run }: { job: JobView; run: JobRunView }) {
+export function Results({ job, run }: { job: JobView; run: JobRunView }) {
     const fields = job.design?.fields ?? [];
     const records = run.output?.records ?? [];
     return (
@@ -596,7 +596,7 @@ function Results({ job, run }: { job: JobView; run: JobRunView }) {
     );
 }
 
-function RunBlock({ job, run, onChange, onView }: { job: JobView; run: JobRunView; onChange: (j: JobView) => void; onView: (run: JobRunView) => void }) {
+export function RunBlock({ job, run, onChange, onView }: { job: JobView; run: JobRunView; onChange: (j: JobView) => void; onView: (run: JobRunView) => void }) {
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const decide = async (action: 'accept_run' | 'reject_run') => {
@@ -669,7 +669,7 @@ const OPPORTUNITY_LABEL: Record<LinkOpportunityStatus, string> = {
     recommended: 'Recommended', saved: 'Saved for later', approved: 'Approved', rejected: 'Rejected', submitted: 'Submitted', live: 'Live', submission_rejected: 'Submission rejected', removed: 'Link removed', expired: 'Expired', nonexistent: 'Doesn’t exist — excluded',
 };
 
-function OpportunityTracker({ job, onChange }: { job: JobView; onChange: (j: JobView) => void }) {
+export function OpportunityTracker({ job, onChange }: { job: JobView; onChange: (j: JobView) => void }) {
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const update = async (opportunity: LinkOpportunityView, status: LinkOpportunityStatus) => {
@@ -742,7 +742,7 @@ function OpportunityTracker({ job, onChange }: { job: JobView; onChange: (j: Job
 
 type SeoBriefView = { projectId: string; projectName: string; status: 'draft' | 'approved'; summary: string; audience: string; goals: string[]; primaryTopics: string[]; competitors: string[]; excludedTopics: string[]; geographicTargets: string[]; positioning: string; priorityPages: { url: string; purpose: string; keywords: string[] }[]; notes: string; revision: number; approvedAt: string | null };
 
-function SeoBriefEditor({ job }: { job: JobView }) {
+export function SeoBriefEditor({ job }: { job: JobView }) {
     const [brief, setBrief] = useState<SeoBriefView | null>(null);
     const [editing, setEditing] = useState(false);
     const [form, setForm] = useState<Record<string, string>>({});

@@ -13,6 +13,7 @@ import {
   getJob,
   pauseJob,
   renameJob,
+  setJobCompletion,
   publishingAction,
   rejectJob,
   resumeJob,
@@ -42,6 +43,7 @@ export async function GET(request: NextRequest, { params }: Context) {
  *   answer: { answers: { [questionId]: { option?, text? } } }
  *   approve: { completion: 'review' | 'automatic', monthlyBudgetUsd? }
  *   rename: { title }
+ *   completion: { completion: 'review' | 'automatic' } (later runs)
  *   accept_run / reject_run: { runId, note? }
  *   publishing_settings: { settings: { channels?, notifyUserIds?, examples? } }
  *   mark_posted: { deliveryId, postedUrl? } · skip_post / post_now: { deliveryId } · edit_post: { deliveryId, title?, body? }
@@ -108,6 +110,9 @@ async function performAction(request: NextRequest, { params }: Context) {
       break;
     case 'edit_work':
       result = await editResponsibility(viewer, id, { title: body.title, instructions: body.instructions });
+      break;
+    case 'completion':
+      result = await setJobCompletion(viewer, id, body.completion);
       break;
     case 'rename':
       result = await renameJob(viewer, id, body.title);

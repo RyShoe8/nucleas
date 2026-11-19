@@ -561,6 +561,18 @@ export async function renameJob(viewer: CompanyViewer, id: string, title: unknow
   return done(viewer, id);
 }
 
+/** Whether finished runs wait for a person or count on their own once every check passes. Applies to later runs. */
+export async function setJobCompletion(viewer: CompanyViewer, id: string, completion: unknown): Promise<ActionResult> {
+  const found = await managed(viewer, id);
+  if (!found.ok) return found;
+  if (completion !== 'review' && completion !== 'automatic') return { ok: false, status: 400, error: 'Choose review or automatic.' };
+  const skill = (found.job.design as { skill?: JobDesign['skill'] } | undefined)?.skill;
+  if (manualArtifact(skill) || skill === 'social_publish') return { ok: false, status: 409, error: 'This job sets how results finish elsewhere.' };
+  if (!['ready', 'active', 'paused'].includes(found.job.status)) return { ok: false, status: 409, error: 'Approve the job first.' };
+  await Job.updateOne({ _id: found.job._id, organizationId: viewer.organizationId }, { $set: { completion }, $push: { events: event(viewer, 'completion', completion) } });
+  return done(viewer, id);
+}
+
 /** Editing the brief invalidates approval, but never rewrites historical results. */
 export async function editResponsibility(viewer: CompanyViewer, id: string, input: { title?: unknown; instructions?: unknown }): Promise<ActionResult> {
   const found = await managed(viewer, id);

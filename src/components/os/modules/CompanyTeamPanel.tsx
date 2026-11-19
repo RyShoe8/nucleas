@@ -36,7 +36,7 @@ type Row = { id: string; title: string; role: TeamRole; stage: Stage; line: stri
 type LogEntry = NonNullable<JobView['teamLog']>[number];
 
 /** The team's exchange on one piece of work, as it happens: who asked whom, what an intern read, the facts used, the answer. */
-function LiveExchange({ log, live }: { log: LogEntry[]; live: boolean }) {
+export function LiveExchange({ log, live }: { log: LogEntry[]; live: boolean }) {
   if (!log.length) return live ? <p className="text-sm text-text-secondary">Starting…</p> : null;
   const name = (role?: TeamRole) => (role ? TEAM[role]?.name ?? role : '');
   return <div className="rounded-lg border border-border p-3">

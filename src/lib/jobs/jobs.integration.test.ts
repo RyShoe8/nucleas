@@ -46,7 +46,7 @@ import { brandVoiceContext, getBrandVoice, updateBrandVoice } from '@/lib/brandV
 import { ArtifactRevision, artifactHistory } from './artifactHistory';
 import { PropertyOverview, PropertyPage } from '@/lib/models/PropertyOverview';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
-import { updateJobBudget, publishingAction, answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, listJobs, pauseJob, renameJob, runDesign, runNow, sweepJobs } from './jobs';
+import { updateJobBudget, publishingAction, answerQuestions, approveJob, archiveJob, claimDueJobRuns, createJob, createTemplateJob, decideRun, executeJobRun, getJob, listJobs, pauseJob, renameJob, setJobCompletion, runDesign, runNow, sweepJobs } from './jobs';
 import type { JobDesign } from './schema';
 import { updateLinkOpportunity, verifyLinkOpportunity, syncLinkOpportunities } from './linkOpportunities';
 import { completePropertyOverviewJob, createPropertyOverviewJob, startPropertyOverviewJob, updatePropertyOverviewJob } from '@/lib/propertyOverview/job';
@@ -902,6 +902,19 @@ describe('approving and the dry run', () => {
     expect(await LinkOpportunity.findById(view!.opportunities[0].id).lean()).toMatchObject({ status: 'submitted', note: 'Good fit', liveLinkUrl: 'https://directory.example.org/listing/playbound' });
     expect(await verifyLinkOpportunity(view!.opportunities[0].id)).toBe('found');
     expect(await LinkOpportunity.findById(view!.opportunities[0].id).lean()).toMatchObject({ status: 'live', verificationMessage: expect.stringContaining('found') });
+  });
+
+  it('switches an approved job between waiting for review and counting automatically, for managers only', async () => {
+    const config = { projectId, schedule: { kind: 'daily' as const, time: '09:00', timezone: 'UTC' }, recordsPerRun: 1, country: 'United States', language: 'English', exclusions: '' };
+    const created = await createTemplateJob(admin, { companyId, template: 'link_building', config });
+    if (!created.ok) throw new Error(created.error);
+    await Job.updateOne({ _id: created.job.id }, { $set: { status: 'proposed' } });
+    expect(await setJobCompletion(admin, created.job.id, 'automatic')).toMatchObject({ ok: false, status: 409 });
+    await Job.updateOne({ _id: created.job.id }, { $set: { status: 'active', completion: 'review' } });
+    expect(await setJobCompletion(admin, created.job.id, 'automatic')).toMatchObject({ ok: true, job: { completion: 'automatic' } });
+    expect(await setJobCompletion(admin, created.job.id, 'sometimes')).toMatchObject({ ok: false, status: 400 });
+    expect(await setJobCompletion({ ...admin, role: 'User' }, created.job.id, 'review')).toMatchObject({ ok: false, status: 403 });
+    expect((await Job.findById(created.job.id).lean())?.completion).toBe('automatic');
   });
 
   it('renames a job for managers only, with a sensible name, and records it', async () => {

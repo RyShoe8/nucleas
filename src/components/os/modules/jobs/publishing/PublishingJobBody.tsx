@@ -17,7 +17,7 @@ async function post(jobId: string, body: Record<string, unknown>): Promise<{ job
 }
 
 let peopleCache: Promise<{ userId: string; name: string }[]> | null = null;
-function loadPeople() {
+export function loadPeople() {
     peopleCache ??= fetch('/api/os/people', { cache: 'no-store' })
         .then((res) => (res.ok ? res.json() : { people: [] }))
         .then((body: { people?: { userId: string; name: string }[] }) => body.people ?? [])
@@ -38,7 +38,7 @@ const ago = (iso: string | null) => {
 };
 
 /** The sample posts from a dry run, shown the way they will read, with one decision. */
-function SampleReview({ job, run, onChange }: { job: JobView; run: JobRunView; onChange: (j: JobView) => void }) {
+export function SampleReview({ job, run, onChange }: { job: JobView; run: JobRunView; onChange: (j: JobView) => void }) {
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const decide = async (action: 'accept_run' | 'reject_run') => {
