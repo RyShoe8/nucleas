@@ -5,7 +5,10 @@ import { useWindowManager } from '@/hooks/os/useWindowManager';
 import { useOsAuth } from '@/hooks/os/useOsAuth';
 import ModuleRegistry from '@/lib/os/moduleRegistry';
 import { windowLabel } from '@/lib/os/windowLabel';
-import ModuleLauncher, { AppLauncherPanel } from './ModuleLauncher';
+import ModuleLauncher from './ModuleLauncher';
+import dynamic from 'next/dynamic';
+
+const OfficeModule = dynamic(() => import('@/components/os/modules/OfficeModule'));
 import OsAccountMenu from './OsAccountMenu';
 import OsInstallButton from './OsInstallButton';
 import IntegrationNotice from './IntegrationNotice';
@@ -48,10 +51,10 @@ export default function OsShell({ children }: { children?: ReactNode }) {
             </div>
         </header>
         <main className={styles.stage}>
-            {atHome && <div className={styles.landing}>
-                <div className={styles.intro}><span className={styles.eyebrow}>A LITTLE LESS FRICTION. A LOT MORE POSSIBLE.</span><h1>Your next move,<br />{' '}<em>within reach.</em></h1><p>One place to think, create, and move your companies forward.</p></div>
-                <div className={styles.launcherHome}><AppLauncherPanel onOpen={() => setHomeFor(null)} /></div>
-            </div>}
+            {/* Home is the Office: every company and its team at a glance, the same main view as the desktop app. */}
+            {atHome && <section aria-label="Office" className={styles.appSurface}>
+                <div className={`${styles.appBody} nucleas-app-content`}><OfficeModule /></div>
+            </section>}
             {allowed.filter(w => !w.poppedOut).map(w => {
                 const mod = ModuleRegistry.get(w.moduleId)!;
                 const visible = !atHome && active?.id === w.id;

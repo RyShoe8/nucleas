@@ -402,7 +402,7 @@ function FreeModelChecks({ rows, onRun, onCancel }: { rows: CheckRow[]; onRun: (
                 facts. Rogly models are ranked by these scores. Checks are free. Fast models finish in a couple of minutes; slow ones are checked in parts over several passes (every 10 minutes), and the scores in use stay until new ones land.
             </p>
             {rows.length ? (
-                <table className="w-full text-xs">
+                <div className="overflow-x-auto"><table className="w-full text-xs">
                     <thead>
                         <tr className="text-[11px] text-text-secondary text-left">
                             <th className="font-normal py-1 pr-2">Model</th>
@@ -452,7 +452,7 @@ function FreeModelChecks({ rows, onRun, onCancel }: { rows: CheckRow[]; onRun: (
                             );
                         })}
                     </tbody>
-                </table>
+                </table></div>
             ) : (
                 <p className="text-[11px] text-text-secondary">No checks yet.</p>
             )}
@@ -654,7 +654,7 @@ export default function AiRoutingModule() {
                 <p className="text-[11px] text-text-secondary mb-2">
                     Chosen automatically from every enabled credential. Rogly uses its best-checked model for the job (by name until checks have run). Use Change to choose a provider and model for one task at one plan level; Auto returns it to the engine&apos;s pick.
                 </p>
-                <table className="w-full text-sm">
+                <div className="overflow-x-auto"><table className="w-full text-sm">
                     <thead>
                         <tr className="text-[11px] text-text-secondary text-left">
                             <th className="font-normal py-1 pr-2">Need</th>
@@ -709,7 +709,7 @@ export default function AiRoutingModule() {
                             </tr>
                         ))}
                     </tbody>
-                </table>
+                </table></div>
             </section>
         </div>
     );

@@ -51,7 +51,7 @@ function DeskView({ room, desk, onOpen }: { room: Room; desk: Desk; onOpen: (roo
     );
 }
 
-function RoomView({ room, onOpenRoom, onOpenDesk }: { room: Room; onOpenRoom: (room: Room) => void; onOpenDesk: (room: Room, desk: Desk) => void }) {
+export function RoomView({ room, onOpenRoom, onOpenDesk }: { room: Room; onOpenRoom: (room: Room) => void; onOpenDesk: (room: Room, desk: Desk) => void }) {
     const talking = room.desks.filter((d) => d.says).slice(0, 2);
     return (
         <section className="overflow-hidden rounded-xl border border-border bg-background-card/60" aria-label={`${room.name} office`}>
@@ -83,7 +83,7 @@ function RoomView({ room, onOpenRoom, onOpenDesk }: { room: Room; onOpenRoom: (r
     );
 }
 
-function AppsDrawer({ onClose }: { onClose: () => void }) {
+export function AppsDrawer({ onClose }: { onClose: () => void }) {
     const wm = useWindowManager();
     const auth = useOsAuth();
     const [query, setQuery] = useState('');
@@ -175,8 +175,8 @@ export default function OfficeModule() {
 
             <div className="space-y-3 p-3">
                 <section aria-label="Lobby board" className={`rounded-xl border px-3 py-2.5 ${waitingTotal ? 'border-amber-400/40 bg-amber-400/5' : 'border-border'}`}>
-                    <div className="flex items-center gap-2">
-                        <strong className="flex-1 text-sm">{waitingTotal ? `${waitingTotal} thing${waitingTotal === 1 ? '' : 's'} need${waitingTotal === 1 ? 's' : ''} you` : 'Nothing needs you right now'}</strong>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <strong className="min-w-0 flex-1 text-sm">{waitingTotal ? `${waitingTotal} thing${waitingTotal === 1 ? '' : 's'} need${waitingTotal === 1 ? 's' : ''} you` : 'Nothing needs you right now'}</strong>
                         {workingTotal ? <span className="text-[11px] text-sky-300">{workingTotal} working now</span> : null}
                         <button type="button" className="ui-button" onClick={openWork}>Open the queue</button>
                     </div>
@@ -185,8 +185,8 @@ export default function OfficeModule() {
                             {queue.slice(0, 4).map(({ item, job }) => (
                                 <li key={item.key}>
                                     <button type="button" onClick={openWork} className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-xs hover:bg-white/5">
-                                        <span className="w-28 shrink-0 truncate text-text-secondary">{job.companyName} · {memberName(memberOf(job))}</span>
-                                        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                                        <span className="hidden w-28 shrink-0 truncate text-text-secondary sm:block">{job.companyName} · {memberName(memberOf(job))}</span>
+                                        <span className="min-w-0 flex-1"><span className="block truncate">{item.label}</span><span className="block truncate text-[10px] text-text-secondary sm:hidden">{job.companyName} · {memberName(memberOf(job))}</span></span>
                                     </button>
                                 </li>
                             ))}
@@ -202,7 +202,7 @@ export default function OfficeModule() {
                         <button type="button" className="ui-button mt-2" onClick={() => wm.open('companies')}>Add a company</button>
                     </div>
                 ) : (
-                    <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))]">
+                    <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr))]">
                         {rooms.map((room) => <RoomView key={room.companyId} room={room} onOpenRoom={openRoom} onOpenDesk={openDesk} />)}
                     </div>
                 )}

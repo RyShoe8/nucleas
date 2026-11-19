@@ -154,7 +154,7 @@ function Breakdown({ title, rows, total, noTokens = false }: { title: string; ro
     return (
         <section>
             <h3 className="text-[11px] uppercase tracking-wider text-text-secondary mb-1">{title}</h3>
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto"><table className="w-full text-sm">
                 <tbody>
                     {rows.slice(0, 12).map((r) => (
                         <tr key={r.key} className="border-t border-border">
@@ -173,7 +173,7 @@ function Breakdown({ title, rows, total, noTokens = false }: { title: string; ro
                         </tr>
                     ))}
                 </tbody>
-            </table>
+            </table></div>
         </section>
     );
 }

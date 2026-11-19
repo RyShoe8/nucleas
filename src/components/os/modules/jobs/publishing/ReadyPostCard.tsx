@@ -154,7 +154,7 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
                         <button type="button" className="ui-button-primary" onClick={() => setMarking(true)}>Mark as added</button>
                         {delivery.editableFields?.length ? <button type="button" className="ui-button" disabled={busy !== null} onClick={() => { setFieldValues(Object.fromEntries(delivery.editableFields!.map(field => [field.key, field.value]))); setEditing(true); }}>Edit deal</button> : null}
                         <span className="flex-1" />
-                        <button type="button" className="text-[11px] text-text-secondary hover:text-text-primary" disabled={busy !== null} onClick={() => window.confirm('Skip this one? Nobody will be asked to add it.') && void run('skip', { action: 'skip_post' })}>Skip</button>
+                        <button type="button" className="min-h-[36px] px-2 text-[11px] text-text-secondary hover:text-text-primary sm:min-h-0 sm:px-0" disabled={busy !== null} onClick={() => window.confirm('Skip this one? Nobody will be asked to add it.') && void run('skip', { action: 'skip_post' })}>Skip</button>
                     </div>
                 ))}
                 {copied === 'failed' ? <p className="text-[11px] text-red-400">Could not copy. Select the text and copy it by hand.</p> : null}
@@ -231,7 +231,7 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
                     <button type="button" className="ui-button-primary" onClick={() => setMarking(true)}>Mark as posted</button>
                     <span className="flex-1" />
                     <button type="button" className="ui-button" onClick={() => setEditing(true)}>Edit</button>
-                    <button type="button" className="text-[11px] text-text-secondary hover:text-text-primary" disabled={busy !== null} onClick={() => window.confirm('Skip this post? Nobody will be asked to post it.') && void run('skip', { action: 'skip_post' })}>Skip</button>
+                    <button type="button" className="min-h-[36px] px-2 text-[11px] text-text-secondary hover:text-text-primary sm:min-h-0 sm:px-0" disabled={busy !== null} onClick={() => window.confirm('Skip this post? Nobody will be asked to post it.') && void run('skip', { action: 'skip_post' })}>Skip</button>
                 </div>
             ) : null}
             {isReddit && !subreddit ? <p className="text-[11px] text-text-secondary">No subreddit is set for this company. Add it in the Company window.</p> : null}
@@ -267,7 +267,7 @@ function FollowingPost({ jobId, delivery, onChange }: { jobId: string; delivery:
                 <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide">{PLATFORM_LABEL[delivery.platform]}</span>
                 <span className="flex-1" />
                 {limit && delivery.platform === 'bluesky' ? <span className={`text-[11px] tabular-nums ${over ? 'text-red-400' : 'text-text-secondary'}`} aria-live="polite">{length} / {limit}{over ? ' · too long' : ''}</span> : null}
-                {!editing ? <button type="button" className="text-[11px] text-text-secondary hover:text-text-primary" onClick={() => { setBody(delivery.body); setEditing(true); }}>Edit</button> : null}
+                {!editing ? <button type="button" className="min-h-[36px] px-2 text-[11px] text-text-secondary hover:text-text-primary sm:min-h-0 sm:px-0" onClick={() => { setBody(delivery.body); setEditing(true); }}>Edit</button> : null}
             </div>
             {editing ? (
                 <div className="space-y-1" onKeyDown={(e) => { if (e.key === 'Escape') setEditing(false); if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !busy && !over) void save(); }}>

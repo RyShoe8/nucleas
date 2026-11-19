@@ -72,7 +72,7 @@ export default function TodayModule() {
                 ))}
             </div>
 
-            <table className="w-full text-sm border-collapse">
+            <div className="overflow-x-auto"><table className="w-full text-sm border-collapse">
                 <thead>
                     <tr className="text-[11px] text-text-secondary text-left">
                         <th className="font-normal py-1 pr-2">Business</th>
@@ -118,7 +118,7 @@ export default function TodayModule() {
                         </tr>
                     ))}
                 </tbody>
-            </table>
+            </table></div>
             <p className="text-[11px] text-text-secondary">Last 7 complete days vs the 7 before. Subscribers and monthly recurring revenue are current values vs a week ago.</p>
         </div>
     );

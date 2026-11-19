@@ -72,10 +72,10 @@ type Tab = 'todo' | 'settings' | 'history';
 
 function Segmented<T extends string>({ value, options, onChange, disabled, label }: { value: T; options: { value: T; label: string; title?: string }[]; onChange: (value: T) => void; disabled?: boolean; label: string }) {
     return (
-        <div role="radiogroup" aria-label={label} className="inline-flex overflow-hidden rounded border border-border text-xs">
+        <div role="radiogroup" aria-label={label} className="flex w-full flex-wrap overflow-hidden rounded border border-border text-xs sm:inline-flex sm:w-auto">
             {options.map((option) => (
                 <button key={option.value} type="button" role="radio" aria-checked={value === option.value} title={option.title} disabled={disabled} onClick={() => value !== option.value && onChange(option.value)}
-                    className={`px-2.5 py-1 disabled:cursor-not-allowed disabled:opacity-50 ${value === option.value ? 'bg-primary text-white' : 'hover:bg-background-card'}`}>
+                    className={`min-h-[36px] flex-1 px-2.5 py-1.5 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:flex-none sm:py-1 ${value === option.value ? 'bg-primary text-white' : 'hover:bg-background-card'}`}>
                     {option.label}
                 </button>
             ))}
@@ -85,8 +85,8 @@ function Segmented<T extends string>({ value, options, onChange, disabled, label
 
 function SettingRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
     return (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border py-2.5 last:border-b-0">
-            <div className="min-w-[160px] flex-1"><p className="text-sm">{label}</p>{hint ? <p className="text-[11px] text-text-secondary">{hint}</p> : null}</div>
+        <div className="flex flex-col gap-2 border-b border-border py-2.5 last:border-b-0 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-1">
+            <div className="min-w-0 sm:min-w-[160px] sm:flex-1"><p className="text-sm">{label}</p>{hint ? <p className="text-[11px] text-text-secondary">{hint}</p> : null}</div>
             <div className="flex flex-wrap items-center gap-2">{children}</div>
         </div>
     );
@@ -142,7 +142,7 @@ function TodoTab({ job, focus, onChange, onViewRun }: { job: JobView; focus?: Qu
     );
 }
 
-function SettingsTab({ job, onChange }: { job: JobView; onChange: (job: JobView) => void }) {
+export function SettingsTab({ job, onChange }: { job: JobView; onChange: (job: JobView) => void }) {
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [name, setName] = useState(job.design?.title ?? '');
@@ -226,8 +226,8 @@ function SettingsTab({ job, onChange }: { job: JobView; onChange: (job: JobView)
                 ) : null}
                 {d ? (
                     <SettingRow label="Name">
-                        <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); if (name.trim() !== d.title) void save('rename', { action: 'rename', title: name }); }}>
-                            <input className="ui-control h-8 w-56 text-xs" value={name} maxLength={120} disabled={!can} aria-label="Job name" onChange={(e) => setName(e.target.value)} />
+                        <form className="flex w-full items-center gap-2 sm:w-auto" onSubmit={(e) => { e.preventDefault(); if (name.trim() !== d.title) void save('rename', { action: 'rename', title: name }); }}>
+                            <input className="ui-control h-8 w-full min-w-0 text-xs sm:w-56" value={name} maxLength={120} disabled={!can} aria-label="Job name" onChange={(e) => setName(e.target.value)} />
                             {name.trim() !== d.title ? <button type="submit" className="ui-button" disabled={busy !== null}>Save</button> : null}
                         </form>
                     </SettingRow>
@@ -243,7 +243,7 @@ function SettingsTab({ job, onChange }: { job: JobView; onChange: (job: JobView)
             {busy ? <p className="text-xs text-text-secondary" role="status">Saving…</p> : null}
             {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
             {can && !job.runs.some((r) => r.status === 'running') ? (
-                <button type="button" className="text-xs text-text-secondary underline hover:text-red-300" disabled={busy !== null} onClick={() => window.confirm('Archive this job? It stops running and leaves this list. Its history is kept.') && void save('archive', { action: 'archive' })}>Archive this job</button>
+                <button type="button" className="min-h-[36px] text-xs text-text-secondary underline hover:text-red-300 sm:min-h-0" disabled={busy !== null} onClick={() => window.confirm('Archive this job? It stops running and leaves this list. Its history is kept.') && void save('archive', { action: 'archive' })}>Archive this job</button>
             ) : null}
         </div>
     );
@@ -281,7 +281,7 @@ function HistoryTab({ job, onViewRun }: { job: JobView; onViewRun: (run: JobRunV
                             <span className="w-28 shrink-0 text-text-secondary">{new Date(run.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
                             <span className="min-w-0 flex-1 truncate">{run.dryRun ? 'Trial run · ' : ''}{run.error ?? run.output?.summary ?? `${run.output?.records.length ?? 0} results`}</span>
                             <Pill tone={run.status === 'failed' ? 'bad' : run.status === 'needs_review' ? 'wait' : run.status === 'rejected' ? 'off' : 'on'}>{run.status === 'needs_review' ? 'Waiting' : run.status === 'completed' ? 'Done' : run.status === 'rejected' ? 'Rejected' : 'Failed'}</Pill>
-                            <button type="button" className="text-primary underline" onClick={() => onViewRun(run)}>Details</button>
+                            <button type="button" className="min-h-[32px] px-1 text-primary underline sm:min-h-0" onClick={() => onViewRun(run)}>Details</button>
                         </li>
                     ))}
                 </ul>
@@ -296,7 +296,7 @@ function HistoryTab({ job, onViewRun }: { job: JobView; onViewRun: (run: JobRunV
     );
 }
 
-function JobPanel({ job, focus, onChange }: { job: JobView; focus?: QueueItem['target']; onChange: (job: JobView) => void }) {
+export function JobPanel({ job, focus, onChange }: { job: JobView; focus?: QueueItem['target']; onChange: (job: JobView) => void }) {
     const waiting = queueFor(job).length;
     const [tab, setTab] = useState<Tab>('todo');
     const [viewRun, setViewRun] = useState<JobRunView | null>(null);
@@ -313,10 +313,10 @@ function JobPanel({ job, focus, onChange }: { job: JobView; focus?: QueueItem['t
     const canRun = job.canManage && ['ready', 'active'].includes(job.status) && job.deliveryRunnable && !jobIsBusy(job);
     const tabs: { id: Tab; label: string }[] = [{ id: 'todo', label: waiting ? `To do · ${waiting}` : 'To do' }, { id: 'settings', label: 'Settings' }, { id: 'history', label: 'History' }];
     return (
-        <div className="space-y-3 pb-3 pl-9 pr-3">
-            <div className="flex flex-wrap items-center border-b border-border" role="tablist" aria-label={`${job.design?.title ?? 'Job'} sections`}>
+        <div className="space-y-3 pb-3 pl-3 pr-3 sm:pl-9">
+            <div className="flex items-center overflow-x-auto border-b border-border" role="tablist" aria-label={`${job.design?.title ?? 'Job'} sections`}>
                 {tabs.map((t) => (
-                    <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)} className={`-mb-px border-b-2 px-3 py-2 text-xs ${tab === t.id ? 'border-text-primary text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>{t.label}</button>
+                    <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)} className={`-mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-2.5 text-xs sm:py-2 ${tab === t.id ? 'border-text-primary text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>{t.label}</button>
                 ))}
                 <span className="flex-1" />
                 {canRun ? <button type="button" className="ui-button my-1" disabled={busy} onClick={() => void runNow()}>{busy ? 'Starting…' : job.publishing ? 'Check now' : 'Run now'}</button> : null}
@@ -463,7 +463,7 @@ export default function WorkBoard({ jobs, activity, names, selected, createdId, 
                                                         const mode = modeLine(job);
                                                         return (
                                                             <li key={job.id} id={`work-job-${job.id}`} className="scroll-mt-2">
-                                                                <button type="button" aria-expanded={jobOpen} onClick={() => open.set(jobKey, !jobOpen)} className="flex w-full items-center gap-2 py-2.5 pl-9 pr-3 text-left hover:bg-background-elevated/40">
+                                                                <button type="button" aria-expanded={jobOpen} onClick={() => open.set(jobKey, !jobOpen)} className="flex w-full items-center gap-2 py-2.5 pl-4 pr-3 text-left hover:bg-background-elevated/40 sm:pl-9">
                                                                     <span aria-hidden="true" className="w-3 text-text-secondary">{jobOpen ? '▾' : '▸'}</span>
                                                                     <span className="min-w-0 flex-1">
                                                                         <span className="block truncate text-sm">{job.design?.title ?? job.request}</span>
@@ -478,7 +478,7 @@ export default function WorkBoard({ jobs, activity, names, selected, createdId, 
                                                     })}
                                                     {group.activity.map((item) => (
                                                         <li key={item.id}>
-                                                            <button type="button" onClick={() => wm.open(item.open.window, item.open.payload ? { payload: item.open.payload } : undefined)} className="flex w-full items-center gap-2 py-2.5 pl-9 pr-3 text-left hover:bg-background-elevated/40">
+                                                            <button type="button" onClick={() => wm.open(item.open.window, item.open.payload ? { payload: item.open.payload } : undefined)} className="flex w-full items-center gap-2 py-2.5 pl-4 pr-3 text-left hover:bg-background-elevated/40 sm:pl-9">
                                                                 <span aria-hidden="true" className="w-3" />
                                                                 <span className="min-w-0 flex-1">
                                                                     <span className="block truncate text-sm">{item.title}</span>
