@@ -16,6 +16,13 @@ describe('verifyCredential', () => {
     expect(JSON.stringify(rejected)).not.toContain('example-key');
     expect(rejected).toMatchObject({ ok: false, reason: 'invalid_credential' });
   });
+  it('checks a Serper key with one search and reports a bad key or no credits', async () => {
+    const f = fakeFetch(200, { organic: [{ title: 't', link: 'https://a.com' }] });
+    expect(await verifyCredential('serper', 'serper-key', f)).toEqual({ ok: true, accountLabel: 'Serper' });
+    expect(f.mock.calls[0][1]?.headers).toMatchObject({ 'x-api-key': 'serper-key' });
+    expect(await verifyCredential('serper', 'serper-key', fakeFetch(401, { message: 'Unauthorized.' }))).toMatchObject({ ok: false, reason: 'invalid_credential' });
+    expect(await verifyCredential('serper', 'serper-key', fakeFetch(400, { message: 'Not enough credits' }))).toMatchObject({ ok: false, reason: 'plan_limited' });
+  });
   it('reads Brevo account identity and plan', async () => {
     const f = fakeFetch(200, { companyName: 'Frugal Gambler', plan: [{ type: 'free' }] });
     const out = await verifyCredential('brevo', 'xkeysib-abc', f);

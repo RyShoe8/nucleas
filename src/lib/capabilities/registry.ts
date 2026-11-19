@@ -5,6 +5,8 @@ import { defaultRange } from './adapters/http';
 import { ga4Traffic, gscPerformance, type SearchOutput, type TrafficOutput } from './adapters/google';
 import { brevoAudience, mercuryCash, stripeRevenue, type CashOutput, type EmailAudienceOutput, type RevenueOutput } from './adapters/commerce';
 import { adsenseRevenue, type AdRevenueOutput } from './adapters/adsense';
+import { searchOpportunities, type SearchOpportunitiesOutput } from './adapters/searchOpportunities';
+import { serperSearch, type SerpOutput } from './adapters/serper';
 import { ahrefsOverview, ensureAhrefsProject, findProjectForDomain, listAhrefsProjects, type SeoOverviewOutput } from './adapters/ahrefs';
 
 export const SEARCH_LAG_DAYS = 2;
@@ -51,6 +53,74 @@ const searchPerformance: CapabilityDefinition<DaysInput, SearchOutput> = {
     // Search Console data lags ~2 days; ask for the window ending 2 days ago.
     const output = await gscPerformance(ctx, defaultRange(input.days, ctx.now, SEARCH_LAG_DAYS));
     return { output, summary: `${output.totals.clicks.toLocaleString('en-US')} clicks, ${output.totals.impressions.toLocaleString('en-US')} impressions` };
+  },
+};
+
+const opportunitiesInput = z.object({
+  days: z.number().int().min(7).max(90).default(28),
+  minImpressions: z.number().int().min(1).max(100_000).default(50),
+  minPosition: z.number().min(1).max(100).default(8),
+  maxPosition: z.number().min(1).max(100).default(20),
+  website: z.string().max(253).optional(),
+}).strict();
+
+const searchOpportunitiesRead: CapabilityDefinition<z.infer<typeof opportunitiesInput>, SearchOpportunitiesOutput> = {
+  id: 'search.opportunities.read',
+  version: 1,
+  title: 'Search opportunities',
+  domain: 'search',
+  kind: 'read',
+  risk: 'read',
+  approval: 'auto',
+  provider: 'gsc',
+  requiresResource: 'site',
+  input: opportunitiesInput,
+  cacheSeconds: 6 * 3600,
+  toolDescription: "SEO opportunities from one company's own Search Console data (free): striking-distance queries (ranking 8-20 with real impressions), queries split between several of its own pages (cannibalization), top positions with poor click-through (title and description fixes), and pages losing clicks versus the previous period. Optional website limits it to one of the company's sites.",
+  toolParameters: {
+    days: { type: 'integer', description: 'Window in days (7-90, default 28)' },
+    minImpressions: { type: 'integer', description: 'Ignore queries with fewer impressions in the window (default 50)' },
+    minPosition: { type: 'number', description: 'Striking distance starts at this average position (default 8)' },
+    maxPosition: { type: 'number', description: 'Striking distance ends at this average position (default 20)' },
+    website: { type: 'string', description: "One of the company's websites, e.g. example.com (default: all of them)" },
+  },
+  async run(ctx, input) {
+    if (input.minPosition > input.maxPosition) throw new CapabilityError('failed', 'minPosition must not be above maxPosition.');
+    const output = await searchOpportunities(ctx, input, SEARCH_LAG_DAYS);
+    return { output, summary: `${output.strikingDistance.length} striking-distance queries, ${output.competingPages.length} with competing pages, ${output.decliningPages.length} declining pages` };
+  },
+};
+
+const serpInput = z.object({
+  query: z.string().trim().min(2).max(200),
+  country: z.string().trim().toLowerCase().regex(/^[a-z]{2}$/).default('us'),
+  language: z.string().trim().toLowerCase().regex(/^[a-z]{2}(-[a-z]{2})?$/).default('en'),
+  location: z.string().trim().max(120).optional(),
+}).strict();
+
+const searchResultsRead: CapabilityDefinition<z.infer<typeof serpInput>, SerpOutput> = {
+  id: 'search.results.read',
+  version: 1,
+  title: 'Google results for a search',
+  domain: 'search',
+  kind: 'read',
+  risk: 'read',
+  approval: 'auto',
+  provider: 'serper',
+  input: serpInput,
+  // Each search spends a paid credit; the same search within two weeks is answered from the receipt.
+  cacheSeconds: 14 * 86_400,
+  maxOutputBytes: 60_000,
+  toolDescription: 'Live Google results for one search phrase (one paid Serper credit, reused for 14 days): the top 10 pages with titles and domains, People also ask questions, related searches, any answer box, and where the company ranks. Use it to see search intent and the format that wins (list, guide, comparison, product page) for a shortlisted keyword, not for broad keyword discovery.',
+  toolParameters: {
+    query: { type: 'string', description: 'The exact search phrase', required: true },
+    country: { type: 'string', description: 'Two-letter country code (default us)' },
+    language: { type: 'string', description: 'Language code (default en)' },
+    location: { type: 'string', description: 'Optional city or region, e.g. "Las Vegas, Nevada, United States"' },
+  },
+  async run(ctx, input) {
+    const output = await serperSearch(ctx, input);
+    return { output, summary: `Top ${output.organic.length} results for "${input.query}"${output.companyPosition ? `; the company ranks #${output.companyPosition}` : '; the company is not in the top 10'}` };
   },
 };
 
@@ -184,6 +254,8 @@ const seoProjectCreate: CapabilityDefinition<Record<string, never>, { projectId:
 export const CAPABILITIES: CapabilityDefinition[] = [
   analyticsTraffic,
   searchPerformance,
+  searchOpportunitiesRead,
+  searchResultsRead,
   emailAudience,
   paymentsRevenue,
   adRevenue,

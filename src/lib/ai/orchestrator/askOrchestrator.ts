@@ -55,7 +55,13 @@ const planSchema = z.object({
   compareSiteSize: z.boolean().default(false),
   clarifyQuestion: z.string().max(500).optional(),
   fetch: z
-    .array(z.object({ company: z.string().max(200), tool: z.string().max(100), days: z.number().int().min(1).max(365).optional() }))
+    .array(z.object({
+        company: z.string().max(200),
+        tool: z.string().max(100),
+        days: z.number().int().min(1).max(365).optional(),
+        /** The tool's own arguments (a search phrase, a URL, a country); each tool checks them. */
+        args: z.record(z.union([z.string().max(500), z.number(), z.boolean()])).refine((a) => Object.keys(a).length <= 10).optional(),
+      }))
     .max(MAX_FETCH_JOBS)
     .default([]),
   actions: z.array(z.object({ company: z.string().max(200), tool: z.string().max(100) })).max(MAX_ACTIONS).default([]),
@@ -200,12 +206,78 @@ function money(cents: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(cents / 100);
 }
 
+/** The arguments a tool takes besides company and days, for the planner's catalog. */
+function toolArgsLine(def: { function: { parameters?: unknown } }): string {
+  const params = def.function.parameters as { properties?: Record<string, { description?: string }>; required?: string[] } | undefined;
+  const keys = Object.keys(params?.properties ?? {}).filter((key) => key !== 'company' && key !== 'days');
+  if (!keys.length) return '';
+  return ` Args: ${keys.map((key) => `${key}${params?.required?.includes(key) ? ' (required)' : ''}`).join(', ')}.`;
+}
+
+type SerpLine = { position: number; title: string; domain: string; url: string };
+type OutlineLine = { ok?: boolean; url: string; title?: string | null; wordCount?: number; headings?: { level: number; text: string }[]; structuredData?: string[]; error?: string };
+
+function outlineLines(outline: OutlineLine, indent: string): string[] {
+  if (outline.ok === false) return [`${indent}${outline.url}: ${outline.error ?? 'could not be read'}`];
+  const heads = (outline.headings ?? []).filter((h) => h.level <= 2).slice(0, 14).map((h) => `${h.level === 1 ? 'H1' : 'H2'} ${h.text}`);
+  return [
+    `${indent}${outline.url} · ${outline.wordCount ?? 0} words${outline.structuredData?.length ? ` · schema: ${outline.structuredData.slice(0, 6).join(', ')}` : ''}`,
+    ...(heads.length ? [`${indent}  ${heads.join(' | ')}`] : []),
+  ];
+}
+
+/** SEO tool results, compact enough for the writer to use every row it needs. */
+function seoFacts(company: string, tool: string, result: Record<string, unknown>): string[] | null {
+  if (tool === 'keyword_ideas' && Array.isArray(result.ideas)) {
+    const ideas = result.ideas as { keyword: string }[];
+    return [
+      `Keyword ideas for "${String(result.seed)}" (${String(result.country)}, Google autocomplete, no volumes; ${ideas.length} ideas${result.cached ? ', cached' : ''}):`,
+      `  ${ideas.slice(0, 120).map((i) => i.keyword).join('; ')}`,
+      ...(Array.isArray(result.questions) && result.questions.length ? [`  Questions: ${(result.questions as string[]).slice(0, 40).join('; ')}`] : []),
+    ];
+  }
+  if (tool === 'page_outline' && typeof result.url === 'string') {
+    return [`Page outline${result.title ? ` "${String(result.title)}"` : ''}${result.metaDescription ? ` (description: ${String(result.metaDescription).slice(0, 200)})` : ''}:`, ...outlineLines({ ...(result as OutlineLine), ok: true }, '  ')];
+  }
+  const output = result.output as Record<string, unknown> | undefined;
+  if (tool === 'search_opportunities_read' && output) {
+    const rows = (list: unknown, fmt: (r: Record<string, unknown>) => string) => (Array.isArray(list) ? (list as Record<string, unknown>[]).slice(0, 25).map((r) => `  - ${fmt(r)}`) : []);
+    return [
+      `${company} search opportunities (Search Console ${String(output.startDate)} to ${String(output.endDate)}${output.website ? `, ${String(output.website)} only` : ''}):`,
+      'Striking distance (query → page, avg position, impressions, clicks):',
+      ...rows(output.strikingDistance, (r) => `${String(r.query)} → ${String(r.page)} · pos ${String(r.position)} · ${String(r.impressions)} impr · ${String(r.clicks)} clicks`),
+      'Competing pages (one query split between own pages):',
+      ...rows(output.competingPages, (r) => `${String(r.query)} (${String(r.impressions)} impr): ${((r.pages as { page: string; position: number }[]) ?? []).map((p) => `${p.page} pos ${p.position}`).join(' vs ')}`),
+      'Low click-through at top positions:',
+      ...rows(output.lowClickThrough, (r) => `${String(r.query)} → ${String(r.page)} · pos ${String(r.position)} · CTR ${String(r.ctr)}% on ${String(r.impressions)} impr`),
+      'Pages losing clicks vs the previous period:',
+      ...rows(output.decliningPages, (r) => `${String(r.page)} · ${String(r.previousClicks)} → ${String(r.clicks)} clicks (${String(r.changePct)}%)`),
+    ];
+  }
+  if (tool === 'search_results_read' && output && Array.isArray(output.organic)) {
+    return [
+      `Google results for "${String(output.query)}" (${String(output.country)}${output.location ? `, ${String(output.location)}` : ''}): ${output.companyPosition ? `${company} ranks #${String(output.companyPosition)} (${String(output.companyUrl)})` : `${company} is not in the top 10`}.`,
+      ...(output.organic as SerpLine[]).map((r) => `  ${r.position}. ${r.title} — ${r.domain} (${r.url})`),
+      ...(Array.isArray(output.peopleAlsoAsk) && output.peopleAlsoAsk.length ? [`  People also ask: ${(output.peopleAlsoAsk as { question: string }[]).map((q) => q.question).join(' | ')}`] : []),
+      ...(Array.isArray(output.relatedSearches) && output.relatedSearches.length ? [`  Related searches: ${(output.relatedSearches as string[]).join('; ')}`] : []),
+      ...(output.answerBox ? [`  Answer box: ${(output.answerBox as { text: string }).text}`] : []),
+      ...(Array.isArray(result.outlines) ? ['  Top pages:', ...(result.outlines as OutlineLine[]).flatMap((o) => outlineLines(o, '    '))] : []),
+    ];
+  }
+  return null;
+}
+
 /** Turns raw tool results into a readable fact sheet (money converted from cents so numbers match what is written). */
 export function factSheet(results: { company: string; tool: string; result: Record<string, unknown> }[]): string {
   const lines: string[] = [];
   for (const { company, tool, result } of results) {
     if (!result.ok) {
       lines.push(`- ${company} / ${tool}: unavailable (${String(result.error ?? result.status ?? 'unknown')})`);
+      continue;
+    }
+    const seo = seoFacts(company, tool, result);
+    if (seo) {
+      lines.push(...seo);
       continue;
     }
     if (tool === 'company_activity' && Array.isArray(result.changes)) {
@@ -266,7 +338,8 @@ function plannerPrompt(context: PortfolioContext, toolCatalog: string, today: st
     'For deepResearch.strategy only: ' + strategyInstructions,
     `- qualifies: for any list or search, ${WHAT_COUNTS_GUIDANCE}`,
     '- compareSiteSize: true when the user wants websites sorted or compared by how big or popular they are. Nucleas looks that up itself.',
-    `- fetch: at most ${MAX_FETCH_JOBS} jobs, only for company data. Prefer company_metrics. Only request tools listed for that company.`,
+    `- fetch: at most ${MAX_FETCH_JOBS} jobs, only for company data. Prefer company_metrics. Only request tools listed for that company. Put a tool's own arguments (listed after "Args:") in args, e.g. {"company":"<name>","tool":"search_results_read","args":{"query":"best slot apps","outlineTop":3}}.`,
+    '- SEO data, cheapest first: keyword_ideas (free) for discovery and long-tail ideas from a seed; search_opportunities_read (free, the company\'s own Search Console) for what to improve, striking-distance queries, competing pages and declining pages; page_outline (free) for one page\'s structure; search_results_read (paid: one credit per phrase) only for a few shortlisted phrases, at most 3 per answer, with outlineTop 3 when the user wants a content brief or to know what ranks. keyword_ideas and page_outline need no company: set company to the company the question is about, or "general". Autocomplete has no search volumes; never invent volumes.',
     `- actions: only when the user explicitly asks for a change; at most ${MAX_ACTIONS}.`,
     '- job: only for work that repeats or keeps watching ("every day…", "weekly…", "let me know when…"), work that acts outside this chat (adds to a catalog or site, publishes, sends, outreach such as earning backlinks), or when the user asks for a job. Restate the full request (what, for which company, how often, where results should go if said). Nucleas designs the job, asks what it must, and a person approves it. Leave fetch, research and actions empty when you set it. A one-time request for information is NEVER a job, however large: "find", "list", "rank", "compare", "research" and "build me a list" are answered right here with research or deepResearch. A change to site code is a codeChange.',
     '- codeChange: when the user asks to change, fix, add to or plan an edit of a company website or app (its code), OR reports something wrong on it that code would fix ("X shows up where it should not", "remove the listing under Y", a page URL plus a problem), and that company has a code repository listed below. Restate the full request so it stands alone, including any URL, what is wrong and what they want instead. It is planned against the repository and waits for approval; nothing is changed yet. Leave fetch, research and actions empty when you set it. Never answer such a report from guesses about the code.',
@@ -423,7 +496,7 @@ async function runAskOrchestratorUncapped(
   const tools = await buildAssistantTools(viewer, input.context.companies, { fetchImpl: input.fetchImpl });
   const toolDefs = tools.toolSet.definitions.filter((d) => d.function.name !== 'list_companies');
   const writeTools = new Set(CAPABILITIES.filter((c) => c.kind === 'write').map((c) => toolNameFor(c.id)));
-  const toolCatalog = toolDefs.map((d) => `- ${d.function.name}${writeTools.has(d.function.name) ? ' (makes a change)' : ''}: ${d.function.description}`).join('\n');
+  const toolCatalog = toolDefs.map((d) => `- ${d.function.name}${writeTools.has(d.function.name) ? ' (makes a change)' : ''}: ${d.function.description}${toolArgsLine(d)}`).join('\n');
   const repos = await companiesWithRepositories(viewer, input.context.companies.map((c) => c.id));
   const codeCatalog = input.context.companies
     .filter((c) => repos.has(c.id))
@@ -638,8 +711,9 @@ async function runAskOrchestratorUncapped(
   const allowed = new Set(toolDefs.map((d) => d.function.name));
   for (const job of plan.fetch) {
     if (!allowed.has(job.tool) || writeTools.has(job.tool)) continue;
-    say(describeToolCall(job.tool, JSON.stringify({ company: job.company })));
-    const raw = await tools.toolSet.execute(job.tool, JSON.stringify({ company: job.company, ...(job.days ? { days: job.days } : {}) }), { runId });
+    const callArgs = { ...(job.args ?? {}), company: job.company, ...(job.days ? { days: job.days } : {}) };
+    say(describeToolCall(job.tool, JSON.stringify(callArgs)));
+    const raw = await tools.toolSet.execute(job.tool, JSON.stringify(callArgs), { runId });
     fetched.push({ company: job.company, tool: job.tool, result: toolResult(raw) });
   }
   let actionsRun = 0;

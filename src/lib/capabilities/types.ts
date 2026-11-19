@@ -88,6 +88,13 @@ export interface CapabilityDefinition<I = unknown, O = unknown> {
   /** Resource type that must be pinned for the company (ExternalResource.resourceType). */
   requiresResource?: string;
   input: z.ZodType<I, z.ZodTypeDef, unknown>;
+  /**
+   * Extra arguments the AI may pass besides the company (JSON Schema properties). Every value is still checked by
+   * `input`; without this, AI callers can only pass `days`.
+   */
+  toolParameters?: Record<string, { type: 'string' | 'integer' | 'number' | 'boolean'; description: string; enum?: string[]; required?: boolean }>;
+  /** What the tool is for, shown to the AI instead of the generic description. */
+  toolDescription?: string;
   /** Reads: seconds a successful identical result may be reused instead of calling the provider again. */
   cacheSeconds?: number;
   /** Explicit UTF-8 output limit, capped at 2,000,000 bytes; overflow fails the receipt. */

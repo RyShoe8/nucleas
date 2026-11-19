@@ -28,7 +28,7 @@ export interface DeclarePlan {
 }
 
 /** Org-scoped accounts we hold regardless of stacks. */
-const ORG_BASELINE_PROVIDERS = ['ahrefs'];
+const ORG_BASELINE_PROVIDERS = ['ahrefs', 'serper'];
 
 export async function planDeclaredConnections(organizationId: Types.ObjectId): Promise<DeclarePlan> {
   // Planning runs as an administrator view of the org: every company, no team filter.

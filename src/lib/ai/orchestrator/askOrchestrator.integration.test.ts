@@ -103,6 +103,31 @@ async function ask(text: string, level: CostLevel = 'low') {
   return runAskOrchestrator(admin, { text, context, projectId: new Types.ObjectId(), history: [], level });
 }
 
+describe('SEO fact sheet', () => {
+  it('lays out Google results with the top pages, and Search Console opportunities, compactly', () => {
+    const sheet = factSheet([
+      { company: 'Frugal Gambler', tool: 'search_results_read', result: { ok: true, output: {
+        query: 'best slot apps', country: 'us', location: null, companyPosition: null, companyUrl: null,
+        organic: [{ position: 1, title: 'Top apps', domain: 'casinoapps.com', url: 'https://casinoapps.com/apps' }],
+        peopleAlsoAsk: [{ question: 'Which slot app pays most?' }], relatedSearches: ['slot apps real money'], answerBox: null,
+      }, outlines: [{ ok: true, url: 'https://casinoapps.com/apps', wordCount: 1800, structuredData: ['FAQPage'], headings: [{ level: 1, text: 'Best apps' }, { level: 3, text: 'skipped' }, { level: 2, text: 'Payouts' }] }, { ok: false, url: 'https://blocked.com', error: 'Could not read the page: 403' }] } },
+      { company: 'Frugal Gambler', tool: 'search_opportunities_read', result: { ok: true, output: {
+        startDate: '2026-10-21', endDate: '2026-11-17', website: null,
+        strikingDistance: [{ query: 'slot odds', page: 'https://frugalgambler.club/odds', position: 11.4, impressions: 900, clicks: 10 }],
+        competingPages: [], lowClickThrough: [], decliningPages: [{ page: 'https://frugalgambler.club/gone', previousClicks: 40, clicks: 0, changePct: -100 }],
+      } } },
+    ]);
+    expect(sheet).toContain('Google results for "best slot apps" (us): Frugal Gambler is not in the top 10.');
+    expect(sheet).toContain('1. Top apps — casinoapps.com (https://casinoapps.com/apps)');
+    expect(sheet).toContain('People also ask: Which slot app pays most?');
+    expect(sheet).toContain('https://casinoapps.com/apps · 1800 words · schema: FAQPage');
+    expect(sheet).toContain('H1 Best apps | H2 Payouts');
+    expect(sheet).toContain('https://blocked.com: Could not read the page: 403');
+    expect(sheet).toContain('slot odds → https://frugalgambler.club/odds · pos 11.4 · 900 impr · 10 clicks');
+    expect(sheet).toContain('https://frugalgambler.club/gone · 40 → 0 clicks (-100%)');
+  });
+});
+
 describe('engine selection in Ask', () => {
   it('low: #3 paid planner, Rogly writer; high: #1 paid planner and writer, always reviewed', async () => {
     const seen: Record<string, string[]> = {};
@@ -201,6 +226,35 @@ describe('orchestrated Ask', () => {
     expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'work', 'check']);
     expect(out.stages.find((s) => s.stage === 'work')).toMatchObject({ free: true });
     expect(out.costMicros).toBe(3000);
+  });
+
+  it('passes a tool its own arguments from the plan and gives the writer the SEO results', async () => {
+    let plannerSystem = '';
+    let writerInput = '';
+    chat.mockImplementation(async (input) => {
+      const stage = stageOf(input);
+      if (stage === 'plan') {
+        plannerSystem = String(input.systemPrompt ?? '');
+        return reply('{"kind":"answer","scope":"general","fetch":[{"company":"Frugal Gambler","tool":"keyword_ideas","args":{"seed":"slot odds","expand":false,"company":"ignored"}}],"outline":["List the ideas"],"review":false}', 2000);
+      }
+      if (stage === 'work') {
+        writerInput = String(input.userText);
+        return reply('Ideas: slot odds calculator.');
+      }
+      return reply('{"verdict":"ok"}');
+    });
+    const fetchImpl = vi.fn(async (url: string) => {
+      const q = new URL(url).searchParams.get('q')!;
+      return new Response(JSON.stringify([q, ['slot odds calculator', 'how slot odds work']]), { status: 200 });
+    });
+    const text = 'Give me keyword ideas for slot odds';
+    const context = await resolvePortfolioContext(admin, { message: text });
+    await runAskOrchestrator(admin, { text, context, projectId: new Types.ObjectId(), history: [], level: 'low', fetchImpl });
+    expect(plannerSystem).toContain('- keyword_ideas: ');
+    expect(plannerSystem).toContain('Args: seed (required), country, language, expand.');
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('q=slot%20odds');
+    expect(writerInput).toContain('Keyword ideas for "slot odds"');
+    expect(writerInput).toContain('Questions: how slot odds work');
   });
 
   it('sends answers with untraced numbers to the paid reviewer, which can correct them', async () => {

@@ -5,6 +5,7 @@ import Client from '@/lib/models/Client';
 import Project from '@/lib/models/Project';
 import { IntegrationConnection, IntegrationSecret } from '@/lib/models/Integration';
 import { CapabilityInvocation } from '@/lib/models/Capability';
+import { SeoLookup } from '@/lib/models/SeoLookup';
 import { MetricSnapshot } from '@/lib/models/Metric';
 import { sealSecret } from '@/lib/security/secretBox';
 import { listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
@@ -61,7 +62,7 @@ async function sessions(companyId: string, recent: number, prior: number) {
 }
 
 beforeEach(async () => {
-  await Promise.all([Client.deleteMany({}), Project.deleteMany({}), IntegrationConnection.deleteMany({}), IntegrationSecret.deleteMany({}), CapabilityInvocation.deleteMany({}), MetricSnapshot.deleteMany({})]);
+  await Promise.all([Client.deleteMany({}), Project.deleteMany({}), IntegrationConnection.deleteMany({}), IntegrationSecret.deleteMany({}), CapabilityInvocation.deleteMany({}), MetricSnapshot.deleteMany({}), SeoLookup.deleteMany({})]);
   fgId = await company('Frugal Gambler', 'frugalgambler.club', 'owned', [teamEmployee]);
   pbId = await company('PlayBound', 'playbound.club', 'owned');
   await company('Senior By Design', 'seniorbydesign.com', 'client');
@@ -169,6 +170,48 @@ describe('assistant tools', () => {
     expect(String(receipt?.companyId)).toBe(pbId);
     expect(receipt?.status).toBe('plan_limited');
     expect(tools.invocationIds).toHaveLength(1);
+  });
+
+  it('gets Google results with their top pages read, passing the search through and charging a repeat nothing', async () => {
+    await connect(null, 'serper');
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://google.serper.dev/search') {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ q: 'best slot apps', gl: 'gb' });
+        return new Response(JSON.stringify({ organic: [{ title: 'Top slot apps', link: 'https://casinoapps.com/apps', position: 1 }, { title: 'Ours', link: 'https://frugalgambler.club/apps', position: 2 }], peopleAlsoAsk: [], relatedSearches: [] }), { status: 200 });
+      }
+      if (url === 'https://casinoapps.com/apps') return new Response('<html><title>Apps</title><body><h1>Best apps</h1><h2>Payouts</h2></body></html>', { status: 200 });
+      throw new Error(`unexpected ${url}`);
+    });
+    const tools = await buildAssistantTools(admin, await listCompanyProfiles(admin), { fetchImpl });
+    const serp = tools.toolSet.definitions.find((d) => d.function.name === toolNameFor('search.results.read'))!.function.parameters as { required: string[]; properties: Record<string, unknown> };
+    expect(serp.required).toEqual(['company', 'query']);
+    expect(Object.keys(serp.properties)).toEqual(expect.arrayContaining(['query', 'country', 'outlineTop']));
+
+    const args = JSON.stringify({ company: 'Frugal Gambler', query: 'best slot apps', country: 'GB', outlineTop: 1 });
+    const out = JSON.parse(await tools.toolSet.execute(toolNameFor('search.results.read'), args, { runId: new Types.ObjectId() }));
+    expect(out).toMatchObject({ ok: true, output: { companyPosition: 2 }, outlines: [{ ok: true, url: 'https://casinoapps.com/apps', headings: [{ level: 1, text: 'Best apps' }, { level: 2, text: 'Payouts' }] }] });
+    const receipt = await CapabilityInvocation.findOne({ capabilityId: 'search.results.read' }).lean();
+    expect(receipt?.input).toEqual({ query: 'best slot apps', country: 'gb', language: 'en' });
+
+    // The same search again: the receipt and the page outline are reused, so nothing is fetched.
+    fetchImpl.mockClear();
+    expect(JSON.parse(await tools.toolSet.execute(toolNameFor('search.results.read'), args, { runId: new Types.ObjectId() }))).toMatchObject({ ok: true, outlines: [{ ok: true }] });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(JSON.parse(await tools.toolSet.execute(toolNameFor('search.results.read'), JSON.stringify({ company: 'Frugal Gambler', query: 'x y', country: 'usa' }), { runId: new Types.ObjectId() }))).toMatchObject({ ok: false });
+  });
+
+  it('gets keyword ideas once and serves the same request from the cache', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      const q = new URL(url).searchParams.get('q')!;
+      return new Response(JSON.stringify([q, [`${q} calculator`]]), { status: 200 });
+    });
+    const tools = await buildAssistantTools(admin, await listCompanyProfiles(admin), { fetchImpl });
+    const first = JSON.parse(await tools.toolSet.execute('keyword_ideas', '{"seed":"Slot Odds","expand":false}', { runId: new Types.ObjectId() }));
+    expect(first).toMatchObject({ ok: true, cached: false, ideas: [{ keyword: 'slot odds calculator' }] });
+    const again = JSON.parse(await tools.toolSet.execute('keyword_ideas', '{"seed":"slot  odds","expand":false}', { runId: new Types.ObjectId() }));
+    expect(again).toMatchObject({ ok: true, cached: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(await tools.toolSet.execute('page_outline', '{"url":"http://insecure.example"}', { runId: new Types.ObjectId() }))).toMatchObject({ ok: false });
   });
 
   it('cannot make changes on behalf of a non-manager', async () => {

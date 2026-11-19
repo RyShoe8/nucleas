@@ -72,6 +72,16 @@ export async function verifyCredential(provider: string, credential: string, fet
         const livemode = Array.isArray(body.data) && (body.data[0] as { livemode?: boolean } | undefined)?.livemode;
         return { ok: true, accountLabel: key.startsWith('rk_test_') ? 'Stripe (test mode)' : 'Stripe', planLabel: livemode === false ? 'test' : undefined };
       }
+      case 'serper': {
+        // Serper has no free account endpoint, so the check is one real search (one credit).
+        const res = await fetchImpl('https://google.serper.dev/search', { method: 'POST', headers: { 'x-api-key': key, 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify({ q: 'serper api check', num: 1 }), signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'error' });
+        const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        const fail = authFailure(res.status, body, key);
+        if (fail) return fail;
+        if (res.status === 400 && /credit/i.test(JSON.stringify(body))) return { ok: false, reason: 'plan_limited', message: 'This Serper account has no credits left.' };
+        if (!res.ok || !Array.isArray(body.organic)) return { ok: false, reason: 'invalid_credential', message: `Serper returned ${res.status}.` };
+        return { ok: true, accountLabel: 'Serper' };
+      }
       case 'ahrefs': {
         const { status, body } = await getJson(fetchImpl, 'https://api.ahrefs.com/v3/subscription-info/limits-and-usage', { authorization: `Bearer ${key}` });
         // A valid key on a plan without API access answers "Insufficient plan" (status not relied on).

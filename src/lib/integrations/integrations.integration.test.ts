@@ -90,15 +90,17 @@ describe('declared connections', () => {
     expect(owned).toEqual(['brevo', 'ga4', 'gsc', 'posthog', 'stripe']);
     expect(plan.items.filter((i) => i.companyId === clientId)).toEqual([]);
     expect(plan.items.find((i) => i.provider === 'ahrefs')).toMatchObject({ companyId: null, scope: 'org' });
+    expect(plan.items.find((i) => i.provider === 'serper')).toMatchObject({ companyId: null, scope: 'org' });
     expect(plan.unmappedTools.PlayBound).toEqual(['buffer']);
   });
 
   it('is idempotent and never overwrites a connected integration', async () => {
     const first = await applyDeclaredConnections(orgId);
-    expect(first.created).toBe(6);
+    // Five for the owned company, plus the organization-wide Ahrefs and Serper accounts.
+    expect(first.created).toBe(7);
     await IntegrationConnection.updateOne({ companyId: new Types.ObjectId(ownedId), provider: 'brevo' }, { $set: { status: 'connected' } });
     const second = await applyDeclaredConnections(orgId);
-    expect(second).toMatchObject({ created: 0, existing: 6 });
+    expect(second).toMatchObject({ created: 0, existing: 7 });
     expect((await IntegrationConnection.findOne({ provider: 'brevo' }).lean())?.status).toBe('connected');
   });
 });

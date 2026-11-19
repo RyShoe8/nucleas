@@ -10,6 +10,9 @@ import { getCompanyMetrics } from '@/lib/metrics/query';
 import type { ExtraToolSet } from '@/lib/ai/tools/runToolLoop';
 import { listJobs, type JobView } from '@/lib/jobs/jobs';
 import { TEAM, teamRoleFor } from '@/lib/companies/teamRoles';
+import { cachedLookup } from '@/lib/seo/cache';
+import { keywordIdeas } from '@/lib/seo/keywordIdeas';
+import { pageOutline } from '@/lib/seo/pageOutline';
 
 /**
  * Portfolio assistant tools. Every tool takes a `company` argument restricted to the companies the
@@ -20,6 +23,12 @@ import { TEAM, teamRoleFor } from '@/lib/companies/teamRoles';
 
 const MAX_TOOL_OUTPUT = 6000;
 const MAX_JOBS_OUTPUT = 16000;
+/** SEO lookups return long lists; the writer still gets a compact version through the fact sheet. */
+const MAX_SEO_OUTPUT = 14000;
+/** Free SEO sources are cached for the organization this long. */
+const KEYWORD_IDEAS_DAYS = 30;
+const SERP_CAPABILITY = 'search.results.read';
+const PAGE_OUTLINE_DAYS = 14;
 
 /** The jobs as the assistant needs them: grouped by company, one compact line of facts per job. */
 export function summarizeJobs(jobs: JobView[]) {
@@ -78,6 +87,7 @@ function takesDays(def: CapabilityDefinition): boolean {
 }
 
 function describe(def: CapabilityDefinition): string {
+  if (def.toolDescription) return def.toolDescription;
   const effect =
     def.kind === 'read'
       ? 'Reads live data.'
@@ -176,6 +186,37 @@ export async function buildAssistantTools(
         },
       },
     },
+    {
+      type: 'function',
+      function: {
+        name: 'keyword_ideas',
+        description:
+          "Keyword ideas for a seed phrase from Google's autocomplete (free, cached 30 days): what people actually type after it, expanded with question words, comparisons and a-z, plus the ones phrased as questions. No search volumes. Use it for keyword discovery and long-tail ideas before spending paid searches.",
+        parameters: {
+          type: 'object',
+          properties: {
+            seed: { type: 'string', description: 'Seed phrase, e.g. "slot machine odds"' },
+            country: { type: 'string', description: 'Two-letter country code (default us)' },
+            language: { type: 'string', description: 'Language code (default en)' },
+            expand: { type: 'boolean', description: 'Expand with question words, comparisons and a-z (default true); false returns only direct completions' },
+          },
+          required: ['seed'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'page_outline',
+        description:
+          "The SEO structure of any public page (free, cached 14 days): title, meta description, canonical, H1-H3 headings in order, word count, internal and external links, images missing alt text, structured data types and published/modified dates. Read through the real browser, so JavaScript sites work. Use it on the pages that rank for a keyword to build a content brief, or on the company's own page to compare.",
+        parameters: {
+          type: 'object',
+          properties: { url: { type: 'string', description: 'Full https URL of the page' } },
+          required: ['url'],
+        },
+      },
+    },
     ...offered.map((d) => ({
       type: 'function' as const,
       function: {
@@ -186,8 +227,10 @@ export async function buildAssistantTools(
           properties: {
             company: companyParam,
             ...(takesDays(d) ? { days: { type: 'integer', description: 'Days of history (1–365, default 28)' } } : {}),
+            ...Object.fromEntries(Object.entries(d.toolParameters ?? {}).map(([key, { required: _required, ...schema }]) => [key, schema])),
+            ...(d.id === SERP_CAPABILITY ? { outlineTop: { type: 'integer', description: 'Also read the SEO outline (headings, length, structured data) of the top N organic results, 0-5 (default 0)' } } : {}),
           },
-          required: ['company'],
+          required: ['company', ...Object.entries(d.toolParameters ?? {}).filter(([, spec]) => spec.required).map(([key]) => key)],
         },
       },
     })),
@@ -218,6 +261,31 @@ export async function buildAssistantTools(
       const one = matchCompany(companies, args.company);
       const jobs = await listJobs(viewer, { ...(one ? { companyId: one.id } : {}), includeClosed: args.includeFinished === true });
       return JSON.stringify({ ok: true, scope: one ? one.name : 'all companies', jobs: summarizeJobs(jobs) }).slice(0, MAX_JOBS_OUTPUT);
+    }
+
+    if (name === 'keyword_ideas') {
+      const seed = typeof args.seed === 'string' ? args.seed : '';
+      const country = typeof args.country === 'string' && /^[a-z]{2}$/i.test(args.country) ? args.country.toLowerCase() : 'us';
+      const language = typeof args.language === 'string' && /^[a-z]{2}(-[a-z]{2})?$/i.test(args.language) ? args.language.toLowerCase() : 'en';
+      const expand = args.expand !== false;
+      try {
+        const key = [seed.toLowerCase().replace(/\s+/g, ' ').trim(), country, language, expand ? 'expand' : 'direct'].join('|');
+        const found = await cachedLookup(viewer.organizationId, 'keyword_ideas', key, KEYWORD_IDEAS_DAYS, () => keywordIdeas({ seed, country, language, expand }, { fetchImpl: options.fetchImpl }));
+        return JSON.stringify({ ok: true, cached: found.cached, fetchedAt: found.fetchedAt, ...found.data }).slice(0, MAX_SEO_OUTPUT);
+      } catch (error) {
+        return JSON.stringify({ ok: false, error: error instanceof Error ? error.message : 'Could not get keyword ideas.' });
+      }
+    }
+
+    if (name === 'page_outline') {
+      const url = typeof args.url === 'string' ? args.url.trim() : '';
+      try {
+        const found = await cachedLookup(viewer.organizationId, 'page_outline', url.toLowerCase(), PAGE_OUTLINE_DAYS, () => pageOutline(url, { fetchImpl: options.fetchImpl }));
+        return JSON.stringify({ ok: true, cached: found.cached, fetchedAt: found.fetchedAt, ...found.data }).slice(0, MAX_SEO_OUTPUT);
+      } catch (error) {
+        // Never an empty outline: say the page could not be read.
+        return JSON.stringify({ ok: false, url, error: `Could not read the page: ${error instanceof Error ? error.message : 'unknown error'}` });
+      }
     }
 
     const company = matchCompany(companies, args.company);
@@ -260,11 +328,29 @@ export async function buildAssistantTools(
 
     const def = byName.get(name);
     if (!def) return JSON.stringify({ ok: false, error: 'Unknown tool.' });
-    const input = takesDays(def) && typeof args.days === 'number' ? { days: Math.round(args.days) } : {};
+    const input: Record<string, unknown> = takesDays(def) && typeof args.days === 'number' ? { days: Math.round(args.days) } : {};
+    // Declared extra arguments pass through as given; the capability's own schema checks them.
+    for (const [key, spec] of Object.entries(def.toolParameters ?? {})) {
+      const value = args[key];
+      if (value === undefined || value === null || value === '') continue;
+      input[key] = spec.type === 'integer' && typeof value === 'number' ? Math.round(value) : value;
+    }
     const res = await invokeCapability(viewer, company.id, def.id, input, { aiRunId: String(context.runId), registry, fetchImpl: options.fetchImpl });
     if (!res.ok) return JSON.stringify({ ok: false, company: company.name, error: res.error });
     const inv = res.invocation;
     invocationIds.push(inv.id);
+    // The pages that rank, read in the same call so one request gives a whole content brief.
+    const outlineTop = def.id === SERP_CAPABILITY && typeof args.outlineTop === 'number' ? Math.min(Math.max(Math.round(args.outlineTop), 0), 5) : 0;
+    const organic = (inv.output as { organic?: { url: string }[] } | null)?.organic ?? [];
+    const outlines = outlineTop && (inv.status === 'succeeded' || inv.status === 'verified')
+      ? await Promise.all(organic.slice(0, outlineTop).map(async ({ url }) => {
+          try {
+            return { ok: true, ...(await cachedLookup(viewer.organizationId, 'page_outline', url.toLowerCase(), PAGE_OUTLINE_DAYS, () => pageOutline(url, { fetchImpl: options.fetchImpl }))).data };
+          } catch (error) {
+            return { ok: false, url, error: `Could not read the page: ${error instanceof Error ? error.message : 'unknown error'}` };
+          }
+        }))
+      : undefined;
     return JSON.stringify({
       ok: inv.status === 'succeeded' || inv.status === 'verified',
       company: company.name,
@@ -273,7 +359,8 @@ export async function buildAssistantTools(
       error: inv.error,
       awaitingApproval: inv.status === 'pending_approval' ? 'A manager must approve this in the Activity list before it runs.' : undefined,
       output: inv.output,
-    }).slice(0, MAX_TOOL_OUTPUT);
+      ...(outlines ? { outlines } : {}),
+    }).slice(0, def.toolParameters ? (outlines ? MAX_SEO_OUTPUT * 2 : MAX_SEO_OUTPUT) : MAX_TOOL_OUTPUT);
   }
 
   return { toolSet: { definitions, execute }, invocationIds };
