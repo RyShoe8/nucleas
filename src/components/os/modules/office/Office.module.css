@@ -1,55 +1,123 @@
-.floor {
-    background-image: linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
-    background-size: 16px 16px;
+.campus {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(430px, 100%), 1fr));
+    align-items: start;
+    gap: 28px;
+    padding: 16px;
+    border: 1px solid #ffffff09;
+    border-radius: 24px;
+    background: repeating-linear-gradient(90deg, #ffffff02 0 1px, transparent 1px 48px), #101822;
 }
+.companyRoom { overflow: hidden; border-radius: 16px; border: 1px solid #63778c55; background: #18232e; box-shadow: 0 9px 0 #090f18, 0 12px 22px #0003; }
+.roomScene { position: relative; height: 440px; overflow: hidden; isolation: isolate; background: #222d38; }
+.backWall { position: absolute; inset: 0 0 auto; height: 100px; background: linear-gradient(180deg, #364553, #273440); border-bottom: 7px solid #16232e; box-shadow: inset 0 -3px #ffffff0b; }
+.window { position: absolute; display: flex; gap: 3px; left: 20px; top: 17px; width: 24%; height: 50px; padding: 4px; background: #14212c; border: 2px solid #778b9d66; border-radius: 4px; box-shadow: 0 0 30px #95bce911; transform: skewY(-2deg); }
+.window span { flex: 1; background: linear-gradient(150deg, #8ba8c6, #526b91 60%, #d3a6a4); }
+.wallSign { position: absolute; left: 32%; top: 23px; max-width: 54%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 12px; border: 1px solid #ffffff22; border-left: 3px solid var(--company-color); border-radius: 5px; background: #19252e; font-size: 11px; letter-spacing: .05em; color: #e1e7ef; box-shadow: 0 4px 8px #0003; }
+.wallLight { position: absolute; right: 18px; top: 20px; width: 5px; height: 30px; border-radius: 8px; background: #ffe8ba; box-shadow: 0 0 25px 9px #ffe8ba15; }
+.roomFloor { position: absolute; inset: 96px 0 0; background: repeating-linear-gradient(90deg, transparent 0 71px, #00000015 71px 73px), repeating-linear-gradient(0deg, #5e5a5114 0 35px, #ffffff06 35px 36px), linear-gradient(160deg, #494c4b, #2f393f); border-left: 8px solid #263640; border-right: 8px solid #263640; }
+.aisle { position: absolute; top: 220px; left: 7%; right: 7%; border-top: 1px solid #ffffff0d; padding-top: 5px; color: #b6c6d33a; font-size: 8px; letter-spacing: .22em; text-align: center; }
+.workstation { position: absolute; width: 29%; max-width: 150px; z-index: 1; pointer-events: none; }
+.workstation img { width: 100%; height: auto; display: block; }
+.personPosition { position: absolute; z-index: 2; width: 84px; transform: translateX(-50%); }
+.personPosition:focus-within, .personPosition:hover { z-index: 4; }
+.person { position: relative; width: 84px; display: flex; flex-direction: column; align-items: center; outline-offset: 4px; border-radius: 12px; }
+.person:focus-visible { outline: 2px solid #d4c5ff; background: #b5a5ff1a; }
+.personArt { display: block; filter: drop-shadow(0 5px 3px #0003); }
+.sprite { display: block; object-fit: contain; user-select: none; }
+.away { opacity: .66; filter: saturate(.65); }
+.nameplate { position: relative; z-index: 1; display: flex; align-items: center; gap: 4px; margin-top: -5px; padding: 3px 6px; border: 1px solid #ffffff18; background: #111c29ee; border-radius: 5px; color: #e1e9f4; font-size: 9px; line-height: 1; box-shadow: 0 3px 8px #0002; }
+.nameplate i { width: 4px; height: 4px; border-radius: 50%; background: #9ca6b6; }
+.nameplate i[data-state=working] { background: #75c7ff; box-shadow: 0 0 6px #75c7ff; }
+.nameplate i[data-state=waiting] { background: #ffcc73; }
+.nameplate i[data-state=idle] { background: #8ad8b6; }
+.personStatus { margin-top: 2px; font-size: 8px; line-height: 1.3; color: #d5dce7; text-shadow: 0 1px 3px #000; }
+.requestBadge { position: absolute; right: 10px; top: 0; display: grid; place-items: center; min-width: 18px; height: 18px; border: 2px solid #3e2f1e; border-radius: 8px 8px 8px 2px; background: #ffcc73; color: #33200d; font-size: 10px; font-weight: 700; box-shadow: 0 2px 6px #0004; }
+.door { position: absolute; bottom: 0; left: 27%; right: 27%; padding: 5px 4px 7px; background: #111b25; border: 1px solid #ffffff11; border-bottom: 0; border-radius: 12px 12px 0 0; color: #8a9ba9; text-align: center; font-size: 7px; letter-spacing: .17em; }
+.door span { display: block; height: 3px; width: 45%; margin: 0 auto 4px; background: var(--company-color); border-radius: 3px; opacity: .65; }
+.strolling { animation: stroll 9s linear infinite; animation-delay: var(--phase); }
+.turning { animation: turn 9s step-end infinite; animation-delay: var(--phase); }
+@keyframes stroll { 0%, 100% { transform: translateX(-10px); } 50% { transform: translateX(10px); } }
+@keyframes turn { 0% { transform: scaleX(1); } 50% { transform: scaleX(-1); } }
+@media (prefers-reduced-motion: reduce) { .strolling, .turning { animation: none; } }
+@media (max-width: 480px) { .campus { padding: 6px; gap: 20px; } .person { width: 70px; } .sprite { max-width: 70px; } .personPosition { width: 70px; } .wallSign { font-size: 9px; } }
 
-.sprite {
-    image-rendering: pixelated;
-    shape-rendering: crispEdges;
-}
+/* A continuous building envelope, shared corridor and two distinct wings. */
+.building { container-type: inline-size; overflow: hidden; border: 8px solid #52626d; border-top-width: 12px; border-radius: 5px; background: repeating-linear-gradient(90deg, #ffffff05 0 1px, transparent 1px 42px), repeating-linear-gradient(0deg, #00000012 0 1px, transparent 1px 42px), #39464b; box-shadow: 0 12px 35px #0004, inset 0 0 0 2px #91a0a644; }
+.buildingHeader { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 22px; background: #1b2930; border-bottom: 5px solid #697d86; }
+.buildingHeader span { font-size: 9px; letter-spacing: .13em; color: #a9bec6; }
+.buildingHeader h2 { font-size: 23px; font-weight: 500; letter-spacing: -.04em; margin: 4px 0 0; color: #f2efe7; }
+.commonRooms { display: grid; grid-template-columns: 1fr 1.2fr; gap: 6px; padding: 14px 14px 0; }
+.meetingRoom, .breakRoom { position: relative; height: 460px; overflow: hidden; border: 5px solid #7a8b91; border-bottom-color: #89b8bc66; background: repeating-linear-gradient(90deg, transparent 0 60px, #ffffff05 60px 61px), #4b5352; box-shadow: inset 0 7px 12px #0003; }
+.breakRoom { background-color: #55544d; }
+.roomCaption { position: absolute; top: 9px; left: 12px; color: #d6e2df; font-size: 8px; letter-spacing: .17em; }
+.sharedDoor { position: absolute; bottom: -5px; left: 36%; width: 28%; text-align: center; padding: 4px 0 6px; border: 1px solid #c0d0d022; background: #39464b; color: #b2c3c5; font-size: 7px; letter-spacing: .15em; }
+.amenity { position: absolute; width: 140px; }
+.amenityButton { position: relative; display: block; width: 100%; border-radius: 12px; outline-offset: 3px; }
+.amenityButton:focus-visible { outline: 2px solid #e2d8a8; }.amenityButton:hover { background: #ffffff0b; }
+.amenityButton img { display: block; width: 100%; height: auto; filter: drop-shadow(0 5px 4px #0003); }
+.amenityName { position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); white-space: nowrap; padding: 3px 6px; background: #17282de8; border: 1px solid #bdcfc32a; color: #e0e8de; font-size: 8px; border-radius: 4px; }
+.amenity_projector { width: 43%; max-width: 185px; left: 29%; top: 28px; }
+.amenity_conference { width: 75%; max-width: 300px; left: 13%; top: 168px; }
+.amenity_coffee { width: 33%; max-width: 145px; left: 3%; top: 28px; }
+.amenity_water { width: 25%; max-width: 118px; left: 34%; top: 37px; }
+.amenity_plant { width: 23%; max-width: 104px; right: 4%; top: 28px; }
+.amenity_pool { width: 48%; max-width: 210px; left: 1%; top: 181px; }
+.amenity_gaming { width: 40%; max-width: 172px; right: 3%; top: 104px; }
+.amenity_couch { width: 45%; max-width: 192px; right: 1%; top: 232px; }
+.amenity_reception { position: relative; width: 130px; flex-shrink: 0; }
+.visitors { position: absolute; display: flex; align-items: end; justify-content: center; left: 0; right: 0; bottom: -20px; pointer-events: none; z-index: 5; }
+.visitor { position: relative; width: 86px; flex: 0 1 86px; min-width: 0; border-radius: 8px; pointer-events: auto; outline-offset: 3px; }
+.visitor:focus-visible { outline: 2px solid #f6d58f; }.visitor img { max-width: 100%; object-fit: contain; }
+.visitor span { display: block; width: max-content; max-width: 75px; position: absolute; left: 50%; bottom: -4px; transform: translateX(-50%); border-radius: 3px; background: #162a30ee; color: #e1e9dc; padding: 2px 3px; font-size: 7px; }
+.arriving { animation: arrive 1.8s ease-out both; }
+@keyframes arrive { from { transform: translate(35px,35px); opacity: .25; } to { transform: translate(0,0); opacity: 1; } }
+.activityEffect { position: absolute; top: 40%; left: 40%; color: #fff7cf; font-size: 15px; pointer-events: none; }
+.amenityActive .activityEffect { animation: useAmenity 2s ease-in-out infinite alternate; }
+@keyframes useAmenity { from { transform: translate(0,0); opacity: .4; } to { transform: translate(12px,-6px); opacity: 1; } }
+.mainCorridor { display: flex; align-items: center; justify-content: space-around; gap: 10px; min-height: 150px; padding: 5px 20px 20px; border-bottom: 1px solid #adc6bf22; color: #bdcbc8; }
+.mainCorridor > span { font-size: 8px; letter-spacing: .14em; }
+.wings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 38px; padding: 0 14px 28px; }
+.companyWing, .clientWing { min-width: 0; }
+.wingSign { display: flex; align-items: center; justify-content: space-between; padding: 16px 4px; gap: 10px; color: #dfe9e5; }
+.wingSign h3 { font-size: 13px; font-weight: 500; }.wingSign span { font-size: 9px; color: #b1c4bd; }
+.studioGrid, .suiteGrid { display: grid; align-items: start; gap: 34px 8px; grid-template-columns: repeat(auto-fill, minmax(min(420px,100%),1fr)); }
+.suiteGrid { grid-template-columns: repeat(auto-fill,minmax(min(280px,100%),1fr)); }
+.companyRoom { border-radius: 2px; border: 5px solid #75868a; border-bottom: 5px solid #879b9c; background: #26343c; box-shadow: 0 5px 0 #1c2c3266; }
+.roomFloor { border-left-width: 0; border-right-width: 0; }
+.clientSuite .roomScene { height: 322px; }.clientSuite .backWall { height: 77px; }.clientSuite .roomFloor { top: 73px; }.clientSuite .window { height: 34px; }.clientSuite .wallSign { top: 20px; font-size: 9px; padding: 4px 7px; }.clientSuite .aisle { top: 174px; }.clientSuite .person, .clientSuite .personPosition { width: 64px; }.clientSuite .nameplate { font-size: 8px; }.clientSuite .workstation { max-width: 115px; }
+.visitingDesk { position: absolute; z-index: 3; transform: translateX(-50%); max-width: 90px; padding: 4px 6px; border-radius: 5px; border: 1px dashed #b9d6cc77; background: #203139ed; color: #c0d8cb; font-size: 9px; }.visitingDesk small { display: block; font-size: 7px; }
+.entryHall { position: relative; height: 58px; display: flex; align-items: center; justify-content: center; gap: 8px; border-top: 1px solid #afc4bb33; color: #c1d5ce; }.entryHall span { position: absolute; top: 7px; font-size: 7px; letter-spacing: .2em; }.entryHall i { width: 52px; height: 22px; border: 2px solid #90afb5; margin-top: 20px; background: #a1c8ce33; }
+.activityPanel { margin: 0 14px 12px; padding: 14px; border: 1px solid #aec2b366; background: #1c2d34; color: #e1e9e3; border-radius: 8px; font-size: 12px; }
+.activityHeading { display: flex; justify-content: space-between; align-items: center; }.activityHeading strong { font-size: 15px; }.activityHeading button { padding: 5px 10px; border: 1px solid #b6cbb744; border-radius: 4px; }
+.activityPanel p { margin: 6px 0 12px; font-size: 11px; color: #adc5ba; }
+.companySelect { display: flex; align-items: center; gap: 12px; margin: 12px 0; }.companySelect select { min-width: 0; max-width: 70%; background: #30464d; padding: 6px 8px; border: 1px solid #728c86; border-radius: 4px; }
+.activityChoices { display: flex; flex-wrap: wrap; gap: 6px; }.activityChoices button { text-align: left; border: 1px solid #a4bca44f; padding: 7px 12px; border-radius: 5px; }.activityChoices button:hover:not(:disabled) { background: #56796644; }.activityChoices button:disabled { opacity: .45; }.activityChoices small { display: block; font-size: 9px; color: #a7c4b8; }
+.activityMember { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid #ffffff11; }.activityMember span { flex: 1; }.activityMember button { text-decoration: underline; font-size: 10px; }
+@container (min-width: 1050px) { .wings { grid-template-columns: minmax(0,2fr) minmax(0,1fr); gap: 40px; }.clientWing { border-left: 2px solid #c9d5ca24; padding-left: 14px; } }
+.singleWing { grid-template-columns: minmax(0,1fr); }.singleWing .clientWing { border-left: 0; padding-left: 0; }
+@container (max-width: 650px) { .commonRooms { grid-template-columns: 1fr; }.buildingHeader { padding: 12px; }.buildingHeader > span { max-width: 105px; text-align: right; line-height: 1.6; }.commonRooms { padding: 8px 8px 0; }.wings { padding-left: 8px; padding-right: 8px; }.building { border-width: 5px; } }
+@media (prefers-reduced-motion: reduce) { .arriving, .amenityActive .activityEffect { animation: none; } }
 
-.working .body {
-    animation: type 0.45s steps(2) infinite;
-}
-
-.working .screenGlow {
-    animation: glow 1.6s ease-in-out infinite;
-}
-
-.waiting {
-    animation: hop 0.9s ease-in-out infinite;
-}
-
-.waiting .arm {
-    transform-origin: 13px 13px;
-    animation: wave 0.9s ease-in-out infinite;
-}
-
-.idle .body {
-    animation: breathe 3.2s ease-in-out infinite;
-}
-
-.away {
-    opacity: 0.45;
-    filter: grayscale(0.6);
-}
-
-.bubble {
-    animation: pop 0.25s ease-out;
-}
-
-.zz {
-    animation: float 2.4s ease-in-out infinite;
-}
-
-@keyframes type { 50% { transform: translateY(0.6px); } }
-@keyframes glow { 50% { opacity: 0.55; } }
-@keyframes hop { 50% { transform: translateY(-3px); } }
-@keyframes wave { 50% { transform: rotate(-35deg); } }
-@keyframes breathe { 50% { transform: translateY(0.4px); } }
-@keyframes pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-@keyframes float { 0% { transform: translate(0, 0); opacity: 0; } 30% { opacity: 1; } 100% { transform: translate(4px, -8px); opacity: 0; } }
-
-@media (prefers-reduced-motion: reduce) {
-    .working .body, .working .screenGlow, .waiting, .waiting .arm, .idle .body, .bubble, .zz { animation: none; }
+/* Narrow windows use touch-sized team controls rather than shrinking a desktop floor plan. */
+.building { container-name: office-building; }
+.mobileRoster { display: none; }
+@container office-building (max-width: 520px) {
+    .buildingHeader { flex-wrap: wrap; }.buildingHeader > span { max-width: none; text-align: left; }
+    .commonRooms { gap: 12px; }
+    .meetingRoom, .breakRoom { height: auto; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px 6px; padding: 12px 6px 35px; overflow: visible; }
+    .roomCaption { position: static; grid-column: 1 / -1; font-size: 9px; line-height: 1.5; }
+    .amenity:not(.amenity_reception) { position: relative; width: 100%; max-width: none; top: auto; left: auto; right: auto; margin-bottom: 16px; }
+    .amenityButton { min-height: 44px; }.amenityName { font-size: 10px; max-width: 100%; white-space: normal; text-align: center; line-height: 1.25; }
+    .visitors { bottom: -28px; }.visitor { width: 48px; flex-basis: 48px; min-height: 44px; }.visitor span { font-size: 8px; }
+    .mainCorridor { padding-inline: 6px; gap: 4px; }.mainCorridor > span { font-size: 8px; max-width: 65px; }.amenity_reception { width: 100px; }
+    .roomScene { display: none; }
+    .mobileRoster { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; padding: 10px; background: repeating-linear-gradient(90deg,#ffffff03 0 1px,transparent 1px 30px),#394744; }
+    .mobileMember { display: flex; align-items: center; gap: 4px; min-width: 0; min-height: 64px; text-align: left; border-radius: 8px; border: 1px solid #9caf9f38; padding: 4px; background: #1d3035c9; }
+    .mobileMember:focus-visible { outline: 2px solid #d4c5ff; }.mobileMember img { width: 48px !important; height: 56px !important; flex-shrink: 0; }
+    .mobileMember span { min-width: 0; }.mobileMember strong { display: block; font-size: 11px; overflow-wrap: anywhere; }.mobileMember small { display: block; font-size: 10px; color: #b6cbbd; }.mobileMember .mobileAttention { color: #ffce85; }
+    .clientSuite .mobileRoster { padding: 6px; gap: 4px; }.clientSuite .mobileMember { min-height: 52px; }.clientSuite .mobileMember img { width: 34px !important; height: 42px !important; }
+    .activityPanel { margin-inline: 8px; padding: 10px; }.activityPanel p { line-height: 1.6; }.activityHeading button, .activityMember button, .companySelect select { min-height: 44px; }
+    .activityChoices { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }.activityChoices button { min-height: 52px; padding: 8px; overflow-wrap: anywhere; }.activityChoices small { font-size: 10px; }
+    .activityMember span { flex-basis: 100%; }.activityMember button { padding: 8px; }.companySelect { flex-wrap: wrap; }.companySelect select { max-width: 100%; width: 100%; font-size: 16px; }
 }

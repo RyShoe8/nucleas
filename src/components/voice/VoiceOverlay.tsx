@@ -4,20 +4,21 @@ import { useVoice } from '@/components/voice/VoiceProvider';
 import VoiceIntentConfirmModal from '@/components/voice/VoiceIntentConfirmModal';
 import { useIntentConfirmation } from '@/components/intent/IntentConfirmationContext';
 
-export function VoiceButton() {
+export function VoiceButton({ inline = false }: { inline?: boolean }) {
     const voice = useVoice();
     if (!voice.enabled) return null;
 
     return (
         <button
+            type="button"
             onClick={voice.state === 'listening' ? voice.stopListening : voice.startListening}
-            className={`hidden md:flex fixed bottom-20 md:bottom-6 right-6 z-[90] p-4 rounded-full shadow-2xl transition-all duration-300 scale-110 items-center justify-center ${voice.state === 'listening'
+            className={`${inline ? 'inline-flex h-11 w-11 sm:h-8 sm:w-8 shrink-0 self-end rounded-md' : 'hidden md:flex fixed bottom-20 md:bottom-6 right-6 z-[90] p-4 rounded-full shadow-2xl scale-110'} transition-colors items-center justify-center ${voice.state === 'listening'
                 ? 'bg-red-500 text-white animate-pulse ring-4 ring-red-500/20'
                 : voice.state === 'processing'
                     ? 'bg-yellow-500 text-white'
                     : voice.state === 'confirming'
                         ? 'bg-amber-600 text-white ring-4 ring-amber-500/25'
-                        : 'bg-indigo-600 text-white hover:bg-indigo-500 hover:scale-125'
+                        : 'bg-indigo-600 text-white hover:bg-indigo-500'
                 }`}
             aria-label={voice.state === 'listening' ? 'Stop listening' : 'Start voice command'}
             data-tour="voice-button"
@@ -31,11 +32,23 @@ export function VoiceButton() {
                     d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 15a3 3 0 003-3V5a3 3 0 00-6 0v7a3 3 0 003 3z"
                 />
             </svg>
-            {voice.state === 'listening' && (
+            {!inline && voice.state === 'listening' && (
                 <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-400 rounded-full animate-ping" />
             )}
         </button>
     );
+}
+
+export function InlineVoiceControls() {
+    const voice = useVoice();
+    if (!voice.enabled) return null;
+    return <div className="flex flex-wrap items-center gap-2">
+        <VoiceButton inline />
+        {voice.wakeWordSupported && <button type="button" onClick={voice.toggleWakeWord} aria-pressed={voice.wakeWordEnabled}
+            className="min-h-11 sm:min-h-0 rounded border border-border px-2 py-1 text-[11px] text-text-secondary" title="Say Nucleas to activate voice">
+            Wake: {voice.wakeWordEnabled ? (voice.isWakeArmed ? 'armed' : 'on') : 'off'}
+        </button>}
+    </div>;
 }
 
 /** controls: the floating microphone and wake-word buttons. Windows that are not the place to talk leave them out; confirmations and the listening panel still work. */

@@ -9,7 +9,9 @@ import { useOsCompanies } from './CompaniesModule';
 import { useActivity } from './jobs/ActivityList';
 import type { JobView } from './jobs/JobCard';
 import { memberName, memberOf, queueFor } from './jobs/workQueue';
-import Character from './office/Character';
+import OfficeRoom from './office/OfficeRoom';
+import OfficeBuilding from './office/OfficeBuilding';
+import type { OfficeVisit } from './office/officeActivities';
 import { buildOffice, type Desk, type Room, type TodayMetrics } from './office/officeState';
 import styles from './office/Office.module.css';
 
@@ -33,28 +35,10 @@ function useDesktop() {
     return { desktop, state };
 }
 
-function Bubble({ desk }: { desk: Desk }) {
-    if (desk.state === 'waiting') return <span className={`${styles.bubble} absolute -top-1 right-1 z-10 min-w-[18px] rounded-full bg-amber-400 px-1.5 text-center text-[10px] font-semibold text-black`}>{desk.waiting > 1 ? desk.waiting : '!'}</span>;
-    if (desk.state === 'away') return <span className={`${styles.zz} absolute right-3 top-1 text-[10px] text-text-secondary`}>z</span>;
-    return null;
-}
-
-function DeskView({ room, desk, onOpen }: { room: Room; desk: Desk; onOpen: (room: Room, desk: Desk) => void }) {
-    const label = `${desk.name}${desk.says ? `: ${desk.says}` : desk.state === 'away' ? ': nothing assigned' : desk.state === 'idle' ? `: ${desk.jobs} job${desk.jobs === 1 ? '' : 's'}, nothing happening now` : ''}`;
-    return (
-        <button type="button" title={label} aria-label={`${room.name} · ${label}`} onClick={() => onOpen(room, desk)}
-            className="group relative flex flex-col items-center rounded-md px-1 pb-1 pt-2 hover:bg-white/5 focus-visible:bg-white/5">
-            <Bubble desk={desk} />
-            <Character role={desk.role} state={desk.state} size={48} />
-            <span className="mt-0.5 max-w-full truncate text-[10px] text-text-secondary group-hover:text-text-primary">{desk.name}</span>
-        </button>
-    );
-}
-
-export function RoomView({ room, onOpenRoom, onOpenDesk }: { room: Room; onOpenRoom: (room: Room) => void; onOpenDesk: (room: Room, desk: Desk) => void }) {
+export function RoomView({ room, visits = [], onOpenRoom, onOpenDesk }: { room: Room; visits?: OfficeVisit[]; onOpenRoom: (room: Room) => void; onOpenDesk: (room: Room, desk: Desk) => void }) {
     const talking = room.desks.filter((d) => d.says).slice(0, 2);
     return (
-        <section className="overflow-hidden rounded-xl border border-border bg-background-card/60" aria-label={`${room.name} office`}>
+        <section className={`${styles.companyRoom} ${room.relationship === 'client' ? styles.clientSuite : ''}`} aria-label={`${room.name} ${room.relationship === 'client' ? 'client suite' : 'company studio'}`}>
             <button type="button" onClick={() => onOpenRoom(room)} className="flex w-full items-center gap-2 border-b border-border px-3 py-2 text-left hover:bg-white/5" style={{ boxShadow: `inset 3px 0 0 ${room.color}` }}>
                 <strong className="min-w-0 flex-1 truncate text-sm">{room.name}</strong>
                 {room.working ? <span className="text-[10px] text-sky-300">{room.working} working</span> : null}
@@ -71,9 +55,7 @@ export function RoomView({ room, onOpenRoom, onOpenDesk }: { room: Room; onOpenR
                     ))}
                 </div>
             ) : null}
-            <div className={`${styles.floor} grid grid-cols-3 gap-1 p-2`}>
-                {room.desks.map((desk) => <DeskView key={desk.role} room={room} desk={desk} onOpen={onOpenDesk} />)}
-            </div>
+            <OfficeRoom room={room} visits={visits} onOpenDesk={onOpenDesk} />
             {talking.length ? (
                 <ul className="space-y-0.5 border-t border-border px-3 py-2 text-[11px]">
                     {talking.map((d) => <li key={d.role} className="truncate"><span className={d.state === 'waiting' ? 'text-amber-300' : 'text-sky-300'}>{d.name}</span><span className="text-text-secondary"> · {d.says}</span></li>)}
@@ -142,7 +124,7 @@ export default function OfficeModule() {
     }, [reload]);
 
     const rooms = useMemo(() => buildOffice({
-        companies: (companies ?? []).map((c) => ({ id: c.id, name: c.name, color: c.color })),
+        companies: (companies ?? []).map((c) => ({ id: c.id, name: c.name, color: c.color, relationship: c.relationship })),
         jobs: jobs ?? [],
         activity: activity?.items ?? [],
         today,
@@ -209,12 +191,10 @@ export default function OfficeModule() {
                         <button type="button" className="ui-button mt-2" onClick={() => wm.open('companies')}>Add a company</button>
                     </div>
                 ) : (
-                    <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr))]">
-                        {rooms.map((room) => <RoomView key={room.companyId} room={room} onOpenRoom={openRoom} onOpenDesk={openDesk} />)}
-                    </div>
+                    <OfficeBuilding rooms={rooms} onOpenDesk={openDesk} renderRoom={(room, visits) => <RoomView key={room.companyId} room={room} visits={visits} onOpenRoom={openRoom} onOpenDesk={openDesk} />} />
                 )}
 
-                <p className="text-[11px] text-text-secondary">Typing: working now · hopping with a badge: waiting on you · resting: has jobs, nothing running · faded: nothing assigned. Click a person to open their team, a room to open the company.</p>
+                <p className="text-[11px] text-text-secondary">One office, two wings: our companies and client suites. Blue: working · amber: needs you · green: available · muted: unassigned. Walking is ambient, not a progress indicator. Select a person for their work or a company sign for its overview.</p>
                 {desktopState ? (
                     <button type="button" className="text-[11px] text-text-secondary underline" onClick={() => void (desktopState.update.phase === 'ready' ? desktop?.installUpdate?.() : desktop?.checkUpdate?.())}>
                         Nucleas {desktopState.version} · {desktopState.update.text}

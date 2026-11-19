@@ -1,10 +1,30 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { writeAnswerClipboard } from './copyAnswer';
 import IdeChatMarkdown from '@/components/ide/IdeChatMarkdown';
 import { parseAnswerSlides } from '@/lib/ai/answerSlides';
 
 export default function AnswerPresentation({ text }: { text: string }) {
+    const content = useRef<HTMLDivElement>(null);
+    const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+    const plain = text.replace('<!-- nucleas-slides -->', '').trim();
+    const slides = parseAnswerSlides(text);
+    const copy = async () => {
+        if (!content.current) return;
+        try { await writeAnswerClipboard(content.current); setCopyState('copied'); }
+        catch { setCopyState('failed'); }
+    };
+    return <div>
+        {slides ? <><Briefing text={text} /><div ref={content} hidden><IdeChatMarkdown text={plain} /></div></> : <div ref={content}><IdeChatMarkdown text={plain} /></div>}
+        <div className="mt-3 flex items-center gap-2">
+            <button type="button" onClick={() => void copy()} className="min-h-11 sm:min-h-0 rounded-md border border-border px-3 py-2 text-xs text-text-secondary hover:text-text-primary hover:bg-white/5">Copy answer</button>
+            <span role="status" className="text-xs text-text-secondary">{copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Could not copy. Select the text and copy it.' : ''}</span>
+        </div>
+    </div>;
+}
+
+function Briefing({ text }: { text: string }) {
     const slides = parseAnswerSlides(text);
     const [index, setIndex] = useState(0);
     const [showText, setShowText] = useState(false);

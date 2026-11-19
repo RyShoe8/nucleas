@@ -41,10 +41,10 @@ export default function DesktopModule() {
         : !auth.userId ? <><p>Sign in to open your Nucleas apps.</p><a className="ui-button" href="/login">Sign in</a></>
         : !definition ? <p>This app is unavailable. Update Nucleas and try again.</p>
         : denied ? <p>Your account does not have access to this app.</p> : null;
-    // The intent layer brings confirmation dialogs and the Ctrl+K palette to every app window. In the desktop app the
-    // microphone lives in the main Nucleas window and talks through Ask, so other windows do not show one. In a browser,
-    // where there is no main window, each page keeps its own.
-    const talksHere = !hasLauncher || moduleId === 'assistant';
+    // Confirmations and Ctrl+K remain available in every window. Ask owns inline microphone and wake controls;
+    // the main desktop window can also start listening there through the existing voice bridge.
+    // Ask owns inline microphone/wake controls. Never float them over its composer.
+    const talksHere = !hasLauncher && moduleId !== 'assistant';
     return <WindowManagerProvider userId={auth.userId}><OsIntentLayer voiceControls={talksHere}>
         {hasLauncher && moduleId === 'assistant' ? <VoiceFromMainWindow /> : null}
         <div className={styles.window}>

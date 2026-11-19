@@ -1,4 +1,5 @@
 'use client';
+import { InlineVoiceControls } from '@/components/voice/VoiceOverlay';
 
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react';
 import { upload } from '@vercel/blob/client';
@@ -229,6 +230,7 @@ export default function AskComposer({
                     </ul>
                 ) : null}
                 {notice ? <p className="text-[11px] text-amber-400">{notice}</p> : null}
+                <InlineVoiceControls />
                 <div className="flex gap-2 items-stretch">
                     <button
                         type="button"
@@ -236,7 +238,7 @@ export default function AskComposer({
                         disabled={disabled || files.length >= MAX_FILES}
                         title="Attach files (or drop them here, or paste an image)"
                         aria-label="Attach files"
-                        className="px-2 rounded border border-border hover:bg-background-card disabled:opacity-50 self-end h-8"
+                        className="px-2 rounded border border-border hover:bg-background-card disabled:opacity-50 self-end min-h-11 min-w-11 sm:min-h-8 sm:min-w-0"
                     >
                         📎
                     </button>
@@ -272,7 +274,7 @@ export default function AskComposer({
                         style={{ height }}
                         className="flex-1 min-w-0 px-2 py-1.5 rounded border border-border bg-background-elevated text-sm resize-none"
                     />
-                    <button type="submit" disabled={!canSend} className="px-3 rounded bg-primary text-white text-sm disabled:opacity-50 self-end h-8">
+                    <button type="submit" disabled={!canSend} className="px-3 rounded bg-primary text-white text-sm disabled:opacity-50 self-end min-h-11 min-w-11 sm:min-h-8 sm:min-w-0">
                         {busy ? '…' : uploading ? 'Uploading…' : 'Ask'}
                     </button>
                 </div>

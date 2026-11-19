@@ -75,7 +75,7 @@ export default function OsShell({ children }: { children?: ReactNode }) {
                 {allowed.length > 0 && <div className={styles.appSwitches}>{allowed.map(w => <button type="button" key={w.id} aria-pressed={!atHome && active?.id === w.id} title={windowLabel(w, ModuleRegistry.get(w.moduleId))} onClick={() => select(w.id)}>
                     <span className={styles.switchDot} aria-hidden />{windowLabel(w, ModuleRegistry.get(w.moduleId))}{w.poppedOut ? ' ↗' : ''}
                 </button>)}</div>}
-                <VoiceButton />
+                {atHome || active?.moduleId !== 'assistant' ? <VoiceButton inline /> : null}
             </nav>
         </div>
     </div>;

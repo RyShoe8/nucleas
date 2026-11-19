@@ -5,6 +5,7 @@ import AnswerDetails from './assistant/AnswerDetails';
 import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import AnswerPresentation from './assistant/AnswerPresentation';
+import { copyAskSelection } from './assistant/copyAnswer';
 import BuildCard, { type BuildView } from './building/BuildCard';
 import JobCard, { type JobView } from './jobs/JobCard';
 import AskComposer, { type AttachmentRef } from './assistant/AskComposer';
@@ -309,7 +310,7 @@ export default function AssistantModule({ payload }: { payload?: Record<string, 
                 )}
             </div>
 
-            <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+            <div onCopy={copyAskSelection} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
                 {turns === null ? <p className="text-sm text-text-secondary">Loading…</p> : null}
                 {turns?.length === 0 ? (
                     <div className="space-y-2">

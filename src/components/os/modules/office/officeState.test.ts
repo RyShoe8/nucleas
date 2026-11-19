@@ -14,6 +14,20 @@ const companies = [{ id: id('b'), name: 'PlayBound', color: '#378ADD' }, { id: i
 const build = (jobs: JobView[], activity: ActivityItem[] = [], today = []) => buildOffice({ companies, jobs, activity, today });
 
 describe('the office', () => {
+  it('keeps owned and internal companies distinct from clients without losing their team or work', () => {
+    const rooms = buildOffice({
+      companies: [
+        { id: id('b'), name: 'PlayBound', relationship: 'owned' },
+        { id: id('c'), name: 'Nucleas', relationship: 'internal' },
+        { id: id('d'), name: 'Client business', relationship: 'client' },
+      ], jobs: [job()], activity: [], today: [],
+    });
+    expect(rooms.filter(r => r.relationship !== 'client').map(r => r.name).sort()).toEqual(['Nucleas', 'PlayBound']);
+    expect(rooms.filter(r => r.relationship === 'client').map(r => r.name)).toEqual(['Client business']);
+    expect(rooms.find(r => r.name === 'PlayBound')?.desks.find(d => d.role === 'marketing')?.jobs).toBe(1);
+    expect(rooms.every(r => r.desks.length === OFFICE_ROLES.length)).toBe(true);
+  });
+
   it('gives every company a room with the whole team, and never the reserved tester', () => {
     const rooms = build([]);
     expect(rooms.map((r) => r.name)).toEqual(['PlayBound', 'Tailnote']);

@@ -39,7 +39,7 @@ export default function OsRoot({ children }: OsRootProps) {
     return (
         <WindowManagerProvider userId={auth.userId}>
             <OsInstallProvider>
-                <OsIntentLayer>
+                <OsIntentLayer voiceControls={false}>
                     <OsShell>{children}</OsShell>
                 </OsIntentLayer>
             </OsInstallProvider>

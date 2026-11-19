@@ -27,6 +27,7 @@ export interface Room {
     companyId: string;
     name: string;
     color: string;
+    relationship: 'owned' | 'internal' | 'client';
     desks: Desk[];
     waiting: number;
     working: number;
@@ -58,7 +59,7 @@ export function screenValue(current: number, unit: string): string {
 export const OFFICE_ROLES: TeamRole[] = TEAM_ROLES.filter((role) => TEAM[role].active);
 
 export function buildOffice(input: {
-    companies: { id: string; name: string; color?: string }[];
+    companies: { id: string; name: string; color?: string; relationship?: Room['relationship'] }[];
     jobs: JobView[];
     activity: ActivityItem[];
     today: TodayMetrics[];
@@ -87,6 +88,7 @@ export function buildOffice(input: {
             companyId: company.id,
             name: company.name,
             color: company.color || '#64748b',
+            relationship: company.relationship ?? 'client',
             // Busy desks first, so the eye lands on who needs you, then who is working.
             desks: [...desks].sort((a, b) => rank(a.state) - rank(b.state)),
             waiting: desks.reduce((n, d) => n + d.waiting, 0),
