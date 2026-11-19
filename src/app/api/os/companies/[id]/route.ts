@@ -5,9 +5,10 @@ import Client from '@/lib/models/Client';
 import { getCompanyProfile, isCompanyManager } from '@/lib/companies/companyProfile';
 import { listCompanyConnections } from '@/lib/integrations/connections';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
-import { normalizeProductionDomain } from '@/lib/companies/productionDomain';
+import { normalizeProductionDomain, sameSite } from '@/lib/companies/productionDomain';
 import { normalizeSubreddit } from '@/lib/companies/subreddit';
 import { recordActivity } from '@/lib/companies/activityLog';
+import { refetchSiteHistory } from '@/lib/metrics/siteHistory';
 import { CompanyAssistantTurn } from '@/lib/models/CompanyAssistantTurn';
 import { BrandVoice } from '@/lib/models/BrandVoice';
 import { connectedSocialLinks, mergeSocialLinks } from '@/lib/companies/connectedSocialLinks';
@@ -100,18 +101,31 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       return NextResponse.json({ error: 'Request body must be valid JSON.' }, { status: 400 });
     }
     const has = (key: string) => Boolean(body) && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, key);
-    if (!has('domain') && !has('subreddit')) {
+    if (!has('domain') && !has('subreddit') && !has('websites')) {
       return NextResponse.json({ error: 'Nothing to update.' }, { status: 400 });
     }
     const fields = body as { domain?: unknown; subreddit?: unknown };
     const domain = has('domain') ? normalizeProductionDomain(fields.domain) : null;
     if (domain && !domain.ok) return NextResponse.json({ error: domain.error }, { status: 400 });
     const subreddit = has('subreddit') ? normalizeSubreddit(fields.subreddit) : null;
+    // Other websites: each a plain domain, at most 20, without repeats.
+    let websites: string[] | null = null;
+    if (has('websites')) {
+      const raw = (body as { websites?: unknown }).websites;
+      if (!Array.isArray(raw) || raw.length > 20) return NextResponse.json({ error: 'Websites must be a list of up to 20 domains.' }, { status: 400 });
+      const cleaned: string[] = [];
+      for (const entry of raw) {
+        const site = normalizeProductionDomain(entry);
+        if (!site.ok) return NextResponse.json({ error: site.error }, { status: 400 });
+        if (site.domain && !cleaned.includes(site.domain)) cleaned.push(site.domain);
+      }
+      websites = cleaned;
+    }
     if (subreddit && !subreddit.ok) return NextResponse.json({ error: subreddit.error }, { status: 400 });
 
     const company = await Client.findOne({ _id: id, organizationId: viewer.organizationId });
     if (!company) return NextResponse.json({ error: 'Company not found' }, { status: 404 });
-    const result: { domain?: string | null; subreddit?: string | null } = {};
+    const result: { domain?: string | null; subreddit?: string | null; websites?: string[] } = {};
     const activities: { title: string; detail?: string }[] = [];
 
     if (domain?.ok) {
@@ -122,6 +136,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         activities.push({ title: domain.domain ? 'Production domain set' : 'Production domain cleared', detail: domain.domain ?? previous ?? undefined });
       }
     }
+    if (websites) {
+      const primary = company.domain ?? null;
+      const next = websites.filter((site) => !sameSite(site, primary));
+      const previous = (company.get('websites') as string[] | undefined) ?? [];
+      company.set('websites', next.length ? next : undefined);
+      result.websites = [...(primary ? [primary] : []), ...next];
+      if (previous.join(',') !== next.join(',')) activities.push({ title: 'Websites updated', detail: result.websites.join(', ') || 'none' });
+    }
     if (subreddit?.ok) {
       const previous = company.subreddit ?? null;
       company.subreddit = subreddit.subreddit ?? undefined;
@@ -131,6 +153,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       }
     }
     await company.save();
+    // Per-site numbers need the new list of websites applied to past days too.
+    if (activities.some((a) => a.title === 'Websites updated' || a.title.startsWith('Production domain'))) await refetchSiteHistory(viewer.organizationId, id);
     for (const activity of activities) {
       await recordActivity({ organizationId: viewer.organizationId, companyId: id, kind: 'company', ...activity, actorUserId: viewer.userId });
     }

@@ -1,3 +1,4 @@
+import { siteKey } from '@/lib/companies/productionDomain';
 import { CapabilityError, type CapabilityRunContext } from '../types';
 import { providerJson } from './http';
 import { socialPlatform } from '@/lib/metrics/social';
@@ -41,6 +42,8 @@ export interface TrafficOutput {
   days: TrafficDay[];
   topChannels: { channel: string; sessions: number }[];
   socialDays?: { date: string; platform: string; sessions: number }[];
+  /** The same daily numbers per website (canonical host: www. merged with the bare domain). */
+  siteDays?: (TrafficDay & { site: string })[];
 }
 
 type RunReport = { rows?: { dimensionValues: { value: string }[]; metricValues: { value: string }[] }[] };
@@ -129,6 +132,22 @@ export async function ga4Traffic(ctx: CapabilityRunContext, range: { startDate: 
     'Google Analytics'
   ).catch(() => ({ rows: [] }));
 
+  const byHost = await providerJson<RunReport>(ctx, url, {
+    method: 'POST', headers,
+    body: JSON.stringify({ dateRanges: [range], dimensions: [{ name: 'date' }, { name: 'hostName' }], metrics: [{ name: 'sessions' }, { name: 'totalUsers' }, { name: 'newUsers' }, { name: 'screenPageViews' }], limit: 25_000 }),
+  }, 'Google Analytics').catch(() => ({ rows: [] }));
+  const siteRows = new Map<string, TrafficDay & { site: string }>();
+  for (const row of byHost.rows ?? []) {
+    const raw = row.dimensionValues[0]?.value ?? '';
+    const site = siteKey(row.dimensionValues[1]?.value ?? '');
+    if (raw.length !== 8 || !site) continue;
+    const date = `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+    const [sessions, users, newUsers, pageViews] = row.metricValues.map((m) => Number(m.value) || 0);
+    const key = `${date}|${site}`;
+    const prior = siteRows.get(key) ?? { date, site, sessions: 0, users: 0, newUsers: 0, pageViews: 0, aiClicks: 0 };
+    siteRows.set(key, { ...prior, sessions: prior.sessions + sessions, users: prior.users + users, newUsers: prior.newUsers + newUsers, pageViews: prior.pageViews + pageViews });
+  }
+
   const aiClicksByDate = new Map<string, number>();
   for (const row of aiReferrals.rows ?? []) {
     const rawDate = row.dimensionValues[0]?.value ?? '';
@@ -154,6 +173,7 @@ export async function ga4Traffic(ctx: CapabilityRunContext, range: { startDate: 
     totals,
     days,
     socialDays,
+    siteDays: [...siteRows.values()],
     topChannels: (channels.rows ?? []).map((r) => ({ channel: r.dimensionValues[0].value, sessions: Number(r.metricValues[0].value) || 0 })),
   };
 }
@@ -165,6 +185,8 @@ export interface SearchOutput {
   totals: { clicks: number; impressions: number; ctr: number; position: number };
   days: { date: string; clicks: number; impressions: number }[];
   topQueries: { query: string; clicks: number; impressions: number; position: number }[];
+  /** Daily clicks and impressions per website (from each page's host), for domain properties covering several sites. */
+  siteDays?: { date: string; site: string; clicks: number; impressions: number }[];
 }
 
 type GscRows = { rows?: { keys: string[]; clicks: number; impressions: number; ctr: number; position: number }[] };
@@ -179,9 +201,24 @@ export async function gscPerformance(ctx: CapabilityRunContext, range: { startDa
   const byQuery = await providerJson<GscRows>(ctx, url, { method: 'POST', headers, body: JSON.stringify({ ...range, dimensions: ['query'], rowLimit: 10 }) }, 'Search Console');
   const total = await providerJson<GscRows>(ctx, url, { method: 'POST', headers, body: JSON.stringify({ ...range, rowLimit: 1 }) }, 'Search Console');
 
+  // Per site: Search Console has no host dimension, so pages are read and grouped by their host (paged, bounded).
+  const perSite = new Map<string, { date: string; site: string; clicks: number; impressions: number }>();
+  for (let page = 0; page < 4; page += 1) {
+    const rows = await providerJson<GscRows>(ctx, url, { method: 'POST', headers, body: JSON.stringify({ ...range, dimensions: ['date', 'page'], rowLimit: 25_000, startRow: page * 25_000 }) }, 'Search Console').catch(() => ({ rows: [] }) as GscRows);
+    for (const r of rows.rows ?? []) {
+      const site = siteKey(r.keys[1]);
+      if (!site) continue;
+      const key = `${r.keys[0]}|${site}`;
+      const prior = perSite.get(key) ?? { date: r.keys[0], site, clicks: 0, impressions: 0 };
+      perSite.set(key, { ...prior, clicks: prior.clicks + r.clicks, impressions: prior.impressions + r.impressions });
+    }
+    if ((rows.rows?.length ?? 0) < 25_000) break;
+  }
+
   const t = total.rows?.[0];
   return {
     siteUrl,
+    siteDays: [...perSite.values()],
     ...range,
     totals: {
       clicks: t?.clicks ?? 0,

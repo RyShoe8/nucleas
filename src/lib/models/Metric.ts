@@ -19,6 +19,27 @@ const snapshotSchema = new Schema(
 snapshotSchema.index({ companyId: 1, metricKey: 1, date: 1 }, { unique: true });
 snapshotSchema.index({ organizationId: 1, metricKey: 1, date: -1 });
 
+/**
+ * The same daily numbers split by website, for companies with several sites. A breakdown kept apart from
+ * the company totals above, so a total is never stored twice or summed from these rows. `site` is the
+ * canonical host (siteKey: no www., lowercase), so www.example.com and example.com are one site.
+ */
+const siteSnapshotSchema = new Schema(
+  {
+    organizationId: { type: Schema.Types.ObjectId, required: true },
+    companyId: { type: Schema.Types.ObjectId, ref: 'Client', required: true },
+    site: { type: String, required: true },
+    metricKey: { type: String, required: true },
+    /** YYYY-MM-DD (UTC). */
+    date: { type: String, required: true },
+    value: { type: Number, required: true },
+    breakdown: { type: Schema.Types.Mixed },
+    invocationId: { type: Schema.Types.ObjectId, ref: 'CapabilityInvocation' },
+  },
+  { timestamps: true }
+);
+siteSnapshotSchema.index({ companyId: 1, site: 1, metricKey: 1, date: 1 }, { unique: true });
+
 /** Per-company sync bookkeeping with a lease so overlapping cron runs never sync the same company twice. */
 const syncStateSchema = new Schema(
   {
@@ -41,4 +62,6 @@ function modelFor<T>(name: string, schema: Schema<T>): Model<T> {
 
 export type MetricSnapshotDoc = InferSchemaType<typeof snapshotSchema>;
 export const MetricSnapshot = modelFor<MetricSnapshotDoc>('MetricSnapshot', snapshotSchema);
+export type MetricSiteSnapshotDoc = InferSchemaType<typeof siteSnapshotSchema>;
+export const MetricSiteSnapshot = modelFor<MetricSiteSnapshotDoc>('MetricSiteSnapshot', siteSnapshotSchema);
 export const MetricSyncState = modelFor<InferSchemaType<typeof syncStateSchema>>('MetricSyncState', syncStateSchema);

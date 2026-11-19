@@ -11,6 +11,8 @@ export interface ConnectionView {
   id: string;
   provider: string;
   providerName: string;
+  /** The company websites this account belongs to; empty for the whole company. */
+  sites?: string[];
   domain: string;
   scope: 'org' | 'company';
   companyId: string | null;
@@ -42,6 +44,7 @@ type ConnectionLean = {
   planLimited?: boolean;
   lastVerifiedAt?: Date;
   lastError?: string;
+  sites?: string[];
 };
 
 function toView(c: ConnectionLean): ConnectionView {
@@ -60,6 +63,7 @@ function toView(c: ConnectionLean): ConnectionView {
     planLimited: Boolean(c.planLimited),
     lastVerifiedAt: c.lastVerifiedAt?.toISOString(),
     lastError: c.lastError,
+    sites: c.sites ?? [],
     connectable: def?.authKind === 'api_key' && c.provider !== 'website',
     signIn: ['ga4', 'gsc', 'adsense', 'admanager'].includes(c.provider) ? 'google' : c.provider === 'facebook' && facebookSignInConfigured() ? 'facebook' : null,
     webhook: def?.authKind === 'webhook',
@@ -67,7 +71,7 @@ function toView(c: ConnectionLean): ConnectionView {
   };
 }
 
-const VIEW_FIELDS = 'provider scope companyId status credentialHint accountLabel planLabel planLimited lastVerifiedAt lastError';
+const VIEW_FIELDS = 'provider scope companyId status credentialHint accountLabel planLabel planLimited lastVerifiedAt lastError sites';
 
 /** Company connections plus the org-wide accounts that serve it. */
 export async function listCompanyConnections(viewer: CompanyViewer, companyId: string): Promise<ConnectionView[] | null> {

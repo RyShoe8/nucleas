@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
-import { MetricSnapshot, MetricSyncState } from '@/lib/models/Metric';
+import { MetricSiteSnapshot, MetricSnapshot, MetricSyncState } from '@/lib/models/Metric';
+import { siteKey } from '@/lib/companies/productionDomain';
 import { getCompanyProfile, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { METRICS, type MetricDefinition, type MetricUnit } from './catalog';
 import { readServiceData } from '@/lib/companies/serviceData';
@@ -116,7 +117,7 @@ export function whatChanged(views: MetricView[]): string[] {
   const revenueParts = views.filter((v) => v.key === 'revenue_net' || v.key === 'ad_revenue' || v.key === 'adx_revenue').length;
   for (const v of views) {
     if (v.key === 'revenue_total' && revenueParts < 2) continue;
-    if (v.warning || (v.unit === 'money' && !v.currency)) continue;
+    if (v.warning || (v.unit === 'money' && !v.currency)) continue;
     if (v.change === null || v.previous === null || v.previous < MIN_BASELINE[v.unit]) continue;
     if (Math.abs(v.change) < NOTABLE_CHANGE) continue;
     const pct = Math.round(Math.abs(v.change) * 100);
@@ -144,12 +145,18 @@ export interface CompanyMetricsView {
   lastSyncedAt: string | null;
   metrics: MetricView[];
   changes: string[];
+  /** The company's websites, when it has several; each can be chosen to see its own numbers. */
+  sites: string[];
+  /** The website these numbers are for; null for the whole company. */
+  site: string | null;
+  /** With a website chosen: metrics that are only kept for the whole company (payments, email, cash). */
+  companyWideOnly: string[];
 }
 
 export async function getCompanyMetrics(
   viewer: CompanyViewer,
   companyId: string,
-  options: { days?: number; periodDays?: number; includeSensitive?: boolean; now?: Date } = {}
+  options: { days?: number; periodDays?: number; includeSensitive?: boolean; now?: Date; site?: string | null } = {}
 ): Promise<CompanyMetricsView | null> {
   const profile = await getCompanyProfile(viewer, companyId);
   if (!profile) return null;
@@ -159,12 +166,25 @@ export async function getCompanyMetrics(
   const defs = METRICS.filter((m) => !m.sensitive || options.includeSensitive);
   const cid = new Types.ObjectId(companyId);
 
-  const rows = await loadRows([cid], defs.map((m) => m.key), sinceDate(Math.max(days, periodDays * 2), now));
+  const since = sinceDate(Math.max(days, periodDays * 2), now);
+  const sites = profile.websites.length > 1 ? profile.websites : [];
+  const site = options.site ? siteKey(options.site) : '';
+  const state = await MetricSyncState.findOne({ companyId: cid }).select('lastSuccessAt lastRunAt').lean<{ lastSuccessAt?: Date; lastRunAt?: Date }>();
+  if (site && sites.includes(site)) {
+    // One website: whatever its sources report for it (split by the source, or an account assigned to it).
+    const rows = await MetricSiteSnapshot.find({ companyId: cid, site, metricKey: { $in: defs.map((m) => m.key) }, date: { $gte: since } })
+      .select('metricKey date value breakdown updatedAt')
+      .lean<{ metricKey: string; date: string; value: number; breakdown?: Record<string, number>; updatedAt?: Date }[]>();
+    const views = withTotalRevenue(defs.map((m) => buildView(m, rows.filter((r) => r.metricKey === m.key), now, days, periodDays)).filter((v): v is MetricView => v !== null));
+    const shown = new Set(views.map((v) => v.key));
+    const companyWideOnly = defs.filter((m) => !shown.has(m.key) && !m.key.startsWith('social_sessions_')).map((m) => m.label);
+    return { lastSyncedAt: state?.lastSuccessAt?.toISOString() ?? null, metrics: views, changes: whatChanged(views), sites, site, companyWideOnly };
+  }
+  const rows = await loadRows([cid], defs.map((m) => m.key), since);
   const views = withServiceMetrics(withTotalRevenue(
     defs.map((m) => buildView(m, rows.filter((r) => r.metricKey === m.key), now, days, periodDays)).filter((v): v is MetricView => v !== null)
   ), await readServiceData(viewer.organizationId, companyId), periodDays, now);
-  const state = await MetricSyncState.findOne({ companyId: cid }).select('lastSuccessAt lastRunAt').lean<{ lastSuccessAt?: Date; lastRunAt?: Date }>();
-  return { lastSyncedAt: state?.lastSuccessAt?.toISOString() ?? null, metrics: views, changes: whatChanged(views) };
+  return { lastSyncedAt: state?.lastSuccessAt?.toISOString() ?? null, metrics: views, changes: whatChanged(views), sites, site: null, companyWideOnly: [] };
 }
 
 /** Headline metrics for every company the viewer can see — the cross-company "Today" view. */
@@ -199,7 +219,7 @@ export async function getTodayOverview(viewer: CompanyViewer, options: { now?: D
     const metrics: TodayRow['metrics'] = {};
     for (const v of views) {
       if (!(TODAY_METRICS as readonly string[]).includes(v.key)) continue;
-      if (v.warning || (v.unit === 'money' && v.currency !== 'USD')) continue;
+      if (v.warning || (v.unit === 'money' && v.currency !== 'USD')) continue;
       metrics[v.key] = { current: v.current, change: v.change, lastDay: v.lastDay?.value ?? null, unit: v.unit };
       totals[v.key] = (totals[v.key] ?? 0) + v.current;
     }

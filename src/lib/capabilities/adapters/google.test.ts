@@ -11,8 +11,13 @@ describe('ga4Traffic', () => {
     vi.stubEnv('GOOGLE_CLIENT_SECRET', 'secret');
     let report = 0;
     const fetch = vi.fn(async (url: string, _init?: RequestInit) => {
-      void _init;
       if (url.includes('oauth2.googleapis.com')) return new Response(JSON.stringify({ access_token: 'access' }), { status: 200 });
+      // The per-website report: www. and the bare domain are one site.
+      if (String(_init?.body ?? '').includes('hostName')) return new Response(JSON.stringify({ rows: [
+        { dimensionValues: [{ value: '20261001' }, { value: 'www.playbound.club' }], metricValues: [{ value: '12' }, { value: '9' }, { value: '5' }, { value: '25' }] },
+        { dimensionValues: [{ value: '20261001' }, { value: 'playbound.club' }], metricValues: [{ value: '3' }, { value: '2' }, { value: '1' }, { value: '5' }] },
+        { dimensionValues: [{ value: '20261001' }, { value: 'docs.playbound.club' }], metricValues: [{ value: '5' }, { value: '4' }, { value: '2' }, { value: '10' }] },
+      ] }), { status: 200 });
       report += 1;
       if (report === 1) {
         return new Response(JSON.stringify({ rows: [{ dimensionValues: [{ value: '20261001' }], metricValues: [{ value: '20' }, { value: '15' }, { value: '8' }, { value: '40' }] }] }), { status: 200 });
@@ -42,11 +47,15 @@ describe('ga4Traffic', () => {
 
     expect(output.days).toEqual([{ date: '2026-10-01', sessions: 20, users: 15, newUsers: 8, pageViews: 40, aiClicks: 5 }]);
     expect(output.totals).toMatchObject({ sessions: 20, users: 15, newUsers: 8, aiClicks: 5 });
+    expect(output.siteDays).toEqual([
+      { date: '2026-10-01', site: 'playbound.club', sessions: 15, users: 11, newUsers: 6, pageViews: 30, aiClicks: 0 },
+      { date: '2026-10-01', site: 'docs.playbound.club', sessions: 5, users: 4, newUsers: 2, pageViews: 10, aiClicks: 0 },
+    ]);
     expect(output.socialDays).toEqual([{ date: '2026-10-01', platform: 'facebook', sessions: 7 }, { date: '2026-10-01', platform: 'bluesky', sessions: 2 }]);
-    const socialRequest = JSON.parse(String(fetch.mock.calls[3][1]?.body));
+    const socialRequest = JSON.parse(String(fetch.mock.calls.find(([, init]) => String(init?.body ?? '').includes('Organic Social'))?.[1]?.body));
     expect(socialRequest.dimensionFilter.orGroup.expressions[0].filter.inListFilter.values).toEqual(['Organic Social', 'Paid Social']);
     expect(socialRequest.dimensionFilter.orGroup.expressions[1].filter.stringFilter.value).toContain('bsky');
-    const aiRequest = JSON.parse(String(fetch.mock.calls.at(-1)?.[1]?.body));
+    const aiRequest = JSON.parse(String(fetch.mock.calls.find(([, init]) => String(init?.body ?? '').includes('chatgpt.com'))?.[1]?.body));
     expect(aiRequest.dimensionFilter.filter.inListFilter.values).toContain('chatgpt.com');
   });
 });

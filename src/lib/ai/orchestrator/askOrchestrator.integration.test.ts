@@ -567,6 +567,38 @@ describe('code changes', () => {
     expect(answer.text).toMatch(/no GitHub repository connected/);
   });
 
+  describe('a question Nucleas has no tool for', () => {
+    const gapPlan = '{"kind":"answer","scope":"company","capabilityGap":{"need":"a list of every scheduled job","proposal":"A read-only tool listing each job by company with status and schedule"},"outline":[],"review":false}';
+
+    it('says so and plans the missing tool against its own repository, for approval', async () => {
+      await AiProjectRepository.deleteMany({});
+      const project = await Project.create({ name: 'Nucleas', projectType: 'internal', category: 'website', status: 'launched', color: '#111', userId: new Types.ObjectId() });
+      const company = await Client.create({ organizationId: org, name: 'Nucleas', color: '#111', relationship: 'owned', domain: 'nucleas.app', hubProjectId: project._id });
+      await Project.updateOne({ _id: project._id }, { $set: { clientId: company._id } });
+      await AiProjectRepository.create({ organizationId: String(org), projectId: project._id, owner: 'RyShoe8', repo: 'nucleas', installationId: '42' });
+      chat.mockImplementation(async () => reply(gapPlan));
+      propose.mockReset();
+      propose.mockResolvedValue({ ok: true, costMicros: 500, build: { id: 'n1', title: 'Add a jobs tool to Ask', summary: 'Lists jobs by company.', status: 'proposed', repository: { fullName: 'RyShoe8/nucleas' } } });
+      const answer = await ask('Show every scheduled job by company');
+      expect(propose).toHaveBeenCalledWith(admin, expect.objectContaining({ companyId: String(company._id), request: expect.stringContaining('A read-only tool listing each job') }));
+      expect(answer.text).toContain("I don't have a tool for that yet: a list of every scheduled job.");
+      expect(answer.text).toContain('Add a jobs tool to Ask');
+      expect(answer.build).toMatchObject({ id: 'n1', status: 'proposed' });
+      await Client.deleteOne({ _id: company._id });
+      await Project.deleteOne({ _id: project._id });
+    });
+
+    it('explains what to connect when Nucleas has no repository of its own', async () => {
+      await AiProjectRepository.deleteMany({});
+      propose.mockReset();
+      chat.mockImplementation(async () => reply(gapPlan));
+      const answer = await ask('Show every scheduled job by company');
+      expect(propose).not.toHaveBeenCalled();
+      expect(answer.text).toContain("I don't have a tool for that yet");
+      expect(answer.text).toContain("Nucleas's own code repository");
+    });
+  });
+
   it('recovers an obvious PlayBound code change when the free planner returns prose twice', async () => {
     const project = await Project.create({ name: 'PlayBound', projectType: 'internal', category: 'website', status: 'launched', color: '#222', userId: new Types.ObjectId() });
     const company = await Client.create({ organizationId: org, name: 'PlayBound', color: '#222', relationship: 'owned', domain: 'playbound.club', hubProjectId: project._id });

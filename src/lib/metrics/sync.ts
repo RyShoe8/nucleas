@@ -2,7 +2,8 @@ import { randomUUID } from 'crypto';
 import { Types } from 'mongoose';
 import Client from '@/lib/models/Client';
 import { IntegrationConnection } from '@/lib/models/Integration';
-import { MetricSnapshot, MetricSyncState } from '@/lib/models/Metric';
+import { MetricSiteSnapshot, MetricSnapshot, MetricSyncState } from '@/lib/models/Metric';
+import { siteKey } from '@/lib/companies/productionDomain';
 import { invokeCapability } from '@/lib/capabilities/runtime';
 import { defaultRange, isoDate } from '@/lib/capabilities/adapters/http';
 import { SEARCH_LAG_DAYS } from '@/lib/capabilities/registry';
@@ -28,6 +29,12 @@ export function windowDates(capabilityId: string, days: number, now: Date): stri
 
 function systemViewer(organizationId: Types.ObjectId): CompanyViewer {
   return { userId: 'system', organizationId, employeeId: null, role: 'Administrator' };
+}
+
+/** The websites each company-scoped connection is assigned to (payments, email), by provider. */
+async function assignedSites(organizationId: Types.ObjectId, companyId: Types.ObjectId): Promise<Map<string, string[]>> {
+  const rows = await IntegrationConnection.find({ organizationId, companyId, status: 'connected', 'sites.0': { $exists: true } }).select('provider sites').lean<{ provider: string; sites?: string[] }[]>();
+  return new Map(rows.map((row) => [row.provider, (row.sites ?? []).map((site) => siteKey(site)).filter(Boolean)]));
 }
 
 async function connectedProviders(organizationId: Types.ObjectId, companyId: Types.ObjectId): Promise<Set<string>> {
@@ -58,6 +65,12 @@ export async function syncCompanyMetrics(
   const providers = await connectedProviders(organizationId, companyId);
   const result: CompanySyncResult = { written: 0, results: [] };
   const daysFor = (id: string) => (typeof options.days === 'function' ? options.days(id) : options.days);
+  // Per-website rows are kept only for a company with several websites, and only for its own sites:
+  // with one website they would just repeat the totals, and other hosts (previews, translators) are noise.
+  const company = await Client.findById(companyId).select('domain websites').lean<{ domain?: string; websites?: string[] }>();
+  const ownSites = new Set([company?.domain, ...(company?.websites ?? [])].map((site) => siteKey(site)).filter(Boolean));
+  const splitBySite = ownSites.size > 1;
+  const assigned = splitBySite ? await assignedSites(organizationId, companyId) : new Map<string, string[]>();
 
   for (const cap of SYNC_CAPABILITIES) {
     if (!providers.has(cap.provider)) continue;
@@ -104,6 +117,39 @@ export async function syncCompanyMetrics(
     if (ops.length) {
       await MetricSnapshot.bulkWrite(ops, { ordered: false });
       result.written += ops.length;
+    }
+    if (splitBySite) {
+      const siteOps = [];
+      const accountSites = (assigned.get(cap.provider) ?? []).filter((site) => ownSites.has(site));
+      for (const metric of METRICS.filter((m) => m.capabilityId === cap.capabilityId && (m.extractSites || accountSites.length))) {
+        let points: (MetricPoint & { site: string })[];
+        try {
+          // A source that splits by site says which; otherwise the account's assigned websites own its numbers.
+          points = (metric.extractSites
+            ? metric.extractSites(inv.output)
+            : metric.extract(inv.output, today).flatMap((p) => accountSites.map((site) => ({ ...p, site }))))
+            .filter((p) => ownSites.has(siteKey(p.site)));
+        } catch {
+          continue;
+        }
+        // Only the websites this source actually reports: a site it does not cover has no data, not zeros.
+        for (const site of new Set(points.map((p) => siteKey(p.site)))) {
+          const mine = new Map(points.filter((p) => siteKey(p.site) === site).map((p) => [p.date, p]));
+          // Like the totals: a day with no activity is 0, so a revised day never keeps a stale value.
+          const daysToWrite = metric.kind === 'daily' && dates.length ? dates : [...mine.keys()];
+          for (const date of daysToWrite) {
+            const p: { value: number; breakdown?: Record<string, number> } = mine.get(date) ?? { value: 0 };
+            siteOps.push({
+              updateOne: {
+                filter: { companyId, site, metricKey: metric.key, date },
+                update: { $set: { organizationId, value: p.value, breakdown: p.breakdown ?? null, invocationId: new Types.ObjectId(inv.id) } },
+                upsert: true,
+              },
+            });
+          }
+        }
+      }
+      if (siteOps.length) await MetricSiteSnapshot.bulkWrite(siteOps, { ordered: false });
     }
   }
   if (providers.has(EVENTS_PROVIDER)) {

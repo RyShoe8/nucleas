@@ -1,3 +1,4 @@
+import { siteKey } from './productionDomain';
 import { Types } from 'mongoose';
 import Client, { type CompanyRelationship } from '@/lib/models/Client';
 import Project from '@/lib/models/Project';
@@ -37,6 +38,8 @@ export interface CompanyProfile {
   relationship: CompanyRelationship;
   /** Production domain only; never a preview host. */
   domain?: string;
+  /** Every website of the company: the production domain first, then its other sites. */
+  websites: string[];
   hubProjectId?: string;
   status?: string;
   name: string;
@@ -100,6 +103,7 @@ export function resolveCompanyProfile(company: Doc, hubProject: Doc | null): Com
     id: String(company._id),
     relationship,
     domain: str(company.domain),
+    websites: [...new Set([str(company.domain), ...(Array.isArray(company.websites) ? (company.websites as unknown[]).map(str) : [])].map((site) => siteKey(site)).filter(Boolean))],
     hubProjectId: company.hubProjectId ? String(company.hubProjectId) : undefined,
     status: str(company.status),
     name: str(src.name) ?? str(company.name) ?? 'Untitled company',

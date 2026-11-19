@@ -5,6 +5,8 @@ export interface OsCompanySummary {
     name: string;
     relationship: 'client' | 'owned' | 'internal';
     domain?: string;
+    /** Every website: the production domain first, then the others. */
+    websites?: string[];
     devUrl?: string;
     color?: string;
     logo?: string;
@@ -24,6 +26,8 @@ export interface OsConnection {
     planLabel?: string;
     planLimited: boolean;
     lastVerifiedAt?: string;
+    /** The company websites this account belongs to (payments, email); empty for the whole company. */
+    sites?: string[];
     lastError?: string;
     connectable: boolean;
     signIn: 'google' | 'facebook' | null;

@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { createPortal } from 'react-dom';
+import { useTitleSlot } from '@/lib/os/titleSlot';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import type { ModuleRenderContext } from '@/lib/os/types';
 import { RELATIONSHIP_LABEL, type OsCompanyDetail, type OsConnection } from './companyTypes';
@@ -18,7 +20,7 @@ import SocialIcon from '@/components/projects/SocialIcon';
 import { SOCIAL_NETWORK_LABELS } from '@/lib/utils/socialUrls';
 import type { SocialNetwork } from '@/lib/models/Project';
 
-export default function CompanyModule({ payload }: ModuleRenderContext) {
+export default function CompanyModule({ payload, windowId }: ModuleRenderContext) {
     // The screen can move to another company in place, keeping the tab you are on.
     const [companyId, setCompanyId] = useState(payload?.companyId);
     const [section, setSection] = useState(payload?.section ?? 'performance');
@@ -26,6 +28,10 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
     const [error, setError] = useState<string | null>(null);
     const [activityKey, setActivityKey] = useState(0);
     const [focusJobId, setFocusJobId] = useState<string | undefined>(typeof payload?.jobId === 'string' ? payload.jobId : undefined);
+    // In its own desktop window the company picker lives in the title bar, so the page does not repeat the name.
+    const titleSlot = useTitleSlot(windowId);
+    // Combined numbers for every website until one is chosen; the logo goes back to all of them.
+    const [site, setSite] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         if (!companyId) return;
@@ -57,19 +63,38 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
     if (!detail) return <div className="p-4 text-sm text-text-secondary">Loading…</div>;
 
     const { company, projects, connections } = detail;
+    const switcher = (compact: boolean) => <CompanySwitcher compact={compact} current={company} onSwitch={(next) => { setDetail(null); setFocusJobId(undefined); setSite(null); setCompanyId(next.id); }} />;
+    const websites = company.websites?.length ? company.websites : company.domain ? [company.domain] : [];
+    if (titleSlot && typeof document !== 'undefined') document.title = company.name;
 
     return (
         <div className="h-full overflow-y-auto p-5 space-y-5 text-text-primary">
             <header className="flex items-start gap-3">
+                <button type="button" onClick={() => setSite(null)} title={websites.length > 1 ? 'Show every website together' : company.name} aria-label={websites.length > 1 ? 'Show every website together' : company.name} aria-pressed={websites.length > 1 && !site}
+                    className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border ${websites.length > 1 && !site ? 'border-primary' : 'border-border'} bg-background-card hover:border-primary`}>
+                    {company.logo
+                        // eslint-disable-next-line @next/next/no-img-element -- the company's own logo, any host
+                        ? <img src={company.logo} alt="" className="h-full w-full object-contain" />
+                        : <span aria-hidden className="h-5 w-5 rounded-full" style={{ backgroundColor: company.color ?? '#64748b' }} />}
+                </button>
                 <div className="min-w-0 flex-1">
-                    <CompanySwitcher current={company} onSwitch={(next) => { setDetail(null); setFocusJobId(undefined); setCompanyId(next.id); }} />
-                    <p className="text-xs text-text-secondary">
-                        {RELATIONSHIP_LABEL[company.relationship]}
-                        {company.devUrl ? ` · dev ${company.devUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}` : ''}
+                    {titleSlot ? createPortal(switcher(true), titleSlot) : switcher(false)}
+                    {/* The websites, each opening the site: the name is already in the title bar. */}
+                    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                        {websites.length ? websites.map((host, i) => (
+                            <span key={host} className="inline-flex items-center gap-1">
+                                {websites.length > 1
+                                    ? <button type="button" onClick={() => { setSite(site === host ? null : host); setSection('performance'); }} aria-pressed={site === host} title={site === host ? 'Back to every website' : `Show only ${host}`}
+                                        className={`rounded px-1.5 ${site === host ? 'bg-primary/15 font-medium text-primary' : i === 0 && !site ? 'font-medium text-text-primary' : 'text-text-secondary'} hover:text-primary`}>{host}</button>
+                                    : <span className="font-medium">{host}</span>}
+                                <a href={`https://${host}`} target="_blank" rel="noreferrer" className="text-xs text-text-secondary hover:text-primary" title={`Open ${host}`} aria-label={`Open ${host}`}>↗</a>
+                            </span>
+                        )) : <button type="button" className="text-xs text-text-secondary hover:text-text-primary" onClick={() => setSection('about')}>Add a website</button>}
+                        <span className="text-xs text-text-secondary">{RELATIONSHIP_LABEL[company.relationship]}{company.devUrl ? ` · dev ${company.devUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}` : ''}</span>
                     </p>
                     <button type="button" className="mt-1 block text-left text-sm text-text-secondary hover:text-text-primary" onClick={() => setSection('about')} title="Open About: what it does, who it is for, competitors and key facts">
                         <span className="line-clamp-2">{company.description || 'Add what this company does, who it is for and what the team should know.'}</span>
-                        <span className="text-xs text-primary">About {company.name} →</span>
+                        <span className="text-xs text-primary">About →</span>
                     </button>
                     <SocialLinks links={company.socialLinks ?? []} />
                 </div>
@@ -102,12 +127,12 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
                             setActivityKey((key) => key + 1);
                         }}
                     />
-                    <ProductionDomainEditor
+                    <WebsitesEditor
                         companyId={company.id}
-                        domain={company.domain}
+                        websites={websites}
                         canManage={detail.canManage}
-                        onSaved={(domain) => {
-                            setDetail((current) => current ? { ...current, company: { ...current.company, domain: domain ?? undefined } } : current);
+                        onSaved={(sites) => {
+                            setDetail((current) => current ? { ...current, company: { ...current.company, domain: sites[0], websites: sites } } : current);
                             setActivityKey((key) => key + 1);
                         }}
                     />
@@ -116,6 +141,8 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
             {section === 'performance' && <CompanySnapshot
                 key={company.id}
                 companyId={company.id}
+                site={site}
+                onAllSites={() => setSite(null)}
                 connections={connections.filter((c) => c.status === 'connected')}
                 aiCitations={detail.stats?.aiCitations ?? 0}
                 aiCitationSeries={detail.stats?.aiCitationSeries ?? []}
@@ -129,6 +156,7 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
             <AdminAccount companyId={company.id} defaultDomain={company.domain} />
             <WebsiteConnectionPanel companyId={company.id} domain={company.domain} />
             <IntegrationsSummary companyId={company.id} companyName={company.name} connections={connections} />
+            <AccountWebsites companyId={company.id} websites={websites} connections={connections} canManage={detail.canManage} onSaved={() => void load()} />
             </div>
             </section>}
             {section === 'activity' && <CompanyTimeline key={company.id} companyId={company.id} refreshKey={activityKey} onOpenJob={(jobId) => { setFocusJobId(jobId); setSection('team'); }} />}
@@ -136,31 +164,31 @@ export default function CompanyModule({ payload }: ModuleRenderContext) {
     );
 }
 
-function ProductionDomainEditor({ companyId, domain, canManage, onSaved }: { companyId: string; domain?: string; canManage: boolean; onSaved: (domain: string | null) => void }) {
+/** The company's websites, one per line; the first is its production domain. */
+function WebsitesEditor({ companyId, websites, canManage, onSaved }: { companyId: string; websites: string[]; canManage: boolean; onSaved: (websites: string[]) => void }) {
     const [editing, setEditing] = useState(false);
-    const [value, setValue] = useState(domain ?? '');
+    const [value, setValue] = useState(websites.join('\n'));
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
-
-    useEffect(() => setValue(domain ?? ''), [domain]);
 
     async function save(event: FormEvent) {
         event.preventDefault();
         if (saving) return;
         setSaving(true);
         setError(null);
+        const lines = value.split(/[\n,]+/).map((line) => line.trim()).filter(Boolean);
         try {
             const response = await fetch(`/api/os/companies/${companyId}`, {
                 method: 'PATCH',
                 headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ domain: value }),
+                body: JSON.stringify({ domain: lines[0] ?? '', websites: lines.slice(1) }),
             });
-            const data = await response.json().catch(() => ({})) as { domain?: string | null; error?: string };
+            const data = await response.json().catch(() => ({})) as { domain?: string | null; websites?: string[]; error?: string };
             if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-            onSaved(data.domain ?? null);
+            onSaved(data.websites ?? (data.domain ? [data.domain] : []));
             setEditing(false);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Could not save the production domain.');
+            setError(err instanceof Error ? err.message : 'Could not save the websites.');
         } finally {
             setSaving(false);
         }
@@ -168,15 +196,14 @@ function ProductionDomainEditor({ companyId, domain, canManage, onSaved }: { com
 
     if (!editing) {
         return (
-            <div className="mt-1 flex items-center gap-2 text-xs">
-                {domain ? (
-                    <a href={`https://${domain}`} target="_blank" rel="noreferrer" className="text-primary hover:underline" onClick={(event) => event.stopPropagation()}>{domain}</a>
-                ) : (
-                    <span className="text-text-secondary">No production domain</span>
-                )}
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-text-secondary">Websites</span>
+                {websites.length ? websites.map((site, i) => (
+                    <a key={site} href={`https://${site}`} target="_blank" rel="noreferrer" className="text-primary hover:underline">{site}{i === 0 ? ' (main)' : ''}</a>
+                )) : <span className="text-text-secondary">None yet</span>}
                 {canManage ? (
-                    <button type="button" className="text-[11px] text-text-secondary hover:text-text-primary underline-offset-2 hover:underline" onClick={() => { setValue(domain ?? ''); setError(null); setEditing(true); }}>
-                        {domain ? 'Edit' : 'Set domain'}
+                    <button type="button" className="text-[11px] text-text-secondary underline-offset-2 hover:text-text-primary hover:underline" onClick={() => { setValue(websites.join('\n')); setError(null); setEditing(true); }}>
+                        {websites.length ? 'Edit' : 'Add websites'}
                     </button>
                 ) : null}
             </div>
@@ -185,21 +212,14 @@ function ProductionDomainEditor({ companyId, domain, canManage, onSaved }: { com
 
     return (
         <form onSubmit={save} className="mt-2 max-w-md space-y-1.5">
-            <label className="block text-[11px] text-text-secondary" htmlFor={`production-domain-${companyId}`}>Production domain</label>
+            <label className="block text-[11px] text-text-secondary" htmlFor={`websites-${companyId}`}>Websites, one per line. The first is the main (production) site.</label>
+            <textarea id={`websites-${companyId}`} value={value} onChange={(event) => setValue(event.target.value)} placeholder={'example.com\nshop.example.com'} autoFocus rows={4}
+                className="w-full rounded border border-border bg-background px-2 py-1 text-xs text-text-primary" />
             <div className="flex gap-2">
-                <input
-                    id={`production-domain-${companyId}`}
-                    value={value}
-                    onChange={(event) => setValue(event.target.value)}
-                    placeholder="example.com"
-                    autoFocus
-                    className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-xs text-text-primary"
-                />
                 <button type="submit" disabled={saving} className="rounded bg-primary px-2.5 py-1 text-xs text-white disabled:opacity-50">{saving ? 'Saving…' : 'Save'}</button>
-                <button type="button" disabled={saving} className="rounded border border-border px-2.5 py-1 text-xs hover:bg-background-card disabled:opacity-50" onClick={() => { setEditing(false); setError(null); setValue(domain ?? ''); }}>Cancel</button>
+                <button type="button" disabled={saving} className="rounded border border-border px-2.5 py-1 text-xs hover:bg-background-card disabled:opacity-50" onClick={() => { setEditing(false); setError(null); }}>Cancel</button>
             </div>
-            <p className="text-[11px] text-text-secondary">Used to match analytics, search, hosting, and other company integrations. This does not change DNS.</p>
-            {error ? <p className="text-[11px] text-red-400">{error}</p> : null}
+            {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
         </form>
     );
 }
@@ -405,6 +425,50 @@ function ProjectsSection({ projects }: { projects: OsCompanyDetail['projects'] }
                     ))}
                 </ul>
             )}
+        </section>
+    );
+}
+
+/**
+ * Payments and email accounts cannot tell a company's websites apart, so each is assigned to the sites it
+ * belongs to; their numbers then show under those sites. An email list may serve several sites.
+ */
+function AccountWebsites({ companyId, websites, connections, canManage, onSaved }: { companyId: string; websites: string[]; connections: OsConnection[]; canManage: boolean; onSaved: () => void }) {
+    const [busy, setBusy] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const accounts = connections.filter((c) => c.scope === 'company' && c.status === 'connected' && ['payments', 'email', 'commerce'].includes(c.domain));
+    if (websites.length < 2 || !accounts.length) return null;
+    const save = async (account: OsConnection, sites: string[]) => {
+        setBusy(account.provider);
+        setError(null);
+        const res = await fetch(`/api/os/companies/${companyId}/connections`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ provider: account.provider, sites }) }).catch(() => null);
+        setBusy(null);
+        if (!res?.ok) return setError(((await res?.json().catch(() => ({}))) as { error?: string } | undefined)?.error ?? 'Could not save.');
+        onSaved();
+    };
+    return (
+        <section className="space-y-2 rounded-md border border-border px-3 py-2">
+            <p className="text-xs"><span className="font-medium">Which website each account is for</span> <span className="text-text-secondary">· numbers from these show under the websites you tick. Leave all unticked for the whole company.</span></p>
+            {accounts.map((account) => (
+                <div key={account.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    <span className="w-28 shrink-0 font-medium">{account.providerName}</span>
+                    {websites.map((host) => {
+                        const on = (account.sites ?? []).includes(host);
+                        const next = on ? (account.sites ?? []).filter((s) => s !== host) : [...(account.sites ?? []), host];
+                        // Payments belong to one website; an email list can be shared.
+                        const single = account.domain !== 'email';
+                        return (
+                            <label key={host} className="inline-flex items-center gap-1">
+                                <input type={single ? 'radio' : 'checkbox'} name={`sites-${account.id}`} checked={on} disabled={!canManage || busy !== null}
+                                    onChange={() => void save(account, single ? (on ? [] : [host]) : next)} />
+                                {host}
+                            </label>
+                        );
+                    })}
+                    {account.domain !== 'email' && (account.sites ?? []).length ? <button type="button" className="text-text-secondary underline" disabled={!canManage || busy !== null} onClick={() => void save(account, [])}>Whole company</button> : null}
+                </div>
+            ))}
+            {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
         </section>
     );
 }

@@ -245,17 +245,22 @@ export default function CompanySnapshot({
     aiCitations,
     aiCitationSeries,
     onActivity,
+    site = null,
+    onAllSites = () => {},
 }: {
     companyId: string;
     connections: OsConnection[];
     aiCitations: number;
     aiCitationSeries: { date: string; value: number }[];
     onActivity: () => void;
+    /** One website's numbers; null for every website together. */
+    site?: string | null;
+    onAllSites?: () => void;
 }) {
     const auth = useOsAuth();
     const has = (provider: string) => connections.some((c) => c.provider === provider);
     const hasPerformanceConnection = ['ga4', 'gsc', 'brevo', 'stripe', 'adsense', 'admanager', 'ahrefs', 'mercury', 'signups'].some(has);
-    const [data, setData] = useState<{ lastSyncedAt: string | null; metrics: OsMetric[]; changes: string[] } | null>(null);
+    const [data, setData] = useState<{ lastSyncedAt: string | null; metrics: OsMetric[]; changes: string[]; site?: string | null; companyWideOnly?: string[] } | null>(null);
     const [period, setPeriod] = useState(7);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
@@ -267,12 +272,12 @@ export default function CompanySnapshot({
 
     useEffect(() => {
         const controller = new AbortController();
-        void fetch(`/api/os/companies/${companyId}/metrics?period=${period}`, { signal: controller.signal })
+        void fetch(`/api/os/companies/${companyId}/metrics?period=${period}${site ? `&site=${encodeURIComponent(site)}` : ''}`, { signal: controller.signal })
             .then(async res => { if (!res.ok) throw new Error(`Could not load metrics (${res.status}).`); return res.json(); })
             .then(body => { if (!controller.signal.aborted) { setData(body); setLoadError(null); } })
             .catch(error => { if (!controller.signal.aborted) setLoadError(error.message); });
         return () => controller.abort();
-    }, [companyId, period, reloadKey]);
+    }, [companyId, period, reloadKey, site]);
 
     const syncNow = async () => {
         setSyncing(true);
@@ -325,9 +330,14 @@ export default function CompanySnapshot({
     return (
         <section className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-3">
-                <div><h3 className="font-medium">Company performance</h3><p className="text-xs text-text-secondary">Completed reporting days · compare with the preceding equal period. Source timezones may differ.</p></div>
+                <div><h3 className="font-medium">{site ? `${site} performance` : 'Company performance'}</h3><p className="text-xs text-text-secondary">Completed reporting days · compare with the preceding equal period. Source timezones may differ.</p></div>
                 <label className="text-xs">Timeframe <select aria-label="Performance timeframe" value={period} onChange={e => { setData(null); setLoadError(null); setPeriod(Number(e.target.value)); }} className="ml-2 rounded-lg border border-border bg-background-card p-2">{[7, 14, 28, 90].map(days => <option value={days} key={days}>{days} days</option>)}</select></label>
             </div>
+            {site ? <p className="flex flex-wrap items-center gap-2 rounded-md border border-primary/40 bg-primary/5 px-3 py-2 text-xs">
+                <span>Showing <strong>{site}</strong> only.</span>
+                {data?.companyWideOnly?.length ? <span className="text-text-secondary">Kept for the whole company, not per site: {data.companyWideOnly.slice(0, 6).join(', ')}{data.companyWideOnly.length > 6 ? '…' : ''}.</span> : null}
+                <button type="button" className="ml-auto rounded border border-border px-2 py-0.5 hover:bg-background-card" onClick={onAllSites}>All websites</button>
+            </p> : null}
             {loadError && <p role="alert" className="text-sm text-amber-300">{loadError} <button onClick={() => setReloadKey(k => k + 1)} className="underline">Retry</button></p>}
             {hasPerformanceConnection ? <div className="flex items-center justify-end gap-2">
                     <span className="text-[11px] text-text-secondary">Last successful sync {timeAgo(data?.lastSyncedAt ?? null)}</span>

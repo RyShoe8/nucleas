@@ -14,6 +14,11 @@ const connectionSchema = new Schema(
     /** Null for org-scoped accounts shared by every company (e.g. Ahrefs). */
     companyId: { type: Schema.Types.ObjectId, ref: 'Client', default: null },
     provider: { type: String, required: true, trim: true },
+    /**
+     * The company websites this account belongs to (canonical hosts), for sources that cannot tell sites
+     * apart themselves (payments, email). Empty: the whole company. An email list may serve several sites.
+     */
+    sites: { type: [String], default: undefined },
     scope: { type: String, enum: ['org', 'company'], required: true },
     status: { type: String, enum: INTEGRATION_STATUSES, default: 'declared' },
     source: { type: String, enum: ['stack_backfill', 'baseline', 'manual', 'onboarding'], required: true },

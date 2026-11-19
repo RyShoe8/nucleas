@@ -78,6 +78,11 @@ const ClientSchema: Schema = new Schema(
       trim: true,
       lowercase: true,
     },
+    /** The company's other websites, beyond the production domain above (domains only, no paths). */
+    websites: {
+      type: [{ type: String, trim: true, lowercase: true }],
+      default: undefined,
+    },
     subreddit: {
       type: String,
       trim: true,

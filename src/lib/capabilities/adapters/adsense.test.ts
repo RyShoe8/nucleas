@@ -22,10 +22,11 @@ describe('AdSense adapter', () => {
         calls.push(url);
         if (url.includes('oauth2')) return json({ access_token: 'at' });
         return json({
-          headers: [{ name: 'DATE' }, { name: 'ESTIMATED_EARNINGS', currencyCode: 'USD' }, { name: 'PAGE_VIEWS' }, { name: 'CLICKS' }],
+          headers: [{ name: 'DATE' }, { name: 'DOMAIN_NAME' }, { name: 'ESTIMATED_EARNINGS', currencyCode: 'USD' }, { name: 'PAGE_VIEWS' }, { name: 'CLICKS' }],
           rows: [
-            { cells: [{ value: '2026-09-26' }, { value: '1.23' }, { value: '400' }, { value: '3' }] },
-            { cells: [{ value: '2026-09-27' }, { value: '0.5' }, { value: '100' }, { value: '1' }] },
+            { cells: [{ value: '2026-09-26' }, { value: 'frugalgambler.club' }, { value: '1.00' }, { value: '300' }, { value: '2' }] },
+            { cells: [{ value: '2026-09-26' }, { value: 'www.frugalgambler.club' }, { value: '0.23' }, { value: '100' }, { value: '1' }] },
+            { cells: [{ value: '2026-09-27' }, { value: 'frugalgambler.club' }, { value: '0.5' }, { value: '100' }, { value: '1' }] },
           ],
         });
       }),
@@ -37,7 +38,13 @@ describe('AdSense adapter', () => {
       { date: '2026-09-26', earnings: 123, pageViews: 400, clicks: 3 },
       { date: '2026-09-27', earnings: 50, pageViews: 100, clicks: 1 },
     ]);
+    // www. and the bare domain are the same site: summed per day, and one site in the breakdown.
+    expect(out.siteDays).toEqual([
+      { date: '2026-09-26', site: 'frugalgambler.club', earnings: 123, pageViews: 400, clicks: 3 },
+      { date: '2026-09-27', site: 'frugalgambler.club', earnings: 50, pageViews: 100, clicks: 1 },
+    ]);
     const report = decodeURIComponent(calls.find((u) => u.includes('reports:generate'))!);
+    expect(report).toContain('DOMAIN_NAME==frugalgambler.club,DOMAIN_NAME==www.frugalgambler.club');
     expect(report).toContain('accounts/pub-123/reports:generate');
     expect(report).toContain('filters=DOMAIN_NAME==frugalgambler.club');
     vi.unstubAllEnvs();

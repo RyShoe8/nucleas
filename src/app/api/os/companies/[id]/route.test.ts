@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   citations: vi.fn(),
   voice: vi.fn(),
   connected: vi.fn(async () => [] as { network: string; url: string }[]),
+  refetch: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -29,6 +30,7 @@ vi.mock('@/lib/models/CompanyAssistantTurn', () => ({ CompanyAssistantTurn: { ag
 vi.mock('@/lib/integrations/connections', () => ({ listCompanyConnections: (...args: unknown[]) => mocks.connections(...args) }));
 vi.mock('@/lib/companies/connectedSocialLinks', async () => ({ ...(await vi.importActual<object>('@/lib/companies/connectedSocialLinks')), connectedSocialLinks: () => mocks.connected() }));
 vi.mock('@/lib/companies/activityLog', () => ({ recordActivity: (...args: unknown[]) => mocks.activity(...args) }));
+vi.mock('@/lib/metrics/siteHistory', () => ({ refetchSiteHistory: (...args: unknown[]) => mocks.refetch(...args) }));
 
 import { GET, PATCH } from './route';
 
@@ -87,6 +89,27 @@ describe('company production domain', () => {
     const response = await PATCH(new NextRequest(`https://os.nucleas.test/api/os/companies/${companyId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subreddit: 'u/someone' }) }), { params: Promise.resolve({ id: companyId }) });
     expect(response.status).toBe(400);
     expect(mocks.findCompany).not.toHaveBeenCalled();
+  });
+
+  it('saves extra websites once each, dropping the main site written with www.', async () => {
+    const stored: Record<string, unknown> = { websites: undefined };
+    const company = { domain: 'frugalgambler.club', save: mocks.save, get: (k: string) => stored[k], set: (k: string, v: unknown) => { stored[k] = v; } };
+    mocks.findCompany.mockResolvedValue(company);
+    const body = { websites: ['https://www.FrugalGambler.club/', 'www.dealsblog.example', 'dealsblog.example'] };
+    const response = await PATCH(new NextRequest(`https://os.nucleas.test/api/os/companies/${companyId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), { params: Promise.resolve({ id: companyId }) });
+    expect(await response.json()).toEqual({ websites: ['frugalgambler.club', 'dealsblog.example'] });
+    expect(stored.websites).toEqual(['dealsblog.example']);
+    expect(mocks.activity).toHaveBeenCalledWith(expect.objectContaining({ title: 'Websites updated' }));
+    expect(mocks.refetch).toHaveBeenCalledWith('b'.repeat(24), companyId);
+  });
+
+  it('rejects a website with a path, or too many, without writing', async () => {
+    for (const websites of [['dealsblog.example/admin'], Array.from({ length: 21 }, (_, i) => `site${i}.example`), 'dealsblog.example']) {
+      const response = await PATCH(new NextRequest(`https://os.nucleas.test/api/os/companies/${companyId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ websites }) }), { params: Promise.resolve({ id: companyId }) });
+      expect(response.status).toBe(400);
+    }
+    expect(mocks.findCompany).not.toHaveBeenCalled();
+    expect(mocks.refetch).not.toHaveBeenCalled();
   });
 
   it('reports whether the company has an approved Voice', async () => {

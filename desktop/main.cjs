@@ -27,6 +27,8 @@ function broadcast() {
 }
 // The main Nucleas window is the Office app: the whole business at a glance, with Ask, voice and every app.
 const OFFICE_KEY = 'office:{}';
+const OFFICE_RELOAD_AFTER_MS = 10 * 60 * 1000;
+let officeHiddenAt = Date.now();
 const testRun = !app.isPackaged && (process.argv.includes('--smoke-test') || process.argv.includes('--resource-test'));
 function office() { return windows.get(OFFICE_KEY); }
 /** App windows a person opened, not counting the Office, which stays open in the background. */
@@ -42,7 +44,8 @@ function secureWindow(win, local = false) {
     if (externalUrl(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
-  win.webContents.on('did-create-window', child => secureWindow(child));
+  // A page an app window opens (a sign-in, a full page) floats like the app window that opened it.
+  win.webContents.on('did-create-window', child => { secureWindow(child); if (!win.isDestroyed() && win.isAlwaysOnTop()) child.setAlwaysOnTop(true, 'floating'); });
   win.webContents.on('will-navigate', (event, url) => {
     if (!local && trustedRemote(url) && new URL(url).pathname === '/login') { event.preventDefault(); void win.loadFile(authFile); return; }
     if (local || !trustedRemote(url)) { event.preventDefault(); if (!local && externalUrl(url)) void shell.openExternal(url); }
@@ -103,12 +106,17 @@ function createLauncher() {
 function showLauncher() {
   if (testRun) { if (!launcher) { createLauncher(); return; } launcher.show(); launcher.focus(); return; }
   const main = office();
-  if (main && !main.isDestroyed()) { if (main.isMinimized()) main.restore(); main.show(); main.focus(); return; }
+  if (main && !main.isDestroyed()) {
+    // The Office stays open in the background, so it would keep the version it first loaded forever.
+    // Coming back after a while reloads it, which picks up anything deployed since.
+    if (!main.isVisible() && Date.now() - officeHiddenAt > OFFICE_RELOAD_AFTER_MS && !main.webContents.isLoading()) main.webContents.reload();
+    if (main.isMinimized()) main.restore(); main.show(); main.focus(); return;
+  }
   openModule({ moduleId: 'office' });
 }
 function toggleMain() {
   const main = office();
-  if (main && !main.isDestroyed() && main.isVisible() && main.isFocused()) main.hide(); else showLauncher();
+  if (main && !main.isDestroyed() && main.isVisible() && main.isFocused()) { main.hide(); officeHiddenAt = Date.now(); } else showLauncher();
 }
 function openModule(raw) {
   const value = moduleRequest(raw, catalog);
@@ -127,12 +135,23 @@ function openModule(raw) {
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), partition: 'persist:nucleas', sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true } });
   windows.set(value.key, win);
   targets.set(win, target.href);
+  if (isOffice) {
+    // The Office steps aside when you click away to another program: it goes behind everything
+    // (minimized), while the app windows stay in front. Moving to a Nucleas app window keeps it.
+    win.on('blur', () => setTimeout(() => {
+      if (quitting || win.isDestroyed() || !win.isVisible() || win.isMinimized()) return;
+      if (!BrowserWindow.getFocusedWindow()) { win.minimize(); officeHiddenAt = Date.now(); }
+    }, 120));
+  } else {
+    // App windows (Company, Work, Ask…) float above every program until closed or minimized.
+    win.setAlwaysOnTop(true, 'floating');
+  }
   secureWindow(win);
   win.once('ready-to-show', () => win.show());
   win.on('close', event => {
     saved[value.key] = win.getNormalBounds(); persist();
     // Closing the Office hides it to the tray, like the launcher did; quitting closes it for real.
-    if (isOffice && !quitting) { event.preventDefault(); win.hide(); if (update.phase === 'ready' && openApps() === 0) installUpdate(); }
+    if (isOffice && !quitting) { event.preventDefault(); win.hide(); officeHiddenAt = Date.now(); if (update.phase === 'ready' && openApps() === 0) installUpdate(); }
   });
   win.on('closed', () => { windows.delete(value.key); targets.delete(win); broadcast(); });
 

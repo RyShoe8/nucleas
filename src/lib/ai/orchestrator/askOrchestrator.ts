@@ -67,6 +67,8 @@ const planSchema = z.object({
   codeChange: z.object({ company: z.string().max(200), request: z.string().min(5).max(4000) }).optional(),
   /** Non-code work to set up as a job (once or repeating); Nucleas designs it and a person approves. */
   job: z.object({ company: z.string().max(200), request: z.string().min(5).max(4000) }).optional(),
+  /** Nothing Nucleas has can answer this: what is missing, and the tool it would build for itself. */
+  capabilityGap: z.object({ need: z.string().min(5).max(1000), proposal: z.string().min(5).max(3000) }).optional(),
 });
 export type AskPlan = z.infer<typeof planSchema>;
 
@@ -125,7 +127,7 @@ export function recoverObviousCodeChange(
  * company's site (not a question), route it to the repository-grounded flow anyway.
  */
 export function shouldOverrideToCodeChange(plan: AskPlan, text: string): boolean {
-  if (plan.kind !== 'answer' || plan.codeChange || plan.job || plan.deepResearch) return false;
+  if (plan.kind !== 'answer' || plan.codeChange || plan.job || plan.capabilityGap || plan.deepResearch) return false;
   if (plan.fetch.length || plan.actions.length || plan.research.length) return false;
   const trimmed = text.trim();
   if (/\?\s*$/.test(trimmed)) return false;
@@ -216,6 +218,20 @@ export function factSheet(results: { company: string; tool: string; result: Reco
       if (Array.isArray(result.notableChanges) && result.notableChanges.length) lines.push(`  Notable: ${(result.notableChanges as string[]).join('; ')}`);
       continue;
     }
+    if (tool === 'nucleas_jobs' && Array.isArray(result.jobs)) {
+      type JobLine = { name: string; owner?: string; status: string; schedule: string; lastRun: string | null; nextRun: string | null; waitingForYou: string[]; resultsGoOut: string | null; spentThisMonthUsd: number };
+      const groups = result.jobs as { company: string; count: number; jobs: JobLine[] }[];
+      lines.push(`Nucleas jobs (${String(result.scope)}): ${groups.reduce((n, g) => n + g.count, 0)} in total.`);
+      if (!groups.length) lines.push('  No jobs are set up.');
+      for (const group of groups) {
+        lines.push(`${group.company} (${group.count}):`);
+        for (const job of group.jobs) {
+          const when = [job.lastRun ? `last ${job.lastRun.slice(0, 16).replace('T', ' ')}` : 'not run yet', job.nextRun ? `next ${job.nextRun.slice(0, 16).replace('T', ' ')}` : ''].filter(Boolean).join(', ');
+          lines.push(`  - ${job.name} · ${job.owner ?? 'team'} · ${job.status} · ${job.schedule} · ${when}${job.waitingForYou.length ? ` · waiting for you: ${job.waitingForYou.join(', ')}` : ''}${job.resultsGoOut ? ` · ${job.resultsGoOut}` : ''} · $${job.spentThisMonthUsd.toFixed(2)} this month`);
+        }
+      }
+      continue;
+    }
     lines.push(`- ${company} / ${tool}: ${String(result.summary ?? result.status ?? 'done')}`);
     if (result.output) lines.push(`  data: ${JSON.stringify(result.output).slice(0, 1500)}`);
     if (result.awaitingApproval) lines.push(`  ${String(result.awaitingApproval)}`);
@@ -230,10 +246,12 @@ function plannerPrompt(context: PortfolioContext, toolCatalog: string, today: st
     'Do NOT answer the question. Decide what data to fetch and how the answer should be structured. A separate writer produces the answer from the data you request.',
     '',
     'Return ONLY a JSON object:',
-    '{"kind":"answer"|"clarify","scope":"company"|"general"|"mixed","clarifyQuestion":"...","research":[{"query":"..."}],"deepResearch":{"question":"..."},"fetch":[{"company":"<exact name>","tool":"<tool>","days":28}],"team":[{"member":"<member>","ask":"<the question for them>","company":"<exact name, when about one company>"}],"actions":[{"company":"<exact name>","tool":"<change tool>"}],"codeChange":{"company":"<exact name>","request":"<the change, in full>"},"job":{"company":"<exact name>","request":"<the work, in full>"},"outline":["point 1","point 2"],"review":true|false}',
+    '{"kind":"answer"|"clarify","scope":"company"|"general"|"mixed","clarifyQuestion":"...","research":[{"query":"..."}],"deepResearch":{"question":"..."},"fetch":[{"company":"<exact name>","tool":"<tool>","days":28}],"team":[{"member":"<member>","ask":"<the question for them>","company":"<exact name, when about one company>"}],"actions":[{"company":"<exact name>","tool":"<change tool>"}],"codeChange":{"company":"<exact name>","request":"<the change, in full>"},"job":{"company":"<exact name>","request":"<the work, in full>"},"capabilityGap":{"need":"<what is missing>","proposal":"<the tool to build>"},"outline":["point 1","point 2"],"review":true|false}',
     '',
     'Rules:',
     '- scope: "company" for questions about these businesses, "general" for anything else (world knowledge, how-to, industry questions), "mixed" when both are needed.',
+    '- capabilityGap: when the answer needs information or an action that none of the tools above, research, the company context or the team can provide, set capabilityGap instead of answering from unrelated data. need: what is missing, in plain words ("a list of every scheduled job"). proposal: the tool Nucleas would build for itself to answer it: what it reads or does, for which companies, and what it returns. Nucleas then plans that tool as a change to its own code and shows the user the plan before anything is built. Leave fetch, research and actions empty when you set it. Never use it when an existing tool, research or the company context can answer.',
+    '- Questions about Nucleas itself — the jobs or responsibilities it runs, what is scheduled, active, paused, waiting for approval or waiting for the user — are answered from the nucleas_jobs tool: fetch it once with company "all" (or the one company asked about). Never say Nucleas cannot see its own jobs.',
     `- research: up to ${MAX_RESEARCH} web searches when the answer depends on current or external facts (news, rankings, prices, competitors, recent events). Omit for timeless knowledge.`,
     '- deepResearch: when the answer needs several rounds of searching where later searches depend on earlier findings (e.g. building a list of sites, comparing competitors, investigating a market). Give one clear research question and a strategy object. Use research instead for single lookups.',
     'For deepResearch.strategy only: ' + strategyInstructions,
@@ -558,6 +576,50 @@ async function runAskOrchestratorUncapped(
       invocationIds: [],
       costMicros,
       runId: planTurn.runId,
+      build: b,
+    };
+  }
+
+  // A capability Nucleas does not have: say so, and plan building it into Nucleas itself for the user to approve.
+  if (plan.capabilityGap) {
+    const gap = plan.capabilityGap;
+    const own = [...repos.entries()].find(([, fullName]) => /(^|\/)nucleas$/i.test(fullName))
+      ?? [...repos.entries()].find(([id]) => /^nucleas$/i.test(input.context.companies.find((c) => c.id === id)?.name ?? ''));
+    if (!own) {
+      return {
+        role: 'assistant',
+        text: [
+          `I don't have a tool for that yet: ${gap.need}.`,
+          `To answer it I'd need to build one for myself: ${gap.proposal}`,
+          "I can plan that change once Nucleas's own code repository is connected. Add Nucleas as a company and connect its repository under Code repository, then ask me again.",
+        ].join('\n\n'),
+        stages, invocationIds: [], costMicros, runId: planTurn.runId,
+      };
+    }
+    const [companyId, fullName] = own;
+    const request = [
+      `Give Nucleas the ability to answer this request from a user in Ask: "${input.text.slice(0, 1500)}"`,
+      `What is missing: ${gap.need}`,
+      `The tool to build: ${gap.proposal}`,
+      'Build it the way the existing Ask tools are built (src/lib/ai/company/companyTools.ts), so the Ask planner can choose it and the writer sees its results (factSheet in src/lib/ai/orchestrator/askOrchestrator.ts). Keep it read-only unless the request needs a change, scope it to the companies the user can access, and add tests.',
+    ].join('\n\n');
+    say(`Planning a new tool for Nucleas (${fullName})`);
+    const proposal = await proposeCodeChange(viewer, { companyId, request, level: input.level, signal: input.signal, onProgress: input.onProgress });
+    costMicros += proposal.costMicros;
+    stages.push({ stage: 'code', costMicros: proposal.costMicros, note: proposal.ok ? `planned a new tool against ${proposal.build.repository.fullName}` : proposal.message.slice(0, 120) });
+    if (!proposal.ok) {
+      return { role: 'assistant', text: `I don't have a tool for that yet: ${gap.need}. I tried to plan building it (${gap.proposal}) but couldn't: ${proposal.message}`, stages, invocationIds: [], costMicros, runId: planTurn.runId };
+    }
+    const b = proposal.build;
+    return {
+      role: 'assistant',
+      text: [
+        `I don't have a tool for that yet: ${gap.need}.`,
+        `I'd need to build one for myself, so I planned it as a change to Nucleas (${b.repository.fullName}): **${b.title}**`,
+        b.summary,
+        'Read the plan, then approve it to build, edit it first, or reject it. Nothing changes until you open the pull request from Building, and once it ships, ask me again.',
+      ].filter(Boolean).join('\n\n'),
+      stages, invocationIds: [], costMicros, runId: planTurn.runId,
       build: b,
     };
   }

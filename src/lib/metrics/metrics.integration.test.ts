@@ -5,10 +5,11 @@ import Client from '@/lib/models/Client';
 import Project from '@/lib/models/Project';
 import { ExternalResource, IntegrationConnection, IntegrationSecret } from '@/lib/models/Integration';
 import { CapabilityInvocation } from '@/lib/models/Capability';
-import { MetricSnapshot, MetricSyncState } from '@/lib/models/Metric';
+import { MetricSiteSnapshot, MetricSnapshot, MetricSyncState } from '@/lib/models/Metric';
 import { sealSecret } from '@/lib/security/secretBox';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { processMetricSync, runCompanySync, windowDates } from './sync';
+import { refetchSiteHistory } from './siteHistory';
 import { getCompanyMetrics, getTodayOverview, whatChanged, type MetricView } from './query';
 
 let replica: MongoMemoryReplSet;
@@ -23,7 +24,7 @@ beforeAll(async () => {
   vi.stubEnv('GOOGLE_CLIENT_SECRET', 'csecret');
   replica = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: 'wiredTiger', ip: '127.0.0.1' } });
   await mongoose.connect(replica.getUri('nucleas_metrics_test'));
-  await Promise.all([MetricSnapshot.syncIndexes(), MetricSyncState.syncIndexes(), IntegrationConnection.syncIndexes()]);
+  await Promise.all([MetricSnapshot.syncIndexes(), MetricSiteSnapshot.syncIndexes(), MetricSyncState.syncIndexes(), IntegrationConnection.syncIndexes()]);
 }, 120_000);
 
 afterAll(async () => {
@@ -70,7 +71,7 @@ function fakeProviders(requestedDays: number[] = []) {
 beforeEach(async () => {
   await Promise.all([
     Client.deleteMany({}), Project.deleteMany({}), IntegrationConnection.deleteMany({}), IntegrationSecret.deleteMany({}),
-    ExternalResource.deleteMany({}), CapabilityInvocation.deleteMany({}), MetricSnapshot.deleteMany({}), MetricSyncState.deleteMany({}),
+    ExternalResource.deleteMany({}), CapabilityInvocation.deleteMany({}), MetricSnapshot.deleteMany({}), MetricSiteSnapshot.deleteMany({}), MetricSyncState.deleteMany({}),
   ]);
   const hub = await Project.create({ name: 'Frugal Gambler', projectType: 'internal', category: 'website', status: 'launched', color: '#111', userId: new Types.ObjectId() });
   const company = await Client.create({ organizationId: orgId, name: 'Frugal Gambler', color: '#111', relationship: 'owned', domain: 'frugalgambler.club', hubProjectId: hub._id });
@@ -193,5 +194,81 @@ describe('total revenue', () => {
     const single = withTotalRevenue([mk('ad_revenue', 20_000, 10_000)]);
     expect(single[0]).toMatchObject({ key: 'revenue_total', label: 'Revenue', current: 20_000 });
     expect(whatChanged(single)).toHaveLength(1);
+  });
+});
+
+/** Like fakeProviders, but GA4 also answers the per-website report: www. and bare domain split the traffic, plus a stranger's host. */
+function fakeSiteProviders() {
+  const base = fakeProviders();
+  return vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes(':runReport')) {
+      const body = JSON.parse(String(init?.body));
+      if (body.dimensions.length === 2 && body.dimensions[1].name === 'hostName') {
+        const { startDate, endDate } = body.dateRanges[0];
+        const rows = [];
+        for (const d = new Date(`${startDate}T00:00:00Z`); d <= new Date(`${endDate}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
+          const day = d.toISOString().slice(0, 10).replaceAll('-', '');
+          rows.push(
+            { dimensionValues: [{ value: day }, { value: 'www.frugalgambler.club' }], metricValues: [{ value: '3' }, { value: '1' }, { value: '1' }, { value: '1' }] },
+            { dimensionValues: [{ value: day }, { value: 'frugalgambler.club' }], metricValues: [{ value: '2' }, { value: '1' }, { value: '1' }, { value: '1' }] },
+            { dimensionValues: [{ value: day }, { value: 'casinoreviews.example' }], metricValues: [{ value: '9' }, { value: '9' }, { value: '9' }, { value: '9' }] },
+          );
+        }
+        return json({ rows });
+      }
+    }
+    return base(url, init);
+  });
+}
+
+describe('per-website numbers', () => {
+  it('stays off for a company with one website', async () => {
+    await runCompanySync({ _id: companyId, organizationId: orgId }, { now: NOW, fetchImpl: fakeSiteProviders() });
+    expect(await MetricSiteSnapshot.countDocuments({ companyId })).toBe(0);
+    const view = await getCompanyMetrics(admin, String(companyId), { now: NOW, site: 'frugalgambler.club' });
+    expect(view).toMatchObject({ sites: [], site: null });
+  });
+
+  it('splits by website without touching company totals, merging www. and leaving uncovered sites empty', async () => {
+    await Client.updateOne({ _id: companyId }, { $set: { websites: ['www.dealsblog.example', 'https://www.frugalgambler.club'] } });
+    await IntegrationConnection.updateOne({ companyId, provider: 'stripe' }, { $set: { sites: ['frugalgambler.club'] } });
+    await runCompanySync({ _id: companyId, organizationId: orgId }, { now: NOW, fetchImpl: fakeSiteProviders() });
+
+    // Company totals are exactly what the unsplit report said; nothing is added from the per-site rows.
+    const dates = windowDates('analytics.traffic.read', 90, NOW);
+    const totals = await MetricSnapshot.find({ companyId, metricKey: 'sessions' }).lean();
+    expect(totals).toHaveLength(90);
+    expect(totals.reduce((sum, r) => sum + r.value, 0)).toBe(dates.reduce((sum, d) => sum + Number(d.slice(8, 10)), 0));
+
+    // www. and the bare domain are one site; the stranger's host is dropped; the blog has no source so no rows.
+    const sessions = await MetricSiteSnapshot.find({ companyId, metricKey: 'sessions' }).lean();
+    expect(new Set(sessions.map((r) => r.site))).toEqual(new Set(['frugalgambler.club']));
+    expect(sessions).toHaveLength(90);
+    expect(sessions.every((r) => r.value === 5)).toBe(true);
+    expect(await MetricSiteSnapshot.countDocuments({ companyId, site: 'dealsblog.example' })).toBe(0);
+
+    // Stripe is assigned to the main site, so its revenue shows there.
+    const revenue = await MetricSiteSnapshot.find({ companyId, site: 'frugalgambler.club', metricKey: 'revenue_net' }).lean();
+    expect(revenue.find((r) => r.date === '2026-09-26')?.value).toBe(5000);
+
+    const all = await getCompanyMetrics(admin, String(companyId), { now: NOW });
+    expect(all).toMatchObject({ site: null, sites: ['frugalgambler.club', 'dealsblog.example'] });
+    const one = await getCompanyMetrics(admin, String(companyId), { now: NOW, site: 'WWW.FrugalGambler.club' });
+    expect(one!.site).toBe('frugalgambler.club');
+    expect(one!.metrics.find((m) => m.key === 'sessions')!.current).toBe(35);
+    expect(one!.metrics.map((m) => m.key)).toContain('revenue_net');
+    const blog = await getCompanyMetrics(admin, String(companyId), { now: NOW, site: 'dealsblog.example' });
+    expect(blog!.metrics.find((m) => m.key === 'sessions')).toBeUndefined();
+    expect(blog!.companyWideOnly.length).toBeGreaterThan(0);
+  });
+
+  it('fills the history of a newly added website on the next sync instead of starting from today', async () => {
+    await runCompanySync({ _id: companyId, organizationId: orgId }, { now: NOW, fetchImpl: fakeSiteProviders() });
+    await Client.updateOne({ _id: companyId }, { $set: { websites: ['dealsblog.example'] } });
+    await refetchSiteHistory(orgId, companyId);
+    const later = new Date(NOW.getTime() + 2 * 60 * 60 * 1000);
+    await runCompanySync({ _id: companyId, organizationId: orgId }, { now: later, fetchImpl: fakeSiteProviders() });
+    expect(await MetricSiteSnapshot.countDocuments({ companyId, site: 'frugalgambler.club', metricKey: 'sessions' })).toBe(90);
+    expect(await MetricSnapshot.countDocuments({ companyId, metricKey: 'sessions' })).toBe(90);
   });
 });

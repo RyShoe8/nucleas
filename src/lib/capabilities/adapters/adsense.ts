@@ -1,6 +1,7 @@
 import type { CapabilityRunContext } from '../types';
 import { providerJson } from './http';
 import { googleAccessToken } from './google';
+import { siteKey } from '@/lib/companies/productionDomain';
 
 /**
  * AdSense Management API v2. Same approach The Ad Shop uses in production: daily
@@ -58,6 +59,8 @@ export interface AdRevenueOutput {
   pageViews: number;
   clicks: number;
   days: { date: string; earnings: number; pageViews: number; clicks: number }[];
+  /** The same days per website (www. and the bare domain are one site). */
+  siteDays?: { date: string; site: string; earnings: number; pageViews: number; clicks: number }[];
 }
 
 type Report = {
@@ -83,16 +86,31 @@ export async function adsenseRevenue(ctx: CapabilityRunContext, range: { startDa
   });
   for (const m of ['ESTIMATED_EARNINGS', 'PAGE_VIEWS', 'CLICKS']) qs.append('metrics', m);
   qs.append('dimensions', 'DATE');
-  qs.append('filters', `DOMAIN_NAME==${domain}`);
+  qs.append('dimensions', 'DOMAIN_NAME');
+  // AdSense may hold the site as example.com or www.example.com; either way it is this company's site.
+  qs.append('filters', `DOMAIN_NAME==${domain},DOMAIN_NAME==www.${domain}`);
 
   const report = await providerJson<Report>(ctx, `${BASE}/${account}/reports:generate?${qs}`, { headers: { authorization: `Bearer ${token}` } }, 'AdSense');
   const currency = (report.headers?.find((h) => h.name === 'ESTIMATED_EARNINGS')?.currencyCode ?? 'USD').toLowerCase();
-  const days = (report.rows ?? []).map((r) => ({
+  // Cells follow the request: dimensions (DATE, DOMAIN_NAME) first, then the metrics.
+  const rows = (report.rows ?? []).map((r) => ({
     date: r.cells[0]?.value ?? '',
-    earnings: Math.round(parseFloat(r.cells[1]?.value ?? '0') * 100),
-    pageViews: parseInt(r.cells[2]?.value ?? '0', 10) || 0,
-    clicks: parseInt(r.cells[3]?.value ?? '0', 10) || 0,
+    site: siteKey(r.cells[1]?.value ?? domain) || domain,
+    earnings: Math.round(parseFloat(r.cells[2]?.value ?? '0') * 100),
+    pageViews: parseInt(r.cells[3]?.value ?? '0', 10) || 0,
+    clicks: parseInt(r.cells[4]?.value ?? '0', 10) || 0,
   })).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.date));
+  const sum = (list: typeof rows, by: (row: (typeof rows)[number]) => string) => {
+    const out = new Map<string, (typeof rows)[number]>();
+    for (const row of list) {
+      const key = by(row);
+      const prior = out.get(key);
+      out.set(key, prior ? { ...prior, earnings: prior.earnings + row.earnings, pageViews: prior.pageViews + row.pageViews, clicks: prior.clicks + row.clicks } : { ...row });
+    }
+    return [...out.values()];
+  };
+  const days = sum(rows, (row) => row.date).map(({ date, earnings, pageViews, clicks }) => ({ date, earnings, pageViews, clicks }));
+  const siteDays = sum(rows, (row) => `${row.date}|${row.site}`);
 
   return {
     site: siteName,
@@ -103,5 +121,6 @@ export async function adsenseRevenue(ctx: CapabilityRunContext, range: { startDa
     pageViews: days.reduce((s, d) => s + d.pageViews, 0),
     clicks: days.reduce((s, d) => s + d.clicks, 0),
     days,
+    siteDays,
   };
 }

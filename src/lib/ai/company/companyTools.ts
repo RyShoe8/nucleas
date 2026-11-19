@@ -8,6 +8,8 @@ import type { CapabilityDefinition } from '@/lib/capabilities/types';
 import type { CompanyProfile, CompanyViewer } from '@/lib/companies/companyProfile';
 import { getCompanyMetrics } from '@/lib/metrics/query';
 import type { ExtraToolSet } from '@/lib/ai/tools/runToolLoop';
+import { listJobs, type JobView } from '@/lib/jobs/jobs';
+import { TEAM, teamRoleFor } from '@/lib/companies/teamRoles';
 
 /**
  * Portfolio assistant tools. Every tool takes a `company` argument restricted to the companies the
@@ -17,6 +19,54 @@ import type { ExtraToolSet } from '@/lib/ai/tools/runToolLoop';
  */
 
 const MAX_TOOL_OUTPUT = 6000;
+const MAX_JOBS_OUTPUT = 16000;
+
+/** The jobs as the assistant needs them: grouped by company, one compact line of facts per job. */
+export function summarizeJobs(jobs: JobView[]) {
+  const scheduleOf = (job: JobView) => {
+    const s = job.design?.schedule;
+    if (!s || s.kind === 'once') return 'once';
+    if (s.kind === 'hourly') return 'every hour';
+    if (s.kind === 'daily') return s.everyDays && s.everyDays > 1 ? `every ${s.everyDays} days` : `daily${s.time ? ` at ${s.time}` : ''}`;
+    if (s.kind === 'weekly') return `weekly${s.time ? ` at ${s.time}` : ''}`;
+    return 'monthly';
+  };
+  const waitingFor = (job: JobView) => {
+    const items: string[] = [];
+    if (job.status === 'needs_answers') items.push('answers to its questions');
+    if (job.status === 'proposed') items.push('approval of its plan');
+    const reviews = job.runs.filter((r) => r.status === 'needs_review').length;
+    if (reviews) items.push(`${reviews} result${reviews === 1 ? '' : 's'} to review`);
+    const posts = job.publishing?.ready.filter((d) => d.status === 'ready').length ?? 0;
+    if (posts) items.push(`${posts} post${posts === 1 ? '' : 's'} or record${posts === 1 ? '' : 's'} to handle`);
+    const links = job.opportunities.filter((o) => o.status === 'recommended' || o.status === 'approved').length;
+    if (links) items.push(`${links} link opportunit${links === 1 ? 'y' : 'ies'}`);
+    return items;
+  };
+  const byCompany = new Map<string, ReturnType<typeof line>[]>();
+  function line(job: JobView) {
+    const running = job.runs.find((r) => r.status === 'running');
+    return {
+      name: job.design?.title ?? job.request.slice(0, 120),
+      owner: TEAM[job.teamRole ?? teamRoleFor(job)]?.name,
+      status: running ? `working now (${running.progressState.label})` : job.status,
+      schedule: scheduleOf(job),
+      lastRun: job.lastRunAt,
+      nextRun: job.status === 'active' ? job.nextRunAt : null,
+      waitingForYou: waitingFor(job),
+      resultsGoOut: job.publishing
+        ? job.publishing.channels.map((c) => `${c.platform}: ${c.mode === 'auto' ? 'automatic' : 'waits for a person'}`).join(', ')
+        : job.completion === 'automatic' ? 'counted automatically when every check passes' : job.completion === 'review' ? 'a person reviews each result' : null,
+      spentThisMonthUsd: Math.round(job.spentThisMonthMicros / 10_000) / 100,
+    };
+  }
+  for (const job of jobs) {
+    const list = byCompany.get(job.companyName) ?? [];
+    list.push(line(job));
+    byCompany.set(job.companyName, list);
+  }
+  return [...byCompany.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([company, list]) => ({ company, count: list.length, jobs: list }));
+}
 
 export function toolNameFor(capabilityId: string): string {
   return capabilityId.replace(/[^a-zA-Z0-9]+/g, '_');
@@ -103,6 +153,19 @@ export async function buildAssistantTools(
     {
       type: 'function',
       function: {
+        name: 'nucleas_jobs',
+        description:
+          "Nucleas's own jobs (responsibilities): every automated or one-off job it runs for the companies, with its team member, status (active, paused, waiting for approval…), schedule, last and next run, what is waiting for a person, how results go out, and this month's spend. Leave company out, or pass \"all\", for every company. Use it for any question about what Nucleas is running, has set up, or needs reviewed.",
+        parameters: {
+          type: 'object',
+          properties: { company: { type: 'string', description: 'One company name from list_companies, or "all" (the default) for every company' }, includeFinished: { type: 'boolean', description: 'Also list finished, failed and rejected jobs (default false)' } },
+          required: [],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
         name: 'company_activity',
         description:
           'What changed recently for one company, newest first: code commits, builds and pull requests, actions Nucleas took in connected systems, and integration changes. Use it to explain recent movements or check what was just changed.',
@@ -149,6 +212,12 @@ export async function buildAssistantTools(
           connected: [...connectedFor(c.id)].sort(),
         })),
       }).slice(0, MAX_TOOL_OUTPUT);
+    }
+
+    if (name === 'nucleas_jobs') {
+      const one = matchCompany(companies, args.company);
+      const jobs = await listJobs(viewer, { ...(one ? { companyId: one.id } : {}), includeClosed: args.includeFinished === true });
+      return JSON.stringify({ ok: true, scope: one ? one.name : 'all companies', jobs: summarizeJobs(jobs) }).slice(0, MAX_JOBS_OUTPUT);
     }
 
     const company = matchCompany(companies, args.company);

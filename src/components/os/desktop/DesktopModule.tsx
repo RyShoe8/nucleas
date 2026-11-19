@@ -9,6 +9,7 @@ import { openPagesInOwnWindow, shareWindowEvents } from '@/lib/os/desktopWindows
 import { OsIntentLayer } from '@/components/os/OsRoot';
 import { useVoice } from '@/components/voice/VoiceProvider';
 import styles from './DesktopModule.module.css';
+import { TITLE_SLOT_ID } from '@/lib/os/titleSlot';
 
 /** Voice is started from the main Nucleas window. It tells the Ask window to listen; no other app window carries a microphone. */
 function VoiceFromMainWindow() {
@@ -52,7 +53,8 @@ export default function DesktopModule() {
                 {hasLauncher ? <button type="button" className={styles.launcher} title="Open the main Nucleas window" onClick={() => void window.nucleasDesktop?.showLauncher?.()} aria-label="Open the main Nucleas window">
                     <span className={styles.mark} aria-hidden>n</span> Nucleas apps
                 </button> : <span className={styles.mark} aria-hidden>n</span>}
-                <span className={styles.title}>{title}</span>
+                {/* An app can put its own control here (the Company window puts its company picker); the plain title then hides. */}
+                <span className={styles.titleBar}><span className={styles.title}>{title}</span><span id={TITLE_SLOT_ID} data-window-id={`desktop-${moduleId}`} className={styles.titleSlot} /></span>
             </header>
             <main className={`${styles.body} nucleas-app-content`} aria-label={title}>
                 {content ? <div className={styles.message}>{content}</div> : definition!.render({ windowId: `desktop-${moduleId}`, moduleId, payload })}
