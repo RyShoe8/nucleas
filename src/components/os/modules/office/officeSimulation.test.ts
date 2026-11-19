@@ -43,4 +43,22 @@ describe('connected office simulation',()=>{
     const moving=moveActor(start,pool,.1),interrupted=moveActor(moving,p.home,.1);
     expect(interrupted.destination.key).toBe(pool.key);expect(interrupted.pending?.key).toBe(p.home.key);
   });
+  it('shares three distinct couch seats between gaming and relaxing, away from the TV',()=>{
+    const world=makeWorld(rooms());
+    const visitors=world.people.slice(0,4);
+    const places=chooseDestinations(world,0,Object.fromEntries(visitors.map((p,i)=>[p.id,i===1?'couch':'gaming'])));
+    const seated=visitors.map(p=>places.get(p.id)!).filter(d=>d.view==='rear');
+    expect(seated).toHaveLength(3);
+    expect(new Set(seated.map(d=>`${d.point.x}:${d.point.y}`)).size).toBe(3);
+    for(const seat of seated) {expect(seat.point.y).toBeGreaterThan(400);expect(seat.depth).toBe(475);}
+    expect(places.get(visitors[3].id)).toBe(visitors[3].home);
+  });
+  it('supports simultaneous shared amenities and gives explicit visits priority over ambient breaks',()=>{
+    const world=makeWorld(rooms()),people=world.people.slice(-6);
+    const requests=['pool','pool','coffee','coffee','water','water'] as const;
+    const places=chooseDestinations(world,300,Object.fromEntries(people.map((p,i)=>[p.id,requests[i]])));
+    expect(people.map(p=>places.get(p.id)?.amenity)).toEqual(requests);
+    expect(new Set(people.map(p=>places.get(p.id)?.key)).size).toBe(6);
+    expect(new Set(people.map(p=>JSON.stringify(places.get(p.id)?.point))).size).toBe(6);
+  });
 });

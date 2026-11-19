@@ -1,7 +1,12 @@
-.wrapper { border: 1px solid #71858055; border-radius: 14px; overflow: hidden; background: #14242a; }
+.wrapper { width:100%;min-width:0;border: 1px solid #71858055; border-radius: 14px; overflow: hidden; background: #14242a; }
 .workStrip { display:flex;gap:8px;overflow-x:auto;padding:10px 12px;color:#dce8de;border-bottom:1px solid #b8cabb25;font-size:12px; }
-.workStrip button { position:relative;flex:0 0 235px;padding:9px 12px 9px 23px;border:1px solid #8cae9940;border-radius:7px;background:#203b3b;text-align:left; }
-.workStrip i { position:absolute;left:9px;top:14px;width:6px;height:6px;border-radius:50%; }.workStrip span { float:right;color:#dfc08a;font-size:10px; }.workStrip small { display:block;margin-top:4px;color:#b8ccc4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.workStrip button { position:relative;display:flex;flex-direction:column;align-items:stretch;flex:0 0 300px;padding:12px 14px 12px 26px;border:1px solid #8cae9960;border-radius:7px;background:#203b3b;text-align:left; }
+.workStrip i { position:absolute;left:10px;top:17px;width:7px;height:7px;border-radius:50%; }.workStrip span { float:right;color:#f4dca3;font-size:12px; }.workStrip small { display:block;margin-top:6px;color:#d1e1d9;line-height:1.4;font-size:12px; }
+.workStrip strong { font-size:14px;padding-right:75px; }.workStrip button > span { position:absolute;right:14px;top:13px; }.workStrip button > small { display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:34px; }
+.boardMetrics:empty { display:none; }
+.boardMetrics { display:flex;gap:18px;margin-top:10px;padding-top:9px;border-top:1px solid #adccbb33;flex-wrap:wrap; }.boardMetrics b { font-size:20px;color:#f2f6ee; }.boardMetrics small { font-size:11px;margin-top:2px; }
+.visitors { list-style:none;padding:0; }.visitors li { font-size:12px;padding:3px 0; }
+.couchFront { position:absolute;z-index:476;object-fit:contain;pointer-events:none;clip-path:polygon(3% 56%,12% 51%,85% 37%,95% 41%,95% 77%,9% 96%,2% 75%); }
 .wingLabel { position:absolute;color:#263f36;font-size:10px;font-weight:700;letter-spacing:.18em; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px; border-bottom: 1px solid #b8cabb25; color: #e3eee8; font-size: 12px; }
 .toolbar > div { flex: 1; min-width: 180px; }.toolbar small { display: block; color: #9fb6aa; font-size: 10px; margin-top: 3px; }
@@ -90,14 +95,19 @@
 .galleryRail i { display:inline-block;margin:-8px 12px 0;width:30px;height:24px;vertical-align:top;border:3px solid #eee3cb;background:linear-gradient(145deg,var(--brand),#45655c);box-shadow:1px 2px 3px #433a2944; }
 .galleryRail i:nth-child(2) { background:linear-gradient(35deg,#c8b895 45%,#869b86 46%); }
 .landingLight { position:absolute;left:250px;right:40px;top:17px;height:2px;background:linear-gradient(90deg,#fff1cb88,transparent);box-shadow:0 2px 6px #fff0c855; }
-.gardenNook { position:absolute;left:870px;width:355px;height:270px;background:repeating-linear-gradient(0deg,#ffffff08 0 1px,transparent 1px 4px),#8d9b7c44;border:1px solid #e5dbc4;border-radius:12px;pointer-events:none; }
-.nookWindow { position:absolute;top:0;right:-10px;width:32px;height:245px;background:repeating-linear-gradient(0deg,transparent 0 57px,#e5dfc9 57px 62px),linear-gradient(90deg,#e3edda,#9bbcb5);border:5px solid #d7d1b8;box-shadow:-25px 15px 35px #f6e6b533; }
-.gardenNook > span { position:absolute;left:25px;top:20px;font-size:8px;color:#476154;letter-spacing:.12em; }
-.nookSofa { position:absolute;left:10px;top:65px;width:225px;height:170px;object-fit:contain; }
-.nookPlant { position:absolute;right:30px;top:40px;width:100px;height:120px;object-fit:contain; }
 .sharedLabel { top:85px;background:#203e34dd;color:#eceddc;padding:5px 8px;border-radius:3px;font-size:9px; }
 .companySign { background:#e9ebdbe8;box-shadow:0 3px 8px #1e392d55; }
 .decor { background:#e4e7d5e8;top:4px;right:8px; }
 .deskChair { position:absolute;width:34px;height:32px;pointer-events:none;background:linear-gradient(120deg,#405153,#182a2d);border-radius:10px 10px 8px 8px;transform:rotate(-12deg);box-shadow:0 6px 7px #20352c66; }
 .deskChair i { position:absolute;left:0;right:0;top:-17px;height:20px;border-radius:10px 10px 4px 4px;background:linear-gradient(150deg,#5e7373,#263d40);border:2px solid #8a9d94; }
 .deskChair b { position:absolute;top:30px;left:7px;width:22px;height:10px;border-bottom:3px solid #28393c;border-radius:50%; }
+
+/* Floor labels remain legible at normal fit; the status rail above stays readable at every zoom. */
+.workLabel { font-size:11px;line-height:1.35;padding:6px 7px;background:#15332ff5;border-color:#a1b7a380; }
+.workLabel strong { font-size:12px; }.workLabel span { -webkit-line-clamp:3; }
+.workLabel.attention { background:#62421b;color:#ffe8b7;border-color:#edc67c; }
+.metrics { top:auto;bottom:5px;left:95px;right:22px;justify-content:space-around;padding:7px 10px;min-height:42px; }
+.metrics span { font-size:11px; }.metrics b { font-size:18px; }
+.client .metrics { left:125px;right:12px;bottom:5px; }
+.companySign strong { font-size:15px; }.companySign small { font-size:10px; }
+.client .companySign strong { font-size:14px; }

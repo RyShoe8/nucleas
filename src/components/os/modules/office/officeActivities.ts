@@ -4,12 +4,12 @@ import type { Room } from './officeState';
 export const AMENITIES = {
     conference: { name: 'Meeting table', action: 'Meeting', capacity: 6 },
     projector: { name: 'Projector', action: 'Presenting', capacity: 1 },
-    couch: { name: 'Couch', action: 'Relaxing', capacity: 2 },
-    coffee: { name: 'Coffee bar', action: 'Making coffee', capacity: 1 },
-    water: { name: 'Water cooler', action: 'Getting water', capacity: 1 },
+    couch: { name: 'Couch', action: 'Relaxing', capacity: 3 },
+    coffee: { name: 'Coffee bar', action: 'Making coffee', capacity: 2 },
+    water: { name: 'Water cooler', action: 'Getting water', capacity: 2 },
     plant: { name: 'Plants', action: 'Tending plants', capacity: 1 },
     pool: { name: 'Pool table', action: 'Playing pool', capacity: 2 },
-    gaming: { name: 'TV & game console', action: 'Playing a game', capacity: 2 },
+    gaming: { name: 'TV & game console', action: 'Playing a game', capacity: 3 },
     reception: { name: 'Reception', action: 'At reception', capacity: 1 },
 } as const;
 export type Amenity = keyof typeof AMENITIES;

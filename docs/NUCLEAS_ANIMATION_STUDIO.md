@@ -14,7 +14,7 @@ Company and organization access is checked before loading projects. The editor's
 
 ## Office runtime
 
-`scripts/build-office-rigs.mjs` packs the original generated body parts into six native `.rigby` sources and samples their Rigby runtime into a shared 24 fps motion file plus six WebP atlases. The office plays those sampled transforms with Canvas; it does not load the editor or call models. Walking, typing, sitting, conversation, coffee, pool and gaming have separate clips, with short transitions between them.
+`scripts/build-office-rigs.mjs` packs the original generated body parts into front and rear native `.rigby` sources for six employees, and samples their Rigby runtime into a shared 24 fps motion file plus WebP atlases. The office plays those sampled transforms with Canvas; it does not load the editor or call models. Walking, typing, sitting, conversation, coffee, pool, gaming and rear-facing lounge seating have separate clips, with short transitions between them. Gaming and relaxing share three couch seats; the couch back occludes the seated figures, which face the television. Pool, coffee and water support simultaneous occupants at distinct positions.
 
 One capped building clock moves employees and draws only visible characters. Assets are shared across companies; hidden tabs, offscreen buildings and reduced-motion preferences stop the clock. Pausing Animation Studio's window stops editor playback as well. No permanent character-level timers or GIF decoders run in the floor view.
 

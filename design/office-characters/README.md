@@ -14,6 +14,12 @@ Delivery: `public/office/rigs` (native projects, shared sampled motion, texture 
 
 Original artwork generated with the built-in image generation tool. The six roles, in order, are Design, Creative, Engineering, Support, Operations and Marketing. Tester remains inactive.
 
+### Rear-facing office rigs (November 19, 2026)
+
+Source: `rig-parts-rear-atlas.png`, generated with the built-in image generation tool using `rig-parts-atlas.png` as the reference. Delivery: `public/office/rigs/*-rear.webp` and editable `*-rear.rigby`; packaged by `scripts/build-office-rigs.mjs`. The shared couch uses rear-facing characters and a foreground furniture layer so occupants sit behind the couch back, facing the television. Gaming and relaxing share three physical seats.
+
+Final prompt: preserve the square reference atlas's six rows and six disconnected columns (head, torso, left arm, right arm, left leg, right leg), but show every part from behind with a slightly elevated camera. Preserve the six employee identities, clothing, colors, dimensions and polished miniature style. Heads show hair without faces; torsos show garment backs; trousers and shoes show rear surfaces and heels. Keep transparent spacing, no text, furniture, assembled bodies or extra objects. Row identities: auburn bob/lavender/gray; blonde curls/teal beanie/rust/olive; dark curls/sage/gray; dark-skinned bun/headset/rose/ivory; silver bob/navy; dark swept hair/blue/gray.
+
 ## Final prompt set
 
 Walk atlas: transparent 1024 x 1536 image, strict four-column, six-row grid of square cells. Premium stylized 3D adult characters, complete standalone bodies, no furniture, text or background. Each row preserves one identity across four walking poses (left contact, passing, right contact, opposite passing), facing right, consistent camera, scale and foot baseline. Soft lighting with a subtle violet rim. Design: auburn bob, lavender sweater, charcoal trousers, white shoes. Creative: curly golden hair, teal beanie, orange overshirt, olive trousers. Engineering: brown skin, dark wavy hair, glasses, mint hoodie. Support: dark skin, bun, headset, rose blouse, cream trousers. Operations: silver hair, navy suit, cream shirt. Marketing: East Asian man, swept dark hair, cobalt overshirt, charcoal trousers.

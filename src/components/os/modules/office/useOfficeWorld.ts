@@ -28,7 +28,7 @@ export function useOfficeWorld(world:World, enabled:boolean, overrides:Record<st
                 const node=nodes.current.get(id);
                 if(!node) continue;
                 node.style.transform=`translate3d(${actor.point.x-44}px,${actor.point.y-82}px,0)`;
-                node.style.zIndex=String(Math.round(actor.point.y)+100);
+                node.style.zIndex=String(actor.arrived&&actor.destination.depth!==undefined?actor.destination.depth:Math.round(actor.point.y)+100);
                 node.dataset.walking=String(!actor.arrived);
                 node.style.setProperty('--facing',String(actor.facing));
                 const canvas=canvases.get(id),person=people.get(id);

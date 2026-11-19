@@ -4,7 +4,7 @@ import { AMENITIES, type Amenity } from './officeActivities';
 
 export type Point = { x: number; y: number };
 export type Suite = { room: Room; x: number; y: number; w: number; h: number; door: Point; lane: number };
-export type Destination = { key: string; point: Point; exit: Point[]; pose: 'idle' | 'seated' | 'pool' | 'coffee'; label: string; amenity?: Amenity; collaboration?: boolean };
+export type Destination = { key: string; point: Point; exit: Point[]; pose: 'idle' | 'seated' | 'pool' | 'coffee'; label: string; amenity?: Amenity; collaboration?: boolean; view?: 'rear'; depth?: number };
 export type Person = { id: string; room: Room; desk: Desk; home: Destination };
 export type World = { width: number; height: number; suites: Suite[]; people: Person[] };
 export const personId = (company: string, role: string) => `${company}:${role}`;
@@ -12,7 +12,7 @@ export const SPINE = 790;
 export const AMENITY_POSITION: Record<Amenity, Point & { size: number }> = {
     conference: { x: 285, y: 320, size: 230 }, projector: { x: 285, y: 140, size: 150 },
     pool: { x: 770, y: 340, size: 195 }, gaming: { x: 1100, y: 230, size: 170 },
-    couch: { x: 1100, y: 385, size: 180 }, coffee: { x: 755, y: 135, size: 135 },
+    couch: { x: 1100, y: 385, size: 230 }, coffee: { x: 755, y: 135, size: 135 },
     water: { x: 950, y: 150, size: 100 }, plant: { x: 1200, y: 140, size: 95 }, reception: { x: 480, y: 577, size: 105 },
 };
 
@@ -41,15 +41,19 @@ export function amenityDestination(amenity: Amenity, slot: number): Destination 
     let point: Point;
     if(amenity==='conference') point={x:210+(slot%3)*75,y:slot<3?290:385};
     else if(amenity==='pool') point={x:slot%2?865:675,y:slot%2?370:390};
-    else point={x:pos.x+(slot%2)*52,y:pos.y+(amenity==='couch'?20:60)};
+    else if(amenity==='gaming'||amenity==='couch') point={x:1055+slot*45,y:440-slot*15};
+    else if(amenity==='coffee') point={x:730+slot*65,y:205};
+    else if(amenity==='water') point={x:930+slot*55,y:218};
+    else point={x:pos.x,y:pos.y+60};
     const left=amenity==='conference'||amenity==='projector';
     const door={x:left?530:980,y:520};
-    const exit=amenity==='reception' ? [{x:SPINE,y:577}] : amenity==='conference' ? [
+    const sofa=amenity==='gaming'||amenity==='couch';
+    const exit=sofa ? [{x:1220,y:point.y},{x:1220,y:490},{x:980,y:490},door,{x:980,y:580},{x:SPINE,y:580}] : amenity==='reception' ? [{x:SPINE,y:577}] : amenity==='conference' ? [
         {x:point.x,y:slot<3?240:440},{x:545,y:slot<3?240:440},{x:545,y:470},{x:door.x,y:470},door,{x:door.x,y:580},{x:SPINE,y:580},
     ] : [
         {x:point.x,y:amenity==='pool'?455:point.y+35}, {x:left?545:925,y:amenity==='pool'?455:point.y+35}, {x:left?545:925,y:470}, {x:door.x,y:470},door,{x:door.x,y:580},{x:SPINE,y:580},
     ];
-    return {key:`${amenity}:${slot}`,point,exit,amenity,pose:amenity==='pool'?'pool':amenity==='coffee'||amenity==='water'?'coffee':amenity==='conference'||amenity==='gaming'||amenity==='couch'?'seated':'idle',label:AMENITIES[amenity].action};
+    return {key:`${amenity}:${slot}`,point,exit,amenity,pose:amenity==='pool'?'pool':amenity==='coffee'||amenity==='water'?'coffee':amenity==='conference'||sofa?'seated':'idle',label:AMENITIES[amenity].action,...(sofa?{view:'rear' as const,depth:475}:{})};
 }
 
 /** Exit via a room's aisle and door; every inter-room route uses the same central spine. */
@@ -67,6 +71,7 @@ const hash=(value:string)=>[...value].reduce((n,c)=>(n*31+c.charCodeAt(0))>>>0,0
 export function chooseDestinations(world:World, elapsedSeconds:number, overrides:Record<string,Amenity|'desk'>={}):Map<string,Destination> {
     const result=new Map<string,Destination>();
     const occupied=new Map<Amenity,number>();
+    let sofaSeats=0;
     const meetingGroups=new Set<string>();
     for(const p of world.people) {
         const group=p.desk.collaboration;
@@ -84,7 +89,9 @@ export function chooseDestinations(world:World, elapsedSeconds:number, overrides
             result.set(p.id,{...host.home,key:`consult:${group.id}:${p.id}`,point:{x:host.home.point.x+(p.id===host.id?0:55),y:host.home.point.y},pose:p.id===host.id?'seated':'idle',label:`Discussing: ${group.title}`,collaboration:true});
         }
     }
-    for(const p of world.people) {
+    // Explicit visits reserve seats first, so ambient occupants cannot silently override a request.
+    const visitors=[...world.people].sort((a,b)=>Number(Boolean(overrides[b.id]))-Number(Boolean(overrides[a.id])));
+    for(const p of visitors) {
         if(result.has(p.id)) continue;
         if(p.desk.state==='working'||p.desk.state==='waiting') {result.set(p.id,p.home);continue;}
         const preference=overrides[p.id];
@@ -94,9 +101,10 @@ export function chooseDestinations(world:World, elapsedSeconds:number, overrides
         const eligible=elapsedSeconds>8+seed%22 && (seed+epoch)%3===0;
         const ambient: Amenity[]=['pool','pool','coffee','water','gaming','couch'];
         const amenity=preference && preference!=='desk' ? preference : preference==='desk'||!eligible ? null : ambient[((seed>>>4)+epoch)%ambient.length];
-        const slot=amenity?(occupied.get(amenity)??0):0;
+        const sofa=amenity==='gaming'||amenity==='couch';
+        const slot=sofa?sofaSeats:amenity?(occupied.get(amenity)??0):0;
         if(amenity && slot<AMENITIES[amenity].capacity) {
-            result.set(p.id,amenityDestination(amenity,slot)); occupied.set(amenity,slot+1);
+            result.set(p.id,amenityDestination(amenity,slot)); occupied.set(amenity,slot+1);if(sofa)sofaSeats++;
         } else result.set(p.id,p.home);
     }
     return result;

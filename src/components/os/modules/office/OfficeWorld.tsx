@@ -23,7 +23,6 @@ const DECOR:Record<string,string>={controller:'🎮',trophy:'🏆',arcade:'🕹'
 
 export default function OfficeWorld({rooms,onOpenRoom,onOpenDesk}:{rooms:Room[];onOpenRoom:(room:Room)=>void;onOpenDesk:(room:Room,desk:Desk)=>void}) {
     const world=useMemo(()=>makeWorld(rooms),[rooms]);
-    const clientWingEnd=Math.max(665,...world.suites.filter(s=>s.room.relationship==='client').map(s=>s.y+s.h));
     const viewport=useRef<HTMLDivElement>(null);
     const [zoom,setZoom]=useState<number|null>(null);
     const [fit,setFit]=useState(1);
@@ -35,9 +34,9 @@ export default function OfficeWorld({rooms,onOpenRoom,onOpenDesk}:{rooms:Room[];
     const scale=zoom??fit;
     useEffect(()=>{
         const element=viewport.current;if(!element)return;
-        const observer=new ResizeObserver(([entry])=>setFit(Math.min(1,Math.max(.55,entry.contentRect.width/1280))));
+        const observer=new ResizeObserver(([entry])=>setFit(Math.max(.55,entry.contentRect.width/world.width)));
         observer.observe(element);return()=>observer.disconnect();
-    },[]);
+    },[world.width]);
     const {nodes,snapshot}=useOfficeWorld(world,enabled&&ambient,overrides);
     const selectedLive=selected?world.people.find(p=>p.id===selected.id):null;
     const counts=new Map<Amenity,number>();
@@ -51,14 +50,13 @@ export default function OfficeWorld({rooms,onOpenRoom,onOpenDesk}:{rooms:Room[];
                 if(suite) viewport.current?.scrollTo({top:Math.max(0,suite.y*scale-20),left:Math.max(0,(suite.x-10)*scale),behavior:'smooth'});
             }}><option value="">Choose company</option>{rooms.map(room=><option value={room.companyId} key={room.companyId}>{room.name}</option>)}</select></label>
             <button type="button" aria-label="Zoom out" onClick={()=>setZoom(Math.max(.1,scale-.1))}>−</button><span>{Math.round(scale*100)}%</span>
-            <button type="button" aria-label="Zoom in" onClick={()=>setZoom(Math.min(1.5,scale+.1))}>+</button>
+            <button type="button" aria-label="Zoom in" onClick={()=>setZoom(Math.min(Math.max(3,fit),scale+.1))}>+</button>
             <button type="button" onClick={()=>setZoom(null)}>Fit width</button>
             <button type="button" onClick={()=>{setZoom(Math.min(fit,(viewport.current?.clientHeight??700)/world.height));viewport.current?.scrollTo({top:0,left:0});}}>Whole office</button>
             <button type="button" aria-pressed={!ambient} onClick={()=>setAmbient(v=>!v)}>{ambient?'Pause motion':'Resume motion'}</button>
         </div>
-        <div className={styles.workStrip} aria-label="Live office work">
-            {rooms.filter(room=>room.waiting||room.working).map(room=><button key={room.companyId} type="button" onClick={()=>onOpenRoom(room)}><i style={{background:room.waiting?'#eab65d':room.color}}/><strong>{room.name}</strong><span>{room.waiting?`${room.waiting} need you`: `${room.working} working`}</span><small>{(room.desks.find(d=>d.waiting&&d.says)??room.desks.find(d=>d.says))?.says}</small></button>)}
-            {!rooms.some(room=>room.waiting||room.working)&&<span>No work running or waiting for review. Select a company to assign work.</span>}
+        <div className={styles.workStrip} aria-label="Company status and metrics">
+            {rooms.map(room=><button key={room.companyId} type="button" onClick={()=>onOpenRoom(room)}><i style={{background:room.waiting?'#eab65d':room.color}}/><strong>{room.name}</strong><span>{room.waiting?`${room.waiting} need you`:room.working?`${room.working} working`:'Available'}</span><small>{(room.desks.find(d=>d.waiting&&d.says)??room.desks.find(d=>d.says))?.says??'Open company and assigned work'}</small><div className={styles.boardMetrics}>{room.screens.map(screen=><div key={screen.label}><b>{screen.value}</b><small>{screen.label} · 7 days</small></div>)}</div></button>)}
         </div>
         {(selectedLive||amenity)&&<div className={styles.inspector}>
             <button type="button" className={styles.close} onClick={()=>{setSelected(null);setAmenity(null);}}>Close</button>
@@ -67,6 +65,8 @@ export default function OfficeWorld({rooms,onOpenRoom,onOpenDesk}:{rooms:Room[];
                 <button type="button" onClick={()=>onOpenRoom(selectedLive.room)}>Company & data</button>
                 {!['waiting','working'].includes(selectedLive.desk.state)&&<><button type="button" onClick={()=>visit(selectedLive,'desk')}>Return to desk</button><label>Visit <select aria-label="Send member to amenity" value="" onChange={event=>visit(selectedLive,event.target.value as Amenity)}><option value="">Choose a shared space</option>{Object.entries(AMENITIES).map(([id,value])=><option key={id} value={id}>{value.name}</option>)}</select></label></>}
             </> : amenity && <><strong>{AMENITIES[amenity].name}</strong><p>{counts.get(amenity)??0} members here. Select an available member to join.</p>
+                <ul className={styles.visitors}>{snapshot.filter(actor=>actor.destination.amenity===amenity||((amenity==='gaming'||amenity==='couch')&&(actor.destination.amenity==='gaming'||actor.destination.amenity==='couch'))).map(actor=>{const person=world.people.find(p=>p.id===actor.id);return person&&<li key={actor.id}>{person.room.name} · {person.desk.name} · {actor.arrived?'Here':'Walking over'}<button type="button" onClick={()=>setOverrides(current=>({...current,[actor.id]:'desk'}))}>Return to desk</button></li>;})}</ul>
+                {(amenity==='gaming'||amenity==='couch')&&<p>The couch has three shared seats for gaming and relaxing.</p>}
                 <select aria-label="Choose available member" value="" onChange={event=>{const person=world.people.find(p=>p.id===event.target.value);if(person)visit(person,amenity);}}><option value="">Choose a team member</option>{world.people.filter(p=>p.desk.state==='idle'||p.desk.state==='away').map(p=><option key={p.id} value={p.id}>{p.room.name} · {p.desk.name}</option>)}</select>
             </>}
         </div>}
@@ -85,11 +85,6 @@ export default function OfficeWorld({rooms,onOpenRoom,onOpenDesk}:{rooms:Room[];
                     {world.suites.map(suite=><div key={`landing:${suite.room.companyId}`} className={styles.landing} aria-hidden="true" style={{left:suite.x,top:suite.y+suite.h,width:suite.w,'--brand':suite.room.color} as CSSProperties}>
                         <div className={styles.galleryRail}><i/><i/><i/></div><div className={styles.landingLight}/>
                     </div>)}
-                    {Array.from({length:Math.max(0,Math.floor((world.height-clientWingEnd-110)/340))},(_,index)=><div key={`garden:${index}`} className={styles.gardenNook} aria-hidden="true" style={{top:clientWingEnd+65+index*340}}>
-                        <div className={styles.nookWindow}/><span>THE GARDEN LOUNGE</span>
-                        <Art src="/office/amenities/couch.webp" className={styles.nookSofa}/>
-                        <Art src="/office/amenities/plant.webp" className={styles.nookPlant}/>
-                    </div>)}
                     <div className={styles.entry}>NUCLEAS <span>HEADQUARTERS</span></div>
                     <div className={styles.wingLabel} style={{left:35,top:630}}>OUR COMPANIES</div><div className={styles.wingLabel} style={{left:860,top:630}}>CLIENT STUDIOS</div>
                     {Object.entries(AMENITY_POSITION).map(([id,pos])=><button type="button" key={id} className={styles.amenity} style={{left:pos.x-pos.size/2,top:pos.y-pos.size/2,width:pos.size,height:pos.size,zIndex:Math.round(pos.y)+60}}
@@ -98,6 +93,7 @@ export default function OfficeWorld({rooms,onOpenRoom,onOpenDesk}:{rooms:Room[];
                         {id==='pool'&&(counts.get('pool')??0)>=2&&<span className={styles.poolAction} aria-hidden="true"><i/><i/><i/></span>}
                         {id==='coffee'&&(counts.get('coffee')??0)>0&&<i className={styles.steam} aria-hidden="true">≈</i>}
                     </button>)}
+                    <Art src="/office/amenities/couch.webp" className={styles.couchFront} style={{left:AMENITY_POSITION.couch.x-AMENITY_POSITION.couch.size/2,top:AMENITY_POSITION.couch.y-AMENITY_POSITION.couch.size/2,width:AMENITY_POSITION.couch.size,height:AMENITY_POSITION.couch.size}}/>
                     {world.suites.map(suite=>{
                         const theme=officeTheme(suite.room),client=suite.room.relationship==='client';
                         return <section key={suite.room.companyId} className={`${styles.suite} ${client?styles.client:''}`} aria-label={`${suite.room.name} studio`} style={{left:suite.x,top:suite.y,width:suite.w,height:suite.h,'--brand':suite.room.color,'--door':`${suite.door.y-suite.y}px`} as CSSProperties}>
