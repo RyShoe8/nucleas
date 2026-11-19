@@ -55,12 +55,3 @@ export function getTimezoneSelectOptions(currentValue?: string): TimezoneOption[
     label: formatTimezoneLabel(value),
   }));
 }
-
-function isKnownTimezone(value: string): boolean {
-  try {
-    Intl.DateTimeFormat(undefined, { timeZone: value });
-    return true;
-  } catch {
-    return false;
-  }
-}

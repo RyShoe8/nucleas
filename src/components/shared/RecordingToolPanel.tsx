@@ -37,7 +37,7 @@ function RecordingToolPanelInner({
   allowAssignment = false,
   uploadOnly: uploadOnlyProp = false,
   description = 'Record your screen with system or microphone audio, or upload a video.',
-  onUploaded,
+  onUploaded: _onUploaded,
   onBack,
   showBack = false,
   control,

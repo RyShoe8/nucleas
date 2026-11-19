@@ -257,7 +257,7 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
         if (recognitionRef.current) {
             try {
                 recognitionRef.current.stop();
-            } catch (_) {}
+            } catch {}
             recognitionRef.current = null;
         }
         setTranscript('');
@@ -274,7 +274,7 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
             try {
                 wakeRecognitionRef.current.onend = null;
                 wakeRecognitionRef.current.stop();
-            } catch (_) {}
+            } catch {}
             wakeRecognitionRef.current = null;
             setIsWakeArmed(false);
         }
@@ -422,7 +422,7 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
         if (recognitionRef.current) {
             try {
                 recognitionRef.current.stop();
-            } catch (_) {}
+            } catch {}
             recognitionRef.current = null;
         }
         if (stateRef.current === 'listening') {

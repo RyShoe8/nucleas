@@ -72,7 +72,10 @@ async function loadFfmpeg(onProgress?: (message: string) => void): Promise<Ffmpe
     ffmpegLoadPromise = (async () => {
       try {
         onProgress?.('Preparing video…');
-        const { FFmpeg } = await import('@ffmpeg/ffmpeg');
+        const base = `${window.location.origin}/ffmpeg`;
+        // Loaded at runtime from the copy served in public/ffmpeg: its worker is created from a URL the
+        // bundler cannot follow, so bundling @ffmpeg/ffmpeg breaks the production build.
+        const { FFmpeg } = (await import(/* turbopackIgnore: true */ /* webpackIgnore: true */ `${base}/index.js`)) as typeof import('@ffmpeg/ffmpeg');
         const { toBlobURL } = await import('@ffmpeg/util');
 
         const ffmpeg = new FFmpeg();
@@ -80,7 +83,6 @@ async function loadFfmpeg(onProgress?: (message: string) => void): Promise<Ffmpe
           if (message) lastFfmpegLog = message;
         });
 
-        const base = `${window.location.origin}/ffmpeg`;
         await withTimeout(
           ffmpeg.load({
             coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, 'text/javascript'),

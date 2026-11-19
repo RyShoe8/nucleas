@@ -42,7 +42,9 @@ function pages(value: unknown): SeoBriefView['priorityPages'] {
   }).slice(0, 50);
 }
 
-function view(row: { projectId: Types.ObjectId; projectName: string; status: 'draft' | 'approved'; summary: string; audience: string; goals?: string[]; primaryTopics?: string[]; competitors?: string[]; excludedTopics?: string[]; geographicTargets?: string[]; positioning?: string; priorityPages?: SeoBriefView['priorityPages']; notes?: string; revision: number; approvedAt?: Date; updatedAt: Date }): SeoBriefView {
+type SeoBriefRow = { projectId: Types.ObjectId; projectName: string; status: 'draft' | 'approved'; summary: string; audience: string; goals?: string[]; primaryTopics?: string[]; competitors?: string[]; excludedTopics?: string[]; geographicTargets?: string[]; positioning?: string; priorityPages?: SeoBriefView['priorityPages']; notes?: string; revision: number; approvedAt?: Date; updatedAt: Date };
+
+function view(row: SeoBriefRow): SeoBriefView {
   return { projectId: String(row.projectId), projectName: row.projectName, status: row.status, summary: row.summary, audience: row.audience, goals: row.goals ?? [], primaryTopics: row.primaryTopics ?? [], competitors: row.competitors ?? [], excludedTopics: row.excludedTopics ?? [], geographicTargets: row.geographicTargets ?? [], positioning: row.positioning ?? '', priorityPages: row.priorityPages ?? [], notes: row.notes ?? '', revision: row.revision, approvedAt: row.approvedAt?.toISOString() ?? null, updatedAt: row.updatedAt.toISOString() };
 }
 
@@ -53,12 +55,12 @@ async function ownedProject(viewer: CompanyViewer, companyId: string, projectId:
 
 export async function getSeoBrief(viewer: CompanyViewer, companyId: string, projectId: string): Promise<SeoBriefView | null> {
   if (!(await ownedProject(viewer, companyId, projectId))) return null;
-  const row = await SeoBrief.findOne({ organizationId: viewer.organizationId, companyId, projectId }).lean<any>();
+  const row = await SeoBrief.findOne({ organizationId: viewer.organizationId, companyId, projectId }).lean<SeoBriefRow>();
   return row ? view(row) : null;
 }
 
 export async function approvedSeoBrief(organizationId: Types.ObjectId, companyId: Types.ObjectId, projectId?: Types.ObjectId): Promise<SeoBriefView | null> {
-  const row = await SeoBrief.findOne({ organizationId, companyId, status: 'approved', ...(projectId ? { projectId } : {}) }).sort({ updatedAt: -1 }).lean<any>();
+  const row = await SeoBrief.findOne({ organizationId, companyId, status: 'approved', ...(projectId ? { projectId } : {}) }).sort({ updatedAt: -1 }).lean<SeoBriefRow>();
   return row ? view(row) : null;
 }
 
@@ -88,7 +90,7 @@ export async function updateSeoBrief(viewer: CompanyViewer, companyId: string, p
     { organizationId: viewer.organizationId, projectId: project._id },
     { $set: { companyId: new Types.ObjectId(companyId), projectName: project.name, status: approve ? 'approved' : 'draft', summary: summary.slice(0, 4000), audience: audience.slice(0, 4000), goals: strings(input.goals), primaryTopics: strings(input.primaryTopics), competitors: strings(input.competitors), excludedTopics: strings(input.excludedTopics), geographicTargets: strings(input.geographicTargets), positioning: String(input.positioning ?? '').slice(0, 4000), priorityPages: pages(input.priorityPages), notes: String(input.notes ?? '').slice(0, 4000), updatedByUserId: new Types.ObjectId(viewer.userId), ...(approve ? { approvedAt: new Date(), approvedByUserId: new Types.ObjectId(viewer.userId) } : {}) }, $inc: { revision: 1 }, ...(!approve ? { $unset: { approvedAt: 1, approvedByUserId: 1 } } : {}) },
     { upsert: true, new: true, setDefaultsOnInsert: true }
-  ).lean<any>();
+  ).lean<SeoBriefRow>();
   return { ok: true, brief: view(row) };
 }
 

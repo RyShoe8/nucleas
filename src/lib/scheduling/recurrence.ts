@@ -82,17 +82,3 @@ export function buildRecurrenceRule(options: BuildRecurrenceOptions): string[] {
 
   return [rule];
 }
-
-/** List window end for importing instances after creating a series. */
-function getRecurrenceImportRangeEnd(
-  start: Date,
-  recurrenceEnd: RecurrenceEnd,
-  until?: Date
-): Date {
-  const maxDays = 90;
-  const cap = new Date(start.getTime() + maxDays * 24 * 60 * 60 * 1000);
-  if (recurrenceEnd === 'on' && until) {
-    return until.getTime() < cap.getTime() ? until : cap;
-  }
-  return cap;
-}

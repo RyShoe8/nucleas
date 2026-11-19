@@ -7,8 +7,7 @@ import WorkspaceNotificationEvent, {
   type IWorkspaceNotificationEvent,
 } from '@/lib/models/WorkspaceNotificationEvent';
 import WorkspaceNotificationPreference from '@/lib/models/WorkspaceNotificationPreference';
-import type { IContentItem } from '@/lib/models/ContentItem';
-import type { IProject, IProjectTask } from '@/lib/models/Project';
+import type { IProject } from '@/lib/models/Project';
 import { getAppBaseUrl } from '@/lib/utils/appBaseUrl';
 import { isManagerOrAdminRole } from '@/lib/utils/roles';
 import {
@@ -320,14 +319,6 @@ export function isDigestDue(
   if (minutes == null) return false;
   if (!lastDigestSentAt) return true;
   return now.getTime() - lastDigestSentAt.getTime() >= minutes * 60 * 1000;
-}
-
-async function getDeliverableEmail(employee: IEmployee): Promise<string | null> {
-  if (employee.userId) {
-    const user = await User.findById(employee.userId).lean();
-    if (user?.email) return user.email;
-  }
-  return employee.email?.trim() || null;
 }
 
 async function enqueueForEmployeeIds(options: {

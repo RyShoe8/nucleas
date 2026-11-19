@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/db/mongodb';
 import Invitation from '@/lib/models/Invitation';
-import Employee from '@/lib/models/Employee';
-import User from '@/lib/models/User';
 
 /**
  * GET /api/invitations/[token] - Get invitation details by token
@@ -34,7 +32,7 @@ export async function GET(
     }
 
     return NextResponse.json(invitation);
-  } catch (error) {
+  } catch {
     // Get invitation by token error
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

@@ -62,7 +62,6 @@ export async function GET(request: NextRequest) {
     });
 
     if (!tokenResponse.ok) {
-      const errorData = await tokenResponse.json();
       // Token exchange error
       return NextResponse.redirect(new URL('/login?error=token_exchange_failed', request.url));
     }
@@ -309,7 +308,7 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.redirect(new URL('/', request.url));
-  } catch (error) {
+  } catch {
     // Google OAuth callback error
     return NextResponse.redirect(new URL('/login?error=oauth_error', request.url));
   }

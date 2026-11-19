@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/db/mongodb';
 import PlatformCategory from '@/lib/models/PlatformCategory';
-import PlatformOption from '@/lib/models/PlatformOption';
 import { requireAdminUser } from '@/lib/blog/requireAdmin';
 import { invalidatePlatformCatalogCache } from '@/lib/platformCatalog/loadPlatformCatalog';
 import { slugifyCatalogName } from '@/lib/platformCatalog/slugify';

@@ -17,5 +17,3 @@ export const NUCLEAS_PLATFORM_FEATURES = [
   'Recurring tasks and content scheduling',
   'Organization branding and multi-project management',
 ] as const;
-
-type NucleasPlatformFeature = (typeof NUCLEAS_PLATFORM_FEATURES)[number];

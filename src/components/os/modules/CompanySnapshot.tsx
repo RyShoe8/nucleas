@@ -172,7 +172,6 @@ const METRIC_GROUPS: { title: string; metrics: MetricSlot[] }[] = [
     },
 ];
 
-const REVENUE_KEYS = new Set(METRIC_GROUPS.find(group => group.title === 'Revenue')!.metrics.map(slot => slot.key));
 
 function MetricCard({ m, slot }: { m?: OsMetric; slot: MetricSlot }) {
     const [open, setOpen] = useState(false);

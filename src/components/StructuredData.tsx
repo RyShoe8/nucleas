@@ -13,7 +13,8 @@ export function StructuredData({ type, data }: StructuredDataProps) {
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+      // Escaped so text such as a blog title containing "</script>" can never close the tag early.
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026') }}
     />
   );
 }

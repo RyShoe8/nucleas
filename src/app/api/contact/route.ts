@@ -122,14 +122,14 @@ export async function POST(request: NextRequest) {
         { message: 'Message sent successfully' },
         { status: 200 }
       );
-    } catch (emailError) {
+    } catch {
       // Error sending contact email
       return NextResponse.json(
         { error: 'Failed to send message. Please try again later.' },
         { status: 500 }
       );
     }
-  } catch (error) {
+  } catch {
     // Contact form error
     return NextResponse.json(
       { error: 'Internal server error' },

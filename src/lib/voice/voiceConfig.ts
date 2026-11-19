@@ -56,12 +56,6 @@ export function getVoiceConfig(): VoiceConfig {
     };
 }
 
-/** Actions that require explicit voice confirmation before executing */
-const HIGH_RISK_ACTIONS = new Set([
-    'DELETE_ENTITY',
-    'EDIT_ENTITY', // Status changes, unassign
-]);
-
 /**
  * Whether speech goes through the server. Electron has the Web Speech API but no service behind it, so it
  * always fails there; some browsers do not have it at all.

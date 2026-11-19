@@ -22,7 +22,7 @@ function organizationErrorResponse(error: unknown) {
   return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     const session = await getSession();
     if (!session) {

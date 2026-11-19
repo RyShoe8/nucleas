@@ -7,13 +7,6 @@ export type RecordingUploadResult = Pick<
   'videoUrl' | 'audioUrl' | 'status' | 'transcript' | 'summary'
 > & { id: string };
 
-function appendTargetToFormData(formData: FormData, target: MediaUploadTarget): void {
-  const fields = mediaTargetToRecordingFields(target);
-  if (fields.projectId) formData.append('projectId', fields.projectId);
-  if (fields.taskId) formData.append('taskId', fields.taskId);
-  if (fields.contentItemId) formData.append('contentItemId', fields.contentItemId);
-}
-
 async function uploadViaBlobClient(
   file: File,
   pathname: string

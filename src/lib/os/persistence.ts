@@ -59,15 +59,6 @@ export function saveOsState(userId: string | null, state: PersistedOsState): voi
     }
 }
 
-function clearOsState(userId: string | null): void {
-    if (typeof window === 'undefined') return;
-    try {
-        window.localStorage.removeItem(keyFor(userId));
-    } catch (err) {
-        console.warn('[OS] Failed to clear state', err);
-    }
-}
-
 function sanitizeLayout(layout: WorkspaceLayout): WorkspaceLayout {
     const windows = layout.windows.map((w) => ({
         ...w,

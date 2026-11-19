@@ -59,7 +59,7 @@ export async function PUT(request: NextRequest) {
         profilePicture: user.profilePicture,
       },
     });
-  } catch (error) {
+  } catch {
     // Profile update error
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

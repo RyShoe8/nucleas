@@ -27,7 +27,13 @@ export async function POST(request: NextRequest) {
         if (!pathname.startsWith(uploadPrefix(viewer.userId)) || pathname.includes('..')) {
           throw new Error('Uploads must go to your own folder.');
         }
-        return { addRandomSuffix: true, validUntil: Date.now() + 60 * 60 * 1000 };
+        // The same kinds of file the Ask box offers, and no more than 50 MB each.
+        return {
+          addRandomSuffix: true,
+          validUntil: Date.now() + 60 * 60 * 1000,
+          maximumSizeInBytes: 50 * 1024 * 1024,
+          allowedContentTypes: ['text/*', 'image/*', 'application/pdf', 'application/json', 'application/xml', 'application/javascript', 'application/x-yaml', 'application/sql', 'application/octet-stream'],
+        };
       },
     });
     return NextResponse.json(result);

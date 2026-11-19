@@ -1,5 +1,4 @@
 import { Types } from 'mongoose';
-import type { IClient } from '@/lib/models/Client';
 
 export type ClientTeamSource = {
   assignedToEmployeeIds?: unknown[];

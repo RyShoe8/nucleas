@@ -456,7 +456,6 @@ async function executeJobRunUncapped(runId: string): Promise<void> {
   activeDesign.instructions += `\n\n${specialistContext}`;
   await progress(run._id, owner, 'Preparing company, project, and model context', { stage: 'preparing', percent: 8 });
 
-  const spent = await monthSpendMicros(job._id);
   // Voice and Marketing plan have no spending cap: they are generated once and reviewed, not scheduled.
 
   const viewer = await loadCompanyViewer(String(job.createdByUserId));

@@ -17,6 +17,12 @@ const eslintConfig = defineConfig([
     "public/**",
     "desktop/**",
   ]),
+  {
+    // A leading underscore marks a parameter or value that is unused on purpose.
+    rules: {
+      "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_", destructuredArrayIgnorePattern: "^_" }],
+    },
+  },
 ]);
 
 export default eslintConfig;

@@ -233,7 +233,7 @@ export function dataStoreIssues(reads: { file: string; line: number; model?: str
   const issues: string[] = [];
   if (related.length) {
     const r = related[0];
-    issues.push(`unverified: ${r.file}:${r.line} reads ${r.model} from the database, the same kind of data as the file you change (${changed.find((f) => stems.some((st) => stem(r.model!).includes(st) || st.includes(stem(r.model!)))) ?? changed[0]}). Stored ${r.model} rows can keep the symptom alive after your change. Say how to check them and what to do if a matching row exists.`);
+    issues.push(`unverified: ${r.file}:${r.line} reads ${r.model} from the database, the same kind of data as the file you change (${changed.find((_f, i) => stems[i].length >= 4 && (stem(r.model!).includes(stems[i]) || stems[i].includes(stem(r.model!)))) ?? changed[0]}). Stored ${r.model} rows can keep the symptom alive after your change. Say how to check them and what to do if a matching row exists.`);
   }
   const others = missing.filter((r) => !related.includes(r)).slice(0, 3);
   if (others.length) issues.push(`unverified: the code path also reads ${others.map((r) => `${r.model} (${r.file}:${r.line})`).join(', ')} from a database. Say whether stored rows in these could keep the symptom alive, or that they do not hold this data.`);

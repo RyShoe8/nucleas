@@ -16,11 +16,6 @@ interface ModuleSize {
     height: number;
 }
 
-interface ModulePosition {
-    x: number;
-    y: number;
-}
-
 export interface ModuleDefinition {
     id: string;
     title: string;

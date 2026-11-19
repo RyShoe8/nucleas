@@ -107,12 +107,6 @@ export const marketingStackSchemaDefinition = {
   default: [],
 };
 
-const platformStackItemSchemaDefinition = {
-  category: { type: String, required: true, trim: true },
-  optionId: { type: String, trim: true, required: true },
-  login: { type: String, trim: true },
-};
-
 export const platformStacksSchemaDefinition = {
   type: Schema.Types.Mixed,
   default: {},

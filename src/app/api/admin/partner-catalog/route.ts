@@ -9,7 +9,7 @@ import PartnerCatalog from '@/lib/models/PartnerCatalog';
  * Returns the partner catalog for the current user's organization (catalog userId = org admin userId).
  * System admins could be extended to list all catalogs.
  */
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     const session = await getSession();
     if (!session) {

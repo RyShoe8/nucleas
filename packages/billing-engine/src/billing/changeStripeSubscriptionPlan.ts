@@ -90,7 +90,7 @@ export async function changeStripeSubscriptionPlan(args: {
 
   const stripe = getStripe();
   const subId = args.org.stripeSubscriptionId!.trim();
-  const sub = await stripe.subscriptions.retrieve(subId, { expand: ['items.data.price'] });
+  await stripe.subscriptions.retrieve(subId, { expand: ['items.data.price'] });
 
   const orgSubDoc = orgSub;
   const currentPlan = orgSubDoc?.subscriptionPlanId

@@ -26,7 +26,7 @@ async function decrypt(session: string): Promise<SessionPayload | null> {
   try {
     const { payload } = await jwtVerify(session, key);
     return payload as SessionPayload;
-  } catch (error) {
+  } catch {
     return null;
   }
 }

@@ -1,23 +1,23 @@
-import OpenAI from 'openai';
-import { toFile } from 'openai/uploads';
+import 'server-only';
 
+/** OpenAI's speech-to-text endpoint, called directly: the model engine handles text, not audio. */
 async function transcribeAudioBuffer(
   buffer: Buffer,
   filename: string,
   apiKey: string
 ): Promise<string> {
-  const openai = new OpenAI({ apiKey });
-  const file = await toFile(buffer, filename, {
-    type: filename.endsWith('.mp4') ? 'audio/mp4' : 'audio/webm',
+  const form = new FormData();
+  form.append('file', new Blob([new Uint8Array(buffer)], { type: filename.endsWith('.mp4') ? 'audio/mp4' : 'audio/webm' }), filename);
+  form.append('model', 'whisper-1');
+  form.append('response_format', 'text');
+  const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+    signal: AbortSignal.timeout(240_000),
   });
-
-  const result = await openai.audio.transcriptions.create({
-    file,
-    model: 'whisper-1',
-    response_format: 'text',
-  });
-
-  return typeof result === 'string' ? result.trim() : String(result).trim();
+  if (!response.ok) throw new Error(`Transcription failed (HTTP ${response.status}).`);
+  return (await response.text()).trim();
 }
 
 /** A short voice command from the microphone (see api/voice/stt). */
@@ -29,7 +29,8 @@ export async function transcribeAudioFromUrl(
   audioUrl: string,
   apiKey: string
 ): Promise<string> {
-  const response = await fetch(audioUrl);
+  // The caller has already checked the URL is our own storage; a redirect elsewhere is refused.
+  const response = await fetch(audioUrl, { redirect: 'error', signal: AbortSignal.timeout(120_000) });
   if (!response.ok) {
     throw new Error('Failed to fetch audio for transcription.');
   }

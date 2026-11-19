@@ -135,10 +135,6 @@ function recordingFileExtension(mimeType: string): string {
   return 'webm';
 }
 
-function isMp4RecordingMimeType(mimeType: string): boolean {
-  return mimeType.startsWith('video/mp4');
-}
-
 function pickAudioMimeType(): string {
   const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
   for (const type of candidates) {

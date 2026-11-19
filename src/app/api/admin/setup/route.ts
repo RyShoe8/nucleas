@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
       adminsSet: adminUsers.modifiedCount,
       usersFixed: fixedCount,
     });
-  } catch (error) {
+  } catch {
     // Admin setup error
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

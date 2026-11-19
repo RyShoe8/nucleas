@@ -15,7 +15,7 @@ import { effectiveRegistrationApproval } from '@/lib/auth/registrationApproval';
 /**
  * Get all users (admin only)
  */
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     const auth = await requirePlatformAdmin();
     if (auth.error) return auth.error;

@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
@@ -21,7 +20,6 @@ interface Catalog {
 }
 
 export default function PartnerCatalogPage() {
-  const router = useRouter();
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -42,7 +40,7 @@ export default function PartnerCatalogPage() {
           partnerLinks: data.partnerLinks || [],
           productTypes: data.productTypes || [],
         });
-      } catch (err) {
+      } catch {
         setError('Failed to load partner catalog');
       } finally {
         setLoading(false);
@@ -67,7 +65,7 @@ export default function PartnerCatalogPage() {
         partnerLinks: data.partnerLinks || [],
         productTypes: data.productTypes || [],
       });
-    } catch (err) {
+    } catch {
       alert('Failed to save');
     } finally {
       setSaving(false);

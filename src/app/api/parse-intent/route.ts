@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
-import { requireAuth } from '@/lib/auth/middleware';
+import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
+import { askEngine } from '@/lib/ai/engine/ask';
 
 const MAX_INPUT_LEN = 4000;
 
@@ -96,8 +96,8 @@ function sanitizeContext(raw: unknown): Record<string, unknown> | null {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await requireAuth(req);
-  if (session instanceof NextResponse) return session;
+  const viewer = await requireCompanyViewer(req);
+  if (viewer instanceof NextResponse) return viewer;
 
   let body: unknown;
   try {
@@ -119,36 +119,22 @@ export async function POST(req: NextRequest) {
     typeof body === 'object' && body !== null && 'context' in body ? (body as { context?: unknown }).context : undefined;
   const contextObj = sanitizeContext(rawContext);
 
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ error: 'Voice intent parsing not configured' }, { status: 503 });
-  }
-
   const userContent =
     `User Input:\n${trimmed}\n\nContext:\n` + JSON.stringify(contextObj ?? {});
 
   try {
-    const client = new OpenAI({ apiKey });
-    const completion = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
-      temperature: 0,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userContent },
-      ],
-    });
-
-    const raw = completion.choices[0]?.message?.content;
+    // A person is waiting on a spoken command: the engine picks the model and answers interactively.
+    const answer = await askEngine({ organizationId: String(viewer.organizationId), userId: viewer.userId, need: 'utility', system: SYSTEM_PROMPT, user: userContent, maxTokens: 800, interactive: true, attemptTimeoutMs: 20_000 });
+    const raw = answer?.text;
     if (!raw) {
-      return NextResponse.json({ error: 'Empty model response' }, { status: 500 });
+      return NextResponse.json({ error: 'No model could read that command. Try again.' }, { status: 503 });
     }
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(stripJsonFence(raw));
     } catch {
-      return NextResponse.json({ error: 'Invalid JSON from model', raw }, { status: 502 });
+      return NextResponse.json({ error: 'Invalid JSON from model' }, { status: 502 });
     }
 
     return NextResponse.json({ intent: parsed, raw });

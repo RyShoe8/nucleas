@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Types } from 'mongoose';
 import connectDB from '@/lib/db/mongodb';
 import InsightItem from '@/lib/models/InsightItem';
 import { requireAdminInsights } from '@/lib/insights/requireAdminInsights';

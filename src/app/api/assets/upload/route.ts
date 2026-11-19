@@ -200,7 +200,7 @@ export async function POST(request: NextRequest) {
     const asset = await Asset.create(assetData);
 
     return NextResponse.json(asset, { status: 201 });
-  } catch (error) {
+  } catch {
     // Upload asset error
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

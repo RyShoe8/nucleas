@@ -94,7 +94,7 @@ export async function GET(request: NextRequest) {
     );
 
     return NextResponse.json(migratedProjects);
-  } catch (error) {
+  } catch {
     // Get projects error
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
@@ -123,7 +123,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { name, description, url, urls, devUrl, liveUrl, projectType, category, color, logo, status, clientId, estimatedHours, assignedTo, assignedToEmployeeId, assignedToEmployeeIds, assignedToNames, tasks, endDate, socialLinks, techStack, marketingStack } = body;
+    const { name, description, url: _url, urls, devUrl, liveUrl, projectType, category, color, logo, status, clientId, estimatedHours, assignedTo, assignedToEmployeeId, assignedToEmployeeIds, assignedToNames, tasks, endDate, socialLinks: _socialLinks, techStack: _techStack, marketingStack: _marketingStack } = body;
 
     if (!name) {
       return NextResponse.json(

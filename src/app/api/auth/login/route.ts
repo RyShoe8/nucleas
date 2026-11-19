@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
         organizationSetupComplete: user.organizationSetupComplete,
       },
     });
-  } catch (error) {
+  } catch {
     // Login error
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

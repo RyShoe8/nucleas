@@ -168,8 +168,7 @@ export function rescueCreateTaskIntent(raw: unknown, rawTranscript: string): Par
 function navigationTargetToParsedIntent(targetRaw: string, rawTranscript: string): ParsedIntent | null {
   const key = targetRaw.toLowerCase().replace(/\s+/g, '_');
 
-  const navPlaces = ['workspace', 'assets', 'employees', 'employee', 'team', 'admin'] as const;
-  type NavPlace = (typeof navPlaces)[number];
+  type NavPlace = 'workspace' | 'assets' | 'employees' | 'employee' | 'team' | 'admin';
   const placeMap: Record<string, NavPlace> = {
     workspace: 'workspace',
     assets: 'assets',

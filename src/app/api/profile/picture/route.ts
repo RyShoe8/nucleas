@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
       message: 'Profile picture uploaded successfully',
       url,
     });
-  } catch (error) {
+  } catch {
     // Profile picture upload error
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

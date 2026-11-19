@@ -2,7 +2,6 @@
 
 import { useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import Link from 'next/link';
 import Card from '@/components/ui/Card';
 import Input from '@/components/ui/Input';
 import Button from '@/components/ui/Button';
@@ -53,7 +52,7 @@ function ContactForm() {
       setSubject(presetSubject);
       setMessage('');
       setType(presetType || 'Other');
-    } catch (err) {
+    } catch {
       setError('An error occurred. Please try again.');
     } finally {
       setLoading(false);

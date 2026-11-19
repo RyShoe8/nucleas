@@ -84,7 +84,7 @@ export async function POST(
           projectDescription,
           taskTitle,
         },
-        apiKey
+        { organizationId: String(ctx.organizationId), userId: session.userId }
       );
 
       recording.transcript = transcript;

@@ -59,7 +59,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       isAdmin: updatedUser!.isAdmin || false,
       registrationApproval: effectiveRegistrationApproval(updatedUser!.registrationApproval),
     });
-  } catch (error) {
+  } catch {
     // Admin update user error
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
@@ -124,7 +124,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     await User.findByIdAndDelete(id);
 
     return NextResponse.json({ message: 'User deleted successfully' });
-  } catch (error) {
+  } catch {
     // Admin delete user error
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

@@ -6,7 +6,7 @@ import { getCompanyProfile, isCompanyManager, type CompanyViewer } from '@/lib/c
 import { deleteStoredFile } from '@/lib/storage/deleteStoredFile';
 
 export const BRAND_ASSET_MAX_BYTES = 10 * 1024 * 1024;
-const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const;
+type AllowedImageType = 'image/png' | 'image/jpeg' | 'image/webp';
 
 export interface BrandAssetView {
   kind: BrandAssetKind;
@@ -19,7 +19,7 @@ export interface BrandAssetView {
 export const isBrandAssetKind = (value: unknown): value is BrandAssetKind => typeof value === 'string' && (BRAND_ASSET_KINDS as readonly string[]).includes(value);
 
 /** Magic bytes, so a renamed file cannot pass as an image. */
-export function sniffImageType(bytes: Uint8Array): (typeof ALLOWED_TYPES)[number] | null {
+export function sniffImageType(bytes: Uint8Array): AllowedImageType | null {
   if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
   if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP') return 'image/webp';

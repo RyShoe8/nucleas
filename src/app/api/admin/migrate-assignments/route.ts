@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
       message: 'Migration completed successfully',
       ...result
     });
-  } catch (error) {
+  } catch {
     // Migration error
     return NextResponse.json({ error: 'Migration failed' }, { status: 500 });
   }

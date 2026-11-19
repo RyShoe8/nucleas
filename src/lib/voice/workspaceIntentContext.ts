@@ -25,9 +25,6 @@ export type WorkspaceIntentContextPayload = {
   projects?: WorkspaceProjectOption[];
 };
 
-/** Subset sent to the LLM (compact, no long arrays). */
-type ParseIntentApiContext = Omit<WorkspaceIntentContextPayload, 'projects'>;
-
 function localTodayIso(): string {
   const d = new Date();
   const y = d.getFullYear();

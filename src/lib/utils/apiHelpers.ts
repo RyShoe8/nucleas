@@ -1,5 +1,4 @@
 import User from '@/lib/models/User';
-import Project from '@/lib/models/Project';
 import { Types } from 'mongoose';
 
 /**
