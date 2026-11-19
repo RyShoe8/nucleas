@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useTitleSlot } from '@/lib/os/titleSlot';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
+import { useOsAuth } from '@/hooks/os/useOsAuth';
 import type { ModuleRenderContext } from '@/lib/os/types';
 import { RELATIONSHIP_LABEL, type OsCompanyDetail, type OsCompanySummary, type OsConnection } from './companyTypes';
 import CompanyTeamPanel from './CompanyTeamPanel';
@@ -32,6 +33,9 @@ export default function CompanyModule({ payload, windowId }: ModuleRenderContext
     const titleSlot = useTitleSlot(windowId);
     // Combined numbers for every website until one is chosen; the logo goes back to all of them.
     const [site, setSite] = useState<string | null>(null);
+    // Set right after this window archives the company, so it can say so and offer to undo.
+    const [archived, setArchived] = useState<{ id: string; name: string } | null>(null);
+    const auth = useOsAuth();
 
     const load = useCallback(async () => {
         if (!companyId) return;
@@ -59,6 +63,7 @@ export default function CompanyModule({ payload, windowId }: ModuleRenderContext
     }, [load]);
 
     if (!companyId) return <div className="p-4 text-sm text-text-secondary">No company selected.</div>;
+    if (archived) return <ArchivedNotice company={archived} onRestored={() => { setArchived(null); setError(null); void load(); }} />;
     if (error) return <div className="p-4 text-sm text-red-400">{error}</div>;
     if (!detail) return <div className="p-4 text-sm text-text-secondary">Loading…</div>;
 
@@ -127,6 +132,7 @@ export default function CompanyModule({ payload, windowId }: ModuleRenderContext
                             setActivityKey((key) => key + 1);
                         }}
                     />
+                    {auth.isAdmin ? <ArchiveCompanyButton companyId={company.id} companyName={company.name} onArchived={() => setArchived({ id: company.id, name: company.name })} /> : null}
                     <RelationshipEditor
                         companyId={company.id}
                         relationship={company.relationship}
@@ -169,6 +175,58 @@ export default function CompanyModule({ payload, windowId }: ModuleRenderContext
             </div>
             </section>}
             {section === 'activity' && <CompanyTimeline key={company.id} companyId={company.id} refreshKey={activityKey} onOpenJob={(jobId) => { setFocusJobId(jobId); setSection('team'); }} />}
+        </div>
+    );
+}
+
+async function setArchivedRequest(companyId: string, archived: boolean): Promise<string | null> {
+    const res = await fetch(`/api/os/companies/${companyId}/archive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ archived }) }).catch(() => null);
+    if (res?.ok) {
+        window.dispatchEvent(new Event('nucleas:companies-changed'));
+        return null;
+    }
+    return ((await res?.json().catch(() => ({}))) as { error?: string } | undefined)?.error ?? 'Something went wrong.';
+}
+
+/** Archiving is how a company is deleted: hidden everywhere and nothing runs for it, but every record is kept. */
+function ArchiveCompanyButton({ companyId, companyName, onArchived }: { companyId: string; companyName: string; onArchived: () => void }) {
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const archive = async () => {
+        if (!window.confirm(`Archive ${companyName}?\n\nIt disappears from every list, window and Ask, and its jobs, watches and metric syncs stop. Nothing is erased: its connections, history and settings are kept, and an Administrator can restore it from Companies → Archived.`)) return;
+        setBusy(true);
+        setError(null);
+        const failed = await setArchivedRequest(companyId, true);
+        setBusy(false);
+        if (failed) setError(failed);
+        else onArchived();
+    };
+    return (
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+            <button type="button" className="rounded border border-red-400/50 px-2 py-0.5 text-red-400 hover:bg-red-400/10 disabled:opacity-50" disabled={busy} onClick={() => void archive()}>
+                {busy ? 'Archiving…' : 'Archive company'}
+            </button>
+            <span className="text-text-secondary">Hides it and stops its work; restorable.</span>
+            {error ? <span role="alert" className="text-red-400">{error}</span> : null}
+        </div>
+    );
+}
+
+function ArchivedNotice({ company, onRestored }: { company: { id: string; name: string }; onRestored: () => void }) {
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    return (
+        <div className="space-y-2 p-4 text-sm">
+            <p><strong>{company.name}</strong> is archived. Its jobs, watches and syncs have stopped, and everything about it is kept.</p>
+            <p className="text-xs text-text-secondary">You can restore it any time from Companies → Archived.</p>
+            <button type="button" className="ui-button" disabled={busy} onClick={async () => {
+                setBusy(true);
+                const failed = await setArchivedRequest(company.id, false);
+                setBusy(false);
+                if (failed) setError(failed);
+                else onRestored();
+            }}>{busy ? 'Restoring…' : 'Undo: restore it'}</button>
+            {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
         </div>
     );
 }

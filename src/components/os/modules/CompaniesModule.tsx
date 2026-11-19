@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import { useOsAuth } from '@/hooks/os/useOsAuth';
 import AddCompanyForm from './AddCompanyForm';
@@ -119,6 +119,61 @@ export default function CompaniesModule() {
                     </section>
                 );
             })}
+            {auth.isAdmin ? <ArchivedCompanies /> : null}
         </div>
+    );
+}
+
+/** Archived companies (Administrators): hidden everywhere else, kept in full, and restorable here. */
+function ArchivedCompanies() {
+    const [open, setOpen] = useState(false);
+    const [rows, setRows] = useState<OsCompanySummary[] | null>(null);
+    const [busy, setBusy] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const load = useCallback(async () => {
+        const res = await fetch('/api/os/companies?archived=1').catch(() => null);
+        const body = (await res?.json().catch(() => null)) as { companies?: OsCompanySummary[]; error?: string } | null;
+        if (!res?.ok) return setError(body?.error ?? 'Could not load archived companies.');
+        setRows(body?.companies ?? []);
+        setError(null);
+    }, []);
+    useEffect(() => {
+        if (!open) return;
+        const refresh = () => void load();
+        refresh();
+        window.addEventListener('nucleas:companies-changed', refresh);
+        return () => window.removeEventListener('nucleas:companies-changed', refresh);
+    }, [open, load]);
+    const restore = async (company: OsCompanySummary) => {
+        setBusy(company.id);
+        const res = await fetch(`/api/os/companies/${company.id}/archive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ archived: false }) }).catch(() => null);
+        setBusy(null);
+        if (!res?.ok) return setError(((await res?.json().catch(() => ({}))) as { error?: string } | undefined)?.error ?? 'Could not restore it.');
+        window.dispatchEvent(new Event('nucleas:companies-changed'));
+    };
+    return (
+        <section className="border-t border-border px-4 py-3">
+            <button type="button" className="text-[11px] uppercase tracking-wider text-text-secondary hover:text-text-primary" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+                {open ? '▾' : '▸'} Archived{rows ? ` (${rows.length})` : ''}
+            </button>
+            {open ? (
+                <div className="mt-2 space-y-2 text-sm">
+                    {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
+                    {rows === null ? <p className="text-xs text-text-secondary">Loading…</p> : rows.length === 0 ? <p className="text-xs text-text-secondary">No archived companies.</p> : (
+                        <ul className="divide-y divide-border">
+                            {rows.map((c) => (
+                                <li key={c.id} className="flex items-center gap-3 py-2">
+                                    <span className="min-w-0 flex-1">
+                                        <span className="block truncate">{c.name}</span>
+                                        <span className="block truncate text-xs text-text-secondary">{RELATIONSHIP_LABEL[c.relationship]}{c.domain ? ` · ${c.domain}` : ''}</span>
+                                    </span>
+                                    <button type="button" className="ui-button text-xs" disabled={busy !== null} onClick={() => void restore(c)}>{busy === c.id ? 'Restoring…' : 'Restore'}</button>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            ) : null}
+        </section>
     );
 }

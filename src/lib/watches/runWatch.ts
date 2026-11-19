@@ -3,6 +3,7 @@ import { recipientOnlyItem } from './offerEligibility';
 import { Types } from 'mongoose';
 import { ContentWatch, WatchItem, WatchMailbox, type ContentWatchDoc } from '@/lib/models/Watch';
 import { openSecret } from '@/lib/security/secretBox';
+import { archivedCompanyIds } from '@/lib/companies/archive';
 import { GmailAccessTokenRejected, GmailApi, GmailAuthError, refreshAccessToken } from '@/lib/mail/gmailClient';
 import { markMailboxDisconnected, watchGoogleCredentials, watchMailboxPurpose } from './mailboxHealth';
 import { parseGmailMessage, type ParsedMessage } from '@/lib/mail/gmailParse';
@@ -340,7 +341,7 @@ export async function scanWatch(watchId: Types.ObjectId | string, deps: ScanDeps
 /** Active watches whose interval has elapsed, oldest scan first (for the cron). Watches on a mailbox that needs reconnecting are skipped. */
 export async function scanDueWatches(options: { limit?: number; now?: number; afterScan?: (watchId: Types.ObjectId, since: Date) => Promise<unknown>; budgetMs?: number } = {}): Promise<{ scanned: number; failed: number; deferred: number }> {
   const now = options.now ?? Date.now();
-  const candidates = await ContentWatch.find({ active: true })
+  const candidates = await ContentWatch.find({ active: true, companyId: { $nin: await archivedCompanyIds() } })
     .sort({ lastScanAt: 1 })
     .limit(50)
     .select('_id mailboxId lastScanAt intervalMinutes')

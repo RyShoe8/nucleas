@@ -77,6 +77,7 @@ function AllCompanyIntegrations() {
 }
 
 function CompanyIntegrations({ companyId }: { companyId: string }) {
+    const wm = useWindowManager();
     const [detail, setDetail] = useState<OsCompanyDetail | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
@@ -105,9 +106,15 @@ function CompanyIntegrations({ companyId }: { companyId: string }) {
     if (!detail) return <div className="p-4 text-sm text-text-secondary">Loading…</div>;
     return (
         <div className="h-full overflow-y-auto p-4 space-y-3 text-text-primary">
-            <p className="text-xs text-text-secondary">
-                {detail.company.name} · {detail.company.domain ?? 'no production domain'}
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-text-secondary">
+                    {detail.company.name} · {detail.company.domain ?? 'no production domain'}
+                </p>
+                {/* Back to the company this setup belongs to. */}
+                <button type="button" className="ui-button text-xs" onClick={() => wm.open('company', { payload: { companyId: detail.company.id, companyName: detail.company.name } })}>
+                    ← {detail.company.name} overview
+                </button>
+            </div>
             <ConnectionsSection companyId={detail.company.id} connections={detail.connections} onChanged={reload} />
             {!detail.connections.some(connection => connection.provider === 'github') && <CodeRepositories companyId={detail.company.id} />}
             <AdminAccount companyId={detail.company.id} defaultDomain={detail.company.domain} />

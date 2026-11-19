@@ -4,6 +4,7 @@ import { ContentWatch, WatchItem } from '@/lib/models/Watch';
 import { ArticleDraft } from '@/lib/models/ArticleDraft';
 import { BrandVoice } from '@/lib/models/BrandVoice';
 import { upstreamContext } from '@/lib/companies/upstreamContext';
+import { archivedCompanyIds } from '@/lib/companies/archive';
 import { formatDealLine } from './dealFormat';
 import { compareByRank, valueLines, watchSettings } from './settings';
 import type { DealMetrics } from './types';
@@ -134,7 +135,7 @@ export async function startDigest(watchId: Types.ObjectId | string, options: { m
 /** Digests whose period has passed (for the cron). The article pipeline then writes them on its next pass. */
 export async function startDueDigests(options: { now?: Date; limit?: number } = {}): Promise<{ started: number }> {
   const now = options.now ?? new Date();
-  const rows = await ContentWatch.find({ active: true, 'digest.enabled': true, companyId: { $exists: true } })
+  const rows = await ContentWatch.find({ active: true, 'digest.enabled': true, companyId: { $exists: true, $nin: await archivedCompanyIds() } })
     .select('_id digest')
     .limit(100)
     .lean<{ _id: Types.ObjectId; digest?: { cadence?: string; lastRunAt?: Date } }[]>();

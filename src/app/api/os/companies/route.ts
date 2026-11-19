@@ -11,7 +11,10 @@ export async function GET(request: NextRequest) {
     const viewer = await requireCompanyViewer(request);
     if (viewer instanceof NextResponse) return viewer;
 
-    const companies = await listCompanyProfiles(viewer);
+    // ?archived=1 lists archived companies (Administrators, to restore them).
+    const archived = request.nextUrl.searchParams.get('archived') === '1';
+    if (archived && viewer.role !== 'Administrator') return NextResponse.json({ error: 'Only Administrators can see archived companies.' }, { status: 403 });
+    const companies = await listCompanyProfiles(viewer, { archived });
     const counts = await IntegrationConnection.aggregate<{ _id: { companyId: unknown; status: string }; n: number }>([
       { $match: { organizationId: viewer.organizationId, companyId: { $ne: null } } },
       { $group: { _id: { companyId: '$companyId', status: '$status' }, n: { $sum: 1 } } },

@@ -55,6 +55,7 @@ import { replaceCompanyOverview } from '@/lib/propertyOverview/storage';
 import { claimJobRunExecution, heartbeatJobRun, initialRunLease, nextQueuedRunId, queueIfBusy, wakeJobQueue } from './runLifecycle';
 import { updateMarketingPlan } from './marketingPlans';
 import { ResearchEvidence } from './researchEvidence';
+import { setCompanyArchived } from '@/lib/companies/archive';
 
 let replica: MongoMemoryReplSet;
 const org = new Types.ObjectId();
@@ -161,6 +162,17 @@ describe('ongoing job settings', () => {
     finally { create.mockRestore(); }
     expect((await Job.findById(job.id).lean())?.nextRunAt).toEqual(due);
     expect(await JobRun.countDocuments({ jobId: job.id })).toBe(0);
+    expect(await claimDueJobRuns(new Date('2026-11-09T09:02:00Z'))).toHaveLength(1);
+  });
+
+  it('runs nothing for an archived company until it is restored', async () => {
+    const job = await proposed({ ...DESIGN, schedule: { kind: 'daily', time: '09:00', timezone: 'UTC' } });
+    await Job.updateOne({ _id: job.id }, { $set: { status: 'active', nextRunAt: new Date('2026-11-09T09:00:00Z') } });
+    expect(await setCompanyArchived(member, companyId, true)).toMatchObject({ ok: false, status: 403 });
+    expect(await setCompanyArchived(admin, companyId, true)).toMatchObject({ ok: true });
+    expect(await claimDueJobRuns(new Date('2026-11-09T09:01:00Z'))).toHaveLength(0);
+    expect(await listJobs(admin)).toHaveLength(0);
+    expect(await setCompanyArchived(admin, companyId, false)).toMatchObject({ ok: true });
     expect(await claimDueJobRuns(new Date('2026-11-09T09:02:00Z'))).toHaveLength(1);
   });
 

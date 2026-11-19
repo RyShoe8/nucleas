@@ -28,6 +28,9 @@ export interface IClient extends Document, IPlatformOperationsFields {
   relationship?: CompanyRelationship;
   /** Primary project for this company (owned properties). Clients resolve theirs via projectType client-admin. */
   hubProjectId?: Types.ObjectId;
+  /** Archived companies are hidden everywhere and nothing runs for them; every record is kept so they can be restored. */
+  archivedAt?: Date;
+  archivedByUserId?: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -110,6 +113,8 @@ const ClientSchema: Schema = new Schema(
       type: String,
       enum: ['client', 'owned', 'internal'],
     },
+    archivedAt: { type: Date },
+    archivedByUserId: { type: Schema.Types.ObjectId, ref: 'User' },
     hubProjectId: {
       type: Schema.Types.ObjectId,
       ref: 'Project',

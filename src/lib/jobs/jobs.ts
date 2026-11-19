@@ -15,6 +15,7 @@ import { Types } from 'mongoose';
 import { aiTransaction } from '@/lib/ai/control/transaction';
 import { Job, JobRun, type JobRunProgressStage, type JobRunStatus, type JobStatus } from '@/lib/models/Job';
 import { getCompanyProfile, isCompanyManager, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
+import { archivedCompanyIds } from '@/lib/companies/archive';
 import { readEngineSettings, type CostLevel } from '@/lib/ai/engine/select';
 import type { ProgressFn } from '@/lib/ai/progress';
 import { designJob } from './designer';
@@ -722,7 +723,7 @@ export { executeJobRun };
 
 /** Claims due recurring jobs and creates their runs. Each job advances before its run starts, so cron retries cannot duplicate it. */
 export async function claimDueJobRuns(now = new Date(), limit = 2): Promise<string[]> {
-  const candidates = await Job.find({ status: { $in: ['ready', 'active'] }, 'design.skill': { $nin: ['brand_voice', 'marketing_plan'] }, nextRunAt: { $lte: now } })
+  const candidates = await Job.find({ status: { $in: ['ready', 'active'] }, 'design.skill': { $nin: ['brand_voice', 'marketing_plan'] }, nextRunAt: { $lte: now }, companyId: { $nin: await archivedCompanyIds() } })
     .sort({ nextRunAt: 1 })
     .limit(Math.max(1, Math.min(limit, 10)))
     .lean<JobLean[]>();

@@ -167,8 +167,9 @@ async function hubProjectsFor(companies: Doc[]): Promise<Map<string, Doc>> {
 }
 
 /** Companies the viewer may see, with resolved profiles. Org boundary is mandatory. */
-export async function listCompanyProfiles(viewer: CompanyViewer): Promise<CompanyProfile[]> {
-  const companies = (await Client.find({ organizationId: viewer.organizationId }).lean()) as unknown as Doc[];
+export async function listCompanyProfiles(viewer: CompanyViewer, options: { archived?: boolean } = {}): Promise<CompanyProfile[]> {
+  // Archived companies are hidden everywhere; { archived: true } lists only them (for restoring).
+  const companies = (await Client.find({ organizationId: viewer.organizationId, archivedAt: { $exists: Boolean(options.archived) } }).lean()) as unknown as Doc[];
   const hubs = await hubProjectsFor(companies);
   return companies
     .map((c) => resolveCompanyProfile(c, c.hubProjectId ? hubs.get(String(c.hubProjectId)) ?? null : null))
@@ -176,9 +177,9 @@ export async function listCompanyProfiles(viewer: CompanyViewer): Promise<Compan
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export async function getCompanyProfile(viewer: CompanyViewer, companyId: string): Promise<CompanyProfile | null> {
+export async function getCompanyProfile(viewer: CompanyViewer, companyId: string, options: { includeArchived?: boolean } = {}): Promise<CompanyProfile | null> {
   if (!Types.ObjectId.isValid(companyId)) return null;
-  const company = (await Client.findOne({ _id: companyId, organizationId: viewer.organizationId }).lean()) as unknown as Doc | null;
+  const company = (await Client.findOne({ _id: companyId, organizationId: viewer.organizationId, ...(options.includeArchived ? {} : { archivedAt: { $exists: false } }) }).lean()) as unknown as Doc | null;
   if (!company) return null;
   const hubs = await hubProjectsFor([company]);
   const profile = resolveCompanyProfile(company, company.hubProjectId ? hubs.get(String(company.hubProjectId)) ?? null : null);

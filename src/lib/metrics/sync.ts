@@ -238,7 +238,7 @@ export async function processMetricSync(options: { now?: Date; budgetMs?: number
 
   const companyIds = (await IntegrationConnection.distinct('companyId', { status: 'connected', companyId: { $ne: null } })) as Types.ObjectId[];
   companyIds.push(...await serviceCompanyIds());
-  const companies = await Client.find({ _id: { $in: companyIds } })
+  const companies = await Client.find({ _id: { $in: companyIds }, archivedAt: { $exists: false } })
     .select('organizationId')
     .lean<{ _id: Types.ObjectId; organizationId: Types.ObjectId }[]>();
 
