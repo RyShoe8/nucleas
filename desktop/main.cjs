@@ -7,10 +7,12 @@ const { ORIGIN, trustedRemote, externalUrl, appPage, moduleRequest, visibleBound
 const catalog = require('./renderer/catalog.json');
 const { signIn, authFile, authUrl } = require('./auth.cjs');
 const { installDisplayCapture } = require('./capture.cjs');
+const { startupUpdate } = require('./startup-update.cjs');
 const targets = new Map();
 const launcherFile = path.join(__dirname, 'renderer/index.html');
 const launcherUrl = pathToFileURL(launcherFile).href;
 let launcher, tray, quitting = false, compact = false;
+let starting = app.isPackaged, startupWindow;
 let update = { phase: 'idle', text: 'Checking for updates…' };
 const windows = new Map();
 let saved = {};
@@ -104,6 +106,7 @@ function createLauncher() {
     void launcher.loadFile(launcherFile);
 }
 function showLauncher() {
+  if (starting) { startupWindow?.show(); startupWindow?.focus(); return; }
   if (testRun) { if (!launcher) { createLauncher(); return; } launcher.show(); launcher.focus(); return; }
   const main = office();
   if (main && !main.isDestroyed()) {
@@ -119,6 +122,7 @@ function toggleMain() {
   if (main && !main.isDestroyed() && main.isVisible() && main.isFocused()) { main.hide(); officeHiddenAt = Date.now(); } else showLauncher();
 }
 function openModule(raw) {
+  if (starting) { showLauncher(); return; }
   const value = moduleRequest(raw, catalog);
   if (!value) throw new Error('Unknown app or invalid context.');
   const existing = windows.get(value.key);
@@ -167,17 +171,25 @@ function openModule(raw) {
   broadcast();
 }
 async function checkUpdates() {
+  if (starting) return;
   if (!app.isPackaged) { status('development', 'Development build · updates begin with an installed release'); return; }
   if (update.phase === 'ready') { if (openApps() === 0) installUpdate(); return; }
   if (['checking', 'downloading'].includes(update.phase)) return;
   status('checking', 'Checking for updates…');
   try { await autoUpdater.checkForUpdates(); } catch { status('error', 'Update service unavailable · try again'); }
 }
-function installUpdate() { if (update.phase === 'ready') { quitting = true; autoUpdater.quitAndInstall(false, true); } }
+function installUpdate() {
+  if (update.phase !== 'ready') return;
+  status('installing', 'Installing the latest Nucleas…');
+  quitting = true;
+  flushBounds();
+  try { autoUpdater.quitAndInstall(true, true); }
+  catch { quitting = false; status('error', 'Update could not install · try again later'); showLauncher(); }
+}
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { showLauncher(); void checkUpdates(); });
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     app.setAppUserModelId('app.nucleas.desktop');
     try { const value = JSON.parse(fs.readFileSync(settingsPath(), 'utf8')); saved = value && typeof value === 'object' && !Array.isArray(value) ? value : {}; } catch { saved = {}; }
     const profile = session.fromPartition('persist:nucleas');
@@ -192,7 +204,12 @@ else {
       if (choice.response === 1) allowedThisRun.add(permission);
       callback(choice.response === 1);
     });
-    if (testRun) createLauncher(); else showLauncher();
+    if (starting) {
+      startupWindow = new BrowserWindow({ width: 420, height: 270, frame: false, resizable: false, closable: false, show: false, backgroundColor: '#111a20', webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+      secureWindow(startupWindow, true);
+      startupWindow.once('ready-to-show', () => startupWindow?.show());
+      void startupWindow.loadFile(path.join(__dirname, 'renderer/startup.html'));
+    } else if (testRun) createLauncher(); else showLauncher();
     tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'renderer/icon.png')).resize({ width: 20, height: 20 }));
     tray.setToolTip('Nucleas · Alt+Space');
     tray.setContextMenu(Menu.buildFromTemplate([
@@ -235,9 +252,21 @@ else {
     autoUpdater.on('update-available', () => status('downloading', 'Downloading the latest Nucleas…'));
     autoUpdater.on('download-progress', progress => status('downloading', `Updating · ${Math.round(progress.percent)}%`));
     autoUpdater.on('update-not-available', () => status('current', 'You’re up to date'));
-    autoUpdater.on('error', () => status('error', 'Update service unavailable · try again'));
-    autoUpdater.on('update-downloaded', () => { status('ready', 'Update ready · restart to install'); if (openApps() === 0 && !office()?.isVisible()) installUpdate(); });
-    void checkUpdates();
+    autoUpdater.on('error', () => {
+      const failedInstall = update.phase === 'installing';
+      if (failedInstall) quitting = false;
+      status('error', 'Update service unavailable · try again');
+      if (failedInstall) showLauncher();
+    });
+    autoUpdater.on('update-downloaded', () => { status('ready', 'Update ready · installs on restart'); if (!starting && openApps() === 0 && !office()?.isVisible()) installUpdate(); });
+    if (starting) {
+      status('checking', 'Checking for updates…');
+      const result = await startupUpdate(autoUpdater);
+      starting = false;
+      startupWindow?.destroy(); startupWindow = undefined;
+      if (quitting) return;
+      if (result === 'ready') installUpdate(); else showLauncher();
+    } else void checkUpdates();
   });
   app.on('before-quit', () => { quitting = true; });
   app.on('will-quit', () => { if (persistTimer) flushBounds(); globalShortcut.unregisterAll(); });

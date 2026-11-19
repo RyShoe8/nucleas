@@ -9,7 +9,7 @@
   "scripts": {
     "prepare": "node scripts/catalog.cjs",
     "start": "node scripts/catalog.cjs && electron .",
-    "test": "node --test policy.test.cjs",
+    "test": "node --test policy.test.cjs startup-update.test.cjs",
     "pack": "node scripts/catalog.cjs && electron-builder --win --dir",
     "dist": "node scripts/catalog.cjs && electron-builder --win nsis --publish never && node scripts/verify-release.cjs"
   },
@@ -33,6 +33,7 @@
       "policy.cjs",
       "capture.cjs",
       "capture-preload.cjs",
+      "startup-update.cjs",
       "renderer/**"
     ],
     "asar": true,
