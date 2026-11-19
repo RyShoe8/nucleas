@@ -76,7 +76,7 @@ function BillingPageInner() {
         return;
       }
       if (!me.isOrgOwner) {
-        router.push('/workspace');
+        router.push('/');
         return;
       }
       if (!cancelled) setAccessChecked(true);

@@ -7,12 +7,7 @@ const TeamModule = dynamic(() => import('./TeamModule'));
 const WorkModule = dynamic(() => import('./WorkModule'));
 const GrowthModule = dynamic(() => import('./GrowthModule'));
 const SettingsModule = dynamic(() => import('./SettingsModule'));
-const ProjectsModule = dynamic(() => import('./ProjectsModule'));
-const ProjectDetailModule = dynamic(() => import('./ProjectDetailModule'));
-const AgendaModule = dynamic(() => import('./AgendaModule'));
-const ScheduleModule = dynamic(() => import('./ScheduleModule'));
 const VoiceModule = dynamic(() => import('./VoiceModule'));
-const PlaceholderModule = dynamic(() => import('./PlaceholderModule'));
 const CompaniesModule = dynamic(() => import('./CompaniesModule'));
 const CompanyModule = dynamic(() => import('./CompanyModule'));
 const TodayModule = dynamic(() => import('./TodayModule'));
@@ -37,10 +32,7 @@ export function registerOsModules(): void {
     if (registered) return;
     registered = true;
 
-    const baseSize = { width: 520, height: 400 };
     const baseMin = { width: 320, height: 220 };
-    const scheduleSize = { width: 1000, height: 700 };
-    const agendaSize = { width: 960, height: 640 };
 
     const definitions: ModuleDefinition[] = [
         {
@@ -259,95 +251,6 @@ export function registerOsModules(): void {
             render: (ctx) => createElement(IntegrationsModule, ctx),
         },
         {
-            id: 'projects',
-            title: 'Projects',
-            icon: '📁',
-            defaultSize: baseSize,
-            minSize: baseMin,
-            canPopout: true,
-            permissions: 'member',
-            launcherHidden: true,
-            render: () => createElement(ProjectsModule),
-        },
-        {
-            id: 'agenda',
-            title: 'Agenda',
-            icon: '📋',
-            defaultSize: agendaSize,
-            minSize: { width: 480, height: 360 },
-            canPopout: true,
-            permissions: 'member',
-            render: () => createElement(AgendaModule),
-        },
-        {
-            id: 'schedule',
-            title: 'Schedule',
-            icon: '📅',
-            defaultSize: scheduleSize,
-            minSize: { width: 640, height: 400 },
-            canPopout: true,
-            permissions: 'member',
-            launcherHidden: true,
-            render: () => createElement(ScheduleModule),
-        },
-        {
-            id: 'project-detail',
-            title: 'Project',
-            icon: '📋',
-            defaultSize: { width: 1350, height: 700 },
-            minSize: { width: 720, height: 360 },
-            canPopout: true,
-            permissions: 'member',
-            launcherHidden: true,
-            windowTitle: (payload) => payload?.projectName,
-            render: (ctx) => createElement(ProjectDetailModule, ctx),
-        },
-        {
-            id: 'tasks',
-            title: 'Tasks',
-            icon: '✅',
-            defaultSize: baseSize,
-            minSize: baseMin,
-            canPopout: true,
-            permissions: 'member',
-            launcherHidden: true,
-            render: () =>
-                createElement(PlaceholderModule, {
-                    title: 'Tasks',
-                    description: 'Cross-project task list will live here.',
-                }),
-        },
-        {
-            id: 'assets',
-            title: 'Assets',
-            icon: '🗂️',
-            defaultSize: baseSize,
-            minSize: baseMin,
-            canPopout: true,
-            permissions: 'member',
-            launcherHidden: true,
-            render: () =>
-                createElement(PlaceholderModule, {
-                    title: 'Assets',
-                    description: 'Screenshots, files, and links attached to work.',
-                }),
-        },
-        {
-            id: 'search',
-            title: 'Search',
-            icon: '🔎',
-            defaultSize: { width: 480, height: 320 },
-            minSize: baseMin,
-            canPopout: true,
-            permissions: 'member',
-            launcherHidden: true,
-            render: () =>
-                createElement(PlaceholderModule, {
-                    title: 'Search',
-                    description: 'Global search across projects, tasks, content, and assets.',
-                }),
-        },
-        {
             id: 'voice',
             title: 'Voice',
             icon: '🎙️',
@@ -357,36 +260,6 @@ export function registerOsModules(): void {
             permissions: 'member',
             launcherHidden: true,
             render: () => createElement(VoiceModule),
-        },
-        {
-            id: 'activity',
-            title: 'Activity',
-            icon: '📈',
-            defaultSize: baseSize,
-            minSize: baseMin,
-            canPopout: true,
-            permissions: 'member',
-            launcherHidden: true,
-            render: () =>
-                createElement(PlaceholderModule, {
-                    title: 'Activity',
-                    description: 'Recent actions across your workspace.',
-                }),
-        },
-        {
-            id: 'smart-buttons',
-            title: 'Smart Buttons',
-            icon: '⚡',
-            defaultSize: baseSize,
-            minSize: baseMin,
-            canPopout: true,
-            permissions: 'member',
-            launcherHidden: true,
-            render: () =>
-                createElement(PlaceholderModule, {
-                    title: 'Smart Buttons',
-                    description: 'Quick-action surfaces and partner shortcuts.',
-                }),
         },
     ];
 

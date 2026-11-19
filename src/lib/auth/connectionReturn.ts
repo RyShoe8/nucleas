@@ -17,7 +17,6 @@ export function connectionReturnPath(value: string | undefined): string | null {
             if (/^[a-f0-9]{32}$/.test(url.searchParams.get('desktopFlow') ?? '')) kept.set('desktopFlow', url.searchParams.get('desktopFlow')!);
             return kept.size ? `${url.pathname}?${kept}` : url.pathname;
         }
-        if (url.origin === 'https://nucleas.app' && (url.pathname === '/api/scheduling/google/connect' || url.pathname === '/api/google/workspace/connect')) return url.pathname;
         if (url.origin !== 'https://nucleas.app' || !['/api/os/integrations/google/start', '/api/os/integrations/facebook/start'].includes(url.pathname)) return null;
         const companyId = url.searchParams.get('companyId');
         if (!companyId || !/^[a-f0-9]{24}$/i.test(companyId)) return null;

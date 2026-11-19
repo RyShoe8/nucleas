@@ -42,14 +42,14 @@ export default function RecordingDetailPage() {
         return;
       }
       if (!res.ok) {
-        router.push('/workspace');
+        router.push('/');
         return;
       }
       const data = await res.json();
       setRecording(data);
       return data as RecordingDetail;
     } catch {
-      router.push('/workspace');
+      router.push('/');
       return null;
     } finally {
       setLoading(false);
@@ -99,7 +99,7 @@ export default function RecordingDetailPage() {
     <div className="max-w-4xl mx-auto p-6 space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Link href="/workspace" className="text-sm text-text-muted hover:underline">
+          <Link href="/" className="text-sm text-text-muted hover:underline">
             ← Back to workspace
           </Link>
           <h1 className="text-2xl font-semibold text-text-primary mt-1">{recording.title}</h1>

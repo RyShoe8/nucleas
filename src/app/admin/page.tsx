@@ -325,7 +325,7 @@ export default function AdminPage() {
             <div className="bg-error-light border border-error/30 text-error px-4 py-3 rounded-lg">
               {error}
             </div>
-            <Button onClick={() => router.push('/planning-map')} className="mt-4">
+            <Button onClick={() => router.push('/')} className="mt-4">
               Go Back
             </Button>
           </Card>

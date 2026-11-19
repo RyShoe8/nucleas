@@ -66,7 +66,7 @@ function RegisterForm() {
             setEmail(data.email); // Pre-fill email
           }
         })
-        .catch((err) => {
+        .catch(() => {
           // Error loading invitation
           setError('Failed to load invitation details');
         })
@@ -134,7 +134,7 @@ function RegisterForm() {
       if (!userData?.organizationSetupComplete) {
         router.push('/setup-organization');
       } else {
-        router.push('/planning-map');
+        router.push('/');
       }
       router.refresh();
     } catch (err) {

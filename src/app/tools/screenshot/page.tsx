@@ -320,7 +320,7 @@ export default function PublicScreenshotToolPage() {
                 </p>
                 <p className="text-text-secondary leading-relaxed">
                   Explore{' '}
-                  <Link href="/features/tools" className="text-primary hover:underline">
+                  <Link href="/register" className="text-primary hover:underline">
                     built-in Nucleas tools
                   </Link>{' '}
                   for recordings, smart buttons, and task-linked assets, or{' '}
@@ -355,7 +355,7 @@ export default function PublicScreenshotToolPage() {
                 Start your free trial
               </Link>
               <Link
-                href="/features/tools"
+                href="/register"
                 className="inline-flex items-center px-8 py-4 rounded-xl border border-border text-text-primary font-semibold text-lg hover:border-primary/40 transition-all"
               >
                 See workspace tools
@@ -384,7 +384,7 @@ export default function PublicScreenshotToolPage() {
             All free tools →
           </Link>
           <Link
-            href="/features/tools"
+            href="/register"
             className="px-6 py-3 rounded-xl border border-border text-text-secondary hover:text-primary hover:border-primary/30 transition-all text-sm font-medium"
           >
             Built-in OS tools →

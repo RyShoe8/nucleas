@@ -26,8 +26,7 @@ describe('Connection sign-in return destination', () => {
     it('resumes connecting Mail, Calendar and Workspace, dropping anything else from the address', () => {
         expect(connectionReturnPath(`/api/os/mail/google/start?companyId=${company}&x=1`)).toBe(`/api/os/mail/google/start?companyId=${company}`);
         expect(connectionReturnPath('/api/os/mail/google/start?companyId=nope')).toBe('/api/os/mail/google/start');
-        expect(connectionReturnPath('/api/scheduling/google/connect?returnTo=https://evil.test')).toBe('/api/scheduling/google/connect');
-        expect(connectionReturnPath('/api/google/workspace/connect?returnTo=https://evil.test')).toBe('/api/google/workspace/connect');
+        expect(connectionReturnPath('/api/google/workspace/connect?returnTo=https://evil.test')).toBeNull();
     });
     it('rejects external destinations, unrelated actions and invalid companies', () => {
         for (const path of ['https://evil.test/api/os/integrations/google/start?companyId='+company, '//evil.test/', '/api/auth/logout', '/api/os/integrations/google/start?companyId=nope']) expect(connectionReturnPath(path)).toBeNull();

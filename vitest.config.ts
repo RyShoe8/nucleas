@@ -4,7 +4,7 @@ import { configDefaults, defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
-    setupFiles: ['./src/lib/workspace/itemSeenState.vitest.setup.ts'],
+    setupFiles: ['./src/test/vitest.setup.ts'],
     // desktop/ has its own tests on node:test (npm run desktop:test).
     exclude: [...configDefaults.exclude, 'dist-worker/**', 'desktop/**'],
   },

@@ -387,7 +387,6 @@ function IntegrationsSummary({ companyId, companyName, connections }: { companyI
 }
 
 function ProjectsSection({ projects }: { projects: OsCompanyDetail['projects'] }) {
-    const wm = useWindowManager();
     return (
         <section>
             <h3 className="ui-kicker mb-2">Projects</h3>
@@ -396,23 +395,12 @@ function ProjectsSection({ projects }: { projects: OsCompanyDetail['projects'] }
             ) : (
                 <ul className="ui-card ui-divider-list overflow-hidden">
                     {projects.map((p) => (
-                        <li key={p.id}>
-                            <button
-                                type="button"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    wm.open('project-detail', { payload: { projectId: p.id, projectName: p.name } });
-                                }}
-                                className="w-full px-3 py-2 flex items-center justify-between gap-2 hover:bg-background-card text-left"
-                            >
-                                <span className="text-sm truncate">
-                                    {p.name}
-                                    {p.isHub ? <span className="ml-2 text-[11px] text-text-secondary">main</span> : null}
-                                </span>
-                                <span className="text-[11px] text-text-secondary flex-shrink-0">
-                                    {p.openTasks} open · {p.totalTasks} tasks · {p.status}
-                                </span>
-                            </button>
+                        <li key={p.id} className="px-3 py-2 flex items-center justify-between gap-2">
+                            <span className="text-sm truncate">
+                                {p.name}
+                                {p.isHub ? <span className="ml-2 text-[11px] text-text-secondary">main</span> : null}
+                            </span>
+                            <span className="text-[11px] text-text-secondary flex-shrink-0">{p.status}</span>
                         </li>
                     ))}
                 </ul>

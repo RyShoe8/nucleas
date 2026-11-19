@@ -7,18 +7,6 @@ import { COMMUNITY_SOCIAL_LINKS } from '@/lib/constants/communitySocialLinks';
 import RecaptchaNotice from '@/components/recaptcha/RecaptchaNotice';
 import { PAGE_GUTTER_CLASS } from '@/lib/ui/mobileLayout';
 
-const featureLinks = [
-  { href: '/features/projects', label: 'Projects' },
-  { href: '/features/clients', label: 'Clients' },
-  { href: '/features/tasks', label: 'Tasks' },
-  { href: '/features/content', label: 'Content' },
-  { href: '/features/meetings', label: 'Meetings' },
-  { href: '/features/scheduling', label: 'Scheduling' },
-  { href: '/features/tools', label: 'Tools' },
-  { href: '/features/team', label: 'Team' },
-  { href: '/features/efficiency', label: 'Efficiency' },
-];
-
 const freeToolLinks = [
   { href: '/tools', label: 'All Free Tools' },
   { href: '/tools/screenshot', label: 'Screenshot Tool' },
@@ -101,25 +89,6 @@ export default function Footer() {
                 </a>
               ))}
             </div>
-          </div>
-
-          {/* Features */}
-          <div>
-            <h3 className="text-sm font-semibold text-white uppercase tracking-wider mb-4">Features</h3>
-            <ul className="space-y-3">
-              <li>
-                <Link href="/features" className="text-sm text-primary hover:text-primary-hover transition-colors font-medium">
-                  All Features
-                </Link>
-              </li>
-              {featureLinks.map((link) => (
-                <li key={link.href}>
-                  <Link href={link.href} className="text-sm text-slate-400 hover:text-white transition-colors">
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
           </div>
 
           {/* Free Tools */}

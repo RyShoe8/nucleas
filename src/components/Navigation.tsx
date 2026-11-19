@@ -16,7 +16,6 @@ const MARKETING_PAGES = ['/', '/about', '/contact', '/pricing', '/terms', '/priv
 function isMarketingPage(pathname: string | null): boolean {
   if (!pathname) return false;
   if (MARKETING_PAGES.includes(pathname)) return true;
-  if (pathname.startsWith('/features')) return true;
   if (pathname.startsWith('/blog')) return true;
   if (pathname.startsWith('/tools')) return true;
   return false;
@@ -75,67 +74,6 @@ function FreeToolsDropdown({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-function FeaturesDropdown({ onNavigate }: { onNavigate?: () => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
-
-  const categories = [
-    { href: '/features/projects', label: 'Projects', desc: 'Manage projects end to end' },
-    { href: '/features/clients', label: 'Clients', desc: 'Client dashboards and HQ hubs' },
-    { href: '/features/tasks', label: 'Tasks', desc: 'Break down and track work' },
-    { href: '/features/content', label: 'Content', desc: 'Plan and schedule content' },
-    { href: '/features/meetings', label: 'Meetings', desc: 'Run prepared meetings' },
-    { href: '/features/scheduling', label: 'Scheduling', desc: 'Workspace calendar' },
-    { href: '/features/tools', label: 'Tools', desc: 'Screenshots, recordings & more' },
-    { href: '/features/team', label: 'Team', desc: 'Capacity and utilization' },
-    { href: '/features/efficiency', label: 'Efficiency', desc: 'Work smarter, not harder' },
-  ];
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className="inline-flex items-center gap-1 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors"
-      >
-        Features
-        <svg className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-      {open && (
-        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-3 w-[420px] max-w-[calc(100vw-2rem)] bg-background-card border border-border rounded-2xl shadow-2xl shadow-black/30 p-3 grid grid-cols-2 gap-1 z-50 animate-fade-in">
-          {categories.map((cat) => (
-            <Link
-              key={cat.href}
-              href={cat.href}
-              onClick={() => { setOpen(false); onNavigate?.(); }}
-              className="flex flex-col gap-0.5 px-3 py-2.5 rounded-xl hover:bg-background-elevated transition-colors group"
-            >
-              <span className="text-sm font-medium text-text-primary group-hover:text-primary transition-colors">{cat.label}</span>
-              <span className="text-xs text-text-muted">{cat.desc}</span>
-            </Link>
-          ))}
-          <Link
-            href="/features"
-            onClick={() => { setOpen(false); onNavigate?.(); }}
-            className="col-span-2 flex items-center justify-center gap-1 px-3 py-2 rounded-xl text-xs font-medium text-primary hover:bg-primary/5 transition-colors mt-1 border-t border-border pt-3"
-          >
-            View all features →
-          </Link>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function Navigation() {
   const pathname = usePathname();
 
@@ -182,7 +120,7 @@ export default function Navigation() {
         } else {
           setUser(null);
         }
-      } catch (error) {
+      } catch {
         setUser(null);
       }
     };
@@ -225,10 +163,6 @@ export default function Navigation() {
     : user?.email?.[0]?.toUpperCase() || 'U';
 
   const dropdownItems = [
-    {
-      label: 'AI needs attention',
-      onClick: () => window.location.assign('/workspace/ai-attention'),
-    },
     {
       label: 'Profile',
       onClick: () => setShowProfileModal(true),
@@ -291,9 +225,6 @@ export default function Navigation() {
 
   const appNavLinks = [
     { href: '/ide', label: 'IDE' },
-    { href: '/workspace', label: 'Workspace' },
-    { href: '/assets', label: 'Assets' },
-    { href: '/employees', label: 'Team' },
   ];
 
   const marketingNavLinks = [
@@ -309,7 +240,7 @@ export default function Navigation() {
           <div className="flex justify-between items-center h-16">
             {/* Logo */}
             <div className="flex items-center">
-              <Link href={user ? '/workspace' : '/'} className="flex items-center gap-2 sm:gap-3" onClick={() => setMobileMenuOpen(false)}>
+              <Link href="/" className="flex items-center gap-2 sm:gap-3" onClick={() => setMobileMenuOpen(false)}>
                 <span className="flex h-10 w-10 sm:h-14 sm:w-14 shrink-0 items-center justify-center overflow-hidden rounded-md">
                   <img
                     src="/images/nucleas-logo.png?v=6"
@@ -329,7 +260,6 @@ export default function Navigation() {
             <div className="hidden md:flex md:items-center md:space-x-8">
               {showMarketingNav ? (
                 <>
-                  <FeaturesDropdown />
                   <FreeToolsDropdown />
                   {marketingNavLinks.map((link) => (
                     <Link
@@ -350,17 +280,7 @@ export default function Navigation() {
                   <Link
                     key={link.href}
                     href={link.href === '/ide' ? ideHrefForNavigation() : link.href}
-                    data-tour={
-                      link.href === '/ide'
-                        ? 'nav-ide'
-                        : link.href === '/workspace'
-                          ? 'nav-workspace'
-                          : link.href === '/assets'
-                            ? 'nav-assets'
-                            : link.href === '/employees'
-                              ? 'nav-team'
-                              : undefined
-                    }
+                    data-tour={link.href === '/ide' ? 'nav-ide' : undefined}
                     onClick={
                       link.href === '/ide'
                         ? navigateToIde
@@ -482,13 +402,6 @@ export default function Navigation() {
               {showMarketingNav ? (
                 <>
                   <Link
-                    href="/features"
-                    onClick={() => setMobileMenuOpen(false)}
-                    className="block px-3 py-2 rounded-md text-base font-medium text-text-secondary hover:bg-background-elevated hover:text-text-primary transition-colors"
-                  >
-                    Features
-                  </Link>
-                  <Link
                     href="/tools"
                     onClick={() => setMobileMenuOpen(false)}
                     className="block px-3 py-2 rounded-md text-base font-medium text-text-secondary hover:bg-background-elevated hover:text-text-primary transition-colors"
@@ -522,17 +435,7 @@ export default function Navigation() {
                   <Link
                     key={link.href}
                     href={link.href === '/ide' ? ideHrefForNavigation() : link.href}
-                    data-tour={
-                      link.href === '/ide'
-                        ? 'nav-ide'
-                        : link.href === '/workspace'
-                          ? 'nav-workspace'
-                          : link.href === '/assets'
-                            ? 'nav-assets'
-                            : link.href === '/employees'
-                              ? 'nav-team'
-                              : undefined
-                    }
+                    data-tour={link.href === '/ide' ? 'nav-ide' : undefined}
                     onClick={(event) => {
                       setMobileMenuOpen(false);
                       if (link.href === '/ide') {

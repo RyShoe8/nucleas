@@ -107,7 +107,6 @@ export function middleware(request: NextRequest) {
   if (
     pathname.startsWith('/api/auth') ||
     pathname.startsWith('/api/invitations/') ||
-    pathname.startsWith('/api/portal/') ||
     pathname.startsWith('/api/public/') ||
     pathname.startsWith('/api/contact') ||
     pathname.startsWith('/api/sales-calls') ||
@@ -122,11 +121,8 @@ export function middleware(request: NextRequest) {
     pathname === '/book-call' ||
     pathname === '/terms' ||
     pathname === '/privacy' ||
-    pathname.startsWith('/features/') ||
-    pathname === '/features' ||
     pathname.startsWith('/blog') ||
-    pathname.startsWith('/tools') ||
-    pathname.startsWith('/portal/')
+    pathname.startsWith('/tools')
   ) {
     if (isOsHost) {
       const requestHeaders = new Headers(request.headers);
@@ -153,11 +149,11 @@ export function middleware(request: NextRequest) {
 
   // Check for session cookie
   // These entry points handle browser login themselves and still enforce manager access.
-  if (pathname === '/api/os/integrations/google/start' || pathname === '/api/os/integrations/facebook/start' || pathname === '/api/os/content/gmail/start' || pathname === '/api/os/mail/google/start' || pathname === '/api/scheduling/google/connect' || pathname === '/api/google/workspace/connect') return NextResponse.next();
+  if (pathname === '/api/os/integrations/google/start' || pathname === '/api/os/integrations/facebook/start' || pathname === '/api/os/content/gmail/start' || pathname === '/api/os/mail/google/start') return NextResponse.next();
   const session = request.cookies.get('session');
 
   // If no session and trying to access protected route, redirect to login
-  if (!session && !pathname.startsWith('/api/auth') && !pathname.startsWith('/api/invitations/') && !pathname.startsWith('/api/portal/') && !pathname.startsWith('/api/public/')) {
+  if (!session && !pathname.startsWith('/api/auth') && !pathname.startsWith('/api/invitations/') && !pathname.startsWith('/api/public/')) {
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -165,7 +161,7 @@ export function middleware(request: NextRequest) {
   }
 
   // IDE: keep Navigation, drop marketing Footer (single viewport, no double scroll).
-  if (!pathname.startsWith('/api/') && !pathname.startsWith('/os/') && !pathname.startsWith('/icons/') && !pathname.startsWith('/fonts/') && !pathname.startsWith('/images/') && !pathname.startsWith('/uploads/') && !/\.[a-z0-9]+$/i.test(pathname) && !pathname.startsWith('/recording/') && !pathname.startsWith('/recordings/') && !(pathname.startsWith('/scheduling/meeting/') && url.searchParams.get('popout') === '1')) {
+  if (!pathname.startsWith('/api/') && !pathname.startsWith('/os/') && !pathname.startsWith('/icons/') && !pathname.startsWith('/fonts/') && !pathname.startsWith('/images/') && !pathname.startsWith('/uploads/') && !/\.[a-z0-9]+$/i.test(pathname) && !pathname.startsWith('/recording/') && !pathname.startsWith('/recordings/')) {
     url.pathname = '/';
     if (pathname.startsWith('/admin/ai')) url.searchParams.set('open', 'ai-budgets');
     return NextResponse.redirect(url);
@@ -179,16 +175,6 @@ export function middleware(request: NextRequest) {
 
   // Recording controls popout: minimal chrome-free shell (authenticated)
   if (pathname.startsWith('/recording/controls')) {
-    const requestHeaders = new Headers(request.headers);
-    requestHeaders.set('x-nucleas-shell', 'minimal');
-    return NextResponse.next({ request: { headers: requestHeaders } });
-  }
-
-  // Meeting popout: minimal chrome-free shell (authenticated)
-  if (
-    pathname.startsWith('/scheduling/meeting/') &&
-    url.searchParams.get('popout') === '1'
-  ) {
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set('x-nucleas-shell', 'minimal');
     return NextResponse.next({ request: { headers: requestHeaders } });
@@ -212,7 +198,7 @@ export function middleware(request: NextRequest) {
       return osRewriteResponse(url, request);
     }
 
-    // Classic app paths on os.* → main domain (e.g. os.nucleas.app/planning-map → nucleas.app/planning-map)
+    // Classic app paths on os.* → main domain (e.g. os.nucleas.app/blog → nucleas.app/blog)
     const classicHost = host.replace(/^os\./, '');
     const classicUrl = new URL(`${pathname}${url.search}`, `${url.protocol}//${classicHost}`);
     return NextResponse.redirect(classicUrl);

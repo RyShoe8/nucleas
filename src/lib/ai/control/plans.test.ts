@@ -6,8 +6,6 @@ import User from '@/lib/models/User';
 import Employee from '@/lib/models/Employee';
 import { AiPlan } from '@/lib/models/AiControl';
 import { approvePlan, buildApprovedTasks, planDigest } from './plans';
-import { preserveTaskAiMetadata } from '@/lib/projects/taskAiMetadata';
-import { mergeTasksPreservingReferences } from '@/lib/projects/taskMerge';
 import type { requireAiProject } from './access';
 
 vi.mock('./access', () => ({ AiHttpError: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
@@ -76,16 +74,5 @@ describe('immutable plan approval', () => {
     vi.mocked(Employee.exists).mockReturnValue({ session: async () => null } as unknown as ReturnType<typeof Employee.exists>);
     await expect(approvePlan(access, String(plan._id), plan.digest)).rejects.toMatchObject({ status: 403 });
     expect(update).not.toHaveBeenCalled();
-  });
-  it('preserves plan provenance only for the exact existing task', () => {
-    const task = buildApprovedTasks(draft, plan.objectiveId, plan._id)[0];
-    expect(preserveTaskAiMetadata({ _id: task._id }, task)).toMatchObject({ aiPlanId: plan._id });
-    expect(preserveTaskAiMetadata({ _id: new Types.ObjectId() }, task)).toEqual({});
-    expect(preserveTaskAiMetadata({}, task)).toEqual({});
-  });
-  it('does not discard updated criteria during client reference-preserving merges', () => {
-    const task = buildApprovedTasks(draft, plan.objectiveId, plan._id)[0];
-    const changed = { ...task, acceptanceCriteria: ['Changed criteria'] };
-    expect(mergeTasksPreservingReferences([task], [changed])[0]).toBe(changed);
   });
 });

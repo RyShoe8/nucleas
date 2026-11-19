@@ -6,12 +6,10 @@ import "../styles/nucleas-apps.css";
 import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
 import OrganizationSetupCheck from "@/components/OrganizationSetupCheck";
-import AppMobileShell from "@/components/AppMobileShell";
 import { StructuredData } from "@/components/StructuredData";
 import PostHogProvider from "@/components/analytics/PostHogProvider";
 import AnalyticsScripts from "@/components/analytics/AnalyticsScripts";
 import GoogleAnalytics from "@/components/analytics/GoogleAnalytics";
-import PlatformGuideLayoutWrapper from "@/components/platformGuide/PlatformGuideLayoutWrapper";
 import RecaptchaScript from "@/components/recaptcha/RecaptchaScript";
 
 const geistSans = Geist({
@@ -129,23 +127,21 @@ export default async function RootLayout({
           </>
         )}
         <PostHogProvider>
-          <PlatformGuideLayoutWrapper>
           <OrganizationSetupCheck>
             {isBareShell ? (
               children
             ) : (
               <>
                 <Navigation />
-                <AppMobileShell>
-                  <main className={`flex-1 ${isIdeShell ? 'min-h-0 overflow-hidden pb-0' : 'pb-16 md:pb-0'}`}>
+                <div className="flex flex-1 flex-col min-h-0 w-full">
+                  <main className={`flex-1 ${isIdeShell ? 'min-h-0 overflow-hidden' : ''}`}>
                     {children}
                   </main>
                   {!isIdeShell ? <Footer /> : null}
-                </AppMobileShell>
+                </div>
               </>
             )}
           </OrganizationSetupCheck>
-          </PlatformGuideLayoutWrapper>
         </PostHogProvider>
       </body>
     </html>
