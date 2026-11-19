@@ -1,0 +1,103 @@
+.wrapper { border: 1px solid #71858055; border-radius: 14px; overflow: hidden; background: #14242a; }
+.workStrip { display:flex;gap:8px;overflow-x:auto;padding:10px 12px;color:#dce8de;border-bottom:1px solid #b8cabb25;font-size:12px; }
+.workStrip button { position:relative;flex:0 0 235px;padding:9px 12px 9px 23px;border:1px solid #8cae9940;border-radius:7px;background:#203b3b;text-align:left; }
+.workStrip i { position:absolute;left:9px;top:14px;width:6px;height:6px;border-radius:50%; }.workStrip span { float:right;color:#dfc08a;font-size:10px; }.workStrip small { display:block;margin-top:4px;color:#b8ccc4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.wingLabel { position:absolute;color:#263f36;font-size:10px;font-weight:700;letter-spacing:.18em; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px; border-bottom: 1px solid #b8cabb25; color: #e3eee8; font-size: 12px; }
+.toolbar > div { flex: 1; min-width: 180px; }.toolbar small { display: block; color: #9fb6aa; font-size: 10px; margin-top: 3px; }
+.toolbar button, .toolbar select, .inspector button, .inspector select { border: 1px solid #afc3b23a; padding: 7px 10px; border-radius: 7px; background: #23393c; color: #e1eae3; min-height: 36px; }
+.toolbar label { display: flex; align-items: center; gap: 6px; }.toolbar select { max-width: 160px; }
+.viewport { overflow: auto; max-height: min(78vh,1000px); overscroll-behavior: contain; touch-action: pan-x pan-y; scrollbar-color: #78988b #1c3035; }
+.world { position: relative; transform-origin: top left; isolation: isolate; background: repeating-linear-gradient(0deg,#fff5d809 0 3px,transparent 3px 9px),repeating-linear-gradient(90deg,transparent 0 71px,#70533825 71px 73px,#fff0ce30 73px 75px),repeating-linear-gradient(0deg,#c5ae87 0 155px,#cbb591 155px 310px,#c1a980 310px 465px); }
+.outerWall { position: absolute; inset: 0; border: 18px solid #9ba6a0; border-top-color: #d5d4c5; pointer-events: none; box-shadow: inset 0 0 0 2px #e8e5d199,inset 0 0 40px #172d2b33; }
+.daylight { pointer-events: none; position: absolute; inset: 0; background: linear-gradient(115deg,#ffefbc22,transparent 35%); }
+.meeting,.recreation { position: absolute; top: 40px; height: 480px; border: 9px solid #c4c7b7; border-bottom-width: 7px; box-shadow: 0 8px 0 #344e4b55,inset 0 15px 16px #112b2b22; background: repeating-linear-gradient(90deg,#746b590c 0 44px,#eddcb61a 44px 46px),#9b9d87; }
+.meeting { left: 30px; width: 580px; }.recreation { left: 650px; width: 600px; background-color: #a09e88; }
+.sharedLabel { position: absolute; top: 15px; left: 18px; color: #354b49; font-size: 11px; font-weight: 700; letter-spacing: .15em; }
+.sharedWindows { position: absolute; left: 145px; right: 25px; height: 48px; top: 9px; background: repeating-linear-gradient(90deg,transparent 0 85px,#677f7877 85px 90px),linear-gradient(160deg,#acc8c0,#6f9caa); border: 5px solid #d6d7c5; box-shadow: 0 8px 14px #f9e9ba33,inset 0 3px 8px #193e4433; }
+.meetingDoor,.recDoor { position: absolute; bottom: -15px; height: 20px; width: 80px; background: #768078; border-left: 4px solid #e2ddc9; border-right: 4px solid #e2ddc9; }.meetingDoor { left: 452px; }.recDoor { left: 282px; }
+.glass { position: absolute; right: -9px; top: 75px; bottom: 22px; width: 9px; background: repeating-linear-gradient(0deg,#b1d3cf99 0 85px,#456e6d 85px 90px); }
+.hallRunner { position: absolute; top: 590px; left: 750px; width: 80px; background: repeating-linear-gradient(0deg,#899c8812 0 7px,#aec5ac0e 7px 9px),#3d625966; border-left: 2px solid #c7cda95e; border-right: 2px solid #c7cda95e; }
+.entry { position: absolute; left: 70px; top: 558px; font-size: 25px; letter-spacing: .22em; color: #2f514b; font-weight: 700; }.entry span { display: block; font-size: 9px; letter-spacing: .45em; }
+.suite { position: absolute; }.suiteFloor { position: absolute; inset: 0; background: repeating-linear-gradient(90deg,transparent 0 39px,#c9ba9e22 39px 41px),repeating-linear-gradient(0deg,transparent 0 69px,#1c47311a 69px 71px),#88947e; border-bottom: 7px solid #aeb7a3; }
+.client .suiteFloor { background-color: #88959a; }
+.backWall { position: absolute; inset: 0 0 auto; height: 78px; background: linear-gradient(#ccd2c4,#b1bca9); border-top: 10px solid #e0e0cf; border-bottom: 5px solid #5c796c; box-shadow: 0 9px 15px #203c2c33; }
+.sideWall { position: absolute; top: 0; bottom: 0; left: 0; width: 10px; background: #c1c8b6; box-shadow: 7px 3px 10px #28433822; }.frontWall { position: absolute; right: 0; top: 0; bottom: 0; width: 10px; background: linear-gradient(to bottom,#c1c8b6 0 calc(var(--door) - 32px),transparent calc(var(--door) - 32px) calc(var(--door) + 32px),#c1c8b6 calc(var(--door) + 32px)); }
+.client .sideWall { background: linear-gradient(to bottom,#c1c8b6 0 calc(var(--door) - 32px),transparent calc(var(--door) - 32px) calc(var(--door) + 32px),#c1c8b6 calc(var(--door) + 32px)); }.client .frontWall { background: #c1c8b6; }
+.doorSwing { position: absolute; top: calc(var(--door) - 30px); right: -2px; width: 34px; height: 61px; border: 2px solid #d2dbc955; border-right: 4px solid #c9d5bc; border-radius: 40px 0 0 0; transform: rotate(18deg); transform-origin: right bottom; }.client .doorSwing { right: auto; left: -2px; transform: rotate(-18deg); border-radius: 0 40px 0 0; }
+.suiteWindows { position: absolute; left: 16px; top: 16px; width: 150px; height: 44px; background: repeating-linear-gradient(90deg,transparent 0 43px,#455f6055 43px 47px),linear-gradient(150deg,#c5ddcf,#7aa0ae 60%,#e4d3b0); border: 4px solid #d8ddca; box-shadow: 0 20px 25px #fcecc233; }
+.companySign { position: absolute; top: 16px; left: 180px; right: 160px; display: flex; align-items: center; gap: 9px; text-align: left; color: #193c35; padding: 4px 8px; border-left: 3px solid var(--brand); background: #e2e5d77a; border-radius: 4px; min-height: 44px; }.companySign img,.monogram { width: 34px; height: 34px; object-fit: contain; border-radius: 4px; background: #f0eee3; flex-shrink: 0; }.monogram { display: grid; place-items: center; font-size: 12px; font-weight: 700; }.companySign strong { display: block; font-size: 13px; }.companySign small { display: block; font-size: 8px; margin-top: 3px; }.companySign:hover { background: #ffffffb0; }
+.client .suiteWindows { width: 72px; }.client .companySign { left: 100px; right: 12px; }.client .companySign strong { font-size: 12px; }
+.metrics { position: absolute; right: 24px; top: 92px; display: flex; gap: 8px; padding: 7px; border: 3px solid #466557; background: #183f35; color: #d7e7cd; border-radius: 4px; text-align: left; box-shadow: 0 3px 5px #273e2d55; }.metrics span { font-size: 8px; }.metrics b { display: block; font-size: 13px; font-family: ui-monospace,monospace; }.client .metrics { top: auto; bottom: 12px; right: 18px; }
+.decor { position: absolute; right: 18px; top: 14px; padding: 3px 8px 6px; border-bottom: 5px solid #807052; color: #41614d; background: #d8deca55; }.decor small { display: block; font-size: 7px; letter-spacing: .06em; }.decor > span { font-size: 21px; margin: 3px; }.client .decor { top: auto; bottom: 8px; left: 30px; right: auto; }.client .decor small { display: none; }.client .decor > span { font-size: 17px; }
+.cornerPlant { position: absolute; width: 62px; height: 62px; object-fit: contain; bottom: 5px; left: 10px; }.client .cornerPlant { display: none; }
+.amenity { position: absolute; outline-offset: 4px; border-radius: 10px; }.amenity > img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 4px 4px #172c2940); }.amenity > span:not(.poolAction) { position: absolute; bottom: -2px; left: 50%; transform: translateX(-50%); white-space: nowrap; background: #243f36df; color: #edf2db; border-radius: 3px; padding: 3px 6px; font-size: 9px; }.amenity:hover { background: #e8e7b41a; }.amenity:focus-visible { outline: 3px solid #f9d17b; }
+.workstation { position: absolute; pointer-events: none; }.workstation > img { width: 100%; object-fit: contain; display: block; }.workLabel { pointer-events: auto; position: absolute; top: 92%; left: 0; width: 100%; text-align: left; padding: 4px 6px; background: #1c3c39e8; border: 1px solid #c2d5ba44; border-radius: 4px; color: #e2ead8; font-size: 8px; box-shadow: 0 3px 5px #0002; }.workLabel strong { display: block; font-size: 9px; }.workLabel span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.3; }.attention { background: #66481f; color: #ffe4a7; border-color: #e8bb6b; }
+.monitorLight { position: absolute; top: 28%; left: 26%; width: 30%; height: 4px; background: #95e4d5; opacity: .55; box-shadow: 0 0 14px #91eff1; }
+.actor { position: absolute; top: 0; left: 0; width: 88px; height: 88px; border-radius: 10px; outline-offset: 2px; contain: layout style; }.actor img { position: absolute; inset: 0; width: 88px; height: 88px; object-fit: contain; filter: drop-shadow(0 3px 2px #18372d33); pointer-events: none; }.actor small { position: absolute; bottom: -9px; left: 50%; transform: translateX(-50%); white-space: nowrap; padding: 2px 4px; font-size: 7px; background: #204137dc; border-radius: 3px; color: #e1eddc; }.actor:focus-visible { outline: 3px solid #ffe2a0; }
+.walkSprite { display: none; }.actor[data-walking=true] .walkSprite { display: block; transform: scaleX(var(--facing)); }.actor[data-walking=true] .poseSprite { display: none; }
+.rigCanvas { display:none;position:absolute;left:-20px;top:-30px;width:128px;height:120px;pointer-events:none; }
+.actor[data-rig=true] .rigCanvas { display:block; }
+.actor[data-rig=true] .walkSprite,.actor[data-rig=true] .poseSprite { display:none; }
+.actor[data-pose=seated][data-walking=false] { height: 100px; }.actor[data-pose=seated] .poseSprite { width: 100px; height: 100px; }
+.reviewBadge { position: absolute; top: 0; right: 4px; border-radius: 50%; background: #ffd17b; color: #493216; min-width: 20px; height: 20px; font-size: 11px; display: grid; place-items: center; border: 2px solid #785a27; }
+.discussion { position: absolute; top: -5px; right: -8px; background: #e2eed8; color: #355944; border-radius: 7px 7px 7px 0; padding: 2px 8px; letter-spacing: 2px; box-shadow: 0 3px 5px #0002; }
+.world[data-motion=true] .actor[data-pose=pool][data-walking=false] .poseSprite { animation: shoot 6s ease-in-out infinite; animation-delay: var(--phase); }
+@keyframes shoot { 0%,30%,100% { transform: translate(0,0) rotate(0); } 40% { transform: translate(-5px,-2px) rotate(-2deg); } 47% { transform: translate(5px,1px) rotate(1deg); } 55% { transform: translate(0,0); } }
+.world[data-motion=true] .actor[data-pose=coffee][data-walking=false] .poseSprite { animation: sip 5s ease-in-out infinite; }
+@keyframes sip { 0%,100% { transform: rotate(0); } 45%,65% { transform: rotate(-3deg) translateY(-2px); } }
+.world[data-motion=true] .actor[data-pose=seated][data-walking=false] .poseSprite { animation: typing 1.8s ease-in-out infinite; }
+@keyframes typing { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-1px) rotate(.6deg); } }
+.poolAction { position: absolute; top: 43%; left: 30%; width: 75px; height: 42px; transform: rotate(-12deg); pointer-events: none; }.poolAction i { position: absolute; width: 5px; height: 5px; background: #f3e7b5; border: 1px solid #afba97; border-radius: 50%; }.poolAction i:nth-child(2) { background: #e39163; left: 25px; top: 12px; }.poolAction i:nth-child(3) { background: #6294b4; left: 43px; top: 20px; }
+.world[data-motion=true] .poolAction i { animation: ball 3s linear infinite; }.world[data-motion=true] .poolAction i:nth-child(2) { animation-delay: .25s; }.world[data-motion=true] .poolAction i:nth-child(3) { animation-delay: .5s; }
+@keyframes ball { 0%,40%,100% { transform: translate(0,0); } 60% { transform: translate(28px,10px); } 80% { transform: translate(12px,25px); } }
+.steam { position: absolute; top: 30%; left: 40%; color: #f3f1dd; }.world[data-motion=true] .steam { animation: steam 2s ease-in infinite; }@keyframes steam { from { transform: translateY(0); opacity: .8; } to { transform: translateY(-15px); opacity: 0; } }
+.inspector { position: relative; padding: 14px; background: #243b3b; color: #dfebdf; border-bottom: 1px solid #c3d6b944; }.inspector p { margin: 6px 0 10px; font-size: 12px; }.inspector button,.inspector select { margin: 4px; font-size: 12px; }.inspector select { max-width: 100%; }.close { float: right; }
+@media (max-width:600px) { .toolbar button,.toolbar select,.inspector button,.inspector select { min-height: 44px; }.toolbar select { max-width: 170px; }.viewport { max-height: 70vh; }.toolbar small { line-height: 1.5; } }
+@media (prefers-reduced-motion:reduce) { .world * { animation: none !important; } }
+
+/* One continuous oak floor. Studio textiles and low dividers define neighbourhoods,
+   while the circulation spine and existing walking aisles stay unobstructed. */
+.outerWall { border-color:#a69f89;border-top-color:#e5ddc7;box-shadow:inset 0 0 0 3px #f5e9cf,inset 10px 0 18px #4f493e33,inset -10px 0 18px #4f493e33; }
+.suiteFloor,.client .suiteFloor { inset:82px 24px 28px 20px;background:repeating-linear-gradient(0deg,#ffffff0c 0 1px,transparent 1px 4px),#87958955;border:1px solid #f2ead255;border-radius:10px;box-shadow:0 1px 2px #493f3222; }
+.suiteFloor { background-color:color-mix(in srgb,var(--brand) 19%,#d9d2b8); }
+.client .suiteFloor { background-color:color-mix(in srgb,var(--brand) 12%,#bfc9bd); }
+.backWall { left:0;right:35px;height:78px;background:url('/office/architecture/studio-wall.webp') center / 100% 100%;border-top:5px solid #dfd7bf;border-bottom:3px solid #84745c;border-radius:3px;box-shadow:0 9px 12px #51453222; }
+.client .backWall { left:25px;right:0;background-image:url('/office/architecture/client-wall.webp'); }
+.sideWall,.frontWall,.client .sideWall,.client .frontWall { display:none; }
+.doorSwing,.client .doorSwing { display:none; }
+.suiteWindows,.sharedWindows { display:none; }
+.meeting,.recreation { background:transparent;border:0;border-bottom:2px solid #f0efda99;box-shadow:0 8px 12px #5d57421a;border-radius:5px; }
+.meeting { background:linear-gradient(180deg,transparent 100px,#d8d7bc77 100px); }
+.recreation { background:linear-gradient(180deg,transparent 100px,#8caa9977 100px); }
+.meetingDoor,.recDoor { background:#c8b18c;border:0;bottom:-8px; }
+.glass { width:4px;right:0;background:linear-gradient(#f8fffa88,#a4cbc377);box-shadow:3px 0 6px #7a8b7722; }
+.meeting::before,.recreation::before { content:'';position:absolute;inset:0 0 auto;height:82px;background:url('/office/architecture/studio-wall.webp') center / 100% 100%;border-bottom:5px solid #aaa38d; }
+.recreation::before { background-image:url('/office/architecture/commons-wall.webp'); }
+.hallRunner { left:745px;width:90px;top:590px;background:repeating-linear-gradient(0deg,#ffffff10 0 1px,transparent 1px 4px),#e4d5b4;border:0;border-left:3px solid #9d886d77;border-right:3px solid #9d886d77;box-shadow:0 0 0 7px #eee2c338; }
+.hallRunner::after { content:'';position:absolute;inset:25px 12px;border-left:1px solid #ac987950;border-right:1px solid #ac987950; }
+.lobbyFloor { position:absolute;left:35px;right:35px;top:530px;height:120px;background:linear-gradient(90deg,#d9ccad99,transparent);border-top:1px solid #f1e4c4;border-bottom:1px solid #f1e4c4;pointer-events:none; }
+.entry { top:550px;left:65px;color:#45594f;text-shadow:0 1px #f0e5c9; }
+.lobbyBench { position:absolute;top:555px;left:1030px;width:145px;height:34px;border-radius:7px;background:repeating-linear-gradient(90deg,#a98155 0 8px,#6e573d 8px 10px);box-shadow:0 6px 0 #564a3e,0 10px 10px #5b523a33;transform:skewY(-3deg);pointer-events:none; }
+.lobbyBench i { display:inline-block;width:37px;height:26px;margin:3px 5px;background:#546e65;border-radius:4px;box-shadow:inset 0 2px 3px #c7d6c244; }
+.lobbyPlant { position:absolute;left:1170px;top:525px;width:76px;height:85px;object-fit:contain;pointer-events:none; }
+.lobbyWayfinding { position:absolute;left:860px;top:553px;color:#40564b;font-size:8px;letter-spacing:.08em; }
+.lobbyWayfinding span { display:block;margin-top:8px;font-size:9px;letter-spacing:0; }
+.wingLabel { color:#526357;top:630px;border-bottom:1px solid #7c816755;padding-bottom:5px; }
+.landing { position:absolute;height:50px;pointer-events:none; }
+.landing::before { content:'';position:absolute;inset:7px 0 10px;background:linear-gradient(90deg,#e5d8b833,transparent);border-top:1px solid #eddfbf88;border-bottom:1px solid #8f795122; }
+.galleryRail { position:absolute;left:32px;top:9px;width:180px;height:23px;border-radius:3px;background:repeating-linear-gradient(90deg,#857557 0 5px,#ad9877 5px 10px);border-top:3px solid #d9c5a3;box-shadow:0 5px 6px #4d4b3422; }
+.galleryRail i { display:inline-block;margin:-8px 12px 0;width:30px;height:24px;vertical-align:top;border:3px solid #eee3cb;background:linear-gradient(145deg,var(--brand),#45655c);box-shadow:1px 2px 3px #433a2944; }
+.galleryRail i:nth-child(2) { background:linear-gradient(35deg,#c8b895 45%,#869b86 46%); }
+.landingLight { position:absolute;left:250px;right:40px;top:17px;height:2px;background:linear-gradient(90deg,#fff1cb88,transparent);box-shadow:0 2px 6px #fff0c855; }
+.gardenNook { position:absolute;left:870px;width:355px;height:270px;background:repeating-linear-gradient(0deg,#ffffff08 0 1px,transparent 1px 4px),#8d9b7c44;border:1px solid #e5dbc4;border-radius:12px;pointer-events:none; }
+.nookWindow { position:absolute;top:0;right:-10px;width:32px;height:245px;background:repeating-linear-gradient(0deg,transparent 0 57px,#e5dfc9 57px 62px),linear-gradient(90deg,#e3edda,#9bbcb5);border:5px solid #d7d1b8;box-shadow:-25px 15px 35px #f6e6b533; }
+.gardenNook > span { position:absolute;left:25px;top:20px;font-size:8px;color:#476154;letter-spacing:.12em; }
+.nookSofa { position:absolute;left:10px;top:65px;width:225px;height:170px;object-fit:contain; }
+.nookPlant { position:absolute;right:30px;top:40px;width:100px;height:120px;object-fit:contain; }
+.sharedLabel { top:85px;background:#203e34dd;color:#eceddc;padding:5px 8px;border-radius:3px;font-size:9px; }
+.companySign { background:#e9ebdbe8;box-shadow:0 3px 8px #1e392d55; }
+.decor { background:#e4e7d5e8;top:4px;right:8px; }
+.deskChair { position:absolute;width:34px;height:32px;pointer-events:none;background:linear-gradient(120deg,#405153,#182a2d);border-radius:10px 10px 8px 8px;transform:rotate(-12deg);box-shadow:0 6px 7px #20352c66; }
+.deskChair i { position:absolute;left:0;right:0;top:-17px;height:20px;border-radius:10px 10px 4px 4px;background:linear-gradient(150deg,#5e7373,#263d40);border:2px solid #8a9d94; }
+.deskChair b { position:absolute;top:30px;left:7px;width:22px;height:10px;border-bottom:3px solid #28393c;border-radius:50%; }

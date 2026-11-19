@@ -26,6 +26,13 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      {
+        source: '/animation-studio/:path*',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          { key: 'Content-Security-Policy', value: "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; img-src 'self' data: blob: https://rigby2d.com; media-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rigby2d.com https://huggingface.co https://*.huggingface.co https://*.hf.co; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" },
+        ],
+      },
     ];
   },
 };

@@ -140,6 +140,13 @@ export async function buildAssistantTools(
 
   const definitions: ToolDefinition[] = [
     {
+      type: 'function', function: {
+        name: 'company_animation',
+        description: 'Rigby2D animation projects in Nucleas. List company animation assets, or inspect an asset by assetId. Only when the user requests animation edits, provide operations to save a NEW draft version for review in Creative → Animation Studio. Never publishes. Operations is a JSON array of Rigby edits: add_animation {name}; add_bone {name,parent,x,y}; set_bone_setup {bone,x,y,rotation}; set_bone_key {animation,bone,channel:rotate|translate|scale,time,value (rotate) or x/y (translate/scale),curve}; set_attachment_key {animation,slot,time,attachment}; set_event_key {animation,event,time}. Inspect first for exact bone/slot/animation names. No filesystem paths or scripts.',
+        parameters: { type:'object',properties:{company:companyParam,assetId:{type:'string',description:'Saved animation Asset ID; omit to list.'},operations:{type:'string',description:'JSON array of up to 64 requested animation edits; omit for inspection.'}},required:['company'] },
+      },
+    },
+    {
       type: 'function',
       function: {
         name: 'list_companies',
@@ -291,6 +298,13 @@ export async function buildAssistantTools(
     const company = matchCompany(companies, args.company);
     if (!company) {
       return JSON.stringify({ ok: false, error: 'Unknown or inaccessible company. Call list_companies for valid names.' });
+    }
+
+    if (name === 'company_animation') {
+      try {
+        const { companyAnimation } = await import('@/lib/animation/companyAnimation');
+        return JSON.stringify({ok:true,result:await companyAnimation(viewer,company.id,{assetId:typeof args.assetId==='string'?args.assetId:undefined,operations:typeof args.operations==='string'?args.operations:undefined})}).slice(0,MAX_SEO_OUTPUT);
+      } catch(error) { return JSON.stringify({ok:false,error:error instanceof Error?error.message:'Animation operation failed.'}); }
     }
 
     if (name === 'company_activity') {

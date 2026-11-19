@@ -3,6 +3,7 @@
 export interface OsCompanySummary {
     id: string;
     name: string;
+    description?: string;
     relationship: 'client' | 'owned' | 'internal';
     domain?: string;
     /** Every website: the production domain first, then the others. */

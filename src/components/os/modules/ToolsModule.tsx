@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import RecordingToolPanel from '@/components/shared/RecordingToolPanel';
 import ScreenshotToolPanel from '@/components/shared/ScreenshotToolPanel';
 import type { IProject } from '@/lib/models/Project';
+import { useWindowManager } from '@/hooks/os/useWindowManager';
 
 type Tool = 'screenshot' | 'recording';
 
@@ -14,6 +15,7 @@ const TOOLS: { id: Tool; label: string; icon: string; description: string }[] = 
 
 /** Built-in capture tools, available directly from the OS module launcher. */
 export default function ToolsModule() {
+    const wm = useWindowManager();
     const [active, setActive] = useState<Tool>('screenshot');
     const [projects, setProjects] = useState<IProject[]>([]);
     const [projectError, setProjectError] = useState<string | null>(null);
@@ -40,6 +42,7 @@ export default function ToolsModule() {
                     <p className="mt-1 text-xs text-text-secondary">
                         Capture locally or save media to Nucleas and attach it to your work.
                     </p>
+                    <button type="button" onClick={() => wm.open('animation')} className="mt-3 rounded border border-border px-3 py-2 text-sm">Open Animation Studio · Rigby2D</button>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2" role="tablist" aria-label="Capture tools">

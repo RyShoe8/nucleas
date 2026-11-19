@@ -47,3 +47,13 @@ next-env.d.ts
 /desktop/release/
 /desktop/renderer/catalog.json
 /desktop/renderer/icon.png
+
+# Rigby build output and upstream demo artwork (not redistributed)
+/public/animation-studio/
+/vendor/rigby/branding/nila/
+/vendor/rigby/branding/rigbytron/
+/vendor/rigby/branding/scene/
+/.office-*.log
+/.rigby-*.log
+/vendor/rigby/branding/*.svg
+/vendor/rigby/branding/*.png

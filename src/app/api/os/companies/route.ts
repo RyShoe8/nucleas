@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { BrandAsset } from '@/lib/models/BrandAsset';
 import { IntegrationConnection } from '@/lib/models/Integration';
 import { listCompanyProfiles } from '@/lib/companies/companyProfile';
 import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
@@ -25,8 +26,10 @@ export async function GET(request: NextRequest) {
       summary.set(key, { ...(summary.get(key) ?? {}), [row._id.status]: row.n });
     }
 
+    const logos=await BrandAsset.find({organizationId:viewer.organizationId,companyId:{$in:companies.map(c=>c.id)},kind:'logo'}).select('companyId url').lean();
+    const logoByCompany=new Map(logos.map(asset=>[String(asset.companyId),asset.url]));
     return NextResponse.json({
-      companies: companies.map((c) => ({ ...c, connections: summary.get(c.id) ?? {} })),
+      companies: companies.map((c) => ({ ...c, logo:logoByCompany.get(c.id)??c.logo, connections: summary.get(c.id) ?? {} })),
     });
   } catch (error) {
     console.error('[os/companies] list failed', error);

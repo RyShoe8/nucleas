@@ -14,6 +14,16 @@ const companies = [{ id: id('b'), name: 'PlayBound', color: '#378ADD' }, { id: i
 const build = (jobs: JobView[], activity: ActivityItem[] = [], today = []) => buildOffice({ companies, jobs, activity, today });
 
 describe('the office', () => {
+  it('uses only live outstanding consultations for collaboration', () => {
+    const now=Date.parse('2026-11-19T15:00:00Z');
+    const ask={at:new Date(now-1000).toISOString(),kind:'ask',from:'marketing',to:'design',text:'Review this campaign'};
+    const input={companies,jobs:[job({status:'testing',teamLog:[ask]})],activity:[],today:[],now};
+    const rooms=buildOffice(input);
+    expect(rooms[0].desks.find(d=>d.role==='design')?.collaboration?.members).toEqual(['marketing','design']);
+    for(const teamLog of [[{...ask,at:new Date(now-600000).toISOString()}],[ask,{...ask,kind:'answer',from:'design',to:'marketing'}]]) {
+      expect(buildOffice({...input,jobs:[job({status:'testing',teamLog})]}).flatMap(r=>r.desks).some(d=>d.collaboration)).toBe(false);
+    }
+  });
   it('keeps owned and internal companies distinct from clients without losing their team or work', () => {
     const rooms = buildOffice({
       companies: [

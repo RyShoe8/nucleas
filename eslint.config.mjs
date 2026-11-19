@@ -16,6 +16,7 @@ const eslintConfig = defineConfig([
     // scripts/copy-ffmpeg-core.mjs on postinstall.
     "public/**",
     "desktop/**",
+    "vendor/**",
   ]),
   {
     // A leading underscore marks a parameter or value that is unused on purpose.

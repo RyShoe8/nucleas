@@ -6,6 +6,7 @@ import Character from './Character';
 import { useOfficeMotion } from './useOfficeMotion';
 import styles from './Office.module.css';
 import { AMENITIES, validVisits, type Amenity, type OfficeVisit } from './officeActivities';
+import OfficeWorld from './OfficeWorld';
 const keyOf = (companyId: string, role: string) => `${companyId}:${role}`;
 
 
@@ -18,7 +19,20 @@ function Visitor({ room, desk, amenity, animate, onReturn }: { room: Room; desk:
     </button>;
 }
 
-export default function OfficeBuilding({ rooms, renderRoom, onOpenDesk }: {
+export default function OfficeBuilding(props: {
+    rooms: Room[];
+    renderRoom: (room: Room, visits: OfficeVisit[]) => ReactNode;
+    onOpenDesk: (room: Room, desk: Desk) => void;
+    onOpenRoom: (room: Room) => void;
+}) {
+    const [view,setView]=useState<'floor'|'list'>('floor');
+    return <><div className="mb-2 flex gap-2" role="group" aria-label="Office view">
+        <button type="button" className="ui-button min-h-11" aria-pressed={view==='floor'} onClick={()=>setView('floor')}>Live office</button>
+        <button type="button" className="ui-button min-h-11" aria-pressed={view==='list'} onClick={()=>setView('list')}>Company list</button>
+    </div>{view==='floor'?<OfficeWorld rooms={props.rooms} onOpenRoom={props.onOpenRoom} onOpenDesk={props.onOpenDesk}/>:<OfficeDirectory {...props}/>}</>;
+}
+
+function OfficeDirectory({ rooms, renderRoom, onOpenDesk }: {
     rooms: Room[];
     renderRoom: (room: Room, visits: OfficeVisit[]) => ReactNode;
     onOpenDesk: (room: Room, desk: Desk) => void;

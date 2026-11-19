@@ -19,6 +19,8 @@ export interface Desk {
     says: string | null;
     waiting: number;
     jobs: number;
+    jobId?: string;
+    collaboration?: { id: string; title: string; members: TeamRole[]; host: TeamRole };
 }
 
 export interface Screen { label: string; value: string; change: number | null }
@@ -28,6 +30,9 @@ export interface Room {
     name: string;
     color: string;
     relationship: 'owned' | 'internal' | 'client';
+    logo?: string;
+    description?: string;
+    domain?: string;
     desks: Desk[];
     waiting: number;
     working: number;
@@ -59,14 +64,22 @@ export function screenValue(current: number, unit: string): string {
 export const OFFICE_ROLES: TeamRole[] = TEAM_ROLES.filter((role) => TEAM[role].active);
 
 export function buildOffice(input: {
-    companies: { id: string; name: string; color?: string; relationship?: Room['relationship'] }[];
+    companies: { id: string; name: string; color?: string; relationship?: Room['relationship']; logo?: string; description?: string; domain?: string }[];
     jobs: JobView[];
     activity: ActivityItem[];
     today: TodayMetrics[];
+    now?: number;
 }): Room[] {
     const rooms = input.companies.map((company): Room => {
         const jobs = input.jobs.filter((job) => job.companyId === company.id);
         const activity = input.activity.filter((item) => item.companyId === company.id);
+        const exchanges = jobs.filter(job => jobIsBusy(job) || job.status === 'testing').flatMap(job => {
+            const recent = (job.teamLog ?? []).filter(event => Number.isFinite(Date.parse(event.at)) && (input.now ?? Date.now()) - Date.parse(event.at) >= 0 && (input.now ?? Date.now()) - Date.parse(event.at) < 5 * 60_000);
+            // Only outstanding, live consultations count; historical advice never creates a meeting.
+            const asks = recent.filter((event, index) => event.kind === 'ask' && event.to && !recent.slice(index + 1).some(reply => reply.kind === 'answer' && reply.from === event.to));
+            const members = [...new Set(asks.flatMap(event => [event.from, event.to!]))].filter(role => OFFICE_ROLES.includes(role));
+            return members.length >= 2 ? [{ id: job.id, title: job.design?.title ?? 'Team consultation', members, host: asks[0].to! }] : [];
+        });
         const desks = OFFICE_ROLES.map((role): Desk => {
             const own = jobs.filter((job) => memberOf(job) === role);
             const queue = own.flatMap((job) => queueFor(job).map((item) => ({ item, job }))).sort((a, b) => a.item.since.localeCompare(b.item.since));
@@ -75,12 +88,14 @@ export function buildOffice(input: {
             const running = own.find((job) => jobIsBusy(job) || job.status === 'testing');
             const runningCode = code.find((item) => item.group === 'working');
             const waiting = queue.length + waitingCode.length;
-            const state: MemberState = waiting ? 'waiting' : running || runningCode ? 'working' : own.some((job) => ['ready', 'active', 'paused'].includes(job.status)) || code.length ? 'idle' : 'away';
+            const collaboration = exchanges.find(exchange => exchange.members.includes(role));
+            const state: MemberState = waiting ? 'waiting' : running || runningCode || collaboration ? 'working' : own.some((job) => ['ready', 'active', 'paused'].includes(job.status)) || code.length ? 'idle' : 'away';
             const says = queue[0]?.item.label
                 ?? waitingCode[0]?.title
                 ?? (running ? `Working on ${running.design?.title ?? 'a job'}: ${running.runs.find((r) => r.status === 'running')?.progressState.label ?? 'starting'}` : null)
-                ?? (runningCode ? `Working on ${runningCode.title}` : null);
-            return { role, name: TEAM[role].name, state, says, waiting, jobs: own.length + code.length };
+                ?? (runningCode ? `Working on ${runningCode.title}` : null)
+                ?? (collaboration ? `Collaborating: ${collaboration.title}` : null);
+            return { role, name: TEAM[role].name, state, says, waiting, jobs: own.length + code.length, jobId: queue[0]?.job.id ?? running?.id ?? collaboration?.id, collaboration: waiting ? undefined : collaboration };
         });
         const metrics = input.today.find((row) => row.companyId === company.id)?.metrics ?? {};
         const screens = SCREEN_ORDER.filter((s) => metrics[s.key]).slice(0, 2).map((s) => ({ label: s.label, value: screenValue(metrics[s.key].current, metrics[s.key].unit), change: metrics[s.key].change }));
@@ -89,6 +104,9 @@ export function buildOffice(input: {
             name: company.name,
             color: company.color || '#64748b',
             relationship: company.relationship ?? 'client',
+            logo: company.logo,
+            description: company.description,
+            domain: company.domain,
             // Busy desks first, so the eye lands on who needs you, then who is working.
             desks: [...desks].sort((a, b) => rank(a.state) - rank(b.state)),
             waiting: desks.reduce((n, d) => n + d.waiting, 0),

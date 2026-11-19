@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "animation:build": "npm --prefix vendor/rigby ci --omit=dev --ignore-scripts --no-audit --no-fund && vite build --config scripts/rigby-vite.config.mjs",
+    "animation:cli": "node vendor/rigby/bin/rigby.js",
+    "prebuild": "npm run animation:build",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -68,6 +71,7 @@
     "tailwindcss": "^3.4.17",
     "tsx": "^4.20.3",
     "typescript": "^5",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "vite": "7.3.5"
   }
 }

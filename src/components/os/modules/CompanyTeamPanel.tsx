@@ -77,7 +77,7 @@ const TOOLS: Partial<Record<TeamRole, [string, string][]>> = {
   engineering: [['building', 'Building']],
   design: [['building', 'Building']],
   support: [['mail', 'Communications']],
-  creative: [['content', 'Content & assets']],
+  creative: [['content', 'Content & assets'], ['animation', 'Animation Studio']],
 };
 
 function Steps({ stage }: { stage: Stage }) {
@@ -89,10 +89,10 @@ function Steps({ stage }: { stage: Stage }) {
   </ol>;
 }
 
-export default function CompanyTeamPanel({ companyId, companyName, focusJobId }: { companyId: string; companyName: string; focusJobId?: string }) {
+export default function CompanyTeamPanel({ companyId, companyName, focusJobId, initialRole }: { companyId: string; companyName: string; focusJobId?: string; initialRole?: TeamRole }) {
   const wm = useWindowManager();
   const [data, setData] = useState<TeamData | null>(null);
-  const [role, setRole] = useState<TeamRole | 'all'>('all');
+  const [role, setRole] = useState<TeamRole | 'all'>(initialRole ?? 'all');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);

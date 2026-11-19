@@ -1,5 +1,17 @@
 # Office artwork sources
 
+## Rigby and architectural pass — November 19, 2026
+
+Generated with the built-in image tool, not an external API. Preserved source files: `activity-atlas.png`, `desks-only-atlas.png`, `rig-parts-atlas.png`, `architecture-atlas.png`. `rig-parts-review.jpg` is a neutral-background inspection proof, not a runtime asset.
+
+Rig parts prompt: use the exact six identities from `idle-atlas.png`, with six rows (one character per row) and six columns (head, torso, left arm, right arm, left leg, right leg). Disconnected complete parts, transparent background, overlapping rounded joints, matching original clothing and soft 3D shading. No people assembled into whole bodies, no furniture or text. Output was 1254×1254; the packer records actual column bounds and 209px rows. Heads, torsos, upper/lower limbs remain separately editable in Rigby.
+
+Architecture prompt: three independent full-width room strips, premium miniature office architecture, straight horizontal back walls, tall skyline windows, warm daylight, pale oak, sage walls, cream concrete, bronze window frames, framed abstract art, shelves, plants and lighting. Owned studio, smaller carpeted client suite, shared commons with kitchenette. Empty central floors for separate interactive furniture; no people, desks, chairs, tables or UI labels. Actual 1254×1254 output is split into wall and floor bands so windows retain their proportions in rooms of different sizes.
+
+Activity atlas prompt: preserve all six identities in six rows with three columns: seated typing with chair but no desk; holding a pool cue; drinking coffee. Transparent, fully isolated characters. These are fallback poses. Desks-only prompt: edit the original furniture atlas to remove every chair while preserving desk, monitor, lamp and plant. Characters and chairs are now independent from the workstation.
+
+Delivery: `public/office/rigs` (native projects, shared sampled motion, texture atlases), `public/office/architecture`, and `public/office/characters/*-workstation.webp`. Rebuild with the three `build-office-*` scripts documented in `docs/NUCLEAS_ANIMATION_STUDIO.md`. The Rigby sources are real bone/slot/keyframe projects; the room remains a scene of separate objects rather than a single illustration.
+
 Original artwork generated with the built-in image generation tool. The six roles, in order, are Design, Creative, Engineering, Support, Operations and Marketing. Tester remains inactive.
 
 ## Final prompt set

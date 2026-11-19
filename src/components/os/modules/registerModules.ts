@@ -22,6 +22,7 @@ const ToolsModule = dynamic(() => import('./ToolsModule'));
 const MailModule = dynamic(() => import('./MailModule'));
 const BrandVoiceModule = dynamic(() => import('./BrandVoiceModule'));
 const ContentModule = dynamic(() => import('./ContentModule'));
+const AnimationModule = dynamic(() => import('./AnimationModule'));
 
 let registered = false;
 
@@ -226,6 +227,12 @@ export function registerOsModules(): void {
             permissions: 'member',
             launcherHidden: true,
             render: (ctx) => createElement(ContentModule, { initialTab: ctx.payload?.tab, initialCompanyId: ctx.payload?.companyId }),
+        },
+        {
+            id: 'animation', title: 'Animation Studio', icon: '🎞️',
+            defaultSize: { width: 1200, height: 820 }, minSize: { width: 360, height: 480 },
+            canPopout: true, permissions: 'member', launcherHidden: true,
+            render: (ctx) => createElement(AnimationModule, { payload: ctx.payload }),
         },
         {
             id: 'tools',

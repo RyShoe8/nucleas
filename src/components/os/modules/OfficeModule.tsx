@@ -124,7 +124,7 @@ export default function OfficeModule() {
     }, [reload]);
 
     const rooms = useMemo(() => buildOffice({
-        companies: (companies ?? []).map((c) => ({ id: c.id, name: c.name, color: c.color, relationship: c.relationship })),
+        companies: (companies ?? []).map((c) => ({ id: c.id, name: c.name, color: c.color, relationship: c.relationship, logo: c.logo, description: c.description, domain: c.domain })),
         jobs: jobs ?? [],
         activity: activity?.items ?? [],
         today,
@@ -136,7 +136,7 @@ export default function OfficeModule() {
 
     const openWork = () => wm.open('work');
     const openRoom = (room: Room) => wm.open('company', { payload: { companyId: room.companyId, companyName: room.name } });
-    const openDesk = (room: Room, desk: Desk) => (desk.state === 'waiting' ? openWork() : wm.open('team', { payload: { companyId: room.companyId, companyName: room.name } }));
+    const openDesk = (room: Room, desk: Desk) => wm.open('team', { payload: { companyId: room.companyId, companyName: room.name, role: desk.role, ...(desk.jobId ? { jobId: desk.jobId } : {}) } });
     const startVoice = async () => {
         setVoiceError(null);
         if (desktop?.startVoice) {
@@ -191,7 +191,7 @@ export default function OfficeModule() {
                         <button type="button" className="ui-button mt-2" onClick={() => wm.open('companies')}>Add a company</button>
                     </div>
                 ) : (
-                    <OfficeBuilding rooms={rooms} onOpenDesk={openDesk} renderRoom={(room, visits) => <RoomView key={room.companyId} room={room} visits={visits} onOpenRoom={openRoom} onOpenDesk={openDesk} />} />
+                    <OfficeBuilding rooms={rooms} onOpenRoom={openRoom} onOpenDesk={openDesk} renderRoom={(room, visits) => <RoomView key={room.companyId} room={room} visits={visits} onOpenRoom={openRoom} onOpenDesk={openDesk} />} />
                 )}
 
                 <p className="text-[11px] text-text-secondary">One office, two wings: our companies and client suites. Blue: working · amber: needs you · green: available · muted: unassigned. Walking is ambient, not a progress indicator. Select a person for their work or a company sign for its overview.</p>

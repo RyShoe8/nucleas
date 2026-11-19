@@ -33,6 +33,8 @@ export function middleware(request: NextRequest) {
   }
   // Installers and update metadata must be reachable before a desktop session exists.
   if (pathname === '/desktop/download' || pathname.startsWith('/desktop/releases/windows/')) return NextResponse.next();
+  // Self-hosted animation editor and public office art must retain the parent's origin.
+  if (pathname.startsWith('/animation-studio/') || pathname.startsWith('/office/')) return NextResponse.next();
   // The main domain is now the OS entry point. Keep API/auth callbacks on their
   // original origin, but send old OS bookmarks to the canonical application.
   if (isOsHost && (pathname === '/' || pathname === '/os' || pathname === '/os/')) {

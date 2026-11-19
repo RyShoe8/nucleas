@@ -237,6 +237,10 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     }
 
     await Asset.findOneAndDelete({ _id: id, userId: { $in: orgUserIds } });
+    if (asset.tags?.includes('nucleas:rigby')) {
+      const { AnimationPayload } = await import('@/lib/models/AnimationPayload');
+      await AnimationPayload.deleteOne({ assetId: asset._id, organizationId: user.organizationId });
+    }
 
     return NextResponse.json({ message: 'Asset deleted successfully' });
   } catch {
