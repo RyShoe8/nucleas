@@ -84,7 +84,7 @@ describe('setup states', () => {
     await connect('ga4', 'refresh-token', { secretProvider: 'google' });
     const f = vi.fn();
     const res = await invokeCapability(admin, companyId, 'analytics.traffic.read', { days: 7 }, { fetchImpl: f });
-    expect(res).toMatchObject({ ok: true, invocation: { status: 'needs_setup', error: expect.stringContaining('pinned') } });
+    expect(res).toMatchObject({ ok: true, invocation: { status: 'needs_setup', error: expect.stringContaining('is chosen for') } });
     expect(f).not.toHaveBeenCalled();
   });
 

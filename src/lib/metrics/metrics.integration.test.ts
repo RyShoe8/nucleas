@@ -8,7 +8,7 @@ import { CapabilityInvocation } from '@/lib/models/Capability';
 import { MetricSiteSnapshot, MetricSnapshot, MetricSyncState } from '@/lib/models/Metric';
 import { sealSecret } from '@/lib/security/secretBox';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
-import { processMetricSync, runCompanySync, windowDates } from './sync';
+import { processMetricSync, runCompanySync, syncCompanyMetrics, windowDates } from './sync';
 import { refetchSiteHistory } from './siteHistory';
 import { getCompanyMetrics, getTodayOverview, whatChanged, type MetricView } from './query';
 
@@ -107,6 +107,18 @@ describe('metric sync', () => {
     await MetricSyncState.updateOne({ companyId }, { $unset: { leaseUntil: '', leaseToken: '' }, $set: { lastRunAt: new Date(NOW.getTime() - 10 * 60_000) } });
     expect((await runCompanySync({ _id: companyId, organizationId: orgId }, { now: NOW, fetchImpl: fakeProviders() })).status).toBe('not_due');
     expect((await runCompanySync({ _id: companyId, organizationId: orgId }, { now: NOW, force: true, fetchImpl: fakeProviders() })).status).toBe('synced');
+  });
+
+  it('defers the sources it has no time left to start, naming them, instead of being cut off', async () => {
+    let reads = 0;
+    // The clock jumps past the budget after the first source has started.
+    const clock = () => (reads++ < 2 ? 0 : 1_000_000);
+    const result = await syncCompanyMetrics(orgId, companyId, { days: 3, now: NOW, fetchImpl: fakeProviders(), clock });
+    expect(result.results).toEqual([
+      expect.objectContaining({ capabilityId: 'analytics.traffic.read', title: 'Website traffic', status: 'succeeded' }),
+      { capabilityId: 'payments.revenue.read', title: 'Revenue', status: 'deferred', error: 'Revenue did not start: this sync ran out of time. It runs on the next sync.' },
+    ]);
+    expect(await MetricSnapshot.countDocuments({ companyId, metricKey: 'revenue_net' })).toBe(0);
   });
 
   it('cron processes due companies and leaves receipts marked as scheduled', async () => {

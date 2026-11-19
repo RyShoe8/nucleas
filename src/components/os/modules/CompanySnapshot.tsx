@@ -283,10 +283,16 @@ export default function CompanySnapshot({
         setSyncing(true);
         setMessage(null);
         const res = await fetch(`/api/os/companies/${companyId}/metrics/sync`, { method: 'POST' });
-        const body = (await res.json().catch(() => ({}))) as { error?: string; results?: { capabilityId: string; status: string; error?: string }[] };
+        const body = (await res.json().catch(() => ({}))) as { error?: string; results?: { capabilityId: string; title?: string; status: string; error?: string }[] };
         setSyncing(false);
+        // Name each source that did not finish, so a missing number can be traced to its cause.
         const problems = (body.results ?? []).filter((r) => r.status !== 'succeeded');
-        setMessage(!res.ok ? body.error ?? `Sync failed (${res.status})` : problems.length ? problems.map((p) => p.error ?? p.status).join(' · ') : null);
+        const describe = (p: { title?: string; capabilityId: string; status: string; error?: string }) => {
+            const name = p.title ?? p.capabilityId;
+            const detail = p.error ?? p.status.replace(/_/g, ' ');
+            return detail.startsWith(name) ? detail : `${name}: ${detail}`;
+        };
+        setMessage(!res.ok ? body.error ?? `Sync failed (${res.status})` : problems.length ? problems.map(describe).join(' · ') : null);
         setReloadKey((k) => k + 1);
         onActivity();
     };

@@ -2,7 +2,8 @@ import { Types } from 'mongoose';
 import { ExternalResource, IntegrationConnection, IntegrationSecret } from '@/lib/models/Integration';
 import { sealSecret } from '@/lib/security/secretBox';
 import { domainFromProject } from '@/lib/companies/ownedCompanies';
-import { listAdManagerSites } from '@/lib/capabilities/adapters/admanager';
+import { listAdManagerNetworks, networkPinId } from '@/lib/capabilities/adapters/admanager';
+import { siteKey } from '@/lib/companies/productionDomain';
 import { listAdSenseSites } from '@/lib/capabilities/adapters/adsense';
 import { isCompanyManager, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
 
@@ -276,27 +277,33 @@ export async function completeGoogleConnection(
     }
   }
 
-  // AdManager: only companies that actually monetise with AdManager (a site matching their domain) get it.
+  // Ad Manager: a company is linked to the one network that serves its websites, with those websites ticked. Anything
+  // unclear (no network, or several) is left for a manager to choose; an existing choice is never replaced.
   if (admanagerGranted) {
     try {
-      const admanagerSites = await listAdManagerSites(fetchImpl, tokens.access_token);
+      const networks = await listAdManagerNetworks(fetchImpl, tokens.access_token);
       for (const company of companies) {
-        if (!company.domain) continue;
-        const matches = admanagerSites.filter((x) => x.domain === company.domain);
-        const site = matches.length === 1 ? matches[0] : undefined;
-        if (!site) continue;
+        const own = new Set(company.websites.map((w) => siteKey(w)));
+        if (!own.size) continue;
+        const serving = networks.filter((n) => n.sites.some((s) => own.has(siteKey(s))));
+        const network = serving.length === 1 ? serving[0] : undefined;
+        if (!network) continue;
         const companyObjectId = new Types.ObjectId(company.id);
         const existing = await IntegrationConnection.findOne({ organizationId: viewer.organizationId, companyId: companyObjectId, provider: 'admanager' })
-          .select('status')
-          .lean<{ status: string }>();
+          .select('status sites')
+          .lean<{ status: string; sites?: string[] }>();
         if (existing?.status === 'disabled') continue; // removed on purpose
-        const pin = await ExternalResource.findOne({ organizationId: viewer.organizationId, companyId: companyObjectId, provider: 'admanager', resourceType: 'site' }).lean();
-        const owner = await ExternalResource.findOne({ organizationId: viewer.organizationId, provider: 'admanager', resourceType: 'site', externalId: site.name }).lean();
-        if ((pin && pin.externalId !== site.name) || (owner && String(owner.companyId) !== company.id)) continue;
+        const pinId = networkPinId(network.name, company.id);
+        const pin = await ExternalResource.findOne({ organizationId: viewer.organizationId, companyId: companyObjectId, provider: 'admanager', resourceType: { $in: ['network', 'site'] } }).lean<{ externalId: string }>();
+        if (pin && pin.externalId !== pinId) continue;
+        const sites = company.websites.filter((w) => network.sites.some((s) => siteKey(s) === siteKey(w)));
         await IntegrationConnection.updateOne(
           { organizationId: viewer.organizationId, companyId: companyObjectId, provider: 'admanager' },
           {
-            $set: { status: 'connected', secretId: secret._id, credentialHint: accountEmail, accountLabel: site.domain, connectedByUserId: new Types.ObjectId(viewer.userId), lastVerifiedAt: new Date() },
+            $set: {
+              status: 'connected', secretId: secret._id, credentialHint: accountEmail, accountLabel: network.displayName, connectedByUserId: new Types.ObjectId(viewer.userId), lastVerifiedAt: new Date(),
+              ...(existing?.sites?.length ? {} : { sites }),
+            },
             $setOnInsert: { scope: 'company', source: 'onboarding', grantedScopes: [], planLimited: false },
             $unset: { lastError: '' },
             $inc: { revision: 1 },
@@ -304,14 +311,14 @@ export async function completeGoogleConnection(
           { upsert: true }
         );
         await ExternalResource.updateOne(
-          { organizationId: viewer.organizationId, provider: 'admanager', resourceType: 'site', externalId: site.name },
-          { $set: { companyId: companyObjectId, label: site.domain, canonicalType: 'Company', canonicalId: companyObjectId, lastSyncedAt: new Date() } },
+          { organizationId: viewer.organizationId, provider: 'admanager', resourceType: 'network', externalId: pinId },
+          { $set: { companyId: companyObjectId, label: network.displayName, canonicalType: 'Company', canonicalId: companyObjectId, lastSyncedAt: new Date() } },
           { upsert: true }
         );
         summary.admanager.connected.push(company.name);
         if (existing?.status !== 'connected') {
           const { recordActivity } = await import('@/lib/companies/activityLog');
-          await recordActivity({ organizationId: viewer.organizationId, companyId: companyObjectId, kind: 'integration', title: 'Google Ad Manager connected', detail: site.domain, actorUserId: viewer.userId });
+          await recordActivity({ organizationId: viewer.organizationId, companyId: companyObjectId, kind: 'integration', title: 'Google Ad Manager connected', detail: `${network.displayName}: ${sites.join(', ')}`, actorUserId: viewer.userId });
         }
       }
     } catch (err) {

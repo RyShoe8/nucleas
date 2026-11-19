@@ -87,8 +87,9 @@ export async function adsenseRevenue(ctx: CapabilityRunContext, range: { startDa
   for (const m of ['ESTIMATED_EARNINGS', 'PAGE_VIEWS', 'CLICKS']) qs.append('metrics', m);
   qs.append('dimensions', 'DATE');
   qs.append('dimensions', 'DOMAIN_NAME');
-  // AdSense may hold the site as example.com or www.example.com; either way it is this company's site.
-  qs.append('filters', `DOMAIN_NAME==${domain},DOMAIN_NAME==www.${domain}`);
+  // Every company website in the account, each as example.com or www.example.com (either way the same site).
+  const domains = [...new Set([domain, ...(ctx.companyWebsites ?? []).map((w) => normalizeDomain(w))])].filter((d) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)).slice(0, 20);
+  qs.append('filters', domains.flatMap((d) => [`DOMAIN_NAME==${d}`, `DOMAIN_NAME==www.${d}`]).join(','));
 
   const report = await providerJson<Report>(ctx, `${BASE}/${account}/reports:generate?${qs}`, { headers: { authorization: `Bearer ${token}` } }, 'AdSense');
   const currency = (report.headers?.find((h) => h.name === 'ESTIMATED_EARNINGS')?.currencyCode ?? 'USD').toLowerCase();

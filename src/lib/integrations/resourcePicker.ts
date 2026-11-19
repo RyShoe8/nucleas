@@ -5,7 +5,8 @@ import { getCompanyProfile, isCompanyManager, listCompanyProfiles, type CompanyV
 import { listGa4Properties, listGscSites } from '@/lib/integrations/google/connectGoogle';
 import { refreshGoogleAccessToken } from '@/lib/capabilities/adapters/google';
 import { listAhrefsProjects } from '@/lib/capabilities/adapters/ahrefs';
-import { listAdManagerSites } from '@/lib/capabilities/adapters/admanager';
+import { listAdManagerNetworks, networkPinId } from '@/lib/capabilities/adapters/admanager';
+import { siteKey } from '@/lib/companies/productionDomain';
 import { listAdSenseSites } from '@/lib/capabilities/adapters/adsense';
 import { CapabilityError, type CapabilityRunContext } from '@/lib/capabilities/types';
 
@@ -17,11 +18,15 @@ import { CapabilityError, type CapabilityRunContext } from '@/lib/capabilities/t
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
-export const PINNABLE: Record<string, { resourceType: string; secretProvider: string; noun: string }> = {
+/**
+ * shared: one resource can serve several companies (an Ad Manager network), so each company keeps its own choice of it
+ * and choosing it never takes it from another company. legacyTypes: older kinds of choice replaced when this is chosen.
+ */
+export const PINNABLE: Record<string, { resourceType: string; secretProvider: string; noun: string; shared?: boolean; legacyTypes?: string[] }> = {
   ga4: { resourceType: 'property', secretProvider: 'google', noun: 'Analytics property' },
   gsc: { resourceType: 'site', secretProvider: 'google', noun: 'Search Console site' },
   ahrefs: { resourceType: 'project', secretProvider: 'ahrefs', noun: 'Ahrefs project' },
-  admanager: { resourceType: 'site', secretProvider: 'google', noun: 'Ad Manager site' },
+  admanager: { resourceType: 'network', secretProvider: 'google', noun: 'Ad Manager network', shared: true, legacyTypes: ['site'] },
   adsense: { resourceType: 'site', secretProvider: 'google', noun: 'AdSense site' },
 };
 
@@ -29,6 +34,8 @@ export interface PinCandidate {
   externalId: string;
   label: string;
   detail?: string;
+  /** Websites this resource serves (Ad Manager network sites), canonical hosts. */
+  sites?: string[];
   /** Company this resource is currently pinned to, if any. */
   pinnedTo?: { companyId: string; name: string };
 }
@@ -50,7 +57,13 @@ export interface PinOptions {
 async function candidatesFor(provider: string, credential: string, fetchImpl: FetchLike): Promise<Omit<PinCandidate, 'pinnedTo'>[]> {
   if (provider === 'admanager') {
     const token = await refreshGoogleAccessToken(credential, fetchImpl);
-    return (await listAdManagerSites(fetchImpl, token)).map(s => ({ externalId: s.name, label: s.domain, detail: s.network }));
+    // Networks by name and code: a network's name often has nothing to do with the websites it serves.
+    return (await listAdManagerNetworks(fetchImpl, token)).map((n) => ({
+      externalId: n.name,
+      label: n.displayName,
+      detail: `Network ${n.code}${n.sites.length ? ` · ${n.sites.length} site${n.sites.length === 1 ? '' : 's'}: ${n.sites.slice(0, 6).join(', ')}${n.sites.length > 6 ? '…' : ''}` : ' · no sites set up'}`,
+      sites: n.sites,
+    }));
   }
   if (provider === 'adsense') {
     const token = await refreshGoogleAccessToken(credential, fetchImpl);
@@ -78,9 +91,11 @@ export async function listPinOptions(viewer: CompanyViewer, companyId: string, p
   const profile = await getCompanyProfile(viewer, companyId);
   if (!profile) return null;
 
-  const pinned = await ExternalResource.findOne({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(companyId), provider, resourceType: spec.resourceType })
+  const stored = await ExternalResource.findOne({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(companyId), provider, resourceType: spec.resourceType })
     .select('externalId label')
     .lean<{ externalId: string; label?: string }>();
+  // A shared resource is stored per company; show it by its own id.
+  const pinned = stored && spec.shared ? { ...stored, externalId: stored.externalId.replace(/@[a-f0-9]{24}$/, '') } : stored;
 
   const secrets = await IntegrationSecret.find({ organizationId: viewer.organizationId, provider: spec.secretProvider }).select('+sealed hint').lean<
     { _id: Types.ObjectId; sealed: string; hint?: string }[]
@@ -100,7 +115,7 @@ export async function listPinOptions(viewer: CompanyViewer, companyId: string, p
       const credential = openSecret(`integration:${spec.secretProvider}`, secret.sealed);
       account.candidates = (await candidatesFor(provider, credential, fetchImpl))
         .map((c) => {
-          const owner = pinMap.get(c.externalId);
+          const owner = spec.shared ? undefined : pinMap.get(c.externalId);
           return owner && owner.companyId !== companyId ? { ...c, pinnedTo: owner } : c;
         })
         .sort((a, b) => a.label.localeCompare(b.label));
@@ -135,6 +150,21 @@ export async function pinResource(
   }
 
   const companyObjectId = new Types.ObjectId(companyId);
+  if (spec.shared) {
+    // Each company keeps its own choice; older kinds of choice (a single Ad Manager site) give way to it.
+    const storedId = networkPinId(candidate.externalId, companyId);
+    await ExternalResource.deleteMany({
+      organizationId: viewer.organizationId,
+      companyId: companyObjectId,
+      provider,
+      $or: [{ resourceType: spec.resourceType, externalId: { $ne: storedId } }, { resourceType: { $in: spec.legacyTypes ?? [] } }],
+    });
+    await ExternalResource.updateOne(
+      { organizationId: viewer.organizationId, provider, resourceType: spec.resourceType, externalId: storedId },
+      { $set: { companyId: companyObjectId, label: candidate.label, canonicalType: 'Company', canonicalId: companyObjectId, lastSyncedAt: new Date() } },
+      { upsert: true }
+    );
+  } else {
   // One pinned resource per company/provider: drop the previous pin, then claim this one.
   await ExternalResource.deleteMany({
     organizationId: viewer.organizationId,
@@ -148,6 +178,12 @@ export async function pinResource(
     { $set: { companyId: companyObjectId, label: candidate.label, canonicalType: 'Company', canonicalId: companyObjectId, lastSyncedAt: new Date() } },
     { upsert: true }
   );
+  }
+
+  // Websites the network already serves are ticked to start with, when none are ticked yet; the manager can change them.
+  const profile = spec.shared ? await getCompanyProfile(viewer, companyId) : null;
+  const served = new Set((candidate.sites ?? []).map((s) => siteKey(s)));
+  const startingSites = profile ? profile.websites.filter((w) => served.has(siteKey(w))) : [];
 
   // Company-scoped connections adopt the chosen account; shared (org) accounts stay as they are.
   if (spec.secretProvider === 'google') {
@@ -169,6 +205,12 @@ export async function pinResource(
       },
       { upsert: true }
     );
+    if (startingSites.length) {
+      await IntegrationConnection.updateOne(
+        { organizationId: viewer.organizationId, companyId: companyObjectId, provider, $or: [{ sites: { $exists: false } }, { sites: { $size: 0 } }] },
+        { $set: { sites: startingSites } }
+      );
+    }
   }
   return { ok: true, label: candidate.label };
 }

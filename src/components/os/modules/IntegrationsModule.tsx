@@ -12,7 +12,7 @@ import CodeRepositories from './CodeRepositories';
 import AdminAccount from './AdminAccount';
 import ServiceDataPanel from './ServiceDataPanel';
 
-const PINNABLE_PROVIDERS: Record<string, string> = { ga4: 'Choose property', gsc: 'Choose site', ahrefs: 'Choose project', adsense: 'Choose site', admanager: 'Choose site' };
+const PINNABLE_PROVIDERS: Record<string, string> = { ga4: 'Choose property', gsc: 'Choose site', ahrefs: 'Choose project', adsense: 'Choose site', admanager: 'Choose network' };
 
 const STATUS_STYLE: Record<string, string> = {
     connected: 'text-emerald-400 border-emerald-400/40',
@@ -115,7 +115,7 @@ function CompanyIntegrations({ companyId }: { companyId: string }) {
                     ← {detail.company.name} overview
                 </button>
             </div>
-            <ConnectionsSection companyId={detail.company.id} connections={detail.connections} onChanged={reload} />
+            <ConnectionsSection companyId={detail.company.id} websites={detail.company.websites ?? (detail.company.domain ? [detail.company.domain] : [])} connections={detail.connections} onChanged={reload} />
             {!detail.connections.some(connection => connection.provider === 'github') && <CodeRepositories companyId={detail.company.id} />}
             <AdminAccount companyId={detail.company.id} defaultDomain={detail.company.domain} />
             <ServiceDataPanel companyId={detail.company.id} setup />
@@ -125,10 +125,12 @@ function CompanyIntegrations({ companyId }: { companyId: string }) {
 
 function ConnectionsSection({
     companyId,
+    websites,
     connections,
     onChanged,
 }: {
     companyId: string;
+    websites: string[];
     connections: OsConnection[];
     onChanged: () => void;
 }) {
@@ -141,7 +143,7 @@ function ConnectionsSection({
             ) : (
                 <ul className="rounded-md border border-border divide-y divide-border">
                     {connections.map((c) => (
-                        <ConnectionRow key={c.id} companyId={companyId} connection={c} onChanged={onChanged} />
+                        <ConnectionRow key={c.id} companyId={companyId} websites={websites} connection={c} onChanged={onChanged} />
                     ))}
                 </ul>
             )}
@@ -211,7 +213,50 @@ function AddIntegration({ companyId, onAdded }: { companyId: string; onAdded: ()
     );
 }
 
-function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: string; connection: OsConnection; onChanged: () => void }) {
+/**
+ * Step two of linking Ad Manager: which of the company's websites the chosen network serves. Reports pull only these
+ * websites (www. and the bare domain alike), and their numbers show under each website.
+ */
+function AdManagerWebsites({ companyId, websites, connection, canManage, onSaved }: { companyId: string; websites: string[]; connection: OsConnection; canManage: boolean; onSaved: () => void }) {
+    const [chosen, setChosen] = useState<string[]>(connection.sites ?? []);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const saved = connection.sites ?? [];
+    const changed = chosen.length !== saved.length || chosen.some((site) => !saved.includes(site));
+    const save = async () => {
+        setSaving(true);
+        setError(null);
+        const res = await fetch(`/api/os/companies/${companyId}/connections`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ provider: 'admanager', sites: chosen }) }).catch(() => null);
+        setSaving(false);
+        if (!res?.ok) return setError(((await res?.json().catch(() => ({}))) as { error?: string } | undefined)?.error ?? 'Could not save.');
+        onSaved();
+    };
+    return (
+        <div className="mt-2 ml-[5.5rem] rounded border border-border p-2 text-xs">
+            <p className="font-medium">Websites this network serves</p>
+            <p className="mb-1 text-[11px] text-text-secondary">AdX reports pull only the websites ticked here.{saved.length ? '' : ' None are ticked yet, so nothing is pulled.'}</p>
+            {websites.length ? (
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                    {websites.map((site) => (
+                        <label key={site} className="inline-flex items-center gap-1.5">
+                            <input type="checkbox" checked={chosen.includes(site)} disabled={!canManage || saving}
+                                onChange={(e) => setChosen((list) => (e.target.checked ? [...list, site] : list.filter((s) => s !== site)))} />
+                            {site}
+                        </label>
+                    ))}
+                </div>
+            ) : <p className="text-[11px] text-text-secondary">Add the company&apos;s websites in its About section first.</p>}
+            {canManage && changed ? (
+                <button type="button" className="mt-2 h-7 rounded bg-primary px-3 text-white disabled:opacity-50" disabled={saving} onClick={() => void save()}>
+                    {saving ? 'Saving…' : 'Save websites'}
+                </button>
+            ) : null}
+            {error ? <p role="alert" className="mt-1 text-[11px] text-red-400">{error}</p> : null}
+        </div>
+    );
+}
+
+function ConnectionRow({ companyId, websites, connection: c, onChanged }: { companyId: string; websites: string[]; connection: OsConnection; onChanged: () => void }) {
     const auth = useOsAuth();
     const [picking, setPicking] = useState(false);
     const [repositoriesOpen, setRepositoriesOpen] = useState(false);
@@ -426,6 +471,7 @@ function ConnectionRow({ companyId, connection: c, onChanged }: { companyId: str
                     }}
                 />
             ) : null}
+            {c.provider === 'admanager' && c.status === 'connected' ? <AdManagerWebsites companyId={companyId} websites={websites} connection={c} canManage={auth.isManagerOrAdmin} onSaved={onChanged} /> : null}
             {(editing || c.provider === 'admanager') && c.keyGuidance ? <p className="mt-1 ml-[5.5rem] text-[11px] text-text-secondary">{c.keyGuidance}</p> : null}
             {message ? <p className="mt-1 ml-[5.5rem] text-[11px] text-red-400">{message}</p> : null}
         </li>

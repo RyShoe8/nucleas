@@ -5,7 +5,8 @@ import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { runCompanySync } from '@/lib/metrics/sync';
 import { enforceRateLimit, rateLimitKey } from '@/lib/security/rateLimit';
 
-export const maxDuration = 120;
+// A first sync backfills 90 days from every source and AdX waits on Google's report; see SYNC_START_BUDGET_MS.
+export const maxDuration = 300;
 
 /** Manual "Sync now" for one company. Managers only; never overlaps a running sync. */
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {

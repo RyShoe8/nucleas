@@ -136,13 +136,13 @@ async function resolveAccess(
 ): Promise<{ access: ProviderAccess; revision: number } | { status: 'needs_setup' | 'needs_reauth' | 'plan_limited'; error: string }> {
   const providerName = getIntegrationProvider(def.provider)?.name ?? def.provider;
   const companyId = new Types.ObjectId(profile.id);
-  type Connection = { _id: Types.ObjectId; status: string; planLimited?: boolean; revision?: number; connectorConfig?: unknown };
+  type Connection = { _id: Types.ObjectId; status: string; planLimited?: boolean; revision?: number; connectorConfig?: unknown; sites?: string[] };
   const connection = explicitConnectionId
     ? await IntegrationConnection.findOne({ _id: explicitConnectionId, organizationId: viewer.organizationId, provider: def.provider, $or: [{ companyId }, { companyId: null, scope: 'org' }] })
-      .select('status planLimited revision connectorConfig').lean<Connection>()
+      .select('status planLimited revision connectorConfig sites').lean<Connection>()
     : (
     (await IntegrationConnection.findOne({ organizationId: viewer.organizationId, companyId, provider: def.provider, status: { $ne: 'disabled' } })
-      .select('status planLimited')
+      .select('status planLimited sites')
       .lean<Connection>()) ??
     (await IntegrationConnection.findOne({ organizationId: viewer.organizationId, companyId: null, provider: def.provider, status: { $ne: 'disabled' } })
       .select('status planLimited')
@@ -155,22 +155,24 @@ async function resolveAccess(
 
   let resource: ProviderAccess['resource'];
   if (def.requiresResource) {
-    const pinned = await ExternalResource.findOne({
+    const kinds = Array.isArray(def.requiresResource) ? def.requiresResource : [def.requiresResource];
+    const found = await ExternalResource.find({
       organizationId: viewer.organizationId,
       companyId,
       provider: def.provider,
-      resourceType: def.requiresResource,
+      resourceType: { $in: kinds },
     })
-      .select('externalId label')
-      .lean<{ externalId: string; label?: string }>();
+      .select('externalId label resourceType')
+      .lean<{ externalId: string; label?: string; resourceType: string }[]>();
+    const pinned = found.sort((a, b) => kinds.indexOf(a.resourceType) - kinds.indexOf(b.resourceType))[0];
     // Never fall back to "first"/"all" resources the credential can see.
-    if (!pinned) return { status: 'needs_setup', error: `No ${providerName} ${def.requiresResource} is pinned to ${profile.name}.` };
-    resource = { externalId: pinned.externalId, label: pinned.label };
+    if (!pinned) return { status: 'needs_setup', error: `No ${providerName} ${kinds[0]} is chosen for ${profile.name}.` };
+    resource = { externalId: pinned.externalId, label: pinned.label, resourceType: pinned.resourceType };
   }
 
   const credential = await readConnectionCredential(viewer.organizationId, connection._id);
   if (!credential) return { status: 'needs_reauth', error: `Reconnect ${providerName}.` };
-  return { access: { provider: def.provider, connectionId: connection._id, credential, resource, ...(explicitConnectionId ? { configuration: connection.connectorConfig } : {}) }, revision: connection.revision ?? 0 };
+  return { access: { provider: def.provider, connectionId: connection._id, credential, resource, sites: connection.sites ?? [], ...(explicitConnectionId ? { configuration: connection.connectorConfig } : {}) }, revision: connection.revision ?? 0 };
 }
 
 async function execute(
@@ -202,6 +204,7 @@ async function execute(
     organizationId: viewer.organizationId,
     companyId: new Types.ObjectId(profile.id),
     companyDomain: profile.domain,
+    companyWebsites: profile.websites,
     access: resolved.access,
     now,
     ...(binding ? { invocationId: String(invocationId), idempotencyKey: binding.idempotencyKey } : {}),

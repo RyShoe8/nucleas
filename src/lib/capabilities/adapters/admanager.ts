@@ -10,13 +10,26 @@ type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 interface Network { name: string; displayName?: string; currencyCode?: string; timeZone?: string }
 interface Site { name: string; url: string }
 export interface AdManagerSite { name: string; domain: string; network: string }
+export interface AdManagerNetwork { name: string; displayName: string; code: string; sites: string[] }
+
+/** A network chosen for one company is stored as "<network>@<companyId>", because several companies may share it. */
+export function networkPinId(network: string, companyId: string): string {
+  return `${network}@${companyId}`;
+}
 type Value = { intValue?: string; doubleValue?: number; stringValue?: string };
 export interface AdxRow { dimensionValues?: Value[]; metricValueGroups?: { primaryValues?: Value[] }[] }
 export interface AdxOutput {
   site: string; domain: string; startDate: string; endDate: string; currency: string; timeZone: string;
   totalEarnings: number; impressions: number; clicks: number;
   days: { date: string; earnings: number; impressions: number; clicks: number }[];
+  /** Every company website the report covered (the pinned site's domain first). */
+  domains?: string[];
+  /** The same numbers per website; www. is merged into the bare domain. */
+  siteDays?: { date: string; site: string; earnings: number; impressions: number; clicks: number }[];
 }
+
+/** At most this many websites go into one report filter (each also as www.). */
+const MAX_REPORT_DOMAINS = 20;
 
 async function listAll<T>(fetchImpl: FetchLike, token: string, path: string, key: string): Promise<T[]> {
   const out: T[] = [];
@@ -35,6 +48,24 @@ async function listAll<T>(fetchImpl: FetchLike, token: string, path: string, key
     seen.add(pageToken);
     if (seen.size > 100) throw new Error('Ad Manager listing exceeds the supported page limit.');
   } while (pageToken);
+  return out;
+}
+
+/** Every Ad Manager network the token can see, with the websites set up in each. */
+export async function listAdManagerNetworks(fetchImpl: FetchLike, token: string): Promise<AdManagerNetwork[]> {
+  const networks = await listAll<Network & { networkCode?: string }>(fetchImpl, token, 'networks', 'networks');
+  const out: AdManagerNetwork[] = [];
+  for (const network of networks) {
+    if (!/^networks\/\d+$/.test(network.name)) throw new Error('Ad Manager returned an invalid network.');
+    const sites = await listAll<Site>(fetchImpl, token, `${network.name}/sites`, 'sites');
+    const code = network.networkCode ?? network.name.split('/')[1];
+    out.push({
+      name: network.name,
+      displayName: network.displayName || `Network ${code}`,
+      code,
+      sites: [...new Set(sites.filter((s) => s.url).map((s) => normalizeDomain(s.url)))].sort(),
+    });
+  }
   return out;
 }
 
@@ -58,13 +89,14 @@ function dateParts(date: string) {
   return { year, month, day };
 }
 
-export function adxReportDefinition(domain: string, range: { startDate: string; endDate: string }, currency: string) {
+export function adxReportDefinition(domain: string | string[], range: { startDate: string; endDate: string }, currency: string) {
+  const domains = (Array.isArray(domain) ? domain : [domain]).slice(0, MAX_REPORT_DOMAINS);
   return {
     reportType: 'HISTORICAL', dimensions: ['DATE', 'SITE'],
     metrics: ['AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_CLICKS'],
     dateRange: { fixed: { startDate: dateParts(range.startDate), endDate: dateParts(range.endDate) } },
     currencyCode: currency.toUpperCase(), timeZoneSource: 'PUBLISHER',
-    filters: [{ fieldFilter: { field: { dimension: 'SITE' }, operation: 'IN', values: [{ stringValue: domain }, { stringValue: `www.${domain}` }] } }],
+    filters: [{ fieldFilter: { field: { dimension: 'SITE' }, operation: 'IN', values: domains.flatMap((d) => [{ stringValue: d }, { stringValue: `www.${d}` }]) } }],
   };
 }
 
@@ -102,23 +134,47 @@ export function implausibleCpm(micros: number, impressions: number): boolean {
   return cpm < CPM_RANGE.min || cpm > CPM_RANGE.max;
 }
 
-export function parseAdxRows(rows: AdxRow[], domain: string, range: { startDate: string; endDate: string }): AdxOutput['days'] {
-  const days = new Map<string, { date: string; micros: number; impressions: number; clicks: number }>();
+type AdxEntry = { date: string; site: string; micros: number; impressions: number; clicks: number };
+
+/** Report rows as one entry per day and website, checked against the requested sites and dates. */
+function readAdxRows(rows: AdxRow[], domain: string | string[], range: { startDate: string; endDate: string }): AdxEntry[] {
+  const allowed = new Set(Array.isArray(domain) ? domain : [domain]);
+  const entries = new Map<string, AdxEntry>();
   for (const row of rows) {
     const raw = row.dimensionValues?.[0]?.stringValue ?? row.dimensionValues?.[0]?.intValue ?? '';
     const date = /^\d{8}$/.test(raw) ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}` : raw;
     const site = normalizeDomain(row.dimensionValues?.[1]?.stringValue ?? '');
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < range.startDate || date > range.endDate || site !== domain) {
-      throw new CapabilityError('failed', 'Ad Manager returned data outside the pinned site or requested date range.');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < range.startDate || date > range.endDate || !allowed.has(site)) {
+      throw new CapabilityError('failed', "Ad Manager returned data outside the company's websites or the requested date range.");
     }
     if (row.metricValueGroups?.length !== 1) throw new CapabilityError('failed', 'Unexpected Ad Manager comparison columns.');
     const values = row.metricValueGroups[0].primaryValues;
     if (values?.length !== 3) throw new CapabilityError('failed', 'Ad Manager returned incomplete AdX metrics.');
-    const day = days.get(date) ?? { date, micros: 0, impressions: 0, clicks: 0 };
-    day.micros += moneyMicros(values[0], 'AD_EXCHANGE_REVENUE');
-    day.impressions += parseInteger(values[1], 'AD_EXCHANGE_IMPRESSIONS');
-    day.clicks += parseInteger(values[2], 'AD_EXCHANGE_CLICKS');
-    days.set(date, day);
+    const key = `${date}|${site}`;
+    const entry = entries.get(key) ?? { date, site, micros: 0, impressions: 0, clicks: 0 };
+    entry.micros += moneyMicros(values[0], 'AD_EXCHANGE_REVENUE');
+    entry.impressions += parseInteger(values[1], 'AD_EXCHANGE_IMPRESSIONS');
+    entry.clicks += parseInteger(values[2], 'AD_EXCHANGE_CLICKS');
+    entries.set(key, entry);
+  }
+  return [...entries.values()];
+}
+
+/** The same report per website, money in hundredths. */
+export function parseAdxSiteRows(rows: AdxRow[], domain: string | string[], range: { startDate: string; endDate: string }): NonNullable<AdxOutput['siteDays']> {
+  return readAdxRows(rows, domain, range)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.site.localeCompare(b.site))
+    .map((e) => ({ date: e.date, site: e.site, earnings: Math.round(e.micros / 10_000), impressions: e.impressions, clicks: e.clicks }));
+}
+
+export function parseAdxRows(rows: AdxRow[], domain: string | string[], range: { startDate: string; endDate: string }): AdxOutput['days'] {
+  const days = new Map<string, { date: string; micros: number; impressions: number; clicks: number }>();
+  for (const entry of readAdxRows(rows, domain, range)) {
+    const day = days.get(entry.date) ?? { date: entry.date, micros: 0, impressions: 0, clicks: 0 };
+    day.micros += entry.micros;
+    day.impressions += entry.impressions;
+    day.clicks += entry.clicks;
+    days.set(entry.date, day);
   }
   // A wrong unit is off by orders of magnitude: refuse it rather than record revenue nobody can trust.
   for (const day of days.values()) {
@@ -135,20 +191,30 @@ type ReportState = { report?: string; operation?: string; completedAt?: string; 
 
 /** Persist the report and operation so a slow Google report resumes on the next sync. */
 export async function admanagerRevenue(ctx: CapabilityRunContext, range: { startDate: string; endDate: string }): Promise<AdxOutput> {
-  const site = ctx.access.resource?.externalId ?? '';
-  const match = /^(networks\/\d+)\/sites\/\d+$/.exec(site);
-  const domain = normalizeDomain(ctx.access.resource?.label ?? '');
-  if (!match || !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) throw new CapabilityError('needs_setup', 'Choose an Ad Manager site for this company.');
-  const network = match[1];
+  const pinned = ctx.access.resource?.externalId ?? '';
+  // A chosen network ("networks/123@company"), or a single site chosen before networks could be ("networks/123/sites/4").
+  const network = /^(networks\/\d+)(?:@[a-f0-9]{24}|\/sites\/\d+)$/.exec(pinned)?.[1];
+  if (!network) throw new CapabilityError('needs_setup', 'Choose the Ad Manager network for this company.');
+  const legacySite = /\/sites\/\d+$/.test(pinned) ? pinned : null;
+  const legacyDomain = legacySite ? normalizeDomain(ctx.access.resource?.label ?? '') : '';
+  // The websites ticked for this connection decide what the report covers; an older single-site choice is its own site.
+  const domains = [...new Set((ctx.access.sites?.length ? ctx.access.sites : legacyDomain ? [legacyDomain] : []).map((w) => normalizeDomain(w)))]
+    .filter((d) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(d))
+    .slice(0, MAX_REPORT_DOMAINS);
+  if (!domains.length) throw new CapabilityError('needs_setup', "Choose which of the company's websites this Ad Manager network serves.");
+  const domain = domains[0];
+  const site = legacySite ?? network;
   const token = await googleAccessToken(ctx);
   const request = <T>(path: string, method = 'GET', body?: unknown) => providerJson<T>(ctx, `${BASE}/${path}`, {
     method, headers: { authorization: `Bearer ${token}` }, ...(body ? { body: JSON.stringify(body) } : {}),
   }, 'Ad Manager');
-  const actualSite = await request<Site>(site);
-  if (normalizeDomain(actualSite.url) !== domain) throw new CapabilityError('needs_setup', 'The pinned Ad Manager site changed. Choose the site again.');
+  if (legacySite && !ctx.access.sites?.length) {
+    const actualSite = await request<Site>(legacySite);
+    if (normalizeDomain(actualSite.url) !== legacyDomain) throw new CapabilityError('needs_setup', 'The chosen Ad Manager site changed. Choose the network again.');
+  }
   const info = await request<Network>(network);
   if (!info.currencyCode || !info.timeZone) throw new CapabilityError('failed', 'Ad Manager did not return its reporting currency and timezone.');
-  const key = createHash('sha256').update(JSON.stringify([site, domain, range, ctx.access.connectionId])).digest('hex');
+  const key = createHash('sha256').update(JSON.stringify([site, domains, range, ctx.access.connectionId])).digest('hex');
   const filter = { organizationId: ctx.organizationId, companyId: ctx.companyId, provider: 'admanager', resourceType: 'adx_report', externalId: key };
   await ExternalResource.updateOne(filter, { $setOnInsert: { canonicalType: 'Company', canonicalId: ctx.companyId, metadata: {} } }, { upsert: true });
   const leaseToken = randomUUID();
@@ -164,8 +230,8 @@ export async function admanagerRevenue(ctx: CapabilityRunContext, range: { start
   try {
     if (!state.report) {
       const report = await request<{ name: string }>(`${network}/reports`, 'POST', {
-        displayName: `Nucleas AdX · ${domain} · ${range.startDate}–${range.endDate}`, visibility: 'HIDDEN',
-        reportDefinition: adxReportDefinition(domain, range, info.currencyCode),
+        displayName: `Nucleas AdX · ${domains.length > 1 ? `${domain} +${domains.length - 1}` : domain} · ${range.startDate}–${range.endDate}`, visibility: 'HIDDEN',
+        reportDefinition: adxReportDefinition(domains, range, info.currencyCode),
       });
       if (!new RegExp(`^${network}/reports/\\d+$`).test(report.name)) throw new CapabilityError('failed', 'Invalid Ad Manager report name.');
       await save({ report: report.name });
@@ -202,9 +268,10 @@ export async function admanagerRevenue(ctx: CapabilityRunContext, range: { start
     } while (pageToken);
     const first = rows[0]?.metricValueGroups?.[0]?.primaryValues?.[0];
     if (first) console.info(`[admanager] ${domain}: ${rows.length} report rows, revenue sent as ${Object.keys(first).join(', ') || 'no value'}`);
-    const days = parseAdxRows(rows, domain, range);
+    const days = parseAdxRows(rows, domains, range);
+    const siteDays = parseAdxSiteRows(rows, domains, range);
     if (!state.completedAt) await save({ completedAt: new Date().toISOString() });
-    return { site, domain, ...range, currency: info.currencyCode.toLowerCase(), timeZone: info.timeZone, days,
+    return { site, domain, domains, siteDays, ...range, currency: info.currencyCode.toLowerCase(), timeZone: info.timeZone, days,
       totalEarnings: days.reduce((n, d) => n + d.earnings, 0), impressions: days.reduce((n, d) => n + d.impressions, 0), clicks: days.reduce((n, d) => n + d.clicks, 0) };
   } finally {
     await ExternalResource.updateOne({ ...filter, 'metadata.leaseToken': leaseToken }, { $unset: { 'metadata.leaseUntil': '', 'metadata.leaseToken': '' } });

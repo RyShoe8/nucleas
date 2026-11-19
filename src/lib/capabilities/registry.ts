@@ -179,7 +179,7 @@ const adRevenue: CapabilityDefinition<DaysInput, AdRevenueOutput> = {
 const adxRevenue: CapabilityDefinition<DaysInput, AdxOutput> = {
   id: 'ads.adx.revenue.read', version: 1, title: 'AdX revenue and performance',
   domain: 'ads', kind: 'read', risk: 'read', approval: 'auto',
-  provider: 'admanager', requiresResource: 'site', input: daysInput, cacheSeconds: 600,
+  provider: 'admanager', requiresResource: ['network', 'site'], input: daysInput, cacheSeconds: 600,
   async run(ctx, input) {
     const output = await admanagerRevenue(ctx, defaultRange(input.days, ctx.now));
     return { output, summary: 'AdX performance for ' + output.domain + ' in ' + output.timeZone + ' over ' + input.days + ' days' };

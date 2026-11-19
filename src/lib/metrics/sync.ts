@@ -6,7 +6,7 @@ import { MetricSiteSnapshot, MetricSnapshot, MetricSyncState } from '@/lib/model
 import { siteKey } from '@/lib/companies/productionDomain';
 import { invokeCapability } from '@/lib/capabilities/runtime';
 import { defaultRange, isoDate } from '@/lib/capabilities/adapters/http';
-import { SEARCH_LAG_DAYS } from '@/lib/capabilities/registry';
+import { getCapability, SEARCH_LAG_DAYS } from '@/lib/capabilities/registry';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { METRICS, SYNC_CAPABILITIES, type MetricPoint } from './catalog';
 import { dailyEventCounts, EVENTS_PROVIDER } from '@/lib/integrations/companyEvents';
@@ -51,16 +51,27 @@ async function connectedProviders(organizationId: Types.ObjectId, companyId: Typ
 
 export interface CompanySyncResult {
   written: number;
-  results: { capabilityId: string; status: string; error?: string }[];
+  /** One per source; `title` names it for people ("Ad revenue", "AdX revenue and performance"). */
+  results: { capabilityId: string; title?: string; status: string; error?: string }[];
 }
+
+/**
+ * Time one sync may spend starting sources. A source not started in time is deferred to the next sync instead of being
+ * cut off with the request, which leaves it silently unsynced. Leaves room for the slowest source (an AdX report waits
+ * up to ~35 s for Google) inside the 300 s route limit.
+ */
+export const SYNC_START_BUDGET_MS = 200_000;
 
 /** Pulls each connected source for one company and upserts its daily metric values. */
 export async function syncCompanyMetrics(
   organizationId: Types.ObjectId,
   companyId: Types.ObjectId,
-  options: { days: number | ((capabilityId: string) => number); now?: Date; fetchImpl?: FetchLike }
+  options: { days: number | ((capabilityId: string) => number); now?: Date; fetchImpl?: FetchLike; startBudgetMs?: number; clock?: () => number }
 ): Promise<CompanySyncResult> {
   const now = options.now ?? new Date();
+  const clock = options.clock ?? Date.now;
+  const started = clock();
+  const budget = options.startBudgetMs ?? SYNC_START_BUDGET_MS;
   const today = isoDate(now);
   const providers = await connectedProviders(organizationId, companyId);
   const result: CompanySyncResult = { written: 0, results: [] };
@@ -74,6 +85,11 @@ export async function syncCompanyMetrics(
 
   for (const cap of SYNC_CAPABILITIES) {
     if (!providers.has(cap.provider)) continue;
+    const title = getCapability(cap.capabilityId)?.title ?? cap.capabilityId;
+    if (clock() - started > budget) {
+      result.results.push({ capabilityId: cap.capabilityId, title, status: 'deferred', error: `${title} did not start: this sync ran out of time. It runs on the next sync.` });
+      continue;
+    }
     const days = daysFor(cap.capabilityId);
     const res = await invokeCapability(systemViewer(organizationId), String(companyId), cap.capabilityId, cap.windowed ? { days } : {}, {
       system: 'metrics-sync',
@@ -81,11 +97,11 @@ export async function syncCompanyMetrics(
       now,
     });
     if (!res.ok) {
-      result.results.push({ capabilityId: cap.capabilityId, status: 'rejected', error: res.error });
+      result.results.push({ capabilityId: cap.capabilityId, title, status: 'rejected', error: res.error });
       continue;
     }
     const inv = res.invocation;
-    result.results.push({ capabilityId: cap.capabilityId, status: inv.status, error: inv.error });
+    result.results.push({ capabilityId: cap.capabilityId, title, status: inv.status, error: inv.error });
     if (inv.status !== 'succeeded' || inv.output == null) continue;
 
     const dates = cap.windowed ? windowDates(cap.capabilityId, days, now) : [];

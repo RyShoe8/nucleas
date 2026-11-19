@@ -17,6 +17,7 @@ describe('AdSense adapter', () => {
       companyId: new Types.ObjectId(),
       now: new Date('2026-09-28T12:00:00Z'),
       reportUnits: () => {},
+      companyWebsites: ['frugalgambler.club', 'dealsblog.club'],
       access: { provider: 'adsense', connectionId: new Types.ObjectId(), credential: 'refresh', resource: { externalId: 'accounts/pub-123/sites/abc', label: 'frugalgambler.club' } },
       fetch: vi.fn(async (url: string) => {
         calls.push(url);
@@ -45,6 +46,8 @@ describe('AdSense adapter', () => {
     ]);
     const report = decodeURIComponent(calls.find((u) => u.includes('reports:generate'))!);
     expect(report).toContain('DOMAIN_NAME==frugalgambler.club,DOMAIN_NAME==www.frugalgambler.club');
+    // The company's other websites are in the same report.
+    expect(report).toContain('DOMAIN_NAME==dealsblog.club,DOMAIN_NAME==www.dealsblog.club');
     expect(report).toContain('accounts/pub-123/reports:generate');
     expect(report).toContain('filters=DOMAIN_NAME==frugalgambler.club');
     vi.unstubAllEnvs();

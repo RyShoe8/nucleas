@@ -49,13 +49,17 @@ export interface ProviderAccess {
   credential: string;
   configuration?: unknown;
   /** The company's pinned resource (GA4 property, GSC site, ...), when the capability needs one. */
-  resource?: { externalId: string; label?: string };
+  resource?: { externalId: string; label?: string; resourceType?: string };
+  /** The company websites this connection is assigned to (Setup), canonical hosts; empty when none are chosen. */
+  sites?: string[];
 }
 
 export interface CapabilityRunContext {
   organizationId: Types.ObjectId;
   companyId: Types.ObjectId;
   companyDomain?: string;
+  /** All of the company's websites (canonical hosts, main one first). */
+  companyWebsites?: string[];
   access: ProviderAccess;
   /** Clock for date windows, shared with callers (e.g. the metric sync) so both agree on 'yesterday'. */
   now: Date;
@@ -86,7 +90,8 @@ export interface CapabilityDefinition<I = unknown, O = unknown> {
   /** Output contains sensitive data (bank balances, recordings); AI access is governed by data-sharing policy. */
   sensitive?: boolean;
   /** Resource type that must be pinned for the company (ExternalResource.resourceType). */
-  requiresResource?: string;
+  /** Accepted kinds in order of preference (a newer kind first, an older one still honoured). */
+  requiresResource?: string | string[];
   input: z.ZodType<I, z.ZodTypeDef, unknown>;
   /**
    * Extra arguments the AI may pass besides the company (JSON Schema properties). Every value is still checked by

@@ -330,6 +330,33 @@ describe('pinning resources', () => {
     expect(await ExternalResource.findOne({ companyId: new Types.ObjectId(clientId), provider: 'ga4' }).lean()).toMatchObject({ externalId: '222' });
   });
 
+  it('lets several companies choose the same Ad Manager network, each ticking the websites it serves', async () => {
+    const secret = await seedGoogleSecret();
+    await Client.updateOne({ _id: clientId }, { $set: { domain: 'seniorbydesign.com', websites: ['seniordeals.com'] } });
+    const listing = vi.fn(async (url: string) => {
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+      if (url.includes('oauth2.googleapis.com')) return json({ access_token: 'at' });
+      if (url.includes('/v1/networks?')) return json({ networks: [{ name: 'networks/77', displayName: 'Media Group LLC', networkCode: '77' }] });
+      return json({ sites: [{ name: 'networks/77/sites/1', url: 'playbound.club' }, { name: 'networks/77/sites/2', url: 'www.seniorbydesign.com' }] });
+    });
+    const { listPinOptions, pinResource } = await import('./resourcePicker');
+    // An older single-site choice is replaced by the network.
+    await ExternalResource.create({ organizationId: orgId, companyId: new Types.ObjectId(ownedId), provider: 'admanager', resourceType: 'site', externalId: 'networks/77/sites/1', label: 'playbound.club', canonicalType: 'Company', canonicalId: new Types.ObjectId(ownedId) });
+
+    const options = await listPinOptions(admin, ownedId, 'admanager', listing);
+    expect(options).toMatchObject({ noun: 'Ad Manager network', accounts: [{ candidates: [{ externalId: 'networks/77', label: 'Media Group LLC', detail: 'Network 77 · 2 sites: playbound.club, seniorbydesign.com' }] }] });
+
+    expect(await pinResource(admin, ownedId, 'admanager', { secretId: String(secret._id), externalId: 'networks/77' }, listing)).toEqual({ ok: true, label: 'Media Group LLC' });
+    expect(await pinResource(admin, clientId, 'admanager', { secretId: String(secret._id), externalId: 'networks/77' }, listing)).toEqual({ ok: true, label: 'Media Group LLC' });
+
+    const pins = await ExternalResource.find({ provider: 'admanager' }).sort({ externalId: 1 }).lean();
+    expect(pins.map((p) => [p.resourceType, p.externalId, String(p.companyId)])).toEqual([['network', `networks/77@${clientId}`, clientId], ['network', `networks/77@${ownedId}`, ownedId]].sort((a, b) => a[1].localeCompare(b[1])));
+    // Each company starts with only its own websites that the network serves.
+    expect((await IntegrationConnection.findOne({ companyId: new Types.ObjectId(ownedId), provider: 'admanager' }).lean())?.sites).toEqual(['playbound.club']);
+    expect((await IntegrationConnection.findOne({ companyId: new Types.ObjectId(clientId), provider: 'admanager' }).lean())?.sites).toEqual(['seniorbydesign.com']);
+    expect((await listPinOptions(admin, clientId, 'admanager', listing))?.pinned?.externalId).toBe('networks/77');
+  });
+
   it('refuses resources the account cannot see and non-managers', async () => {
     const secret = await seedGoogleSecret();
     const { pinResource } = await import('./resourcePicker');
@@ -402,22 +429,24 @@ describe('Ad Manager at Google sign-in', () => {
       const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
       if (url.includes('oauth2.googleapis.com')) return json({ access_token: 'at', refresh_token: 'rt', scope: 'https://www.googleapis.com/auth/admanager email' });
       if (url.includes('openidconnect')) return json({ email: 'reporting@example.com' });
-      if (url.includes('/v1/networks?')) return json({ networks: [{ name: 'networks/1' }] });
-      return json({ sites: [{ name: 'networks/1/sites/1', url: 'playbound.club' }, ...(ambiguous ? [{ name: 'networks/1/sites/2', url: 'playbound.club' }] : [])] });
+      // Network names rarely match the websites they serve.
+      if (url.includes('/v1/networks?')) return json({ networks: [{ name: 'networks/1', displayName: 'Media Group LLC' }, ...(ambiguous ? [{ name: 'networks/2', displayName: 'Second network' }] : [])] });
+      return json({ sites: [{ name: `${url.includes('networks/2') ? 'networks/2' : 'networks/1'}/sites/1`, url: 'https://www.playbound.club/' }, { name: 'networks/1/sites/9', url: 'someoneelse.com' }] });
     });
   }
   beforeEach(() => {
     vi.stubEnv('GOOGLE_CLIENT_ID', 'cid');
     vi.stubEnv('GOOGLE_CLIENT_SECRET', 'test');
   });
-  it('accepts an Ad Manager-only grant and maps only the matching company', async () => {
+  it('links the network that serves the company, ticking only the company websites it serves', async () => {
     const { completeGoogleConnection } = await import('./google/connectGoogle');
     const res = await completeGoogleConnection(admin, { code: 'c', redirectUri: 'https://nucleas.app/cb' }, googleAdManager());
     expect(res).toMatchObject({ ok: true, summary: { admanager: { granted: true, connected: ['PlayBound'] } } });
-    expect(await ExternalResource.findOne({ provider: 'admanager', resourceType: 'site' }).lean()).toMatchObject({ companyId: new Types.ObjectId(ownedId), externalId: 'networks/1/sites/1' });
+    expect(await ExternalResource.findOne({ provider: 'admanager', resourceType: 'network' }).lean()).toMatchObject({ companyId: new Types.ObjectId(ownedId), externalId: `networks/1@${ownedId}`, label: 'Media Group LLC' });
+    expect(await IntegrationConnection.findOne({ provider: 'admanager' }).lean()).toMatchObject({ status: 'connected', sites: ['playbound.club'], accountLabel: 'Media Group LLC' });
     expect(await IntegrationConnection.countDocuments({ provider: 'admanager' })).toBe(1);
   });
-  it('requires manual selection for ambiguous sites', async () => {
+  it('leaves the choice to a person when several networks serve the company', async () => {
     const { completeGoogleConnection } = await import('./google/connectGoogle');
     const res = await completeGoogleConnection(admin, { code: 'c', redirectUri: 'https://nucleas.app/cb' }, googleAdManager(true));
     expect(res).toMatchObject({ ok: true, summary: { admanager: { connected: [] } } });

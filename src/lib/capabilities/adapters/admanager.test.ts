@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Types } from 'mongoose';
-import { admanagerRevenue, adxReportDefinition, implausibleCpm, listAdManagerSites, parseAdxRows, type AdxRow } from './admanager';
+import { admanagerRevenue, adxReportDefinition, implausibleCpm, listAdManagerSites, parseAdxRows, parseAdxSiteRows, type AdxRow } from './admanager';
 import { ExternalResource } from '@/lib/models/Integration';
 import type { CapabilityRunContext } from '../types';
 
@@ -20,6 +20,21 @@ describe('Ad Manager reporting', () => {
       filters: [{ fieldFilter: { field: { dimension: 'SITE' }, operation: 'IN', values: [{ stringValue: 'playbound.club' }, { stringValue: 'www.playbound.club' }] } }],
       dateRange: { fixed: { startDate: { year: 2026, month: 11, day: 1 }, endDate: { year: 2026, month: 11, day: 2 } } },
     });
+  });
+  it('covers every company website in one report and splits the numbers by website', () => {
+    const sites = ['boardingschoolreview.com', 'privateschoolreview.com'];
+    expect(adxReportDefinition(sites, range, 'usd').filters[0].fieldFilter.values).toEqual([
+      { stringValue: 'boardingschoolreview.com' }, { stringValue: 'www.boardingschoolreview.com' },
+      { stringValue: 'privateschoolreview.com' }, { stringValue: 'www.privateschoolreview.com' },
+    ]);
+    const rows = [row('www.boardingschoolreview.com', '1000000'), row('boardingschoolreview.com', '500000'), row('privateschoolreview.com', '2000000')];
+    expect(parseAdxRows(rows, sites, range)).toEqual([{ date: '2026-11-01', earnings: 350, impressions: 360, clicks: 9 }]);
+    expect(parseAdxSiteRows(rows, sites, range)).toEqual([
+      { date: '2026-11-01', site: 'boardingschoolreview.com', earnings: 150, impressions: 240, clicks: 6 },
+      { date: '2026-11-01', site: 'privateschoolreview.com', earnings: 200, impressions: 120, clicks: 3 },
+    ]);
+    // A site that is not the company's is still refused.
+    expect(() => parseAdxSiteRows([row('someoneelse.com')], sites, range)).toThrow('outside');
   });
   it('aggregates same-day rows before rounding micros to hundredths', () => {
     expect(parseAdxRows([row('playbound.club', '1234500'), row('www.playbound.club', '5000')], 'playbound.club', range))
@@ -89,5 +104,40 @@ describe('Ad Manager reporting', () => {
     expect(await admanagerRevenue(ctx, range)).toMatchObject({ totalEarnings: 246, impressions: 240, clicks: 6, currency: 'usd', timeZone: 'America/Chicago' });
     expect(fetcher.mock.calls.some(([url]) => url.endsWith(':run'))).toBe(false);
     expect(ExternalResource.updateOne).toHaveBeenLastCalledWith(expect.objectContaining({ organizationId: ctx.organizationId, companyId: ctx.companyId }), { $unset: { 'metadata.leaseUntil': '', 'metadata.leaseToken': '' } });
+  });
+  it('creates one report over the websites ticked for the chosen network', async () => {
+    vi.stubEnv('GOOGLE_CLIENT_ID', 'test'); vi.stubEnv('GOOGLE_CLIENT_SECRET', 'test');
+    vi.mocked(ExternalResource.findOneAndUpdate).mockReturnValue({ lean: async () => ({ metadata: {} }) } as never);
+    let definition: { filters: { fieldFilter: { values: { stringValue: string }[] } }[] } | null = null;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('oauth2')) return json({ access_token: 'test' });
+      if (url.endsWith('/sites/1')) return json({ url: 'playbound.club' });
+      if (url.endsWith('/networks/1')) return json({ currencyCode: 'USD', timeZone: 'America/Chicago' });
+      if (url.endsWith('/networks/1/reports')) {
+        definition = JSON.parse(String(init?.body)).reportDefinition;
+        return json({ name: 'networks/1/reports/9' });
+      }
+      if (url.endsWith(':run')) return json({ name: 'networks/1/operations/reports/runs/9' });
+      if (url.includes('/operations/')) return json({ done: true, response: { reportResult: 'networks/1/reports/9/results/1' } });
+      if (url.includes('fetchRows')) return json({ rows: [row('playbound.club'), row('www.playbound.games', '2460000')] });
+      throw new Error('Unexpected request ' + url);
+    });
+    const companyId = new Types.ObjectId();
+    // A chosen network, with the websites ticked for it.
+    const ctx = { organizationId: new Types.ObjectId(), companyId, now: new Date(), fetch: fetcher,
+      access: { connectionId: new Types.ObjectId(), credential: 'refresh', sites: ['playbound.club', 'www.PlayBound.games', 'not a site'], resource: { externalId: `networks/1@${companyId}`, label: 'Media Group LLC', resourceType: 'network' } },
+    } as unknown as CapabilityRunContext;
+    const out = await admanagerRevenue(ctx, range);
+    expect(definition!.filters[0].fieldFilter.values.map((v) => v.stringValue)).toEqual(['playbound.club', 'www.playbound.club', 'playbound.games', 'www.playbound.games']);
+    expect(out).toMatchObject({ domains: ['playbound.club', 'playbound.games'], totalEarnings: 369 });
+    expect(out.siteDays?.map((d) => [d.site, d.earnings])).toEqual([['playbound.club', 123], ['playbound.games', 246]]);
+    // The network is checked, never a single site.
+    expect(fetcher.mock.calls.some(([url]) => url.includes('/sites/'))).toBe(false);
+  });
+  it('asks for websites when a network is chosen but none are ticked', async () => {
+    const ctx = { organizationId: new Types.ObjectId(), companyId: new Types.ObjectId(), now: new Date(), fetch: vi.fn(),
+      access: { connectionId: new Types.ObjectId(), credential: 'refresh', sites: [], resource: { externalId: `networks/1@${'a'.repeat(24)}`, label: 'Media Group LLC' } },
+    } as unknown as CapabilityRunContext;
+    await expect(admanagerRevenue(ctx, range)).rejects.toMatchObject({ code: 'needs_setup', message: expect.stringContaining('websites this Ad Manager network serves') });
   });
 });
