@@ -2,6 +2,7 @@ import { createElement } from 'react';
 import ModuleRegistry from '@/lib/os/moduleRegistry';
 import type { ModuleDefinition } from '@/lib/os/types';
 import dynamic from 'next/dynamic';
+const OfficeModule = dynamic(() => import('./OfficeModule'));
 const TeamModule = dynamic(() => import('./TeamModule'));
 const WorkModule = dynamic(() => import('./WorkModule'));
 const GrowthModule = dynamic(() => import('./GrowthModule'));
@@ -42,6 +43,16 @@ export function registerOsModules(): void {
     const agendaSize = { width: 960, height: 640 };
 
     const definitions: ModuleDefinition[] = [
+        {
+            id: 'office',
+            title: 'Office',
+            icon: '⌂',
+            defaultSize: { width: 1180, height: 820 },
+            minSize: { width: 420, height: 360 },
+            canPopout: true,
+            permissions: 'member',
+            render: () => createElement(OfficeModule),
+        },
         {
             id: 'team',
             title: 'Team',

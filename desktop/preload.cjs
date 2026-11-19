@@ -7,6 +7,14 @@ if (local || location.origin === 'https://nucleas.app') {
     openModule: (moduleId, payload) => ipcRenderer.invoke('module:open', { moduleId, payload }),
     // An app window can be told to start listening; it cannot start voice in another window itself.
     onVoiceStart: callback => { const listener = () => callback(); ipcRenderer.on('voice:start', listener); return () => ipcRenderer.removeListener('voice:start', listener); },
+    // The Office (the main window) reads the app's update state and starts voice; the main process refuses these for other windows.
+    ...(!local ? {
+      startVoice: () => ipcRenderer.invoke('voice:start'),
+      desktopState: () => ipcRenderer.invoke('launcher:state'),
+      onDesktopState: callback => { const listener = (_event, state) => callback(state); ipcRenderer.on('launcher:state', listener); return () => ipcRenderer.removeListener('launcher:state', listener); },
+      checkUpdate: () => ipcRenderer.invoke('update:check'),
+      installUpdate: () => ipcRenderer.invoke('update:install'),
+    } : {}),
     ...(local ? {
       signIn: () => ipcRenderer.invoke('auth:signin'),
       startVoice: () => ipcRenderer.invoke('voice:start'),

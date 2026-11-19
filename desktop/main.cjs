@@ -20,7 +20,18 @@ let persistTimer;
 function persist() { clearTimeout(persistTimer); persistTimer = setTimeout(flushBounds, 350); }
 function flushBounds() { clearTimeout(persistTimer); persistTimer = undefined; try { fs.writeFileSync(settingsPath(), JSON.stringify(saved)); } catch { /* Read-only profiles still run. */ } }
 function state() { return { version: app.getVersion(), update, compact, apps: catalog.filter(m => !m.hidden), windows: [...windows].map(([key, w]) => ({ key, title: w.getTitle() })) }; }
-function broadcast() { if (launcher && !launcher.isDestroyed()) launcher.webContents.send('launcher:state', state()); }
+function broadcast() {
+  if (launcher && !launcher.isDestroyed()) launcher.webContents.send('launcher:state', state());
+  const main = office();
+  if (main && !main.isDestroyed()) main.webContents.send('launcher:state', state());
+}
+// The main Nucleas window is the Office app: the whole business at a glance, with Ask, voice and every app.
+const OFFICE_KEY = 'office:{}';
+const testRun = !app.isPackaged && (process.argv.includes('--smoke-test') || process.argv.includes('--resource-test'));
+function office() { return windows.get(OFFICE_KEY); }
+/** App windows a person opened, not counting the Office, which stays open in the background. */
+function openApps() { return [...windows.keys()].filter(key => key !== OFFICE_KEY).length; }
+function officeSender(event) { const main = office(); return Boolean(main && event.sender === main.webContents && event.senderFrame === event.sender.mainFrame && trustedRemote(event.senderFrame.url)); }
 function status(phase, text) { if (update.phase === phase && update.text === text) return; update = { phase, text }; broadcast(); }
 function localSender(event) { return event.sender === launcher?.webContents && event.senderFrame === event.sender.mainFrame && event.senderFrame.url === launcherUrl; }
 function moduleSender(event) { return localSender(event) || ([...windows.values()].some(w => w.webContents === event.sender) && event.senderFrame === event.sender.mainFrame && trustedRemote(event.senderFrame.url)); }
@@ -89,7 +100,16 @@ function createLauncher() {
     });
     void launcher.loadFile(launcherFile);
 }
-function showLauncher() { if (!launcher) { createLauncher(); return; } launcher.show(); launcher.focus(); }
+function showLauncher() {
+  if (testRun) { if (!launcher) { createLauncher(); return; } launcher.show(); launcher.focus(); return; }
+  const main = office();
+  if (main && !main.isDestroyed()) { if (main.isMinimized()) main.restore(); main.show(); main.focus(); return; }
+  openModule({ moduleId: 'office' });
+}
+function toggleMain() {
+  const main = office();
+  if (main && !main.isDestroyed() && main.isVisible() && main.isFocused()) main.hide(); else showLauncher();
+}
 function openModule(raw) {
   const value = moduleRequest(raw, catalog);
   if (!value) throw new Error('Unknown app or invalid context.');
@@ -100,7 +120,8 @@ function openModule(raw) {
   const target = new URL('/os/desktop', ORIGIN);
   target.searchParams.set('module', value.moduleId);
   target.searchParams.set('payload', JSON.stringify(value.payload));
-  const win = new BrowserWindow({ ...bounds(saved[value.key] || { width: value.moduleId === 'assistant' ? 720 : 1120, height: 780 }), minWidth: 400, minHeight: 300, show: false,
+  const isOffice = value.key === OFFICE_KEY;
+  const win = new BrowserWindow({ ...bounds(saved[value.key] || { width: value.moduleId === 'assistant' ? 720 : isOffice ? 1180 : 1120, height: isOffice ? 820 : 780 }), minWidth: 400, minHeight: 300, show: false,
     title: definition.title, backgroundColor: '#0e121c', autoHideMenuBar: true, backgroundMaterial: 'mica',
     titleBarStyle: 'hidden', titleBarOverlay: { color: '#141822', symbolColor: '#c6cedf', height: 47 },
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), partition: 'persist:nucleas', sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true } });
@@ -108,7 +129,11 @@ function openModule(raw) {
   targets.set(win, target.href);
   secureWindow(win);
   win.once('ready-to-show', () => win.show());
-  win.on('close', () => { saved[value.key] = win.getNormalBounds(); persist(); });
+  win.on('close', event => {
+    saved[value.key] = win.getNormalBounds(); persist();
+    // Closing the Office hides it to the tray, like the launcher did; quitting closes it for real.
+    if (isOffice && !quitting) { event.preventDefault(); win.hide(); if (update.phase === 'ready' && openApps() === 0) installUpdate(); }
+  });
   win.on('closed', () => { windows.delete(value.key); targets.delete(win); broadcast(); });
 
   // Login uses the ordinary shared cookie session; return to this app after login.
@@ -124,7 +149,7 @@ function openModule(raw) {
 }
 async function checkUpdates() {
   if (!app.isPackaged) { status('development', 'Development build · updates begin with an installed release'); return; }
-  if (update.phase === 'ready') { if (windows.size === 0) installUpdate(); return; }
+  if (update.phase === 'ready') { if (openApps() === 0) installUpdate(); return; }
   if (['checking', 'downloading'].includes(update.phase)) return;
   status('checking', 'Checking for updates…');
   try { await autoUpdater.checkForUpdates(); } catch { status('error', 'Update service unavailable · try again'); }
@@ -148,7 +173,7 @@ else {
       if (choice.response === 1) allowedThisRun.add(permission);
       callback(choice.response === 1);
     });
-    createLauncher();
+    if (testRun) createLauncher(); else showLauncher();
     tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'renderer/icon.png')).resize({ width: 20, height: 20 }));
     tray.setToolTip('Nucleas · Alt+Space');
     tray.setContextMenu(Menu.buildFromTemplate([
@@ -157,7 +182,7 @@ else {
       { label: 'Quit Nucleas', click: () => { quitting = true; app.quit(); } },
     ]));
     tray.on('click', showLauncher);
-    if (!globalShortcut.register('Alt+Space', () => launcher?.isVisible() ? launcher.hide() : showLauncher())) status('notice', 'Alt+Space is in use · open Nucleas from the tray');
+    if (!globalShortcut.register('Alt+Space', () => testRun ? (launcher?.isVisible() ? launcher.hide() : showLauncher()) : toggleMain())) status('notice', 'Alt+Space is in use · open Nucleas from the tray');
     ipcMain.handle('launcher:show', event => { if (!moduleSender(event)) throw new Error('Not allowed'); showLauncher(); });
     ipcMain.handle('module:open', (event, value) => { if (!moduleSender(event)) throw new Error('Not allowed'); return openModule(value); });
     ipcMain.handle('auth:signin', async event => {
@@ -180,14 +205,19 @@ else {
         const tell = () => { if (!ask.isDestroyed()) ask.webContents.send('voice:start'); };
         if (ask.webContents.isLoading()) ask.webContents.once('did-finish-load', () => setTimeout(tell, 2500)); else tell();
       },
-    })) ipcMain.handle(channel, (event, value) => { if (!localSender(event)) throw new Error('Not allowed'); return handler(value); });
+    })) ipcMain.handle(channel, (event, value) => {
+      // The Office may read the app state, check or install updates, and start voice; only the old launcher may hide or resize itself.
+      const officeAllowed = ['launcher:state', 'update:check', 'update:install', 'voice:start'].includes(channel) && officeSender(event);
+      if (!localSender(event) && !officeAllowed) throw new Error('Not allowed');
+      return handler(value);
+    });
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.on('update-available', () => status('downloading', 'Downloading the latest Nucleas…'));
     autoUpdater.on('download-progress', progress => status('downloading', `Updating · ${Math.round(progress.percent)}%`));
     autoUpdater.on('update-not-available', () => status('current', 'You’re up to date'));
     autoUpdater.on('error', () => status('error', 'Update service unavailable · try again'));
-    autoUpdater.on('update-downloaded', () => { status('ready', 'Update ready · restart to install'); if (windows.size === 0) installUpdate(); });
+    autoUpdater.on('update-downloaded', () => { status('ready', 'Update ready · restart to install'); if (openApps() === 0 && !office()?.isVisible()) installUpdate(); });
     void checkUpdates();
   });
   app.on('before-quit', () => { quitting = true; });

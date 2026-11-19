@@ -1,0 +1,55 @@
+.floor {
+    background-image: linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+    background-size: 16px 16px;
+}
+
+.sprite {
+    image-rendering: pixelated;
+    shape-rendering: crispEdges;
+}
+
+.working .body {
+    animation: type 0.45s steps(2) infinite;
+}
+
+.working .screenGlow {
+    animation: glow 1.6s ease-in-out infinite;
+}
+
+.waiting {
+    animation: hop 0.9s ease-in-out infinite;
+}
+
+.waiting .arm {
+    transform-origin: 13px 13px;
+    animation: wave 0.9s ease-in-out infinite;
+}
+
+.idle .body {
+    animation: breathe 3.2s ease-in-out infinite;
+}
+
+.away {
+    opacity: 0.45;
+    filter: grayscale(0.6);
+}
+
+.bubble {
+    animation: pop 0.25s ease-out;
+}
+
+.zz {
+    animation: float 2.4s ease-in-out infinite;
+}
+
+@keyframes type { 50% { transform: translateY(0.6px); } }
+@keyframes glow { 50% { opacity: 0.55; } }
+@keyframes hop { 50% { transform: translateY(-3px); } }
+@keyframes wave { 50% { transform: rotate(-35deg); } }
+@keyframes breathe { 50% { transform: translateY(0.4px); } }
+@keyframes pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes float { 0% { transform: translate(0, 0); opacity: 0; } 30% { opacity: 1; } 100% { transform: translate(4px, -8px); opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+    .working .body, .working .screenGlow, .waiting, .waiting .arm, .idle .body, .bubble, .zz { animation: none; }
+}
