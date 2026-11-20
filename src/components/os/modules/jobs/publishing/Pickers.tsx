@@ -51,11 +51,12 @@ export function ChannelPicker({ channels, onChange, disabled = false }: { channe
     );
 }
 
-/** Who is emailed when a post is ready to post by hand or the job needs attention. */
+/** Additional people notified in Nucleas when this job needs attention. */
 export function NotifyPicker({ people, value, onChange, disabled = false }: { people: { userId: string; name: string }[]; value: string[]; onChange: (next: string[]) => void; disabled?: boolean }) {
     const chosen = people.filter((p) => value.includes(p.userId));
     const rest = people.filter((p) => !value.includes(p.userId));
     return (
+        <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-1.5">
             {chosen.map((p) => (
                 <span key={p.userId} className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs">
@@ -63,7 +64,7 @@ export function NotifyPicker({ people, value, onChange, disabled = false }: { pe
                     {!disabled ? <button type="button" className="text-text-secondary hover:text-text-primary" aria-label={`Stop notifying ${p.name}`} onClick={() => onChange(value.filter((id) => id !== p.userId))}>×</button> : null}
                 </span>
             ))}
-            {!chosen.length ? <span className="text-xs text-text-secondary">Nobody</span> : null}
+            {!chosen.length ? <span className="text-xs text-text-secondary">No additional people</span> : null}
             {!disabled && rest.length ? (
                 <select className="ui-control h-7 text-xs" value="" aria-label="Add a person to notify" onChange={(e) => e.target.value && onChange([...value, e.target.value])}>
                     <option value="">+ Add</option>
@@ -72,6 +73,8 @@ export function NotifyPicker({ people, value, onChange, disabled = false }: { pe
                     ))}
                 </select>
             ) : null}
+        </div>
+        <p className="max-w-sm text-[11px] text-text-secondary">These people and the assigned reviewer receive Nucleas notifications. Each person controls email summaries in Notifications.</p>
         </div>
     );
 }

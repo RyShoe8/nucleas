@@ -22,7 +22,7 @@ export async function attentionFor(viewer: CompanyViewer): Promise<AttentionItem
   const [members, people, jobs, builds, other, voices, plans, approvals] = await Promise.all([
     CompanyTeam.find(scope).select('companyId role displayName identityName reviewerEmployeeId').lean(),
     Employee.find({ organizationId: String(viewer.organizationId), userId: { $type: 'objectId' } }).select('userId').lean(),
-    Job.find({ ...scope, status: { $nin: ['archived', 'rejected'] } }).select('companyId teamRole design.title design.skill design.category request status updatedAt error lastRunAt').lean(),
+    Job.find({ ...scope, status: { $nin: ['archived', 'rejected'] } }).select('companyId teamRole design.title design.skill design.category request status updatedAt error lastRunAt publishing.notifyUserIds').lean(),
     BuildRequest.find({ ...scope, status: { $in: ['proposed', 'ready', 'failed'] } }).select('companyId teamRole title status updatedAt error').lean(),
     listActivity(viewer, { complete: true, excludeBuilds: true }),
     BrandVoice.find({...scope,status:'draft',revision:{$gt:0}}).select('companyId updatedAt').lean(),
@@ -31,11 +31,13 @@ export async function attentionFor(viewer: CompanyViewer): Promise<AttentionItem
   ]);
   const userByEmployee = new Map(people.map(p => [String(p._id), String(p.userId)]));
   const items: AttentionItem[] = [];
-  const add = (id: string, companyId: string, role: TeamRole, title: string, detail: string, since: Date | string, moduleId: string, extra: Record<string, string> = {}) => {
+  const add = (id: string, companyId: string, role: TeamRole, title: string, detail: string, since: Date | string, moduleId: string, extra: Record<string, string> = {}, notifyUserIds: unknown = []) => {
     const company = byCompany.get(companyId); if (!company) return;
     const member = members.find(m => String(m.companyId) === companyId && m.role === role);
     const recipient = member?.reviewerEmployeeId ? userByEmployee.get(String(member.reviewerEmployeeId)) : String(viewer.organizationId);
-    if ((recipient ?? String(viewer.organizationId)) !== viewer.userId) return;
+    // Existing job notify lists add recipients; they never replace the assigned reviewer or grant company access.
+    const explicitlyNotified = Array.isArray(notifyUserIds) && notifyUserIds.includes(viewer.userId);
+    if ((recipient ?? String(viewer.organizationId)) !== viewer.userId && !explicitlyNotified) return;
     const payload = { companyId, companyName: company.name, role, ...extra };
     items.push({ id, companyId, companyName: company.name, employeeName: member?.displayName || member?.identityName || TEAM[role].name,
       title: title.slice(0, 180), detail: detail.slice(0, 500), since: new Date(since).toISOString(), moduleId, payload, href: attentionLink(moduleId, payload) });
@@ -53,7 +55,7 @@ export async function attentionFor(viewer: CompanyViewer): Promise<AttentionItem
   ]);
   const jobItem = (jobId: string, id: string, detail: string, at: Date, extra: Record<string, string> = {}) => {
     const job = byJob.get(jobId); if (!job) return;
-    add(id, String(job.companyId), teamRoleFor(job), job.design?.title || 'Team assignment', detail, at, 'team', { jobId, ...extra });
+    add(id, String(job.companyId), teamRoleFor(job), job.design?.title || 'Team assignment', detail, at, 'team', { jobId, ...extra }, job.publishing?.notifyUserIds);
   };
   for (const job of jobs) {
     const detail = job.status === 'needs_answers' ? 'Answer the open questions' : job.status === 'proposed' ? 'Review the proposed plan or trial run' : job.status === 'failed' ? job.error || 'This assignment needs help' : null;

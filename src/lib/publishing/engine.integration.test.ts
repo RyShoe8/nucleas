@@ -20,6 +20,7 @@ import { IntegrationConnection } from '@/lib/models/Integration';
 import { publicSignatureConcept, queueSignaturePost } from './signaturePost';
 import type { PostInput } from './publishers';
 import User from '@/lib/models/User';
+import { sendEmail } from '@/lib/services/email';
 import { WatchItem } from '@/lib/models/Watch';
 import type { AdminBrowser } from './admin';
 import { PublishError } from './publishers';
@@ -62,7 +63,6 @@ const config: PublishingConfig = {
 
 const write = async ({ system }: { system: string }) => (system.includes('{"title"') ? JSON.stringify({ title: 'New Game Release', body: 'Reddit body' }) : JSON.stringify({ body: 'A new game is here.' }));
 
-let sent: { to: string; subject: string }[];
 let published: { platform: string; text: string }[];
 let failFacebook: PublishError | null;
 const deps = (): PublishDeps => ({
@@ -70,9 +70,6 @@ const deps = (): PublishDeps => ({
   openPages: async () => [],
   fetcher,
   write,
-  send: async (to, subject) => {
-    sent.push({ to, subject });
-  },
   publish: {
     bluesky: async (_c, input) => {
       published.push({ platform: 'bluesky', text: input.text });
@@ -103,7 +100,7 @@ beforeEach(async () => {
     { organizationId: org, companyId, provider: 'bluesky', scope: 'company', status: 'connected', source: 'manual' },
   ]);
   pages = ['deus-ex', 'openra'];
-  sent = [];
+  vi.mocked(sendEmail).mockClear();
   published = [];
   failFacebook = null;
 });
@@ -131,7 +128,7 @@ describe('publishing jobs', () => {
     expect(output.records[2]!.values).toMatchObject({ post_title: 'New Game Release', post_copy: 'Reddit body', target_url: 'https://playbound.club/games/openra' });
     expect(await PublishItem.countDocuments()).toBe(0);
     expect(published).toEqual([]);
-    expect(sent).toEqual([{ to: 'ryan@example.com', subject: 'Sample posts ready to check · PlayBound' }]);
+    expect(sendEmail).not.toHaveBeenCalled();
   });
 
   it('keeps platform drafts separate, caps Bluesky, and uses the game page in an explicitly existing-item preview', async () => {
@@ -244,12 +241,13 @@ describe('publishing jobs', () => {
     const quiet = await newRun(job._id, false);
     await runPublishing(quiet, 'owner', (await Job.findById(job._id).lean())!, deps());
     expect((await JobRun.findById(quiet._id).lean())?.output).toMatchObject({ summary: 'No new games.' });
-    expect(sent).toEqual([]);
+    expect(sendEmail).not.toHaveBeenCalled();
 
     pages.push('factorio');
     const run = await newRun(job._id, false);
     await runPublishing(run, 'owner', (await Job.findById(job._id).lean())!, deps());
     // Facebook and Bluesky wait for the Reddit card, then go out once it is posted.
+    expect((await JobRun.findById(run._id).lean())?.status).toBe('completed');
     expect(published).toEqual([]);
     const reddit = await PublishDelivery.findOne({ platform: 'reddit' }).lean();
     expect(await markPosted((await Job.findById(job._id).lean())!, String(reddit!._id), String(userId), undefined, deps())).toEqual({ ok: true });
@@ -258,7 +256,7 @@ describe('publishing jobs', () => {
     expect(deliveries.map((d) => [d.platform, d.status])).toEqual([['bluesky', 'posted'], ['facebook', 'posted'], ['reddit', 'posted']]);
     expect(deliveries.map((d) => d.heldFor ?? null)).toEqual([null, null, null]);
     expect(deliveries.find((d) => d.platform === 'reddit')).toMatchObject({ title: 'New Game Release', link: 'https://playbound.club/games/factorio', assets: [{ kind: 'image', url: 'https://playbound.club/factorio.jpg' }] });
-    expect(sent).toEqual([{ to: 'ryan@example.com', subject: '1 post ready to post · PlayBound' }]);
+    expect(sendEmail).not.toHaveBeenCalled();
 
     // The next hour finds nothing new and posts nothing again.
     const again = await newRun(job._id, false);
@@ -282,6 +280,8 @@ describe('publishing jobs', () => {
     const item = await PublishItem.findOne({ key: 'https://playbound.club/games/wings-of-dawn' }).lean();
     expect(item).toMatchObject({ status: 'skipped', skipReason: expect.stringContaining('timeout') });
     expect(await PublishDelivery.countDocuments()).toBe(0);
+    expect(await JobRun.findById(first._id).lean()).toMatchObject({ status: 'needs_review', output: { gaps: [expect.stringContaining('timeout')] } });
+    expect(sendEmail).not.toHaveBeenCalled();
 
     const second = await newRun(job._id, false);
     await runPublishing(second, 'owner', (await Job.findById(job._id).lean())!, deps());
@@ -454,7 +454,8 @@ describe('publishing jobs', () => {
     await runPublishing(run, 'owner', (await Job.findById(job._id).lean())!, deps());
     expect(published).toEqual([]);
     expect(await PublishItem.countDocuments({ status: 'skipped' })).toBe(6);
-    expect(sent[0]?.subject).toBe('Nothing posted: 6 games appeared at once · PlayBound');
+    expect(await JobRun.findById(run._id).lean()).toMatchObject({ status: 'needs_review', output: { gaps: [expect.stringContaining('6 new games appeared at once')] } });
+    expect(sendEmail).not.toHaveBeenCalled();
   });
 
   it('records the existing pages on its first run if the baseline was never taken', async () => {
@@ -776,6 +777,7 @@ describe('admin publishing jobs (deals from the inbox into the site admin)', () 
       const job = await newJob();
       await queueSignaturePost(job, values);
       await queueSignaturePost(job, values);
+      expect(sendEmail).not.toHaveBeenCalled();
       const current = (await Job.findById(job._id).lean())!;
       const view = await publishingView(current);
       expect(view?.ready).toHaveLength(1);

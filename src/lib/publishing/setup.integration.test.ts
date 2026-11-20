@@ -136,7 +136,7 @@ describe('setting up a publishing job', () => {
     expect(ready.map((d) => d.platform)).toEqual(['reddit']);
     expect(ready[0]?.following?.map((d) => d.platform).sort()).toEqual(['bluesky', 'facebook']);
     expect(ready.find((d) => d.platform === 'reddit')).toMatchObject({ title: 'New Game: Factorio', itemTitle: 'factorio' });
-    expect(vi.mocked(sendEmail).mock.calls.at(-1)?.[0]).toMatchObject({ to: 'owner@example.invalid', subject: '1 post ready to post · PlayBound' });
+    expect(sendEmail).not.toHaveBeenCalled();
 
     // Anyone on the team can post a card by hand; only managers change the settings.
     const reddit = ready.find((d) => d.platform === 'reddit')!;

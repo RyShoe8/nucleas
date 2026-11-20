@@ -887,7 +887,10 @@ export default function JobCard({ job: initial, focusRunId, compact = false, onC
 
             {d?.skill === 'ai_citations' ? <p className="text-xs text-text-secondary">Find one researched suggestion each day to help {job.companyName} get mentioned in AI answers. Results are saved here for you to review; this job does not publish social posts or change your website.</p> : null}
 
-            {d?.skill === 'social_publish' && !compact ? <PublishingJobBody job={job} onChange={update} readyShownAbove={readyShownAbove} /> : <>
+            {d?.skill === 'social_publish' && !compact ? <>
+                <PublishingJobBody job={job} onChange={update} readyShownAbove={readyShownAbove} />
+                {reviewRun && !reviewRun.dryRun ? <RunBlock job={job} run={reviewRun} onChange={update} onView={setResultRun} /> : null}
+            </> : <>
             {job.status === 'designing' ? <p className="text-xs text-sky-400">Nucleas is investigating {job.companyName} and preparing a plan…</p> : null}
             {job.status === 'failed' || job.error ? <p className="text-xs text-red-400">{job.error}</p> : null}
 

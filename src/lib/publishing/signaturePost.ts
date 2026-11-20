@@ -5,7 +5,6 @@ import { Job } from '@/lib/models/Job';
 import { PublishDelivery, PublishItem } from '@/lib/models/Publishing';
 import { publishingConfigSchema } from './config';
 import { readConfig } from './engine';
-import { notifyPeople } from './notify';
 
 const LANDING = 'https://tailnote.io/signature-example';
 const TOKEN = /^[a-f0-9]{32}$/;
@@ -44,8 +43,6 @@ export async function queueSignaturePost(job: SignatureJob, values: Record<strin
     { $setOnInsert: { organizationId: job.organizationId, companyId: job.companyId, jobId: job._id, mode: 'manual', status: 'ready', body: post, link: item!.url, assets: [{ kind: 'image', url: imageUrl }] } },
     { upsert: true }
   );
-  await notifyPeople(job.organizationId, [String(job.createdByUserId)], { subject: `Ready to review: ${title}`, intro: 'A new signature concept and its post are ready. Nothing goes out until you post it.', lines: [post], action: 'Review the post' })
-    .catch((error: unknown) => console.error(`[signature-post] job ${job._id} notification failed`, error instanceof Error ? error.message : 'unknown'));
 }
 
 /** What the public landing page shows. A skipped post takes its page down. */

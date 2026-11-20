@@ -119,7 +119,7 @@ function DeliveryStepper({ job, focusId, onChange }: { job: JobView; focusId?: s
 function TodoTab({ job, focus, onChange, onViewRun }: { job: JobView; focus?: QueueItem['target']; onChange: (job: JobView) => void; onViewRun: (run: JobRunView) => void }) {
     const d = job.design;
     const publishing = d?.skill === 'social_publish';
-    const reviewRun = job.runs.find((r) => r.status === 'needs_review' || r.status === 'running') ?? (job.runs[0]?.status === 'failed' ? job.runs[0] : undefined);
+    const reviewRun = (focus?.kind === 'run' ? job.runs.find((r) => r.id === focus.id) : undefined) ?? job.runs.find((r) => r.status === 'needs_review' || r.status === 'running') ?? (job.runs[0]?.status === 'failed' ? job.runs[0] : undefined);
     const refresh = () => { void fetchJob(job.id).then((fresh) => { if (fresh) onChange(fresh); }); };
     // A publishing job being set up keeps its own step-by-step flow: approve, trial posts, switch on.
     if (publishing && ['proposed', 'testing', 'designing'].includes(job.status)) return <PublishingJobBody job={job} onChange={onChange} />;
@@ -130,7 +130,7 @@ function TodoTab({ job, focus, onChange, onViewRun }: { job: JobView; focus?: Qu
             {job.status === 'needs_answers' ? <Questions job={job} onChange={onChange} /> : null}
             {job.status === 'proposed' && d ? <><DesignSummary job={job} />{job.canManage ? <Approve job={job} onChange={onChange} /> : <p className="text-xs text-text-secondary">A manager or administrator approves new jobs.</p>}</> : null}
             {publishing ? <DeliveryStepper key={focus?.kind === 'delivery' ? focus.id : 'first'} job={job} focusId={focus?.kind === 'delivery' ? focus.id : undefined} onChange={onChange} /> : null}
-            {!publishing && reviewRun ? <RunBlock job={job} run={reviewRun} onChange={onChange} onView={onViewRun} /> : null}
+            {reviewRun ? <RunBlock job={job} run={reviewRun} onChange={onChange} onView={onViewRun} /> : null}
             {d?.skill === 'link_building' ? <OpportunityTracker job={job} onChange={onChange} /> : null}
             {d?.skill === 'signature_outreach' ? <DeliveryStepper key={focus?.kind === 'delivery' ? focus.id : 'first'} job={job} focusId={focus?.kind === 'delivery' ? focus.id : undefined} onChange={() => refresh()} /> : null}
             {d?.skill === 'casino_discovery' ? <CasinoDiscoveryPanel job={job} onChange={refresh} /> : null}
@@ -221,7 +221,7 @@ export function SettingsTab({ job, onChange }: { job: JobView; onChange: (job: J
                     </select>
                 </SettingRow>
                 {view ? (
-                    <SettingRow label="Tell me when something is waiting" hint="An email when a post or record needs a person.">
+                    <SettingRow label="Notify" hint="When a post or record needs a person.">
                         <NotifyPicker people={people.length ? people : view.notifyUserIds.map((userId) => ({ userId, name: '…' }))} value={view.notifyUserIds} disabled={!can || busy !== null} onChange={(next) => void save('notify', { action: 'publishing_settings', settings: { notifyUserIds: next } })} />
                     </SettingRow>
                 ) : null}

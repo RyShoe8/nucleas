@@ -41,13 +41,13 @@ import { PLATFORM_RULES, composePost, describeResearchedFacts, draftLength, fall
 import type { FetchLike } from './fetchPublic';
 import { readPageFacts, type PageFacts } from './pageFacts';
 import { listSitePages } from './siteSource';
-import { notifyPeople, type SendFn } from './notify';
 import { PublishError, publishToBluesky, publishToFacebook, type PostInput } from './publishers';
 
 /**
  * Runs publishing jobs. Each hourly run reads the job's source, keeps a record of every item it has
  * seen, writes one post per channel for each new item in the company's approved Voice, then posts it
- * (auto) or prepares a ready-to-post card (manual) and tells the people on the job's notify list.
+ * (auto) or prepares a ready-to-post card (manual). Attention reads these cards for the reviewer and
+ * the job's notify list; each person's summary settings control email delivery.
  *
  * Safeguards: nothing that existed when the job was switched on is ever posted (the baseline); a burst
  * of "new" items (a site restructure) is recorded, not posted; an automatic post that fails becomes a
@@ -62,7 +62,6 @@ export interface PublishDeps {
   fetcher?: FetchLike;
   write?: Writer;
   publish?: Partial<Record<PublishPlatform, (credential: string, input: PostInput) => Promise<{ url: string }>>>;
-  send?: SendFn;
   /** The browser that opens the company's admin (the VPS worker by default). */
   admin?: AdminBrowser;
   /** The admin session to use instead of the saved one (tests). */
@@ -668,8 +667,7 @@ async function runPublishingUncapped(run: { _id: Types.ObjectId; dryRun: boolean
           : `Format preview using an existing ${noun}, “${facts.title}”. This sample is not a new-publication notification. Nothing was posted. Accept to switch the job on: it checks every hour, and only ${noun}s that appear after that are posted.`,
       gaps,
     };
-    const saved = await finishRun(run._id, owner, 'needs_review', { output });
-    if (saved) await notifyPeople(job.organizationId, config.notifyUserIds, { subject: `Sample posts ready to check · ${profile.name}`, intro: rotation ? `Nucleas wrote sample posts for the first ${noun} in the rotation (“${facts.title}”). Nothing was posted. Check the drafts, then accept to switch the job on.` : `Nucleas wrote a format preview using an existing ${noun} (“${facts.title}”). It is not a new-publication notification. Check the drafts, then accept to switch the job on.`, lines: [], action: 'Review the samples' }, deps.send);
+    await finishRun(run._id, owner, 'needs_review', { output });
     return;
   }
 
@@ -715,14 +713,15 @@ async function runPublishingUncapped(run: { _id: Types.ObjectId; dryRun: boolean
       { ordered: false }
     );
     const summary = `${newEntries.length} new ${noun}s appeared at once, which looks like a site change rather than new releases. They were recorded and not posted.`;
-    await finishRun(run._id, owner, 'completed', { output: { records: [], summary, gaps: [] } });
-    await notifyPeople(job.organizationId, config.notifyUserIds, { subject: `Nothing posted: ${newEntries.length} ${noun}s appeared at once · ${profile.name}`, intro: summary, lines: newEntries.slice(0, 8).map((e) => e.title || e.url || e.key), action: 'Open Marketing' }, deps.send);
+    // Keep the skipped batch reviewable instead of sending an out-of-band email.
+    await finishRun(run._id, owner, 'needs_review', { output: { records: [], summary, gaps: [summary] } });
     return;
   }
 
   const records: JobRunOutput['records'] = [];
   const ready: string[] = [];
   const problems: string[] = [];
+  let needsRunReview = false;
   let posted = 0;
   let repeats = 0;
   for (const [index, entry] of fresh.entries()) {
@@ -773,6 +772,7 @@ async function runPublishingUncapped(run: { _id: Types.ObjectId; dryRun: boolean
       const reason = `Could not read ${entry.url ?? entry.key}: ${error instanceof Error ? error.message : 'unknown error'}`.slice(0, 300);
       await PublishItem.updateOne({ _id: itemId }, { $set: { status: 'skipped', skipReason: reason } });
       problems.push(reason);
+      needsRunReview = true;
       continue;
     }
     await PublishItem.updateOne({ _id: itemId }, { $set: { title: facts.title.slice(0, 500), facts: { title: facts.title, description: facts.description, text: facts.text, image: facts.image ?? undefined, images: facts.images, video: facts.video ?? undefined } } });
@@ -821,7 +821,7 @@ async function runPublishingUncapped(run: { _id: Types.ObjectId; dryRun: boolean
       if (outcome.ok) {
         posted += 1;
         await PublishDelivery.updateOne({ _id: delivery._id }, { $set: { status: 'posted', postedUrl: outcome.url, postedAt: new Date(), ...shot, ...(outcome.warning ? { error: outcome.warning } : {}) } });
-        if (outcome.warning) problems.push(`${facts.title}: ${outcome.warning}`);
+        if (outcome.warning) { problems.push(`${facts.title}: ${outcome.warning}`); needsRunReview = true; }
         records.push({ ...record(channel.platform, draft, facts, { status: 'Posted', posted_url: outcome.url }), sources: [outcome.url, ...(facts.link ? [facts.link] : [])] });
         continue;
       }
@@ -843,21 +843,9 @@ async function runPublishingUncapped(run: { _id: Types.ObjectId; dryRun: boolean
   const summary = handled
     ? `${handled} ${newWord}${noun}${handled === 1 ? '' : 's'}. ${posted} ${posted === 1 ? 'was' : 'were'} published or added${ready.length ? `, ${ready.length} ready to do by hand` : ''}.${repeats ? ` ${repeats} repeat${repeats === 1 ? '' : 's'} of earlier ${noun}s skipped.` : ''}`
     : repeats ? `No new ${noun}s (${repeats} repeat${repeats === 1 ? '' : 's'} of earlier ones skipped).` : `No new ${noun}s.`;
-  await finishRun(run._id, owner, 'completed', { output: { records, summary, gaps: problems.slice(0, 20) } });
-  const adminOnly = config.channels.every((c) => c.platform === 'admin');
-  if (ready.length || problems.length) {
-    await notifyPeople(
-      job.organizationId,
-      config.notifyUserIds,
-      {
-        subject: ready.length ? (adminOnly ? `${ready.length} ${noun}${ready.length === 1 ? '' : 's'} ready to add · ${profile.name}` : `${ready.length} post${ready.length === 1 ? '' : 's'} ready to post · ${profile.name}`) : `A publishing job needs attention · ${profile.name}`,
-        intro: ready.length ? (adminOnly ? `New ${noun}${handled === 1 ? '' : 's'} for ${profile.name}. These are filled in and waiting for someone to add them to the admin:` : `New ${noun}${handled === 1 ? '' : 's'} on ${profile.name}. These posts are written and waiting for someone to post them:`) : 'Something went wrong:',
-        lines: [...ready, ...problems].slice(0, 12),
-        action: ready.length ? 'Open the ready-to-post cards' : 'Open Marketing',
-      },
-      deps.send
-    );
-  }
+  // Deliveries already produce their own notifications. Problems without a pending delivery
+  // (unreadable source pages or warnings after a successful save) need a reviewable run as well.
+  await finishRun(run._id, owner, needsRunReview ? 'needs_review' : 'completed', { output: { records, summary, gaps: problems.slice(0, 20) } });
 }
 
 // ---------- People acting on deliveries ----------

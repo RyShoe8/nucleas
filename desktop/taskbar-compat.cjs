@@ -20,7 +20,9 @@ class CompatibleTaskbarController extends EventEmitter{
   if(this.stopped)return;
   const executable=app.isPackaged?path.join(process.resourcesPath,'native/TaskbarLayout.exe'):path.join(__dirname,'native/bin/TaskbarLayout.exe');
   let buffer='';
-  const child=spawn(executable,[String(process.pid)],{windowsHide:true,stdio:['ignore','pipe','ignore']});
+  const handle=this.window.getNativeWindowHandle();
+  const hwnd=handle.length===8?handle.readBigUInt64LE().toString():String(handle.readUInt32LE());
+  const child=spawn(executable,[String(process.pid),'--toolbar-hwnd',hwnd],{windowsHide:true,stdio:['ignore','pipe','ignore']});
   this.child=child;this.lastProbe=Date.now();
   child.stdout.on('data',chunk=>{
    if(this.stopped||this.child!==child)return;
@@ -75,6 +77,10 @@ class CompatibleTaskbarController extends EventEmitter{
   if(JSON.stringify(rect)!==this.bounds){this.window.setBounds(rect,false);this.bounds=JSON.stringify(rect);}
   if(!this.window.isVisible()){
    this.window.setAlwaysOnTop(true,'pop-up-menu');this.window.setOpacity(1);this.window.showInactive();
+  }else if(mode==='taskbar'&&this.layout.obscuredByTaskbar){
+   // Explorer raises itself when another shortcut is hovered or clicked. The toolbar remains
+   // "visible" to Electron, but sits underneath it. Restore only that ordering, without focus.
+   this.window.moveTop();
   }
   this.status(mode);
  }

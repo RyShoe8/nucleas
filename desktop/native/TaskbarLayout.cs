@@ -16,6 +16,7 @@ partial class TaskbarLayout {
  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd,out RECT rect);
  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
  [DllImport("user32.dll")] static extern bool IsChild(IntPtr parent,IntPtr child);
+ [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hwnd,uint command);
  [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint process);
  [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr hwnd,uint flags);
@@ -31,7 +32,7 @@ partial class TaskbarLayout {
  static readonly Stopwatch clock=Stopwatch.StartNew();
  static readonly AutoResetEvent measure=new AutoResetEvent(false);
  static Measurement cached;
- static IntPtr taskbar,hook;
+ static IntPtr taskbar,hook,toolbar;
  static WinEvent callback=OnEvent;
  static long scanStarted=-1,lastOutput,lastParentCheck;
  static string previous="";
@@ -49,6 +50,14 @@ partial class TaskbarLayout {
  static bool FullyShown(IntPtr hwnd,RECT r){
   var info=new MONITORINFO{size=Marshal.SizeOf(typeof(MONITORINFO))};
   return IsWindowVisible(hwnd)&&GetMonitorInfo(MonitorFromWindow(hwnd,2),ref info)&&r.left>=info.monitor.left&&r.top>=info.monitor.top&&r.right<=info.monitor.right&&r.bottom<=info.monitor.bottom;
+ }
+ // A topmost Explorer taskbar can cover another topmost window without hiding it.
+ // Only report Explorer covering our toolbar, not menus or unrelated applications above it.
+ static bool ObscuredByTaskbar(IntPtr bar){
+  if(toolbar==IntPtr.Zero||!IsWindowVisible(toolbar))return false;
+  IntPtr above=GetWindow(toolbar,3); // GW_HWNDPREV: the next window above this one.
+  for(int n=0;above!=IntPtr.Zero&&n<128;n++,above=GetWindow(above,3))if(above==bar)return true;
+  return false;
  }
  static void OnEvent(IntPtr h,uint type,IntPtr hwnd,int obj,int child,uint thread,uint time){
   if(hwnd==taskbar){Probe();if(type!=0x800B)measure.Set();}
@@ -69,7 +78,7 @@ partial class TaskbarLayout {
    var blocks=new List<string>();
    if(matched)foreach(var b in snapshot.blocked){int dx=bounds.left-snapshot.bar.left,dy=bounds.top-snapshot.bar.top;blocks.Add(Rect(new RECT{left=b.left+dx,right=b.right+dx,top=b.top+dy,bottom=b.bottom+dy}));}
    long busy=Interlocked.Read(ref scanStarted);
-   result="{\"visible\":"+Bool(visible)+",\"measured\":"+Bool(matched&&snapshot.valid)+",\"pending\":"+Bool(snapshot==null&&clock.ElapsedMilliseconds<3000)+",\"stalled\":"+Bool(busy>=0&&clock.ElapsedMilliseconds-busy>10000)+",\"bar\":"+Rect(bounds)+",\"blocked\":["+String.Join(",",blocks)+"]}";
+   result="{\"visible\":"+Bool(visible)+",\"obscuredByTaskbar\":"+Bool(visible&&ObscuredByTaskbar(found))+",\"measured\":"+Bool(matched&&snapshot.valid)+",\"pending\":"+Bool(snapshot==null&&clock.ElapsedMilliseconds<3000)+",\"stalled\":"+Bool(busy>=0&&clock.ElapsedMilliseconds-busy>10000)+",\"bar\":"+Rect(bounds)+",\"blocked\":["+String.Join(",",blocks)+"]}";
   }
   if(result!=previous||clock.ElapsedMilliseconds-lastOutput>=5000){Console.WriteLine(result);Console.Out.Flush();previous=result;lastOutput=clock.ElapsedMilliseconds;}
  }
@@ -103,6 +112,13 @@ partial class TaskbarLayout {
  [MTAThread] static void Main(string[] args){
   SetProcessDPIAware();Process parent=null;
   try{if(args.Length>0)parent=Process.GetProcessById(Int32.Parse(args[0]));}catch{return;}
+  for(int i=1;i+1<args.Length;i++)if(args[i]=="--toolbar-hwnd"){
+   long value;uint owner;
+   if(Int64.TryParse(args[i+1],out value)){
+    var candidate=new IntPtr(value);GetWindowThreadProcessId(candidate,out owner);
+    if(parent!=null&&owner==(uint)parent.Id)toolbar=candidate;
+   }
+  }
   var root=GCHandle.Alloc(callback);UIntPtr timer=UIntPtr.Zero;
   try{
    var worker=new Thread(MeasureLoop){IsBackground=true};worker.SetApartmentState(ApartmentState.MTA);worker.Start();Probe();

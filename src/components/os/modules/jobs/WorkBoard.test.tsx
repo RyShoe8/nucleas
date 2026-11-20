@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@/hooks/os/useWindowManager', () => ({ useWindowManager: () => ({ open: () => {} }) }));
 vi.mock('../CompanyTeamPanel', () => ({ LiveExchange: () => null }));
 import type { JobView } from './JobCard';
-import WorkBoard from './WorkBoard';
+import WorkBoard, { JobPanel } from './WorkBoard';
 import { jobLine, memberOf, modeLine, queueFor } from './workQueue';
 
 const id = (c: string) => c.repeat(24);
@@ -70,5 +70,16 @@ describe('the Work board', () => {
     expect(html).toContain('Nothing needs you right now.');
     expect(html).toContain('PlayBound');
     expect(html).not.toContain('Link building');
+  });
+
+  it('opens a publishing warning from its run notification and lets a manager resolve it', () => {
+    const run = (id: string, summary: string) => ({ id, status: 'needs_review', dryRun: false, startedAt: '2026-11-20T00:00:00Z', issues: [], output: { records: [], gaps: [summary], summary } });
+    const current = job({ publishing: publishing([]), design: { ...job().design, skill: 'social_publish' }, runs: [run('newer', 'A newer warning'), run('older', 'Six pages skipped after a site change')] });
+    const html = renderToStaticMarkup(createElement(JobPanel, { job: current, focus: { kind: 'run', id: 'older' }, onChange: () => {} }));
+    expect(html).toContain('Six pages skipped after a site change');
+    expect(html).not.toContain('A newer warning');
+    expect(html).toContain('View full results');
+    expect(html).toContain('>Accept<');
+    expect(html).toContain('>Reject<');
   });
 });
