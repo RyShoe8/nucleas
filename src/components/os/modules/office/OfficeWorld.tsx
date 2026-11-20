@@ -5,6 +5,7 @@ import { AMENITIES, type Amenity } from './officeActivities';
 import { AMENITY_POSITION, makeWorld, officeTheme, type Person } from './officeSimulation';
 import { useOfficeWorld } from './useOfficeWorld';
 import { useOfficeMotion } from './useOfficeMotion';
+import type {SharedOffice} from './useSharedOffice';
 import styles from './World.module.css';
 
 function Art({src,className,style}:{src:string;className?:string;style?:CSSProperties}) {
@@ -21,14 +22,14 @@ function Logo({room}:{room:Room}) {
 }
 const DECOR:Record<string,string>={controller:'🎮',trophy:'🏆',arcade:'🕹',chart:'📈',globe:'🌐',safe:'🔐',camera:'📷',palette:'🎨',books:'📚',house:'🏠',tools:'🛠',plant:'🪴',laptop:'💻',mail:'✉'};
 
-export default function OfficeWorld({rooms,onOpenRoom,onOpenDesk}:{rooms:Room[];onOpenRoom:(room:Room)=>void;onOpenDesk:(room:Room,desk:Desk)=>void}) {
-    const world=useMemo(()=>makeWorld(rooms),[rooms]);
+export default function OfficeWorld({rooms,shared,onOpenRoom,onOpenDesk}:{rooms:Room[];shared:SharedOffice;onOpenRoom:(room:Room)=>void;onOpenDesk:(room:Room,desk:Desk)=>void}) {
+    const fallback=useMemo(()=>makeWorld(rooms),[rooms]);
+    const world=shared.frame?.snapshot.scene.world??fallback;
     const viewport=useRef<HTMLDivElement>(null);
     const [zoom,setZoom]=useState<number|null>(null);
     const [fit,setFit]=useState(1);
     const [selected,setSelected]=useState<Person|null>(null);
     const [amenity,setAmenity]=useState<Amenity|null>(null);
-    const [overrides,setOverrides]=useState<Record<string,Amenity|'desk'>>({});
     const [ambient,setAmbient]=useState(true);
     const {ref,enabled}=useOfficeMotion();
     const scale=zoom??fit;
@@ -37,14 +38,14 @@ export default function OfficeWorld({rooms,onOpenRoom,onOpenDesk}:{rooms:Room[];
         const observer=new ResizeObserver(([entry])=>setFit(Math.max(.55,entry.contentRect.width/world.width)));
         observer.observe(element);return()=>observer.disconnect();
     },[world.width]);
-    const {nodes,snapshot}=useOfficeWorld(world,enabled&&ambient,overrides);
+    const {nodes,snapshot}=useOfficeWorld(world,enabled&&ambient,shared.frame);
     const selectedLive=selected?world.people.find(p=>p.id===selected.id):null;
     const counts=new Map<Amenity,number>();
     for(const actor of snapshot) if(actor.arrived&&actor.destination.amenity) counts.set(actor.destination.amenity,(counts.get(actor.destination.amenity)??0)+1);
-    const visit=(person:Person,target:Amenity|'desk')=>{setOverrides(current=>({...current,[person.id]:target}));setSelected(null);};
+    const visit=async(person:Person,target:Amenity|'desk')=>{if(await shared.visit(person.room.companyId,person.desk.role,target))setSelected(null);};
     return <div className={styles.wrapper} ref={ref}>
         <div className={styles.toolbar}>
-            <div><strong>Office floor</strong><small>Live work at desks · amber needs you · breaks are ambient</small></div>
+            <div><strong>Organization office</strong><small role="status">{shared.error??(!shared.frame?'Connecting to the shared office…':shared.saving?'Saving the shared visit…':'Shared positions · updates every 5 seconds · breaks are ambient')}</small></div>
             <label>Go to <select aria-label="Go to company" defaultValue="" onChange={event=>{
                 const suite=world.suites.find(s=>s.room.companyId===event.target.value);
                 if(suite) viewport.current?.scrollTo({top:Math.max(0,suite.y*scale-20),left:Math.max(0,(suite.x-10)*scale),behavior:'smooth'});
@@ -53,23 +54,23 @@ export default function OfficeWorld({rooms,onOpenRoom,onOpenDesk}:{rooms:Room[];
             <button type="button" aria-label="Zoom in" onClick={()=>setZoom(Math.min(Math.max(3,fit),scale+.1))}>+</button>
             <button type="button" onClick={()=>setZoom(null)}>Fit width</button>
             <button type="button" onClick={()=>{setZoom(Math.min(fit,(viewport.current?.clientHeight??700)/world.height));viewport.current?.scrollTo({top:0,left:0});}}>Whole office</button>
-            <button type="button" aria-pressed={!ambient} onClick={()=>setAmbient(v=>!v)}>{ambient?'Pause motion':'Resume motion'}</button>
+            <button type="button" aria-pressed={!ambient} onClick={()=>setAmbient(v=>!v)}>{ambient?'Reduce motion':'Animate motion'}</button>
         </div>
         <div className={styles.workStrip} aria-label="Company status and metrics">
             {rooms.map(room=><button key={room.companyId} type="button" onClick={()=>onOpenRoom(room)}><i style={{background:room.waiting?'#eab65d':room.color}}/><strong>{room.name}</strong><span>{room.waiting?`${room.waiting} need you`:room.working?`${room.working} working`:'Available'}</span><small>{(room.desks.find(d=>d.waiting&&d.says)??room.desks.find(d=>d.says))?.says??'Open company and assigned work'}</small><div className={styles.boardMetrics}>{room.screens.map(screen=><div key={screen.label}><b>{screen.value}</b><small>{screen.label} · 7 days</small></div>)}</div></button>)}
         </div>
-        {(selectedLive||amenity)&&<div className={styles.inspector}>
+        {(selectedLive||amenity)&&<fieldset className={styles.inspector} disabled={shared.saving||!shared.frame}>
             <button type="button" className={styles.close} onClick={()=>{setSelected(null);setAmenity(null);}}>Close</button>
             {selectedLive ? <><strong>{selectedLive.room.name} · {selectedLive.desk.name}</strong><p>{selectedLive.desk.says??'Available for work'}</p>
                 <button type="button" onClick={()=>onOpenDesk(selectedLive.room,selectedLive.desk)}>Open assigned work{selectedLive.desk.waiting?` · ${selectedLive.desk.waiting} to review`:''}</button>
                 <button type="button" onClick={()=>onOpenRoom(selectedLive.room)}>Company & data</button>
                 {!['waiting','working'].includes(selectedLive.desk.state)&&<><button type="button" onClick={()=>visit(selectedLive,'desk')}>Return to desk</button><label>Visit <select aria-label="Send member to amenity" value="" onChange={event=>visit(selectedLive,event.target.value as Amenity)}><option value="">Choose a shared space</option>{Object.entries(AMENITIES).map(([id,value])=><option key={id} value={id}>{value.name}</option>)}</select></label></>}
             </> : amenity && <><strong>{AMENITIES[amenity].name}</strong><p>{counts.get(amenity)??0} members here. Select an available member to join.</p>
-                <ul className={styles.visitors}>{snapshot.filter(actor=>actor.destination.amenity===amenity||((amenity==='gaming'||amenity==='couch')&&(actor.destination.amenity==='gaming'||actor.destination.amenity==='couch'))).map(actor=>{const person=world.people.find(p=>p.id===actor.id);return person&&<li key={actor.id}>{person.room.name} · {person.desk.name} · {actor.arrived?'Here':'Walking over'}<button type="button" onClick={()=>setOverrides(current=>({...current,[actor.id]:'desk'}))}>Return to desk</button></li>;})}</ul>
+                <ul className={styles.visitors}>{snapshot.filter(actor=>actor.destination.amenity===amenity||((amenity==='gaming'||amenity==='couch')&&(actor.destination.amenity==='gaming'||actor.destination.amenity==='couch'))).map(actor=>{const person=world.people.find(p=>p.id===actor.id);return person&&<li key={actor.id}>{person.room.name} · {person.desk.name} · {actor.arrived?'Here':'Walking over'}<button type="button" onClick={()=>void visit(person,'desk')}>Return to desk</button></li>;})}</ul>
                 {(amenity==='gaming'||amenity==='couch')&&<p>The couch has three shared seats for gaming and relaxing.</p>}
                 <select aria-label="Choose available member" value="" onChange={event=>{const person=world.people.find(p=>p.id===event.target.value);if(person)visit(person,amenity);}}><option value="">Choose a team member</option>{world.people.filter(p=>p.desk.state==='idle'||p.desk.state==='away').map(p=><option key={p.id} value={p.id}>{p.room.name} · {p.desk.name}</option>)}</select>
             </>}
-        </div>}
+        </fieldset>}
         <div ref={viewport} className={styles.viewport} aria-label="Scrollable office floor">
             <div style={{width:world.width*scale,height:world.height*scale,margin:'0 auto'}}>
                 <div className={styles.world} data-motion={enabled&&ambient} style={{width:world.width,height:world.height,transform:`scale(${scale})`}}>

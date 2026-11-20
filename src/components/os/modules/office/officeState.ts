@@ -1,6 +1,7 @@
 import type { ActivityItem } from '@/lib/activity/types-client';
 import { TEAM, TEAM_ROLES, type TeamRole } from '@/lib/companies/teamRoles';
-import { jobIsBusy, type JobView } from '../jobs/JobCard';
+import type { JobView } from '../jobs/JobCard';
+import { jobIsBusy } from '@/lib/jobs/busy';
 import { memberOf, queueFor } from '../jobs/workQueue';
 
 /**

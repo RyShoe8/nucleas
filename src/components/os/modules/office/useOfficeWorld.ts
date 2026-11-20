@@ -1,30 +1,34 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { chooseDestinations, moveActor, type Actor, type World } from './officeSimulation';
-import type { Amenity } from './officeActivities';
+import { type Actor, type World } from './officeSimulation';
+import {projectActor} from '@/lib/office/timeline';
+import type {SharedOfficeFrame} from './useSharedOffice';
 import { drawOfficeRig, loadOfficeRigs } from './officeRig';
 
 /** One capped frame loop for the whole building. Positions update DOM transforms, never React per frame. */
-export function useOfficeWorld(world:World, enabled:boolean, overrides:Record<string,Amenity|'desk'>) {
+export function useOfficeWorld(world:World, enabled:boolean, shared:SharedOfficeFrame|null) {
     const nodes=useRef(new Map<string,HTMLButtonElement>());
-    const actors=useRef(new Map<string,Actor>());
-    const elapsed=useRef(0);
+    const latest=useRef(shared);
+    useEffect(()=>{latest.current=shared;},[shared]);
     const [snapshot,setSnapshot]=useState<Actor[]>([]);
     const [rigReady,setRigReady]=useState(false);
     useEffect(()=>{let cancelled=false;void loadOfficeRigs().then(()=>{if(!cancelled)setRigReady(true);}).catch(()=>{});return()=>{cancelled=true;};},[]);
     useEffect(()=>{
-        const ids=new Set(world.people.map(p=>p.id));
-        for(const id of actors.current.keys()) if(!ids.has(id)) actors.current.delete(id);
-        for(const p of world.people) if(!actors.current.has(p.id)) actors.current.set(p.id,{id:p.id,point:p.home.point,destination:p.home,route:[],arrived:true,facing:1});
-        let frame=0,last=0,published=0,planned=-10;
-        let destinations=chooseDestinations(world,elapsed.current,overrides);
+        let frame=0,last=0,published=0;
         const visible=new Set<string>();
         const observer=new IntersectionObserver(entries=>{for(const entry of entries){const id=(entry.target as HTMLElement).dataset.person;if(id){if(entry.isIntersecting)visible.add(id);else visible.delete(id);}}},{rootMargin:'100px'});
         for(const [id,node] of nodes.current){node.dataset.person=id;observer.observe(node);}
         const canvases=new Map([...nodes.current].map(([id,node])=>[id,node.querySelector('canvas')]));
         const people=new Map(world.people.map(p=>[p.id,p]));
         const paint=()=>{
-            for(const [id,actor] of actors.current) {
+            const shared=latest.current;
+            if(!shared)return [];
+            // Extrapolate only the persisted route, never invent a local next activity.
+            // If disconnected, stop after ten seconds instead of running a private office.
+            const now=shared.snapshot.serverTime+Math.min(10000,Math.max(0,performance.now()-shared.receivedAt));
+            const actors=shared.snapshot.scene.actors.map(actor=>projectActor(actor,Math.max(0,(now-shared.snapshot.scene.at)/1000)));
+            for(const actor of actors) {
+                const id=actor.id;
                 const node=nodes.current.get(id);
                 if(!node) continue;
                 node.style.transform=`translate3d(${actor.point.x-44}px,${actor.point.y-82}px,0)`;
@@ -33,33 +37,24 @@ export function useOfficeWorld(world:World, enabled:boolean, overrides:Record<st
                 node.style.setProperty('--facing',String(actor.facing));
                 const canvas=canvases.get(id),person=people.get(id);
                 if(rigReady&&canvas&&person&&(visible.has(id)||!enabled)) {
-                    node.dataset.rig=String(drawOfficeRig(canvas,person.desk.role,actor,person.desk.state==='working',elapsed.current));
+                    node.dataset.rig=String(drawOfficeRig(canvas,person.desk.role,actor,person.desk.state==='working',now/1000));
                 }
             }
+            return actors;
         };
         if(!enabled) {
-            // Freeze travel and ambient life, but preserve truthful work/pose labels at stations.
-            for(const p of world.people) {
-                const actor=actors.current.get(p.id)!;
-                if(actor.arrived&&actor.destination.key===p.home.key) actors.current.set(p.id,{...actor,destination:p.home});
-            }
-            paint();setSnapshot([...actors.current.values()]);return()=>observer.disconnect();
+            // Reduced motion displays current shared positions without animating travel.
+            setSnapshot(paint());return()=>observer.disconnect();
         }
         const tick=(time:number)=>{
             frame=requestAnimationFrame(tick);
             if(last && time-last<1000/30) return;
-            const delta=last?Math.min((time-last)/1000,.1):0;
-            last=time;elapsed.current+=delta;
-            if(elapsed.current-planned>1) {destinations=chooseDestinations(world,elapsed.current,overrides);planned=elapsed.current;}
-            for(const [id,actor] of actors.current) {
-                const destination=destinations.get(id);
-                if(destination) actors.current.set(id,moveActor(actor,destination,delta));
-            }
-            paint();
-            if(time-published>500) {setSnapshot([...actors.current.values()]);published=time;}
+            last=time;
+            const actors=paint();
+            if(time-published>500) {setSnapshot(actors);published=time;}
         };
         frame=requestAnimationFrame(tick);
         return ()=>{cancelAnimationFrame(frame);observer.disconnect();};
-    },[world,enabled,overrides,rigReady]);
+    },[world,enabled,shared?.snapshot.revision,rigReady]);
     return {nodes,snapshot};
 }

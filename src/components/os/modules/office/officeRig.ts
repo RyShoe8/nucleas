@@ -36,8 +36,8 @@ export function drawOfficeRig(canvas:HTMLCanvasElement,role:string,actor:Actor,w
     const ctx=canvas.getContext('2d');if(!ctx)return false;
     const clip=officeClip(actor,working);
     let player=players.get(canvas);
-    if(!player){player={clip,started:time,lastFrame:-1,last:[],from:[],change:time,facing:actor.facing,texture:textureKey};players.set(canvas,player);}
-    if(player.clip!==clip){player.from=player.last;player.clip=clip;player.started=time;player.change=time;player.lastFrame=-1;}
+    if(!player){player={clip,started:0,lastFrame:-1,last:[],from:[],change:time,facing:actor.facing,texture:textureKey};players.set(canvas,player);}
+    if(player.clip!==clip){player.from=player.last;player.clip=clip;player.started=0;player.change=time;player.lastFrame=-1;}
     const frames=motion.clips[clip]??motion.clips.idle;
     const index=Math.floor((time-player.started)*motion.fps)%frames.length;
     const blend=Math.min(1,(time-player.change)/.28);
