@@ -4,6 +4,7 @@ import {requireCompanyViewer} from '@/lib/companies/osRouteContext';
 import Employee from '@/lib/models/Employee';
 import {POST as createEmployee} from '@/app/api/employees/route';
 import {invalidateOfficeRoster,removeOfficeEmployee,EmployeeManagementError} from '@/lib/office/employees';
+import {officeRosterFilter} from '@/lib/office/roster';
 import {getOrganizationForBillingUser} from '@/lib/billing/organizationResolve';
 import {syncStripeSubscriptionSeatsForOrganization} from 'billing-engine';
 
@@ -11,7 +12,7 @@ const headers={'Cache-Control':'private, no-store'};
 export async function GET(request:NextRequest){
   const viewer=await requireCompanyViewer(request);if(viewer instanceof NextResponse)return viewer;
   const canManage=viewer.role==='Administrator';
-  const people=await Employee.find({organizationId:String(viewer.organizationId)}).select('name jobTitle role userId').sort({name:1}).lean();
+  const people=await Employee.find(officeRosterFilter(String(viewer.organizationId))).select('name jobTitle role userId').sort({name:1}).lean();
   return NextResponse.json({canManage,employees:people.map(p=>({id:String(p._id),name:p.name,jobTitle:p.jobTitle,role:p.role,canRemove:canManage&&String(p.userId)!==String(viewer.organizationId)&&String(p.userId)!==viewer.userId&&String(p._id)!==viewer.employeeId}))},{headers});
 }
 const addSchema=z.object({name:z.string().trim().min(1).max(120),jobTitle:z.string().trim().max(120).optional(),email:z.union([z.literal(''),z.string().trim().email().max(254)]).optional(),role:z.enum(['Administrator','Manager','User']),weeklyHours:z.number().min(0).max(168),employeeType:z.enum(['full-time','part-time','contractor'])}).strict();

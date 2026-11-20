@@ -9,11 +9,13 @@ import { parseMediaResponse, type MediaKind, type MediaRow } from '@/lib/ai/engi
  * AI Engine window; rows are cached for a day and the last good set is kept when a refresh fails.
  */
 
-const ENDPOINT = 'https://artificialanalysis.ai/api/v2/data/llms/models';
+// https://artificialanalysis.ai/data-api/migrate-v2-data — old /data/* routes return 410.
+const ENDPOINT = 'https://artificialanalysis.ai/api/v2/language/models/free';
 const TTL_MS = 24 * 60 * 60 * 1000;
+const API_REVISION = 2;
 const MEDIA_ENDPOINTS: Record<MediaKind, string> = {
-  image: 'https://artificialanalysis.ai/api/v2/data/media/text-to-image',
-  video: 'https://artificialanalysis.ai/api/v2/data/media/text-to-video',
+  image: 'https://artificialanalysis.ai/api/v2/media/text-to-image/models/free',
+  video: 'https://artificialanalysis.ai/api/v2/media/text-to-video/models/free',
 };
 export const BENCHMARK_SOURCE = { name: 'Artificial Analysis', url: 'https://artificialanalysis.ai/' };
 
@@ -48,8 +50,12 @@ const sourceSchema = new Schema(
     /** Text-to-image and text-to-video arena leaderboards, refreshed with the text scores. */
     media: { type: Schema.Types.Mixed, default: {} },
     mediaFetchedAt: { type: Date },
+    mediaAttemptedAt: { type: Date },
+    mediaApiRevision: { type: Number },
     mediaError: { type: String },
     fetchedAt: { type: Date },
+    attemptedAt: { type: Date },
+    apiRevision: { type: Number },
     error: { type: String },
   },
   { timestamps: true }
@@ -61,7 +67,7 @@ export const AiBenchmarkSource: Model<SourceDoc> =
 const KEY = 'artificial_analysis';
 
 type MediaStored = Partial<Record<MediaKind, MediaRow[]>>;
-type Stored = { apiKeyCiphertext?: string; apiKeyLast4?: string; rows?: BenchmarkRow[]; media?: MediaStored; mediaFetchedAt?: Date; mediaError?: string; fetchedAt?: Date; error?: string };
+type Stored = { apiKeyCiphertext?: string; apiKeyLast4?: string; rows?: BenchmarkRow[]; media?: MediaStored; mediaFetchedAt?: Date; mediaAttemptedAt?: Date; mediaApiRevision?: number; mediaError?: string; fetchedAt?: Date; attemptedAt?: Date; apiRevision?: number; error?: string };
 
 function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
@@ -71,6 +77,7 @@ export function parseBenchmarkResponse(body: unknown): BenchmarkRow[] {
   const data = (body as { data?: unknown })?.data;
   if (!Array.isArray(data)) return [];
   return data.flatMap((raw) => {
+    if (!raw || typeof raw !== 'object') return [];
     const r = raw as { slug?: unknown; name?: unknown; model_creator?: { name?: unknown }; evaluations?: Record<string, unknown> };
     if (typeof r.slug !== 'string') return [];
     const e = r.evaluations ?? {};
@@ -87,12 +94,35 @@ export function parseBenchmarkResponse(body: unknown): BenchmarkRow[] {
   });
 }
 
+/** Complete snapshots only: a failed/malformed later page must never replace a good cached list. */
+async function fetchLeaderboard<T>(apiKey: string, endpoint: string, parse: (body: unknown) => T[], label: string): Promise<T[]> {
+  const rows: T[] = [];
+  const signal = AbortSignal.timeout(20_000);
+  for (let page = 1; page <= 50; page += 1) {
+    const url = new URL(endpoint);
+    if (page > 1) url.searchParams.set('page', String(page));
+    const res = await fetch(url.toString(), { headers: { 'x-api-key': apiKey }, cache: 'no-store', signal });
+    if (res.status === 401) throw new Error('Artificial Analysis rejected the API key.');
+    if (res.status === 403) throw new Error(`Artificial Analysis denied access to the ${label} leaderboard. Check this key’s account permissions and plan.`);
+    if (!res.ok) throw new Error(`Artificial Analysis returned ${res.status} for the ${label} leaderboard.`);
+    const body = await res.json();
+    const batch = parse(body);
+    if (batch.length === 0) throw new Error(`Artificial Analysis returned no usable ${label} models on page ${page}.`);
+    rows.push(...batch);
+    const pagination = body?.pagination;
+    if (!pagination) return rows; // Media feeds are not paginated.
+    if (pagination.page !== page || !Number.isInteger(pagination.total_pages) || pagination.total_pages < page ||
+        typeof pagination.has_more !== 'boolean' || pagination.has_more !== (page < pagination.total_pages)) {
+      throw new Error(`Artificial Analysis returned invalid pagination for the ${label} leaderboard.`);
+    }
+    if (!pagination.has_more) return rows;
+  }
+  throw new Error(`Artificial Analysis exceeded the page limit for the ${label} leaderboard.`);
+}
+
 async function fetchRows(apiKey: string): Promise<BenchmarkRow[]> {
-  const res = await fetch(ENDPOINT, { headers: { 'x-api-key': apiKey }, cache: 'no-store', signal: AbortSignal.timeout(20_000) });
-  if (res.status === 401 || res.status === 403) throw new Error('Artificial Analysis rejected the API key.');
-  if (!res.ok) throw new Error(`Artificial Analysis returned ${res.status}.`);
-  const rows = parseBenchmarkResponse(await res.json());
-  if (rows.length === 0) throw new Error('Artificial Analysis returned no models.');
+  const rows = await fetchLeaderboard(apiKey, ENDPOINT, parseBenchmarkResponse, 'language');
+  if (!rows.some(row => row.intelligence !== null || row.coding !== null)) throw new Error('Artificial Analysis returned no usable benchmark scores.');
   return rows;
 }
 
@@ -100,26 +130,25 @@ async function fetchRows(apiKey: string): Promise<BenchmarkRow[]> {
 export async function benchmarkRows(force = false): Promise<BenchmarkRow[]> {
   const doc = await AiBenchmarkSource.findOne({ key: KEY }).lean<Stored>();
   if (!doc?.apiKeyCiphertext) return [];
-  const fresh = doc.fetchedAt && Date.now() - new Date(doc.fetchedAt).getTime() < TTL_MS;
+  const fresh = doc.apiRevision === API_REVISION && doc.attemptedAt && Date.now() - new Date(doc.attemptedAt).getTime() < TTL_MS;
   if (!force && fresh) return doc.rows ?? [];
   try {
     const rows = await fetchRows(decryptModelSecret(doc.apiKeyCiphertext));
-    await AiBenchmarkSource.updateOne({ key: KEY }, { $set: { rows, fetchedAt: new Date() }, $unset: { error: '' } });
+    const now = new Date();
+    await AiBenchmarkSource.updateOne({ key: KEY }, { $set: { rows, fetchedAt: now, attemptedAt: now, apiRevision: API_REVISION }, $unset: { error: '' } });
     return rows;
   } catch (err) {
     // Keep the last good scores; retry on the next day's refresh.
-    await AiBenchmarkSource.updateOne({ key: KEY }, { $set: { error: err instanceof Error ? err.message : 'refresh failed', fetchedAt: new Date() } });
+    await AiBenchmarkSource.updateOne({ key: KEY }, {
+      $set: { error: err instanceof Error ? err.message : 'refresh failed', attemptedAt: new Date(), apiRevision: API_REVISION },
+      ...(doc.apiRevision !== API_REVISION && doc.error ? { $unset: { fetchedAt: '' } } : {}),
+    });
     return doc.rows ?? [];
   }
 }
 
 async function fetchMedia(apiKey: string, kind: MediaKind): Promise<MediaRow[]> {
-  const res = await fetch(MEDIA_ENDPOINTS[kind], { headers: { 'x-api-key': apiKey }, cache: 'no-store', signal: AbortSignal.timeout(20_000) });
-  if (res.status === 401 || res.status === 403) throw new Error('Artificial Analysis rejected the API key.');
-  if (!res.ok) throw new Error(`Artificial Analysis returned ${res.status} for the ${kind} leaderboard.`);
-  const rows = parseMediaResponse(await res.json());
-  if (rows.length === 0) throw new Error(`Artificial Analysis returned no ${kind} models.`);
-  return rows;
+  return fetchLeaderboard(apiKey, MEDIA_ENDPOINTS[kind], parseMediaResponse, kind);
 }
 
 /**
@@ -131,8 +160,9 @@ export async function mediaLeaderboards(force = false): Promise<{ image: MediaRo
   const empty = { image: [] as MediaRow[], video: [] as MediaRow[], error: null, fetchedAt: null };
   if (!doc?.apiKeyCiphertext) return empty;
   const stored = { image: doc.media?.image ?? [], video: doc.media?.video ?? [] };
-  const fresh = doc.mediaFetchedAt && Date.now() - new Date(doc.mediaFetchedAt).getTime() < TTL_MS;
-  if (!force && fresh) return { ...stored, error: doc.mediaError ?? null, fetchedAt: new Date(doc.mediaFetchedAt!).toISOString() };
+  const lastSuccess = doc.mediaFetchedAt && (doc.mediaApiRevision === API_REVISION || !doc.mediaError) ? new Date(doc.mediaFetchedAt).toISOString() : null;
+  const fresh = doc.mediaApiRevision === API_REVISION && doc.mediaAttemptedAt && Date.now() - new Date(doc.mediaAttemptedAt).getTime() < TTL_MS;
+  if (!force && fresh) return { ...stored, error: doc.mediaError ?? null, fetchedAt: lastSuccess };
   const apiKey = decryptModelSecret(doc.apiKeyCiphertext);
   const errors: string[] = [];
   const next: MediaStored = {};
@@ -145,8 +175,11 @@ export async function mediaLeaderboards(force = false): Promise<{ image: MediaRo
     }
   }
   const now = new Date();
-  await AiBenchmarkSource.updateOne({ key: KEY }, { $set: { media: next, mediaFetchedAt: now, ...(errors.length ? { mediaError: errors.join(' ') } : {}) }, ...(errors.length ? {} : { $unset: { mediaError: '' } }) });
-  return { image: next.image ?? [], video: next.video ?? [], error: errors.length ? errors.join(' ') : null, fetchedAt: now.toISOString() };
+  await AiBenchmarkSource.updateOne({ key: KEY }, {
+    $set: { media: next, mediaAttemptedAt: now, mediaApiRevision: API_REVISION, ...(errors.length ? { mediaError: errors.join(' ') } : { mediaFetchedAt: now }) },
+    ...(errors.length ? (doc.mediaFetchedAt && !lastSuccess ? { $unset: { mediaFetchedAt: '' } } : {}) : { $unset: { mediaError: '' } }),
+  });
+  return { image: next.image ?? [], video: next.video ?? [], error: errors.length ? errors.join(' ') : null, fetchedAt: errors.length ? lastSuccess : now.toISOString() };
 }
 
 /** Saves (after verifying) or removes the Artificial Analysis API key. */
@@ -164,7 +197,7 @@ export async function saveBenchmarkKey(apiKey: string | null): Promise<{ ok: tru
   }
   await AiBenchmarkSource.updateOne(
     { key: KEY },
-    { $set: { apiKeyCiphertext: encryptModelSecret(trimmed), apiKeyLast4: secretLast4(trimmed), rows, fetchedAt: new Date() }, $unset: { error: '' } },
+    { $set: { apiKeyCiphertext: encryptModelSecret(trimmed), apiKeyLast4: secretLast4(trimmed), rows, fetchedAt: new Date(), attemptedAt: new Date(), apiRevision: API_REVISION }, $unset: { error: '', mediaAttemptedAt: '', mediaApiRevision: '' } },
     { upsert: true }
   );
   return { ok: true };
@@ -176,7 +209,8 @@ export async function benchmarkStatus(): Promise<{ configured: boolean; keyLast4
     configured: Boolean(doc?.apiKeyCiphertext),
     keyLast4: doc?.apiKeyLast4 ?? null,
     models: doc?.rows?.length ?? 0,
-    fetchedAt: doc?.fetchedAt ? new Date(doc.fetchedAt).toISOString() : null,
+    // Before revision 2, failed attempts overwrote fetchedAt; that date cannot prove freshness.
+    fetchedAt: doc?.fetchedAt && (doc.apiRevision === API_REVISION || !doc.error) ? new Date(doc.fetchedAt).toISOString() : null,
     error: doc?.error ?? null,
   };
 }

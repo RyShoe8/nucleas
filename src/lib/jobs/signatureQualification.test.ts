@@ -48,7 +48,7 @@ describe('signature prospect qualification', () => {
     const blog = 'https://smallco.substack.com/p/launch';
     const values = { ...candidate, first_name: 'Ana', last_name: 'Lee', role: 'Founder', email: 'ana@smallcompany.com', post: '@smallcompany.com How did the launch go?', growth_source: blog, growth_date: new Date().toISOString().slice(0, 10), person_source: 'https://smallcompany.com/team', contact_source: 'https://smallcompany.com/team', cta_url: 'https://smallcompany.com/buy' };
     const sources = [candidate.team_source, blog, 'https://smallcompany.com/buy'];
-    const opened = () => worker.navigate.mockImplementation(async (url: string) => ({ url, links: [candidate.social], text: `${candidate.team_quote} ${candidate.growth_quote} Ana Lee, Founder ana@smallcompany.com` }));
+    const opened = () => worker.navigate.mockImplementation(async (url: string) => ({ url, links: [candidate.social], text: `${candidate.team_quote} ${candidate.growth_quote} ${values.growth_date} Ana Lee, Founder ana@smallcompany.com` }));
 
     it('counts when the homepage points to that exact blog', async () => {
       opened();
@@ -131,9 +131,15 @@ describe('signature prospect qualification', () => {
   });
 
   it('checks quotes against the whole page, not the shortened copy', async () => {
-    worker.navigate.mockImplementation(async (url: string) => ({ url, links: [candidate.social], text: 'shortened', plainText: `${candidate.team_quote} ${candidate.growth_quote} Ana Lee, Founder ana@smallcompany.com` }));
+    worker.navigate.mockImplementation(async (url: string) => ({ url, links: [candidate.social], text: 'shortened', plainText: `${candidate.team_quote} ${candidate.growth_quote} ${new Date().toISOString().slice(0, 10)} Ana Lee, Founder ana@smallcompany.com` }));
     const values = { ...candidate, first_name: 'Ana', last_name: 'Lee', role: 'Founder', email: 'ana@smallcompany.com', post: '@smallcompany.com How did the launch go?', growth_date: new Date().toISOString().slice(0, 10), person_source: candidate.team_source, contact_source: candidate.team_source, cta_url: 'https://smallcompany.com/buy' };
     await expect(qualifySignatureProspect(values, [candidate.team_source, candidate.growth_source, 'https://smallcompany.com/buy'], [], false)).resolves.toContain('Opened primary source');
+  });
+
+  it('rejects a current date invented for an undated announcement even when its quote exists', async () => {
+    worker.navigate.mockImplementation(async (url: string) => ({ url, links: [candidate.social], text: `${candidate.team_quote} ${candidate.growth_quote} Ana Lee, Founder ana@smallcompany.com` }));
+    const values = { ...candidate, growth_date: new Date().toISOString().slice(0, 10), person_source: candidate.team_source, contact_source: candidate.team_source, cta_url: 'https://smallcompany.com/buy' };
+    await expect(qualifySignatureProspect(values, [candidate.team_source, candidate.growth_source, values.cta_url], [], false)).rejects.toThrow('never today');
   });
 
   describe('the final checks on a record', () => {

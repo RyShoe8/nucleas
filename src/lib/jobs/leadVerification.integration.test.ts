@@ -66,6 +66,12 @@ describe('a small job for a free model', () => {
 });
 
 describe('checking what it reports', () => {
+  it('keeps verifiable facts when other fields are explicitly unknown', async () => {
+    const result = await verifyLeadClaims(scope, lead, JSON.stringify({ ...good, email: null, feed: null }), deps);
+    expect(result.confirmed.sort()).toEqual(['growth', 'logo', 'person', 'team']);
+    expect(result.rejected).toEqual([]);
+    expect((await ResearchEvidence.findOne({ domain: lead.domain }).lean())?.facts?.some(fact => fact.field === 'growth')).toBe(true);
+  });
   it('saves everything that checks out, with where it was found', async () => {
     const result = await verifyLeadClaims(scope, lead, JSON.stringify(good), deps);
     expect(result.rejected).toEqual([]);

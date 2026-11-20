@@ -545,6 +545,7 @@ describe('approving and the dry run', () => {
 
   it.each(['signature_outreach', 'casino_discovery'] as const)('replans %s from observed gaps without delivering an empty result', async skill => {
     const job = await proposed({ ...DESIGN, skill });
+    await Job.updateOne({ _id: job.id }, { $set: { level: 'medium' } });
     await JobRun.create({ organizationId: org, companyId: new Types.ObjectId(), jobId: new Types.ObjectId(),
       researchSkill: skill, researchFamily: 'association', startedAt: new Date(), finishedAt: new Date(),
       status: 'completed', costMicros: 123, review: { verdict: 'pass', notes: 'Other company private notes' },
@@ -576,6 +577,8 @@ describe('approving and the dry run', () => {
     const run = await JobRun.findById(approved.dryRunId).lean();
     expect(run?.status).toBe('failed');
     expect(plans).toBe(2);
+    const planningCalls = mocks.chat.mock.calls.filter(([input]) => input.systemPrompt.startsWith('Choose a concrete research method'));
+    expect(planningCalls.every(([input]) => input.standIn?.need === 'plan' && input.standIn?.level === 'medium')).toBe(true);
     if (skill === 'signature_outreach') expect(run?.modelPath).toEqual(expect.arrayContaining([expect.objectContaining({ note: 'Format retry' })]));
     expect(run?.modelPath.map((step: { note: string }) => step.note)).toContain('Scout candidate sources');
     expect(mocks.chat.mock.calls.some(([input]) => input.forceToolLoop && input.userText.includes('Partner announcements'))).toBe(true);
@@ -602,6 +605,35 @@ describe('approving and the dry run', () => {
     expect(calls[0][0].userText).toContain('Deadlock');
     const planner = mocks.chat.mock.calls.find(([input]) => input.systemPrompt.startsWith('Choose a concrete'));
     expect(planner?.[0].userText).toContain('Start from the rarest requirement, a company Bluesky profile');
+  });
+
+  it('lets the selected paid researcher recover from an output limit before returning to free workers', async () => {
+    const job = await proposed({ ...DESIGN, skill: 'signature_outreach' });
+    await Job.updateOne({ _id: job.id }, { $set: { level: 'medium' } });
+    const free = { model: 'local', profileId: 'a'.repeat(24), free: true };
+    const paid = { model: 'paid-research', profileId: 'b'.repeat(24), free: false };
+    mocks.select.mockResolvedValue({ primary: free, fallback: paid });
+    let paidCalls = 0;
+    mocks.chat.mockImplementation(async ({ systemPrompt, model }) => {
+      if (model === paid.model) {
+        paidCalls++;
+        if (paidCalls === 1) return { requestId: 'limit', role: 'status', text: 'The remote model hit its output token limit before producing text.', failureCategory: 'invalid_response', costMicros: 90000 };
+        return { requestId: 'retry', role: 'assistant', text: JSON.stringify({ records: [], summary: 'No verified prospect', gaps: [] }), toolsUsed: ['web_fetch'], costMicros: 10000 };
+      }
+      const text = systemPrompt.startsWith('Choose a concrete') ? JSON.stringify({ source: 'Founders', discovery: 'Find dated launches', rationale: 'Current prospects' })
+        : systemPrompt.startsWith('Scout public') ? '{"candidates":[]}' : GOOD;
+      return { requestId: 'test', role: 'assistant', text, toolsUsed: ['web_fetch'], costMicros: 0 };
+    });
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    const calls = mocks.chat.mock.calls.filter(([input]) => input.model === paid.model);
+    expect(calls).toHaveLength(2);
+    expect(calls.map(([input]) => input.maxOutputTokensOverride)).toEqual([6000, 8192]);
+    expect(calls[1][0].userText).toBe(calls[0][0].userText);
+    const run = await JobRun.findById(approved.dryRunId).lean();
+    expect(run?.costMicros).toBe(100000);
+    expect(run?.modelPath).toEqual(expect.arrayContaining([expect.objectContaining({ note: 'Output budget retry', model: paid.model })]));
+    expect(run?.status).toBe('failed');
   });
 
   describe('the job queue', () => {
@@ -892,6 +924,38 @@ describe('approving and the dry run', () => {
     expect(await LinkOpportunity.countDocuments({ status: 'recommended' })).toBe(0);
     expect(await LinkOpportunity.countDocuments({ status: 'nonexistent' })).toBe(1);
     expect(mocks.verify).toHaveBeenCalledTimes(1);
+  });
+  it('repairs an incomplete link candidate and retries a paid output limit with more space, not another blind search', async () => {
+    const free = { profileId: 'f'.repeat(24), model: 'free-worker', free: true, label: 'Rogly' };
+    const paid = { profileId: 'p'.repeat(24), model: 'paid-research', free: false, label: 'Paid', blendedPricePer1M: 0.1 };
+    mocks.models.mockResolvedValue([free, paid]);
+    mocks.select.mockImplementation(async (_org: string, need: string) => ({ primary: need === 'review' ? paid : free, fallback: null }));
+    const job = await proposed({ ...DESIGN, skill: 'link_building', fields: [...DESIGN.fields,
+      { key: 'opportunity_url', label: 'Opportunity', type: 'url', required: true, description: '' }] });
+    const found = { ...JSON.parse(GOOD).records[0].values, opportunity_url: 'https://directory.example/submit', relevance_score: 90,
+      relevance_evidence: 'A suitable directory with a free submission flow for game discovery communities and a relevant category.',
+      strategy_evidence: 'The selected company is a games community whose actual catalog fits the available category in this directory.' };
+    let paidAttempts = 0;
+    mocks.chat.mockImplementation(async ({ systemPrompt, model }) => {
+      if (systemPrompt.startsWith('You check one run')) return { requestId: 'review', role: 'assistant', text: '{"verdict":"pass","notes":"Sourced."}', costMicros: 0 };
+      if (model === paid.model && ++paidAttempts === 1) return { requestId: 'limit', role: 'status', text: 'The remote model hit its output token limit before producing text.', failureCategory: 'invalid_response', costMicros: 230000 };
+      return { requestId: 'work', role: 'assistant', toolsUsed: ['web_fetch'], costMicros: model === paid.model ? 30000 : 0,
+        text: JSON.stringify({ records: [{ values: model === paid.model ? found : { ...found, opportunity_url: undefined, relevance_score: 'unknown' }, sources: [found.opportunity_url] }], summary: 'Investigated the directory candidate.', gaps: [] }) };
+    });
+    mocks.verify.mockImplementation(async ({ url }) => url ? { hard: [], soft: [] } : { hard: ['The recommendation has no opportunity page address.'], soft: [] });
+    const approved = await approveJob(admin, job.id, { completion: 'review' });
+    await executeJobRun(approved.dryRunId!);
+    const attempts = mocks.chat.mock.calls.filter(([input]) => input.model === paid.model && !input.systemPrompt.startsWith('You check one run'));
+    expect(attempts).toHaveLength(2);
+    expect(attempts.map(([input]) => input.maxOutputTokensOverride)).toEqual([6000, 8192]);
+    expect(attempts[0][0].userText).toContain('Repair the SAME candidate');
+    expect(attempts[0][0].userText).toContain('Investigated the directory candidate.');
+    expect(attempts[1][0].userText).toBe(attempts[0][0].userText);
+    const run = await JobRun.findById(approved.dryRunId).lean();
+    expect(run).toMatchObject({ status: 'needs_review', costMicros: 260000 });
+    expect(run?.output?.records[0].values.opportunity_url).toBe(found.opportunity_url);
+    // The existing paid-review cap still applies after rescue; the repaired fields themselves pass.
+    expect(run?.issues.every((issue: { field?: string }) => issue.field === 'review')).toBe(true);
   });
   it('tracks link recommendations through approval and submission with feedback history', async () => {
     mocks.models.mockResolvedValue([{ profileId: 'r'.repeat(24), model: 'gpt-6-sol', free: false, blendedPricePer1M: 0.01 }]);

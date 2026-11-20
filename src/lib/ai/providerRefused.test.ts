@@ -16,5 +16,7 @@ describe('when another provider should take over a call', () => {
     expect(providerRefusedAccount(status('gpt took longer than 120 seconds to answer and was stopped.', 'kind=timeout'))).toBe(false);
     expect(providerRefusedAccount({ requestId: 'r', role: 'assistant', text: 'Your credits are fine.' })).toBe(false);
     expect(providerRefusedAccount(status('Google returned HTTP 402: credits depleted.', 'httpStatus=402', 1200))).toBe(false);
+    expect(providerRefusedAccount({ ...status('Google returned HTTP 402: credits depleted.', 'httpStatus=402'), costMicros: null })).toBe(false);
+    expect(providerRefusedAccount({ ...status('Monthly quota exceeded.'), failureCategory: 'budget_exhausted' })).toBe(false);
   });
 });

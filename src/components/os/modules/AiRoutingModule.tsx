@@ -230,7 +230,7 @@ function FindModel({ models }: { models: ModelRow[] }) {
 
 function score(b: Benchmark | null, kind: 'intelligence' | 'coding'): string {
     const v = b ? (kind === 'coding' ? (b.coding ?? b.intelligence) : b.intelligence) : null;
-    return v === null ? 'no score' : `${b?.estimated ? '~' : ''}${v.toFixed(1)}`;
+    return v === null ? 'no score' : `${b?.estimated ? '~' : ''}${v.toFixed(1)}${kind === 'coding' && b?.coding == null ? ' (general)' : ''}`;
 }
 
 function scoreTitle(b: Benchmark | null, free: boolean): string {
@@ -244,6 +244,7 @@ function Ranking({ title, kind, rows }: { title: string; kind: 'intelligence' | 
     return (
         <div className="min-w-0">
             <h3 className="text-xs font-medium mb-1">{title}</h3>
+            {kind === 'coding' && rows.some(r => r.benchmark?.coding == null && r.benchmark?.intelligence != null) ? <p className="text-[10px] text-text-secondary mb-1">General = intelligence index used for routing because a coding score is unavailable. It is not a measured coding score.</p> : null}
             <div className="flex items-baseline gap-2 text-[10px] text-text-secondary">
                 <span className="w-4" />
                 <span className="flex-1">Model</span>
@@ -328,10 +329,10 @@ function BenchmarkKey({ status, onSave }: { status: BenchmarkStatus; onSave: (ke
         <div className="space-y-1">
             <p className="text-[11px] text-text-secondary">
                 {status.configured
-                    ? `Key ending ${status.keyLast4} · ${status.models} models scored${status.fetchedAt ? ` · updated ${new Date(status.fetchedAt).toLocaleString()}` : ''}`
+                    ? `Key ending ${status.keyLast4} · ${status.models} models scored${status.fetchedAt ? ` · last successful refresh ${new Date(status.fetchedAt).toLocaleString()}` : ''}`
                     : 'No key yet, so paid models are ranked by price. Create a free key at Artificial Analysis and paste it here.'}
             </p>
-            {status.error ? <p className="text-[11px] text-amber-400">Last refresh: {status.error}</p> : null}
+            {status.error ? <p className="text-[11px] text-amber-400">Refresh failed: {status.error} {status.models ? 'Showing cached scores.' : 'No scores available.'}</p> : null}
             <div className="flex gap-2">
                 <input
                     type="password"
@@ -628,7 +629,7 @@ export default function AiRoutingModule() {
                     <MediaRanking title="Image generation (Elo)" ranking={data.mediaRankings.image} configured={data.benchmarks.configured} />
                     <MediaRanking title="Video generation (Elo)" ranking={data.mediaRankings.video} configured={data.benchmarks.configured} />
                 </div>
-                {data.mediaRankings.error ? <p className="text-[11px] text-amber-400">{data.mediaRankings.error}</p> : null}
+                {data.mediaRankings.error ? <p className="text-[11px] text-amber-400">Refresh failed: {data.mediaRankings.error} Affected leaderboards show their last saved scores, where available.</p> : null}
                 <p className="text-[11px] text-text-secondary">
                     Benchmark data:{' '}
                     <a href={data.benchmarks.source.url} target="_blank" rel="noreferrer" className="underline">

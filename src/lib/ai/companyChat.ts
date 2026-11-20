@@ -206,7 +206,7 @@ import { companyChatAdmissionMessage } from '@/lib/ai/companyChatAdmission';
 import { recordModelFailure, recordModelSuccess } from '@/lib/ai/engine/health';
 import type { RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 import { describeToolCall, type ProgressFn } from '@/lib/ai/progress';
-import { backupsFrom, readEngineSettings, type CostLevel, type Need } from '@/lib/ai/engine/select';
+import { backupsFrom, MAX_BACKUPS, readEngineSettings, type CostLevel, type Need } from '@/lib/ai/engine/select';
 import { contextBudgetChars, contextWindowFor, contextWindowFromProviderMessage, listAvailableModels, outputBudgetTokens, priceTokens, recordObservedContextWindow, type AvailableModel } from '@/lib/ai/engine/catalog';
 
 /**
@@ -221,34 +221,34 @@ export async function attemptCompanyCredentialChat(input: Parameters<typeof chat
   };
   const first = await once(input);
   if (input.standIn === false || !providerRefusedAccount(first) || mongoose.connection.readyState !== 1) return first;
-  // The provider refused the account before any work (out of credits, bad key). The credential is now
-  // benched for later calls; this call moves to the best model for the same task from another provider.
-  const failedProviders = new Set<string>();
+  // Health tracking may already bench the refused credential, and provider aliases need not match
+  // catalog IDs. Use the settled turn's billing policy to decide whether this was a paid call.
+  // Free calls (and calls without a known billing policy) must never start paying here.
+  if (first.noProviderFee !== false || input.signal?.aborted) return first;
   const failedProfiles = new Set([input.modelProfileId]);
-  const models = await listAvailableModels().catch(() => [] as AvailableModel[]);
-  const provider = (profileId: string) => models.find((m) => m.profileId === profileId)?.provider;
-  const original = provider(input.modelProfileId);
-  if (original) failedProviders.add(original);
-  // A free model failing never starts paying; only a paid call moves to another paid one.
-  if (!models.find((m) => m.profileId === input.modelProfileId && m.model === input.model) || models.find((m) => m.profileId === input.modelProfileId)?.free) return first;
+  let models = await listAvailableModels().catch(() => [] as AvailableModel[]);
   const settings = await readEngineSettings(input.organizationId).catch(() => null);
   if (!settings) return first;
   const need = input.standIn?.need ?? needOf(input);
   const level = input.standIn?.level ?? settings.defaultCostLevel;
-  const candidates = backupsFrom(models.filter((m) => !failedProfiles.has(m.profileId)), need, level, settings.priceCeilings, [])
-    .filter((choice) => !failedProviders.has(provider(choice.profileId) ?? ''));
+  const attempted: string[] = [];
   let last = first;
-  for (const choice of candidates) {
-    if (input.signal?.aborted || failedProviders.has(provider(choice.profileId) ?? '')) continue;
+  for (let attempt = 0; attempt < MAX_BACKUPS && !input.signal?.aborted; attempt += 1) {
+    // Re-rank after each account refusal so sibling models on one empty account do not consume
+    // all backup slots. Another credential at the same provider can still have its own credits.
+    if (attempt > 0) models = await listAvailableModels().catch(() => [] as AvailableModel[]);
+    const choice = backupsFrom(models.filter((m) => !failedProfiles.has(m.profileId)), need, level, settings.priceCeilings)[0];
+    if (!choice) break;
+    attempted.push(choice.model);
     const turn = await once({ ...input, modelProfileId: choice.profileId, model: choice.model });
     if (!providerRefusedAccount(turn)) {
-      console.warn(`[companyChat] ${input.model} was refused by its provider; ${choice.model} (${choice.label}) answered instead`);
+      if (turn.role === 'assistant') console.warn(`[companyChat] ${input.model} was refused by its provider; ${choice.model} (${choice.label}) answered instead`);
       return { ...turn, model: turn.model ?? choice.model, standInFor: input.model };
     }
-    failedProviders.add(provider(choice.profileId) ?? choice.profileId);
+    failedProfiles.add(choice.profileId);
     last = turn;
   }
-  return last === first ? first : { ...last, text: `${first.text} Nucleas also tried ${candidates.map((c) => c.model).join(', ')}, which failed too.` };
+  return last === first ? first : { ...last, text: `${first.text} Nucleas also tried ${attempted.join(', ')}, which failed too.` };
 }
 
 /** Which task a stand-in has to be good at, from how the call is made. */
@@ -264,7 +264,7 @@ function needOf(input: { toolProfile?: IdeToolProfile; includeRepoTools?: boolea
  * key. Another provider can do the same work; a rate limit or a timeout is left to the usual retries.
  */
 export function providerRefusedAccount(turn: TeamChatTurn | undefined): boolean {
-  if (!turn || turn.role !== 'status' || (turn.costMicros ?? 0) > 0) return false;
+  if (!turn || turn.role !== 'status' || turn.costMicros !== 0 || turn.failureCategory === 'budget_exhausted') return false;
   const status = /httpStatus=(\d{3})/.exec(turn.debugHint ?? '')?.[1];
   if (status === '401' || status === '402') return true;
   return /\b(credits?|prepayment|quota|billing|insufficient (balance|funds)|payment required)\b/i.test(turn.text) && /\b40[123]\b|depleted|exceeded|insufficient|required/i.test(turn.text);

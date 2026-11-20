@@ -13,3 +13,12 @@ it('replaces prohibited or unavailable placements even when evidence also failed
   expect(linkRetryBrief(issues)).toContain('different eligible opportunity');
   expect(evidenceOnlyLinkFailure([])).toBe(false);
 });
+it('repairs incomplete recommendation fields before discarding the candidate', () => {
+  const issues = ['Why now is missing.', 'Opportunity is missing.', 'Relevance score is not a valid number.',
+    'No source link for this record.', 'Direct audience/topic relevance must score at least 75/100.',
+    'The recommendation has no opportunity page address.'].map(problem => ({ problem }));
+  expect(evidenceOnlyLinkFailure(issues)).toBe(true);
+  expect(linkRetryBrief(issues)).toContain('exact required field keys');
+  expect(evidenceOnlyLinkFailure([{ problem: 'Direct audience/topic relevance must score at least 75/100.' }])).toBe(false);
+  expect(evidenceOnlyLinkFailure([...issues, { problem: 'Independent page check failed: affiliate sites are prohibited.' }])).toBe(false);
+});

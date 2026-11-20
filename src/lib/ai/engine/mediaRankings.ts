@@ -62,7 +62,8 @@ export function parseMediaResponse(body: unknown): MediaRow[] {
   const data = (body as { data?: unknown })?.data;
   if (!Array.isArray(data)) return [];
   return data.flatMap((raw) => {
-    const r = raw as { id?: unknown; slug?: unknown; name?: unknown; model_creator?: { name?: unknown }; elo?: unknown; rank?: unknown; ci95?: unknown; appearances?: unknown; release_date?: unknown };
+    if (!raw || typeof raw !== 'object') return [];
+    const r = raw as { id?: unknown; slug?: unknown; name?: unknown; model_creator?: { name?: unknown }; elo?: unknown; rank?: unknown; ci_95?: unknown; ci95?: unknown; samples?: unknown; appearances?: unknown; release_date?: unknown };
     const elo = num(r.elo);
     const slug = typeof r.slug === 'string' ? r.slug : typeof r.id === 'string' ? r.id : null;
     if (elo === null || !slug) return [];
@@ -74,8 +75,8 @@ export function parseMediaResponse(body: unknown): MediaRow[] {
         creator: typeof r.model_creator?.name === 'string' ? r.model_creator.name : '',
         elo,
         rank: num(r.rank),
-        ci95: typeof r.ci95 === 'string' ? r.ci95 : null,
-        appearances: num(r.appearances),
+        ci95: num(r.ci_95) !== null ? `±${r.ci_95}` : typeof r.ci95 === 'string' ? r.ci95 : null,
+        appearances: num(r.samples) ?? num(r.appearances),
         releaseDate: typeof r.release_date === 'string' ? r.release_date : null,
       },
     ];

@@ -1,6 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Types } from 'mongoose';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import mongoose, { Types } from 'mongoose';
 import { GatewayError } from '@nucleas/ai-core/gateway';
+import * as catalog from '@/lib/ai/engine/catalog';
+import * as selection from '@/lib/ai/engine/select';
+import * as health from '@/lib/ai/engine/health';
+import * as itemCap from '@/lib/ai/control/itemCap';
 
 const runId = new Types.ObjectId();
 
@@ -67,6 +71,92 @@ vi.mock('@/lib/models/AiControl', () => ({
 }));
 
 import { attemptCompanyCredentialChat } from '@/lib/ai/companyChat';
+
+describe('paid account stand-ins', () => {
+  const input = {
+    systemPrompt: 'Plan research', organizationId: 'org', projectId: new Types.ObjectId(),
+    userId: 'a'.repeat(24), userText: 'Choose search methods', priorTurns: [],
+    modelProfileId: 'b'.repeat(24), model: 'models/gemini-4-carbon',
+    includeRepoTools: false, includeImageTool: false, forcePlain: true, stopOnUpstreamFailure: true,
+    standIn: { need: 'plan' as const, level: 'medium' as const },
+  };
+  const candidate = (model: string, profileId: string, intelligence: number, price = 4): catalog.AvailableModel => ({
+    profileId, model, profileLabel: profileId, provider: 'openrouter', label: model,
+    free: false, strengths: ['reasoning', 'chat'], flagship: false, contextTokens: 64000,
+    autoEligible: true, blendedPricePer1M: price,
+    benchmark: { source: model, intelligence, coding: null, math: null },
+  });
+  const refusal = () => new GatewayError('unavailable', { kind: 'http', httpStatus: 402, providerMessage: 'Prepayment credits depleted' });
+  beforeEach(() => {
+    Object.defineProperty(mongoose.connection, 'readyState', { configurable: true, value: 1 });
+    vi.spyOn(health, 'recordModelFailure').mockResolvedValue(undefined);
+    vi.spyOn(health, 'recordModelSuccess').mockResolvedValue(undefined);
+    vi.spyOn(catalog, 'contextWindowFor').mockResolvedValue(64000);
+    vi.spyOn(catalog, 'priceTokens').mockResolvedValue(10);
+    vi.spyOn(catalog, 'listAvailableModels').mockResolvedValue([
+      candidate('too-expensive', 'c'.repeat(24), 99, 8),
+      candidate('affordable-planner', 'd'.repeat(24), 80),
+    ]);
+    vi.spyOn(selection, 'readEngineSettings').mockResolvedValue({ defaultCostLevel: 'high', priceCeilings: selection.DEFAULT_PRICE_CEILINGS, overrides: {} });
+    mocks.gatewayFromProfile.mockImplementation(async (_id: string, model: string) => ({
+      gateway: { endpoint: 'https://provider.example/v1/chat/completions', bearerToken: 'test-only', model, protocol: 'openai-chat' },
+      profile: { provider: 'openrouter', tier: 'paid', label: 'Provider' },
+    }));
+    mocks.invokeModel.mockReset().mockRejectedValueOnce(refusal()).mockResolvedValue({ content: 'Usable research plan', inputTokens: 3, outputTokens: 4, latencyMs: 1 });
+  });
+  afterEach(() => {
+    Reflect.deleteProperty(mongoose.connection, 'readyState');
+    vi.restoreAllMocks();
+  });
+
+  it('recovers when health filtering removed the original model, within the job ceiling', async () => {
+    const turn = await attemptCompanyCredentialChat(input);
+    expect(turn).toMatchObject({ role: 'assistant', model: 'affordable-planner', standInFor: input.model });
+    expect(mocks.invokeModel.mock.calls.map(call => call[0].model)).toEqual([input.model, 'affordable-planner']);
+  });
+
+  it('tries distinct credentials instead of exhausting backup slots on one empty account', async () => {
+    vi.mocked(catalog.listAvailableModels).mockResolvedValue([
+      ...[90, 89, 88].map(score => candidate(`empty-${score}`, 'c'.repeat(24), score)),
+      candidate('healthy-same-provider', 'd'.repeat(24), 80),
+    ]);
+    mocks.invokeModel.mockReset().mockRejectedValueOnce(refusal()).mockRejectedValueOnce(refusal()).mockResolvedValue({ content: 'Plan', inputTokens: 1, outputTokens: 1, latencyMs: 1 });
+    const turn = await attemptCompanyCredentialChat(input);
+    expect(turn).toMatchObject({ role: 'assistant', model: 'healthy-same-provider' });
+    expect(mocks.invokeModel.mock.calls.map(call => call[0].model)).toEqual([input.model, 'empty-90', 'healthy-same-provider']);
+  });
+
+  it.each(['free-level', 'free-credential', 'disabled', 'cancelled'] as const)('does not pay for a stand-in when %s', async scenario => {
+    if (scenario === 'free-credential') mocks.gatewayFromProfile.mockResolvedValue({
+      gateway: { endpoint: 'https://rogly.example/v1/chat/completions', bearerToken: 'test-only', model: 'local', protocol: 'openai-chat' },
+      profile: { provider: 'custom', tier: 'local_remote' },
+    });
+    const turn = await attemptCompanyCredentialChat({ ...input,
+      ...(scenario === 'free-level' ? { standIn: { need: 'plan', level: 'free' } } : {}),
+      ...(scenario === 'disabled' ? { standIn: false } : {}),
+      ...(scenario === 'cancelled' ? { signal: AbortSignal.abort() } : {}),
+    });
+    expect(turn.role).toBe('status');
+    expect(mocks.invokeModel).toHaveBeenCalledTimes(scenario === 'cancelled' ? 0 : 1);
+  });
+
+  it('stops on the job spending cap instead of treating it as another provider billing failure', async () => {
+    vi.spyOn(itemCap, 'itemCapRefusal').mockResolvedValueOnce(null).mockResolvedValue('Monthly quota exceeded; budget exhausted.');
+    const turn = await attemptCompanyCredentialChat(input);
+    expect(turn.failureCategory).toBe('budget_exhausted');
+    expect(mocks.gatewayFromProfile).toHaveBeenCalledTimes(2);
+    expect(mocks.invokeModel).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops after three replacement credentials and reports only attempted models', async () => {
+    vi.mocked(catalog.listAvailableModels).mockResolvedValue([90, 89, 88, 87].map((score, index) => candidate(`empty-${score}`, String(index + 1).repeat(24), score)));
+    mocks.invokeModel.mockReset().mockRejectedValue(refusal());
+    const turn = await attemptCompanyCredentialChat(input);
+    expect(mocks.invokeModel).toHaveBeenCalledTimes(4);
+    expect(turn.text).toContain('empty-90, empty-89, empty-88');
+    expect(turn.text).not.toContain('empty-87');
+  });
+});
 
 describe('Direct local gateway diagnostics and project context', () => {
   it.each([

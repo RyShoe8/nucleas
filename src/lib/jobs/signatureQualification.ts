@@ -183,6 +183,9 @@ export async function qualifySignatureProspect(values: Record<string, unknown>, 
     for (const [label, url, quote] of [['team', candidate.team_source, candidate.team_quote], ['growth', candidate.growth_source, candidate.growth_quote]]) {
         if (!quoteOnPage(pages.find(page => page.url === url)?.whole ?? '', quote)) throw new Error(`The ${label} quote was not found on ${url}. Copy it exactly as the page shows it, or cite the page it is on. Quote given: "${quote.slice(0, 200)}"`);
     }
+    if (!dateOnPage(pages.find(page => page.url === candidate.growth_source)?.whole ?? '', candidate.growth_date)) {
+        throw new Error(`The growth date ${candidate.growth_date} was not found on ${candidate.growth_source}. Use the announcement's published date, never today's date as a substitute.`);
+    }
     const pageAt = (url: string) => pages.find(page => page.url === url) ?? { whole: '', links: [] as string[] };
     const problem = conceptProblem(values, { home: pageAt(candidate.website), person: pageAt(String(values.person_source)), contact: pageAt(String(values.contact_source)) });
     if (problem) throw new Error(problem);

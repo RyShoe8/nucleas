@@ -11,6 +11,7 @@ import {buildOffice} from '@/components/os/modules/office/officeState';
 import {chooseDestinations,OFFICE_LAYOUT_VERSION} from '@/components/os/modules/office/officeSimulation';
 import {advanceScene,type OfficeScene,type OfficeSnapshot,type VisitTarget} from './timeline';
 import {changeRecreation,newRecreation,type RecreationAction} from './recreation';
+import {officeRosterFilter} from './roster';
 
 export class OfficeConflict extends Error {}
 type Command={personId:string;target:VisitTarget}|{recreation:RecreationAction};
@@ -24,7 +25,7 @@ async function loadRooms(viewer:CompanyViewer,previous:OfficeScene|null) {
     listCompanyProfiles(scope),listJobs(scope),listActivity(scope),
     metricsDue?getTodayOverview(scope):Promise.resolve(null),
     BrandAsset.find({organizationId:scope.organizationId,kind:'logo'}).select('companyId url').lean(),
-    Employee.find({organizationId:String(scope.organizationId)}).select('name jobTitle role userId').sort({_id:1}).lean(),
+    Employee.find(officeRosterFilter(String(scope.organizationId))).select('name jobTitle role userId').sort({_id:1}).lean(),
   ]);
   const logoByCompany=new Map(logos.map(a=>[String(a.companyId),a.url]));
   const assignments=await companyAssignments(viewer.organizationId,companies.map(c=>c.id));
