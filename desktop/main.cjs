@@ -170,8 +170,8 @@ function showLauncher() {
   openModule({ moduleId: 'office' });
 }
 function toggleMain() {
-  const main = office();
-  if (main && !main.isDestroyed() && main.isVisible() && main.isFocused()) { main.hide(); officeHiddenAt = Date.now(); } else showLauncher();
+  // Office shortcuts always open/focus it. Only the explicit window controls dismiss it.
+  showLauncher();
 }
 function openModule(raw) {
   if (starting) { showLauncher(); return; }
@@ -191,14 +191,7 @@ function openModule(raw) {
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), partition: 'persist:nucleas', sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true } });
   windows.set(value.key, win);
   targets.set(win, target.href);
-  if (isOffice) {
-    // The Office steps aside when you click away to another program: it goes behind everything
-    // (minimized), while the app windows stay in front. Moving to a Nucleas app window keeps it.
-    win.on('blur', () => setTimeout(() => {
-      if (quitting || win.isDestroyed() || !win.isVisible() || win.isMinimized()) return;
-      if (!BrowserWindow.getFocusedWindow()) { win.minimize(); officeHiddenAt = Date.now(); }
-    }, 120));
-  } else {
+  if (!isOffice) {
     // App windows (Company, Work, Ask…) float above every program until closed or minimized.
     win.setAlwaysOnTop(true, 'floating');
   }
@@ -213,6 +206,7 @@ function openModule(raw) {
   win.on('closed', () => { windows.delete(value.key); targets.delete(win); broadcast(); });
   // Keep the taskbar event-driven: never enumerate every window on the computer.
   for (const event of ['minimize', 'restore', 'show', 'hide']) win.on(event, broadcast);
+  if (isOffice) win.on('minimize', () => { officeHiddenAt = Date.now(); });
   win.on('page-title-updated', () => setImmediate(broadcast));
 
   // Login uses the ordinary shared cookie session; return to this app after login.

@@ -72,7 +72,7 @@ export class OfficeGameRenderer {
   for(let row=0;row<3;row++)for(let i=0;i<8;i++)this.box(x+4+i*8,y+18,5,4,8+row*22,12+i%3*2,['#5e8b7e','#c4a363','#c8c8a9','#8fada6'][i%4]);
  }
  private display(x:number,y:number,kind:string,trim:string){
-  const sprite=kind==='controller'||kind==='trophy'?SPRITE.gaming:kind==='arcade'?SPRITE.arcade:kind==='house'||kind==='tools'?SPRITE.house:kind==='camera'||kind==='palette'?SPRITE.creative:kind==='mail'||kind==='safe'?SPRITE.printer:kind==='books'||kind==='globe'?SPRITE.books:kind==='laptop'?SPRITE.deskSouth:kind==='chart'?SPRITE.board:kind==='plant'?SPRITE.flowers:null;
+  const sprite=kind==='controller'||kind==='trophy'?SPRITE.gaming:kind==='arcade'?SPRITE.arcade:kind==='house'||kind==='tools'?SPRITE.house:kind==='mail'||kind==='safe'||kind==='camera'?SPRITE.printer:kind==='books'||kind==='laptop'||kind==='chart'?SPRITE.books:kind==='plant'||kind==='palette'||kind==='globe'?SPRITE.flowers:null;
   if(sprite!==null&&this.sprite(sprite,x,y+15,95,105))return;
   this.shadow(x-34,y-20,70,36);this.box(x-34,y-20,70,36,0,26,trim,'#7d785c','#5e644d');
   if(kind==='controller'||kind==='arcade'){
@@ -109,7 +109,7 @@ export class OfficeGameRenderer {
   this.plane(x-4,y,side?10:123,side?123:10,23,'#c5cbb0');
  }
  private wallArt(x:number,y:number,kind='chart'){
-  if(kind==='poster'&&this.sprite(SPRITE.board,x+28,y,78,64))return;
+  // Wall art uses the wall's projection and height, never a floor-anchored billboard sprite.
   this.box(x,y,56,3,26,46,'#d1b88b','#b29b73','#8f7959');
   this.box(x+4,y+4,48,1,30,38,'#f0e5c9','#ece1bd','#ece1bd');
   if(kind==='chart'){for(let i=0;i<4;i++)this.box(x+9+i*10,y+6,6,1,35,8+i%3*7,'#6c9d7b','#6c9d7b','#6c9d7b');}
@@ -180,8 +180,10 @@ export class OfficeGameRenderer {
   this.prop(20,20,()=>this.wall(12,12,9,world.height-24),world.height,0);
   for(let y=85;y<world.height-80;y+=240)this.prop(25,y,()=>{this.window(25,y,true);},200,25+y);
   for(const x of [180,450,730,1040])this.prop(x,24,()=>{this.window(x,24);},200);
-  this.prop(580,35,()=>{this.wallArt(580,35);this.plant(590,90);},180);
-  this.prop(880,35,()=>{this.wallArt(880,35,'poster');this.shelf(890,45);},200);
+  this.prop(580,21,()=>this.wallArt(580,21),180);
+  this.prop(590,90,()=>this.plant(590,90),90);
+  this.prop(880,21,()=>this.wallArt(880,21,'poster'),100);
+  this.prop(890,45,()=>this.shelf(890,45),150);
   this.prop(640,140,()=>{this.box(625,50,10,400,0,25,'#c8cfb4','#8a9f86','#68866e');this.plant(630,80);this.plant(630,430);},450);
   this.prop(1150,550,()=>{this.box(1080,560,120,30,0,23,'#a4b799');this.box(1080,585,120,5,23,22,'#7d9a80');this.plant(1230,565);},220);
   this.prop(100,80,()=>this.label(260,80,110,'THE MEETING ROOM'),200);
@@ -191,25 +193,28 @@ export class OfficeGameRenderer {
    this.prop(p.x,p.y,()=>{this.furniture(id);this.hit({kind:'amenity',id},p.x,p.y,20,id==='conference'?210:id==='pool'?190:id==='gaming'?145:100,100);},240,p.x+p.y,['pool','gaming','coffee','water','plant','projector','reception'].includes(id));
   }
   for(let i=0;i<6;i++){const p=amenityDestination('conference',i).point;this.prop(p.x,p.y,()=>this.chair(p.x,p.y,i>=3,i<3?'south':'north'),90,p.x+p.y+(i<3?-5:6),true);}
-  if(world.width>1700){this.prop(1400,240,()=>{this.shelf(1320,48);this.shelf(1410,48);this.box(1340,220,115,44,0,24,'#78987b');this.box(1340,258,115,8,24,29,'#a7b697');this.box(1355,160,78,35,0,25,'#c9b381');this.plant(1490,160);this.plant(1320,390);this.wallArt(1445,35,'poster');},300);}
+  if(world.width>1700){this.prop(1400,240,()=>{this.shelf(1320,48);this.shelf(1410,48);this.box(1340,220,115,44,0,24,'#78987b');this.box(1340,258,115,8,24,29,'#a7b697');this.box(1355,160,78,35,0,25,'#c9b381');this.plant(1490,160);this.plant(1320,390);},300);this.prop(1445,21,()=>this.wallArt(1445,21,'poster'),100);}
   this.prop(132,420,()=>{this.sprite(SPRITE.coat,132,420,43,80);this.sprite(SPRITE.printer,140,220,64,80);},110);
   for(const suite of world.suites){const {x,y,w,h,room}=suite;const style=studioStyle(room);
    this.prop(x,y,()=>{this.wall(x,y,w,8,style.wall);this.box(x,y+8,w,2,0,20,style.accent,style.accent,style.accent);this.window(x+30,y+9);this.logo(room.logo,x+w*.52,y+20);},w,x+y);
    this.prop(x,y,()=>{if(room.relationship==='client'){const door=suite.door.y-y;this.wall(x,y,8,door-35);this.wall(x,y+door+35,8,h-door-35);}else this.box(x,y,8,h-40,0,this.camera.portrait?28:90,'#bfc7ad','#8eaa98','#6d8d7c');},h,x+y);
    this.prop(x+w-12,y+h/2,()=>{if(room.relationship!=='client'){const door=suite.door.y-y;this.box(x+w-8,y+8,8,door-40,0,20,'#becaaa','#81997b','#668469');} },h);
-   this.prop(x+180,y+12,()=>{this.wallArt(x+155+style.seed%30,y+12,style.seed%2?'poster':'chart');if(style.seed%3)this.wallArt(x+245,y+12,'poster');else this.shelf(x+245,y+15);},200);
-   this.prop(x+w-65,y+65,()=>{this.plant(x+w-45,y+50);this.shelf(x+w-160,y+15);},220);
+   this.prop(x+180,y+9,()=>this.wallArt(x+160,y+9,style.seed%2?'poster':'chart'),100);
+   if(room.relationship!=='client')this.prop(x+265,y+9,()=>this.wallArt(x+245,y+9,'poster'),100);
+   this.prop(x+w-45,y+50,()=>this.plant(x+w-45,y+50),90);
+   if(room.relationship!=='client')this.prop(x+w-145,y+40,()=>this.shelf(x+w-180,y+15),130);
    this.prop(x+w*.5,y+h-15,()=>{this.label(x+w*.5,y+h-15,0,room.kind==='management'?'THE HUMAN TEAM':room.relationship==='client'?'CLIENT STUDIO':style.theme.label.toUpperCase(),'#f1e9d7','#3d4546',11);},200);
-   // Product displays, personal clutter and smaller reading nooks replace empty desk grids.
-   const compact=room.relationship==='client',corners=style.seed%2===0;
-   const positions=compact?[{x:x+w-105,y:y+h-90}]:[{x:x+90,y:y+h-85},{x:x+(corners?290:470),y:y+h-100}];
+   // Reserved display bays are below every workstation row, with a full aisle between them.
+   // Management has desks only; an empty studio gets displays, never phantom workstations/chairs.
+   const compact=room.relationship==='client';
+   const positions=compact?[{x:x+w-105,y:y+h-85}]:[{x:x+100,y:y+h-85},{x:x+285,y:y+h-85}];
    if(room.kind!=='management')positions.forEach((p,i)=>this.prop(p.x,p.y,()=>this.display(p.x,p.y,style.theme.objects[(i+style.seed)%style.theme.objects.length],style.trim),100));
-   if(!compact&&room.desks.length<4){
-    const nx=x+(corners?485:275),ny=y+h-100;
-    this.prop(nx,ny,()=>{this.sprite(SPRITE.sofa,nx,ny+18,120,75,style.accent);this.box(nx-28,ny-75,56,30,0,21,'#bd9c70','#8d7050','#69513c');this.plane(nx-15,ny-66,18,14,22,'#eee1c5');this.sprite(SPRITE.flowers,nx+70,ny+15,48,57);},160);
+   if(!compact&&room.kind!=='management'){
+    const nx=x+470,ny=y+h-85;
+    this.prop(nx,ny,()=>this.sprite(SPRITE.sofa,nx,ny+18,120,75,style.accent),130);
+    this.prop(nx,ny-60,()=>{this.box(nx-28,ny-75,56,30,0,21,'#bd9c70','#8d7050','#69513c');this.plane(nx-15,ny-66,18,14,22,'#eee1c5');},85);
+    this.prop(nx+125,ny+15,()=>this.sprite(SPRITE.flowers,nx+125,ny+15,48,57),80);
    }
-   if(!room.desks.length)this.prop(x+w*.48,y+205,()=>{this.box(x+w*.48-65,y+190,130,65,0,35,style.trim);this.chair(x+w*.48-30,y+275);this.chair(x+w*.48+30,y+275);this.display(x+w*.48,y+165,style.theme.objects[0],style.trim);},200);
-   for(let i=0;i<2;i++){const px=x+35+(style.seed%3)*12+i*(w-110);this.prop(px,y+80,()=>this.plant(px,y+80),90);}
 
   }
   for(const person of world.people){

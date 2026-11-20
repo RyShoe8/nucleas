@@ -1,5 +1,5 @@
 import {employeeAppearance} from '@/lib/companies/employeeIdentity';
-import {characterFrame,type CharacterPose} from './officeCharacter';
+import {characterFrame,CHARACTER_SIZE,type CharacterPose} from './officeCharacter';
 import type {DeskFacing} from './officeSimulation';
 
 export const SPRITE={deskNorth:0,deskEast:1,deskSouth:2,deskWest:3,chairSouth:4,chairNorth:5,chairWest:6,chairEast:7,pool:8,tv:9,sofa:10,coffee:11,water:12,books:13,plant:14,flowers:15,printer:16,conference:17,arcade:18,creative:19,house:20,gaming:21,board:22,coat:23};
@@ -11,7 +11,7 @@ export class OfficePixels{
  ready=false;
  constructor(invalidate:()=>void){
   const names=['desk-north','desk-east','desk-south','desk-west','chair-south','chair-north','chair-west','chair-east','pool','tv','sofa','coffee','water','books','plant','flowers','printer','conference','arcade','creative','house','gaming','board','coat'];
-  names.forEach((name,id)=>{const image=new Image();image.onload=()=>{this.ready=true;invalidate();};image.src='/office/pixel/objects/'+name+'.webp';this.images.set(id,image);});
+  names.forEach((name,id)=>{if(id===SPRITE.creative||id===SPRITE.board)return;const image=new Image();image.onload=()=>{this.ready=true;invalidate();};image.src='/office/pixel/objects/'+name+'.webp';this.images.set(id,image);});
  }
  furniture(ctx:CanvasRenderingContext2D,id:number,x:number,y:number,w:number,h=w,tint?:string){
   const image=this.images.get(id);if(!image?.complete||!image.naturalWidth)return false;
@@ -27,11 +27,11 @@ export class OfficePixels{
   }else ctx.drawImage(image,0,0,256,256,Math.round(x-w/2),Math.round(y-h),w,h);return true;
  }
  person(ctx:CanvasRenderingContext2D,id:string,x:number,y:number,facing:DeskFacing,pose:CharacterPose,time:number){
-  const frame=pose==='walk'?Math.floor(time*8+employeeAppearance(id).shirtHue/60)%6:pose==='type'||pose==='pool'||pose==='coffee'?Math.floor(time*3)%2:0;
+  const frame=pose==='walk'?Math.floor(time*10+employeeAppearance(id).shirtHue/60)%8:pose==='type'||pose==='pool'||pose==='coffee'?Math.floor(time*3)%2:0;
   const key=`${id}:${facing}:${pose}:${frame}`;
   let sprite=this.people.get(key);
-  if(!sprite){sprite=characterFrame(id,facing,pose,frame);this.people.set(key,sprite);if(this.people.size>360){const first=this.people.keys().next().value;if(first)this.people.delete(first);}}
-  const a=employeeAppearance(id),h=Math.round(86*a.height),w=Math.round(h*40/64);
+  if(!sprite){sprite=characterFrame(id,facing,pose,frame);this.people.set(key,sprite);if(this.people.size>192){const first=this.people.keys().next().value;if(first)this.people.delete(first);}}
+  const a=employeeAppearance(id),h=Math.round(94*a.height),w=Math.round(h*CHARACTER_SIZE.width/CHARACTER_SIZE.height);
   ctx.imageSmoothingEnabled=false;ctx.drawImage(sprite,Math.round(x-w/2),Math.round(y-h),w,h);
  }
  dispose(){for(const image of this.images.values())image.onload=null;this.images.clear();this.people.clear();this.fabric.clear();}

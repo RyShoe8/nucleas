@@ -56,6 +56,8 @@ The initial release is Windows x64. macOS/Linux installers, native system-wide c
 
 ## Web and native entry points
 
+Office and app windows stay open when focus moves to another application. Alt+Space and Office shortcuts only open/focus Office. Explicitly minimized windows, including Office, appear in the Nucleas taskbar area after the question field and freeze their page until restored. Closing a window removes it and releases its renderer.
+
 The web home uses one full-workspace app view and a floating switcher. Old saved window positions no longer create nested draggable windows there. Apps can still pop out into separate browser windows.
 
 The **Windows app** action downloads the native installer from `/desktop/download`, which follows the published updater manifest. A browser-installed PWA is a separate, older installation and does not provide the native launcher. The automatic PWA install prompt is disabled.

@@ -1,0 +1,60 @@
+import {beforeAll,afterAll,beforeEach,it,expect,vi} from 'vitest';
+import mongoose,{Types} from 'mongoose';
+import {MongoMemoryReplSet} from 'mongodb-memory-server-core';
+import Employee from '@/lib/models/Employee';
+import User from '@/lib/models/User';
+import Invitation from '@/lib/models/Invitation';
+import Project from '@/lib/models/Project';
+import {CompanyTeam} from '@/lib/models/CompanyTeam';
+import {OfficeSceneModel} from '@/lib/models/OfficeScene';
+import {invalidateOfficeRoster,removeOfficeEmployee} from './employees';
+import type {CompanyViewer} from '@/lib/companies/companyProfile';
+let db:MongoMemoryReplSet;
+const org=new Types.ObjectId(),otherOrg=new Types.ObjectId();
+const viewer:CompanyViewer={userId:String(org),organizationId:org,employeeId:null,role:'Administrator'};
+beforeAll(async()=>{db=await MongoMemoryReplSet.create({replSet:{count:1}});await mongoose.connect(db.getUri('roster_test'));});
+afterAll(async()=>{await mongoose.disconnect();await db.stop();});
+beforeEach(async()=>{await Promise.all([Employee.deleteMany({}),User.deleteMany({}),Invitation.deleteMany({}),Project.deleteMany({}),CompanyTeam.deleteMany({}),OfficeSceneModel.deleteMany({})]);});
+it('removes only the chosen org member, cancels invites and returns reviews to the owner without deleting work',async()=>{
+ const account=await User.create({email:'teammate@example.test',googleId:'example-member',organizationId:String(org)});
+ const person=await Employee.create({name:'Teammate',organizationId:String(org),userId:account._id,role:'User'});
+ const outside=await Employee.create({name:'Other org',organizationId:String(otherOrg),role:'User'});
+ await Invitation.create({email:account.email,token:'test-invite',employeeId:person._id,organizationId:String(org),role:'User',expiresAt:new Date(Date.now()+100000),invitedBy:org});
+ await CompanyTeam.create({organizationId:org,companyId:new Types.ObjectId(),role:'marketing',remit:'Grow audience',updatedBy:org,reviewerEmployeeId:person._id,active:true});
+ const project=await Project.create({name:'Existing work',projectType:'internal',category:'generic',userId:account._id,color:'#123456'});
+ await OfficeSceneModel.create({_id:org,revision:8,scene:{contextAt:123,at:123}});
+ await removeOfficeEmployee(viewer,String(person._id));
+ expect(await Employee.findById(person._id)).toBeNull();expect(await Employee.findById(outside._id)).not.toBeNull();
+ expect((await User.findById(account._id))?.organizationId).toBe(String(account._id));
+ expect((await Invitation.findOne({token:'test-invite'}))?.status).toBe('expired');
+ expect((await CompanyTeam.findOne({organizationId:org}))?.reviewerEmployeeId).toBeUndefined();
+ expect((await CompanyTeam.findOne({organizationId:org}))?.active).toBe(true);
+ expect(String((await Project.findById(project._id))?.userId)).toBe(String(org));
+ expect(await OfficeSceneModel.findById(org).lean()).toMatchObject({revision:9,scene:{contextAt:0}});
+});
+it('rejects cross-org removal, non-admins, self and owner without changing the roster',async()=>{
+ const owner=await Employee.create({name:'Owner',organizationId:String(org),userId:org,role:'Administrator'});
+ const manager=await Employee.create({name:'Manager',organizationId:String(org),userId:new Types.ObjectId(),role:'Administrator'});
+ const outside=await Employee.create({name:'Outside',organizationId:String(otherOrg),role:'User'});
+ await expect(removeOfficeEmployee(viewer,String(outside._id))).rejects.toMatchObject({status:404});
+ await expect(removeOfficeEmployee({...viewer,role:'Manager'},String(manager._id))).rejects.toMatchObject({status:403});
+ await expect(removeOfficeEmployee(viewer,String(owner._id))).rejects.toMatchObject({status:409});
+ await expect(removeOfficeEmployee({...viewer,userId:String(manager.userId),employeeId:String(manager._id)},String(manager._id))).rejects.toMatchObject({status:409});
+ expect(await Employee.countDocuments()).toBe(3);
+});
+it('invalidates cached roster with a revision bump so concurrent scene writers cannot restore stale staff',async()=>{
+ await OfficeSceneModel.create({_id:org,revision:4,scene:{contextAt:100,at:100}});
+ await invalidateOfficeRoster(org);
+ expect((await OfficeSceneModel.updateOne({_id:org,revision:4},{$set:{'scene.contextAt':100}})).modifiedCount).toBe(0);
+ expect(await OfficeSceneModel.findById(org).lean()).toMatchObject({revision:5,scene:{contextAt:0}});
+});
+it('rolls membership and reviewer changes back together when removal fails',async()=>{
+ const account=await User.create({email:'rollback@example.test',googleId:'rollback-member',organizationId:String(org)});
+ const person=await Employee.create({name:'Keep me',organizationId:String(org),userId:account._id,role:'User'});
+ await CompanyTeam.create({organizationId:org,companyId:new Types.ObjectId(),role:'marketing',remit:'Grow audience',updatedBy:org,reviewerEmployeeId:person._id,active:true});
+ const fail=vi.spyOn(Employee,'deleteOne').mockRejectedValueOnce(new Error('Interrupted'));
+ try{await expect(removeOfficeEmployee(viewer,String(person._id))).rejects.toThrow('Interrupted');}finally{fail.mockRestore();}
+ expect((await User.findById(account._id))?.organizationId).toBe(String(org));
+ expect(await Employee.findById(person._id)).not.toBeNull();
+ expect(String((await CompanyTeam.findOne({organizationId:org}))?.reviewerEmployeeId)).toBe(String(person._id));
+});

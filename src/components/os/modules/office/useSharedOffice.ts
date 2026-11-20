@@ -43,7 +43,8 @@ export function useSharedOffice() {
     const visibility=()=>{if(document.hidden)request?.abort();else void refresh();};
     document.addEventListener('visibilitychange',visibility);
     window.addEventListener('nucleas:jobs-changed',refresh);
-    return()=>{stopped=true;alive.current=false;controller.abort();clearInterval(timer);document.removeEventListener('visibilitychange',visibility);window.removeEventListener('nucleas:jobs-changed',refresh);};
+    window.addEventListener('nucleas:employees-changed',refresh);
+    return()=>{stopped=true;alive.current=false;controller.abort();clearInterval(timer);document.removeEventListener('visibilitychange',visibility);window.removeEventListener('nucleas:jobs-changed',refresh);window.removeEventListener('nucleas:employees-changed',refresh);};
   },[accept]);
   const visit=useCallback(async(companyId:string,role:string,target:VisitTarget)=>{
     if(saving||!frame)return false;

@@ -7,7 +7,7 @@ function supportsTaskbar(platform, release, arch) {
 }
 function supportsNativeTaskbar(platform,release,arch){return supportsTaskbar(platform,release,arch)&&Number(release.split('.')[2])>=22000;}
 function minimizedWindows(windows) {
-  return [...windows].filter(([key, win]) => key !== 'office:{}' && !win.isDestroyed() && win.isMinimized())
+  return [...windows].filter(([, win]) => !win.isDestroyed() && win.isMinimized())
     .map(([key, win]) => ({ key, title: win.getTitle().slice(0, 160) || 'Nucleas' }));
 }
 function restoreWindow(windows, key) {

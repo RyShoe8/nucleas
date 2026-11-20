@@ -20,7 +20,7 @@ test('only minimized Nucleas app windows appear, retaining each company context'
     ['company:{"id":"one"}', window('Frugal Gambler', true)], ['company:{"id":"two"}', window('PlayBound', true)],
     ['closed:{}', window('Old', true, true)],
   ]);
-  assert.deepEqual(minimizedWindows(windows).map(w => w.title), ['Frugal Gambler', 'PlayBound']);
+  assert.deepEqual(minimizedWindows(windows).map(w => w.title), ['Office', 'Frugal Gambler', 'PlayBound']);
   assert.equal(restoreWindow(windows, 'company:{"id":"two"}'), true);
   assert.equal(windows.get('company:{"id":"two"}').focused, true);
   assert.equal(windows.get('company:{"id":"one"}').focused, undefined);

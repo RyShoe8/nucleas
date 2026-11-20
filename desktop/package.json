@@ -9,7 +9,7 @@
   "scripts": {
     "prepare": "node scripts/catalog.cjs && node scripts/native.cjs",
     "start": "node scripts/catalog.cjs && node scripts/native.cjs && electron .",
-    "test": "node --test policy.test.cjs startup-update.test.cjs taskbar-state.test.cjs taskbar.test.cjs attention.test.cjs taskbar-layout.test.cjs taskbar-compat.test.cjs shortcut-icons.test.cjs",
+    "test": "node --test policy.test.cjs startup-update.test.cjs taskbar-state.test.cjs taskbar.test.cjs attention.test.cjs taskbar-layout.test.cjs taskbar-compat.test.cjs shortcut-icons.test.cjs window-behavior.test.cjs",
     "test:native": "node scripts/native-test.cjs",
     "pack": "node scripts/catalog.cjs && node scripts/native.cjs && electron-builder --win --dir",
     "dist": "node scripts/catalog.cjs && node scripts/native.cjs && electron-builder --win nsis --publish never && node scripts/verify-release.cjs"
