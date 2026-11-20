@@ -8,6 +8,11 @@ const catalog = require('./renderer/catalog.json');
 const { signIn, authFile, authUrl } = require('./auth.cjs');
 const { installDisplayCapture } = require('./capture.cjs');
 const { startupUpdate } = require('./startup-update.cjs');
+const { supportsTaskbar, createQuestionQueue } = require('./taskbar-state.cjs');
+const { createTaskbar } = require('./taskbar.cjs');
+const taskbarSupported = supportsTaskbar(process.platform, require('node:os').release(), process.arch);
+const questions = createQuestionQueue();
+let taskbar, taskbarError = false;
 const targets = new Map();
 const launcherFile = path.join(__dirname, 'renderer/index.html');
 const launcherUrl = pathToFileURL(launcherFile).href;
@@ -26,6 +31,7 @@ function broadcast() {
   if (launcher && !launcher.isDestroyed()) launcher.webContents.send('launcher:state', state());
   const main = office();
   if (main && !main.isDestroyed()) main.webContents.send('launcher:state', state());
+  taskbar?.broadcast();
 }
 // The main Nucleas window is the Office app: the whole business at a glance, with Ask, voice and every app.
 const OFFICE_KEY = 'office:{}';
@@ -39,6 +45,38 @@ function officeSender(event) { const main = office(); return Boolean(main && eve
 function status(phase, text) { if (update.phase === phase && update.text === text) return; update = { phase, text }; broadcast(); }
 function localSender(event) { return event.sender === launcher?.webContents && event.senderFrame === event.sender.mainFrame && event.senderFrame.url === launcherUrl; }
 function moduleSender(event) { return localSender(event) || ([...windows.values()].some(w => w.webContents === event.sender) && event.senderFrame === event.sender.mainFrame && trustedRemote(event.senderFrame.url)); }
+function askSender(event) {
+  const ask = windows.get('assistant:{}');
+  return Boolean(ask && event.sender === ask.webContents && event.senderFrame === event.sender.mainFrame && event.senderFrame.url === targets.get(ask));
+}
+function submitTaskbarQuestion(text) {
+  // Opening first rejects the request without losing the input if the window limit has been reached.
+  openModule({ moduleId: 'assistant' });
+  questions.enqueue(text);
+  const ask = windows.get('assistant:{}');
+  if (ask && !ask.isDestroyed()) ask.webContents.send('ask:available');
+}
+function trayMenu() {
+  if (!tray) return;
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open Nucleas', click: showLauncher }, { label: 'Ask Nucleas', click: () => openModule({ moduleId: 'assistant' }) },
+    { type: 'separator' },
+    { label: taskbarSupported ? 'Show Nucleas in the taskbar' : 'Taskbar bar requires Windows 11', type: 'checkbox', enabled: taskbarSupported, checked: taskbarSupported && saved.taskbarEnabled !== false, click: item => {
+      saved.taskbarEnabled = item.checked; persist(); configureTaskbar(); trayMenu();
+    } },
+    ...(taskbarError ? [{ label: 'Taskbar unavailable · retry', click: () => { configureTaskbar(); trayMenu(); } }] : []),
+    { label: 'Check for updates', click: checkUpdates },
+    { label: 'Quit Nucleas', click: () => { quitting = true; app.quit(); } },
+  ]));
+}
+function configureTaskbar() {
+  taskbar?.stop(); taskbar = undefined; taskbarError = false;
+  if (starting || quitting || testRun || !taskbarSupported || saved.taskbarEnabled === false) return;
+  taskbar = createTaskbar({
+    windows, openOffice: showLauncher, openAsk: () => openModule({ moduleId: 'assistant' }), submit: submitTaskbarQuestion,
+    onFailure: () => { taskbarError = true; trayMenu(); },
+  });
+}
 function secureWindow(win, local = false) {
   win.webContents.setWindowOpenHandler(({ url }) => {
     // App windows have no back button, so a full Nucleas page gets its own window, signed in as the same person.
@@ -158,6 +196,9 @@ function openModule(raw) {
     if (isOffice && !quitting) { event.preventDefault(); win.hide(); officeHiddenAt = Date.now(); if (update.phase === 'ready' && openApps() === 0) installUpdate(); }
   });
   win.on('closed', () => { windows.delete(value.key); targets.delete(win); broadcast(); });
+  // Keep the taskbar event-driven: never enumerate every window on the computer.
+  for (const event of ['minimize', 'restore', 'show', 'hide']) win.on(event, broadcast);
+  win.on('page-title-updated', () => setImmediate(broadcast));
 
   // Login uses the ordinary shared cookie session; return to this app after login.
   win.webContents.on('did-navigate', (_event, url) => {
@@ -212,15 +253,13 @@ else {
     } else if (testRun) createLauncher(); else showLauncher();
     tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'renderer/icon.png')).resize({ width: 20, height: 20 }));
     tray.setToolTip('Nucleas · Alt+Space');
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: 'Open Nucleas', click: showLauncher }, { label: 'Ask Nucleas', click: () => openModule({ moduleId: 'assistant' }) },
-      { type: 'separator' }, { label: 'Check for updates', click: checkUpdates },
-      { label: 'Quit Nucleas', click: () => { quitting = true; app.quit(); } },
-    ]));
+    trayMenu();
     tray.on('click', showLauncher);
     if (!globalShortcut.register('Alt+Space', () => testRun ? (launcher?.isVisible() ? launcher.hide() : showLauncher()) : toggleMain())) status('notice', 'Alt+Space is in use · open Nucleas from the tray');
     ipcMain.handle('launcher:show', event => { if (!moduleSender(event)) throw new Error('Not allowed'); showLauncher(); });
     ipcMain.handle('module:open', (event, value) => { if (!moduleSender(event)) throw new Error('Not allowed'); return openModule(value); });
+    ipcMain.handle('ask:pending', event => { if (!askSender(event)) throw new Error('Not allowed'); return questions.peek(); });
+    ipcMain.handle('ask:accept', (event, id) => { if (!askSender(event)) throw new Error('Not allowed'); return questions.accept(id); });
     ipcMain.handle('auth:signin', async event => {
       const win = [...windows.values()].find(w => w.webContents === event.sender);
       if (!win || event.senderFrame !== event.sender.mainFrame || event.senderFrame.url !== authUrl) throw new Error('Not allowed');
@@ -267,8 +306,9 @@ else {
       if (quitting) return;
       if (result === 'ready') installUpdate(); else showLauncher();
     } else void checkUpdates();
+    configureTaskbar();
   });
-  app.on('before-quit', () => { quitting = true; });
+  app.on('before-quit', () => { quitting = true; taskbar?.stop(); });
   app.on('will-quit', () => { if (persistTimer) flushBounds(); globalShortcut.unregisterAll(); });
   app.on('window-all-closed', () => {});
 }

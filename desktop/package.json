@@ -9,11 +9,12 @@
   "scripts": {
     "prepare": "node scripts/catalog.cjs",
     "start": "node scripts/catalog.cjs && electron .",
-    "test": "node --test policy.test.cjs startup-update.test.cjs",
+    "test": "node --test policy.test.cjs startup-update.test.cjs taskbar-state.test.cjs taskbar.test.cjs",
     "pack": "node scripts/catalog.cjs && electron-builder --win --dir",
     "dist": "node scripts/catalog.cjs && electron-builder --win nsis --publish never && node scripts/verify-release.cjs"
   },
   "dependencies": {
+    "deskband11lib": "1.5.1",
     "electron-updater": "6.8.11"
   },
   "devDependencies": {
@@ -34,9 +35,14 @@
       "capture.cjs",
       "capture-preload.cjs",
       "startup-update.cjs",
+      "taskbar.cjs",
+      "taskbar-state.cjs",
+      "taskbar-preload.cjs",
+      "licenses/**",
       "renderer/**"
     ],
     "asar": true,
+    "asarUnpack": ["**/node_modules/deskband11lib/bin/**"],
     "win": {
       "target": "nsis",
       "icon": "renderer/icon.png",

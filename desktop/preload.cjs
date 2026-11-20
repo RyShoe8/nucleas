@@ -9,6 +9,9 @@ if (local || location.origin === 'https://nucleas.app') {
     onVoiceStart: callback => { const listener = () => callback(); ipcRenderer.on('voice:start', listener); return () => ipcRenderer.removeListener('voice:start', listener); },
     // The Office (the main window) reads the app's update state and starts voice; the main process refuses these for other windows.
     ...(!local ? {
+      pendingTaskbarAsk: () => ipcRenderer.invoke('ask:pending'),
+      acceptTaskbarAsk: id => ipcRenderer.invoke('ask:accept', id),
+      onTaskbarAsk: callback => { const listener = () => callback(); ipcRenderer.on('ask:available', listener); return () => ipcRenderer.removeListener('ask:available', listener); },
       startVoice: () => ipcRenderer.invoke('voice:start'),
       desktopState: () => ipcRenderer.invoke('launcher:state'),
       onDesktopState: callback => { const listener = (_event, state) => callback(state); ipcRenderer.on('launcher:state', listener); return () => ipcRenderer.removeListener('launcher:state', listener); },

@@ -1,0 +1,81 @@
+const { BrowserWindow, ipcMain, Menu, nativeTheme } = require('electron');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const { minimizedWindows, restoreWindow, MAX_QUESTION_LENGTH } = require('./taskbar-state.cjs');
+const file = path.join(__dirname, 'renderer/taskbar.html');
+const url = pathToFileURL(file).href;
+
+/** Owns only the local taskbar surface. No provider credentials, web content or general-purpose IPC. */
+function createTaskbar({ windows, openOffice, openAsk, submit, onFailure }) {
+  let controller, draft = '', attached = false, vertical = false, stopping = false;
+  const snapshot = () => ({ windows: minimizedWindows(windows), draft, vertical, dark: nativeTheme.shouldUseDarkColorsForSystemIntegratedUI });
+  const senderAllowed = event => {
+    const win = controller?.window;
+    return Boolean(win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === event.sender.mainFrame && event.senderFrame.url === url);
+  };
+  const broadcast = () => {
+    const win = controller?.window;
+    if (win && !win.isDestroyed()) win.webContents.send('taskbar:state', snapshot());
+  };
+  const channels = {
+    'taskbar:state': snapshot,
+    'taskbar:office': openOffice,
+    'taskbar:open-ask': openAsk,
+    'taskbar:ask': text => { submit(text); draft = ''; },
+    'taskbar:draft': value => { if (typeof value === 'string' && value.length <= MAX_QUESTION_LENGTH) draft = value; },
+    'taskbar:restore': key => { if (!restoreWindow(windows, key)) throw new Error('This window has closed. Open it from Office.'); },
+    'taskbar:overflow': () => {
+      const entries = minimizedWindows(windows);
+      if (entries.length) Menu.buildFromTemplate(entries.map(entry => ({ label: entry.title, click: () => restoreWindow(windows, entry.key) }))).popup({ window: controller.window });
+    },
+  };
+  for (const [channel, action] of Object.entries(channels)) ipcMain.handle(channel, (event, value) => {
+    if (!senderAllowed(event)) throw new Error('Not allowed');
+    return action(value);
+  });
+  nativeTheme.on('updated', broadcast);
+  function stop() {
+    if (stopping) return;
+    stopping = true;
+    nativeTheme.removeListener('updated', broadcast);
+    for (const channel of Object.keys(channels)) ipcMain.removeHandler(channel);
+    const win = controller?.window;
+    try { controller?.stop(); }
+    catch { if (win && !win.isDestroyed()) win.destroy(); }
+    finally { controller = undefined; }
+  }
+  function fail() {
+    if (stopping) return;
+    stop(); onFailure();
+  }
+  try {
+    const { ElectronTaskbarWindowController, createTaskbarWindowOptions } = require('deskband11lib/electron');
+    const { STRETCH, TaskbarContentPlacement, isVerticalTaskbarEdge } = require('deskband11lib');
+    controller = new ElectronTaskbarWindowController(() => {
+      attached = false;
+      const win = new BrowserWindow(createTaskbarWindowOptions({
+        width: 600, height: 48, transparent: true, backgroundColor: '#00000000', title: 'Nucleas taskbar',
+        webPreferences: { preload: path.join(__dirname, 'taskbar-preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: true },
+      }));
+      win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      win.webContents.on('will-navigate', event => event.preventDefault());
+      win.webContents.on('will-attach-webview', event => event.preventDefault());
+      win.webContents.on('render-process-gone', fail);
+      win.webContents.on('did-finish-load', broadcast);
+      void win.loadFile(file).catch(fail);
+      return win;
+    }, {
+      preferredWidth: STRETCH, preferredHeight: 48, placement: TaskbarContentPlacement.BeforeNotificationArea,
+      trackTaskbarButtons: true, trackNotificationArea: true,
+      animateLayoutChanges: false, highRefreshRateMode: false,
+      layoutRefreshInterval: 500, eventPollInterval: 250,
+    });
+    controller.on('attached', () => { attached = true; broadcast(); });
+    controller.on('taskbarEdgeChanged', event => { vertical = isVerticalTaskbarEdge(event.taskbarEdge); broadcast(); });
+    controller.on('attachFailed', fail);
+    controller.on('layoutError', fail);
+    controller.start();
+  } catch { fail(); }
+  return { stop, broadcast, get active() { return !stopping; }, get attached() { return attached && !stopping; } };
+}
+module.exports = { createTaskbar };

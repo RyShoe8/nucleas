@@ -156,6 +156,7 @@ export default function AssistantModule({ payload }: { payload?: Record<string, 
     const [mode, setMode] = useState<ChatMode>('orchestrated');
     const [cost, setCost] = useState<CostChoice>('default');
     const [busy, setBusy] = useState(false);
+    const sending = useRef(false);
     const [error, setError] = useState<string | null>(null);
     const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -195,9 +196,10 @@ export default function AssistantModule({ payload }: { payload?: Record<string, 
         endRef.current?.scrollIntoView({ block: 'end' });
     }, [turns]);
 
-    const send = async (message: string, attachments: AttachmentRef[] = []): Promise<boolean> => {
+    const send = async (message: string, attachments: AttachmentRef[] = [], taskbarQuestionId?: string): Promise<boolean> => {
         const trimmed = message.trim();
-        if ((!trimmed && !attachments.length) || busy || (mode === 'direct' && !selection)) return false;
+        if ((!trimmed && !attachments.length) || sending.current || busy || (mode === 'direct' && !selection)) return false;
+        sending.current = true;
         setBusy(true);
         setError(null);
         const optimistic: Turn = {
@@ -209,6 +211,9 @@ export default function AssistantModule({ payload }: { payload?: Record<string, 
         };
         setTurns((t) => [...(t ?? []), optimistic, { id: 'pending', role: 'assistant', text: 'Starting…', createdAt: '', pending: true, progress: [], startedAt: Date.now() }]);
         try {
+            if (taskbarQuestionId && !(await window.nucleasDesktop?.acceptTaskbarAsk?.(taskbarQuestionId))) {
+                throw new Error('Question already accepted');
+            }
             const res = await fetch('/api/os/assistant', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json', accept: 'application/x-ndjson' },
@@ -240,6 +245,7 @@ export default function AssistantModule({ payload }: { payload?: Record<string, 
             setTurns((t) => (t ?? []).filter((x) => x.id !== 'pending'));
             return false;
         } finally {
+            sending.current = false;
             setBusy(false);
         }
     };
@@ -247,6 +253,31 @@ export default function AssistantModule({ payload }: { payload?: Record<string, 
     // A question handed over from another screen (the Team hand-off box, or a desktop window's link) is asked once.
     const sendLatest = useRef(send);
     useEffect(() => { sendLatest.current = send; });
+    // Pull after history/auth and between answers. A notification during a busy answer never consumes a question.
+    const taskbarReady = turns !== null && !busy && (mode === 'orchestrated' || Boolean(selection));
+    useEffect(() => {
+        const bridge = window.nucleasDesktop;
+        if (!taskbarReady || !bridge?.pendingTaskbarAsk) return;
+        let active = true;
+        let checking = false;
+        let notifiedWhileChecking = false;
+        const take = async () => {
+            if (!active || sending.current) return;
+            if (checking) { notifiedWhileChecking = true; return; }
+            checking = true;
+            try {
+                const question = await bridge.pendingTaskbarAsk!();
+                if (active && question) void sendLatest.current(question.text, [], question.id);
+            } catch { /* Context-specific Ask windows do not consume the main window's queue. */ }
+            finally {
+                checking = false;
+                if (notifiedWhileChecking) { notifiedWhileChecking = false; void take(); }
+            }
+        };
+        const unsubscribe = bridge.onTaskbarAsk?.(() => { void take(); });
+        void take();
+        return () => { active = false; unsubscribe?.(); };
+    }, [taskbarReady]);
     const askedId = useRef<string | null>(null);
     useEffect(() => {
         const take = () => {
