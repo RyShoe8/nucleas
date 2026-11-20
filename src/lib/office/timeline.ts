@@ -39,8 +39,10 @@ export function advanceScene(previous:OfficeScene|null,rooms:Room[]|undefined,no
   if(command)overrides[command.personId]=command.target;
   const desired=chooseDestinations(world,now/1000,overrides);
   const old=new Map(previous?.actors.map(actor=>[actor.id,actor]));
+  const previousHomes=new Map(previous?.world.people.map(p=>[p.id,p.home.point]));
   const actors=world.people.map(person=>{
-    const saved=old.get(person.id);
+    const home=previousHomes.get(person.id);
+    const saved=home?.x===person.home.point.x&&home?.y===person.home.point.y?old.get(person.id):undefined;
     let actor:Actor=saved?projectActor(saved,Math.max(0,(now-previous!.at)/1000)):{id:person.id,point:person.home.point,destination:person.home,route:[],arrived:true,facing:1};
     const destination=desired.get(person.id)!;
     // Finish the current safe route, then start the next. Every viewer receives that same decision.
@@ -58,7 +60,9 @@ export function advanceScene(previous:OfficeScene|null,rooms:Room[]|undefined,no
 /** Filter after allocation: permissions must never reposition shared studios or reshuffle seats. */
 export function visibleSnapshot(snapshot:OfficeSnapshot,allowed:Set<string>):OfficeSnapshot {
   const world=snapshot.scene.world;
-  const people=world.people.filter(p=>allowed.has(p.room.companyId));
+  const permitted=(room:Room)=>room.kind==='management'||allowed.has(room.companyId);
+  const cleanRoom=(room:Room):Room=>room.kind!=='management'?room:{...room,desks:room.desks.map(d=>({...d,reports:d.reports?.filter(r=>allowed.has(r.companyId)),jobs:d.reports?.filter(r=>allowed.has(r.companyId)).length??0}))};
+  const people=world.people.filter(p=>permitted(p.room)).map(p=>p.desk.human?{...p,room:cleanRoom(p.room),desk:{...p.desk,reports:p.desk.reports?.filter(r=>allowed.has(r.companyId)),jobs:p.desk.reports?.filter(r=>allowed.has(r.companyId)).length??0}}:p);
   const ids=new Set(people.map(p=>p.id));
-  return {...snapshot,scene:{...snapshot.scene,world:{...world,people,suites:world.suites.filter(s=>allowed.has(s.room.companyId))},actors:snapshot.scene.actors.filter(a=>ids.has(a.id)),overrides:{}}};
+  return {...snapshot,scene:{...snapshot.scene,world:{...world,people,suites:world.suites.filter(s=>permitted(s.room)).map(s=>({...s,room:cleanRoom(s.room)}))},actors:snapshot.scene.actors.filter(a=>ids.has(a.id)),overrides:{}}};
 }

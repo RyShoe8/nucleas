@@ -109,6 +109,17 @@ beforeEach(async () => {
 });
 
 describe('publishing jobs', () => {
+  it('opens an older delivery from a notification while retaining its job scope',async()=>{
+    const job=await newJob(),itemId=new Types.ObjectId();
+    const deliveries=await PublishDelivery.insertMany(Array.from({length:35},(_,i)=>({organizationId:org,companyId,jobId:job._id,itemId:new Types.ObjectId(),platform:'facebook',mode:'manual',status:'ready',body:`Post ${i}`,createdAt:new Date(100000+i*1000)})));
+    const id=String(deliveries[0]._id);
+    expect((await publishingView(job))!.ready.some(d=>d.id===id)).toBe(false);
+    expect((await publishingView(job,id))!.ready[0].id).toBe(id);
+    const failed=await PublishDelivery.create({organizationId:org,companyId,jobId:job._id,itemId,platform:'facebook',mode:'manual',status:'failed',body:'Needs help'});
+    expect((await publishingView(job,String(failed._id)))!.ready[0].status).toBe('failed');
+    const foreign=await PublishDelivery.create({organizationId:org,companyId,jobId:new Types.ObjectId(),itemId:new Types.ObjectId(),platform:'facebook',mode:'manual',status:'ready',body:'Different job'});
+    expect((await publishingView(job,String(foreign._id)))!.ready.some(d=>d.id===String(foreign._id))).toBe(false);
+  });
   it('drafts samples on a dry run without recording or posting anything', async () => {
     const job = await newJob();
     const run = await newRun(job._id, true);

@@ -6,9 +6,9 @@ const file = path.join(__dirname, 'renderer/taskbar.html');
 const url = pathToFileURL(file).href;
 
 /** Owns only the local taskbar surface. No provider credentials, web content or general-purpose IPC. */
-function createTaskbar({ windows, openOffice, openAsk, submit, onFailure }) {
+function createTaskbar({ windows, openOffice, openAsk, submit, onFailure, attention = () => ({ count: 0 }), openAttention = () => {} }) {
   let controller, draft = '', attached = false, vertical = false, stopping = false;
-  const snapshot = () => ({ windows: minimizedWindows(windows), draft, vertical, dark: nativeTheme.shouldUseDarkColorsForSystemIntegratedUI });
+  const snapshot = () => ({ windows: minimizedWindows(windows), draft, vertical, attention: attention(), dark: nativeTheme.shouldUseDarkColorsForSystemIntegratedUI });
   const senderAllowed = event => {
     const win = controller?.window;
     return Boolean(win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === event.sender.mainFrame && event.senderFrame.url === url);
@@ -21,6 +21,7 @@ function createTaskbar({ windows, openOffice, openAsk, submit, onFailure }) {
     'taskbar:state': snapshot,
     'taskbar:office': openOffice,
     'taskbar:open-ask': openAsk,
+    'taskbar:attention': openAttention,
     'taskbar:ask': text => { submit(text); draft = ''; },
     'taskbar:draft': value => { if (typeof value === 'string' && value.length <= MAX_QUESTION_LENGTH) draft = value; },
     'taskbar:restore': key => { if (!restoreWindow(windows, key)) throw new Error('This window has closed. Open it from Office.'); },

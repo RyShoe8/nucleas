@@ -78,7 +78,7 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
     // An admin record: the values to enter, each copyable, and the form as Nucleas filled it.
     if (delivery.platform === 'admin') {
         return (
-            <article className="ui-card space-y-2 p-3 text-sm">
+            <article data-delivery-id={delivery.id} className="ui-card space-y-2 p-3 text-sm">
                 <header className="flex items-center gap-2">
                     <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide">Admin</span>
                     <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">{companyName ? `${companyName} · ` : ''}{delivery.itemTitle}</span>
@@ -160,7 +160,7 @@ export default function ReadyPostCard({ jobId, companyName, delivery, subreddit,
     }
 
     return (
-        <article className="ui-card space-y-2 p-3 text-sm">
+        <article data-delivery-id={delivery.id} className="ui-card space-y-2 p-3 text-sm">
             <header className="flex items-center gap-2">
                 <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide">{PLATFORM_LABEL[delivery.platform]}</span>
                 <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">{companyName ? `${companyName} · ` : ''}{delivery.itemTitle}{isReddit && subreddit ? ` · r/${subreddit}` : ''}</span>

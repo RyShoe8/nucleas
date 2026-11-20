@@ -10,6 +10,8 @@ vi.mock('@/lib/ai/engine/select', () => ({
   readEngineSettings: async () => ({}),
   selectModel: async (_org: string, need: string, level: string) => ({ primary: { model: `${level}-${need}`, profileId: 'p', free: level === 'free' }, fallback: null }),
 }));
+const assignments = vi.hoisted(() => vi.fn());
+vi.mock('./teamAssignments',()=>({companyAssignments:assignments}));
 vi.mock('@/lib/models/CompanyTeam', () => ({
   CompanyTeam: { find: () => ({ select: () => ({ lean: async () => [{ role: 'design', remit: 'Own the checkout experience.', lessons: 'Never hide the price.' }] }) }) },
 }));
@@ -29,6 +31,7 @@ type EngineInput = { need: string; system: string; user: string };
 type ChatInput = { model: string; toolProfile: string; forceToolLoop: boolean; userText: string; systemPrompt: string };
 
 beforeEach(() => {
+  assignments.mockResolvedValue(['design','creative','engineering','support','operations','marketing'].map(role=>({role,active:true})));
   engine.mockReset();
   chat.mockReset();
   board.mockClear();
@@ -95,6 +98,16 @@ describe('a member answering with an intern', () => {
 });
 
 describe('the owner asking teammates', () => {
+  it('does not call a specialist who is not assigned to this company', async () => {
+    assignments.mockResolvedValue([{role:'marketing',active:true},{role:'design',active:true}]);
+    engine.mockResolvedValueOnce({text:'{"consult":[{"member":"engineering","question":"Can this be cached?"}]}',model:'planner'});
+    expect(await consultTeammates(viewer,companyId,'marketing','Plan the launch.')).toEqual([]);
+    expect(chat).not.toHaveBeenCalled();
+    expect(engine).toHaveBeenCalledTimes(1);
+    assignments.mockResolvedValue([{role:'marketing',active:true}]);engine.mockClear();
+    expect(await consultTeammates(viewer,companyId,'marketing','Plan the launch.')).toEqual([]);
+    expect(engine).not.toHaveBeenCalled();
+  });
   it('asks only who the owner names, and nobody when the owner needs no one', async () => {
     engine.mockResolvedValueOnce({ text: '{"consult":[{"member":"design","question":"Where should the price sit?"}]}', model: 'paid-plan', usedFallback: false })
       .mockResolvedValueOnce({ text: 'Above the button.', model: 'paid-plan', usedFallback: false });

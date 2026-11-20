@@ -194,9 +194,9 @@ function storedFields(input: WatchInput) {
 export type Result<T> = { ok: true; data: T } | { ok: false; status: 400 | 403 | 404; error: string };
 const fail = (status: 400 | 403 | 404, error: string): { ok: false; status: 400 | 403 | 404; error: string } => ({ ok: false, status, error });
 
-export async function listWatches(viewer: CompanyViewer): Promise<WatchView[] | null> {
+export async function listWatches(viewer: CompanyViewer, options: { complete?: boolean } = {}): Promise<WatchView[] | null> {
   if (!canUseWatches(viewer)) return null;
-  const rows = await ContentWatch.find({ organizationId: viewer.organizationId }).sort({ createdAt: -1 }).limit(100).lean<WatchLean[]>();
+  const rows = await ContentWatch.find({ organizationId: viewer.organizationId }).sort({ createdAt: -1 }).limit(options.complete ? 0 : 100).lean<WatchLean[]>();
   return toViews(viewer, rows);
 }
 

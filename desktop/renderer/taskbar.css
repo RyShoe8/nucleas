@@ -18,6 +18,8 @@ input::placeholder { color: inherit; opacity: .7; }
 .window { min-width: 76px; max-width: 160px; padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-color: var(--bar-line); background: var(--bar-field); }
 .window::before { content: ''; display: inline-block; width: 4px; height: 4px; margin-right: 6px; border-radius: 50%; background: var(--nucleas-primary-dark); vertical-align: middle; }
 #overflow { width: 30px; font-size: 18px; }
+#attention { width: 36px; position: relative; display: grid; place-items: center; }
+#attention-count { position: absolute; top: -2px; right: -2px; border-radius: 8px; background: #bdcf87; color: #173b2e; font-size: 9px; padding: 1px 4px; font-weight: 700; }
 #compact-ask { display: none; width: 32px; }
 #notice { position: absolute; inset: 4px 6px 4px 48px; z-index: 2; background: var(--bar-field); border: 1px solid var(--bar-line); border-radius: 8px; padding: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 [hidden] { display: none !important; }

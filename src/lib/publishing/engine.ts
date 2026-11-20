@@ -1160,7 +1160,7 @@ export interface PublishingView {
   postedThisWeek: number;
 }
 
-export async function publishingView(job: { _id: Types.ObjectId; publishing?: unknown }): Promise<PublishingView | null> {
+export async function publishingView(job: { _id: Types.ObjectId; publishing?: unknown }, focusId?:string): Promise<PublishingView | null> {
   const config = readConfig(job);
   if (!config) return null;
   const [ready, recent, postedThisWeek] = await Promise.all([
@@ -1168,6 +1168,12 @@ export async function publishingView(job: { _id: Types.ObjectId; publishing?: un
     PublishDelivery.find({ jobId: job._id, status: { $in: ['posted', 'skipped', 'failed'] } }).sort({ updatedAt: -1 }).limit(10).lean<DeliveryLean[]>(),
     PublishDelivery.countDocuments({ jobId: job._id, status: 'posted', postedAt: { $gte: new Date(Date.now() - 7 * 86_400_000) } }),
   ]);
+  // A notification can point to an outstanding post beyond the normal history window.
+  // Keep the job scope and all publishing policy checks when bringing it into view.
+  if(focusId&&Types.ObjectId.isValid(focusId)&&!ready.some(d=>String(d._id)===focusId)){
+    const focus=await PublishDelivery.findOne({_id:new Types.ObjectId(focusId),jobId:job._id,status:{$in:['ready','failed']}}).select('+screenshot').lean<DeliveryLean>();
+    if(focus)ready.unshift(focus);
+  }
   const items = new Map(
     (await PublishItem.find({ _id: { $in: [...ready, ...recent].map((d) => d.itemId) } }).select('title').lean<{ _id: Types.ObjectId; title?: string }[]>()).map((i) => [String(i._id), i.title ?? ''])
   );

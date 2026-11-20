@@ -17,12 +17,12 @@ const lines = (value: string) => value.split('\n').map((v) => v.trim()).filter(B
 const STATUS_LABEL: Record<ArticleView['status'], string> = { queued: 'Waiting', running: 'Writing', done: 'Ready', failed: 'Stopped' };
 
 /** Articles: pick a company, say what to write about, and get a draft in that company's Voice. */
-export default function ArticlesPanel() {
+export default function ArticlesPanel({initialArticleId}:{initialArticleId?:string}) {
     const { companies } = useOsCompanies();
     const [articles, setArticles] = useState<ArticleView[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [creating, setCreating] = useState(false);
-    const [openId, setOpenId] = useState<string | null>(null);
+    const [openId, setOpenId] = useState<string | null>(initialArticleId??null);
     const [reload, setReload] = useState(0);
     const refresh = useCallback(() => setReload((n) => n + 1), []);
 

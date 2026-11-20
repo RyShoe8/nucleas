@@ -12,30 +12,37 @@ export function useSharedOffice() {
     const receivedAt=performance.now();
     // Server work can take much longer than transit. Do not mistake half that work
     // for network latency and put the person who saved a visit seconds ahead.
-    setFrame(current=>current&&current.snapshot.revision>snapshot.revision?current:{snapshot,receivedAt});
+    setFrame(current=>{
+      if(current&&current.snapshot.revision>snapshot.revision)return current;
+      if(current&&JSON.stringify(current.snapshot.scene.world)===JSON.stringify(snapshot.scene.world))snapshot.scene.world=current.snapshot.scene.world;
+      return {snapshot,receivedAt};
+    });
     setError(null);
   },[]);
   useEffect(()=>{
     alive.current=true;
     let busy=false,stopped=false;
     const controller=new AbortController();
+    let request:AbortController|null=null;
     const refresh=async()=>{
       if(busy||document.hidden||stopped)return;
       busy=true;
+      request=new AbortController();
       try {
-        const response=await fetch('/api/os/office',{cache:'no-store',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(20000)])});
+        const response=await fetch('/api/os/office',{cache:'no-store',signal:AbortSignal.any([controller.signal,request.signal,AbortSignal.timeout(20000)])});
         if(!response.ok)throw Error('Shared office disconnected. Reconnecting…');
         const data=await response.json() as OfficeSnapshot;
         if(!data.scene?.world||!Array.isArray(data.scene.actors))throw Error('Shared office is unavailable.');
         if(!stopped)accept(data);
-      } catch(e){if(!stopped)setError(e instanceof Error?e.message:'Shared office is unavailable.');}
+      } catch(e){if(!stopped&&!document.hidden)setError(e instanceof Error?e.message:'Shared office is unavailable.');}
       finally {busy=false;}
     };
     void refresh();
-    const timer=setInterval(()=>void refresh(),5000);
-    document.addEventListener('visibilitychange',refresh);
+    const timer=setInterval(()=>void refresh(),10000);
+    const visibility=()=>{if(document.hidden)request?.abort();else void refresh();};
+    document.addEventListener('visibilitychange',visibility);
     window.addEventListener('nucleas:jobs-changed',refresh);
-    return()=>{stopped=true;alive.current=false;controller.abort();clearInterval(timer);document.removeEventListener('visibilitychange',refresh);window.removeEventListener('nucleas:jobs-changed',refresh);};
+    return()=>{stopped=true;alive.current=false;controller.abort();clearInterval(timer);document.removeEventListener('visibilitychange',visibility);window.removeEventListener('nucleas:jobs-changed',refresh);};
   },[accept]);
   const visit=useCallback(async(companyId:string,role:string,target:VisitTarget)=>{
     if(saving||!frame)return false;

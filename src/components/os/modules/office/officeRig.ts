@@ -1,4 +1,5 @@
 import type { Actor } from './officeSimulation';
+import {appearanceTexture} from './officeAppearance';
 
 type Quad = [number,number,number,number,number,number,number];
 type Motion = {fps:number;regions:[number,number,number,number][];clips:Record<string,Quad[][]>};
@@ -29,10 +30,11 @@ export function officeClip(actor:Actor,working:boolean) {
 }
 
 /** Called by the building's single clock, only for visible actors. No per-character RAF or GIF decoder. */
-export function drawOfficeRig(canvas:HTMLCanvasElement,role:string,actor:Actor,working:boolean,time:number,rear=actor.arrived&&actor.destination.view==='rear') {
-    const textureKey=role+(rear?'-rear':'');
-    const texture=textures.get(textureKey);
-    if(!motion||!texture)return false;
+export function drawOfficeRig(canvas:HTMLCanvasElement,_role:string,actor:Actor,working:boolean,time:number,rear=actor.arrived&&actor.destination.view==='rear') {
+    if(!motion)return false;
+    const textureKey=actor.id+(rear?'-rear':'');
+    const texture=appearanceTexture(actor.id,rear,motion.regions,textures);
+    if(!texture)return false;
     const ctx=canvas.getContext('2d');if(!ctx)return false;
     const clip=officeClip(actor,working);
     let player=players.get(canvas);
@@ -43,7 +45,7 @@ export function drawOfficeRig(canvas:HTMLCanvasElement,role:string,actor:Actor,w
     // Reduced motion or a scene reset can move the presentation clock backwards.
     if(time<player.change){player.change=time;player.lastFrame=-1;player.from=[];}
     const blend=Math.max(0,Math.min(1,(time-player.change)/.28));
-    if(player.lastFrame===index&&blend===1&&player.facing===actor.facing&&player.texture===textureKey)return true;
+    if(player.lastFrame===index&&(blend===1||!player.from.length)&&player.facing===actor.facing&&player.texture===textureKey)return true;
     player.texture=textureKey;
     player.lastFrame=index;player.facing=actor.facing;
     const quads=frames[index].map(q=>{
@@ -56,7 +58,7 @@ export function drawOfficeRig(canvas:HTMLCanvasElement,role:string,actor:Actor,w
         const [sx,sy,w,h]=motion.regions[part];
         const flip=actor.arrived?(actor.destination.key==='pool:1'?-1:1):actor.facing;
         ctx.setTransform(.53*flip*a/w,-.53*b/w,.53*flip*c/h,-.53*d/h,128+.53*flip*x,224-.53*y);
-        ctx.drawImage(texture,sx,sy,w,h,0,0,w,h);
+        ctx.drawImage(texture,sx/2,sy/2,w/2,h/2,0,0,w,h);
     }
     return true;
 }

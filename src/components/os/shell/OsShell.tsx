@@ -15,9 +15,12 @@ import IntegrationNotice from './IntegrationNotice';
 import { VoiceButton } from '@/components/voice/VoiceOverlay';
 import { setAssistantFocus } from '@/lib/os/assistantFocus';
 import styles from './DesktopShell.module.css';
+import { TITLE_SLOT_ID } from '@/lib/os/titleSlot';
+import { usePageVisible } from '@/hooks/os/usePageVisible';
 
 /** A focused web workspace. The native desktop owns its independent OS windows. */
 export default function OsShell({ children }: { children?: ReactNode }) {
+    const pageVisible=usePageVisible();
     const wm = useWindowManager();
     const auth = useOsAuth();
     const [homeFor, setHomeFor] = useState<string | null>(null);
@@ -38,10 +41,10 @@ export default function OsShell({ children }: { children?: ReactNode }) {
         if (target?.poppedOut) wm.focusPopout(id);
         else wm.focus(id);
     };
-    return <div className={`${styles.workspace} ${atHome?styles.officeMode:''}`}>
+    return <Activity mode={pageVisible?'visible':'hidden'}><div className={`${styles.workspace} ${atHome?styles.officeMode:''}`}>
         <header className={styles.workspaceHeader}>
             <button type="button" className={styles.wordmark} onClick={() => setHomeFor(wm.activeWindowId)} aria-label="Nucleas home">nucleas<span>.</span></button>
-            <div className={styles.breadcrumb}>{atHome ? 'YOUR COMPANY. IN REACH.' : title}</div>
+            {atHome ? <div id={TITLE_SLOT_ID} data-window-id="web-office" className="flex min-w-0 flex-1 items-center justify-end"/> : <div className={styles.breadcrumb}>{title}</div>}
             <div className={styles.headerActions}>
                 {!atHome && active && <div className={styles.viewActions}>
                     {definition?.canPopout && <button type="button" onClick={() => { if (!wm.popOut(active.id)) setError('Allow pop-ups for Nucleas to open this app in a separate window.'); }} aria-label="Open in a separate window" title="Open in a separate window">↗</button>}
@@ -68,15 +71,15 @@ export default function OsShell({ children }: { children?: ReactNode }) {
             {error && <div role="alert" className={styles.notice}>{error}<button type="button" aria-label="Dismiss" onClick={() => setError(null)}>×</button></div>}
             {children}
         </main>
-        <div className={styles.dockArea}>
+        {(!atHome||allowed.length>0)&&<div className={styles.dockArea}>
             <nav className={styles.dock} aria-label="Workspace apps">
-                <ModuleLauncher onOpen={() => setHomeFor(null)} />
-                <button type="button" className={styles.dockAsk} onClick={() => { setHomeFor(null); setAssistantFocus(null); wm.open('assistant'); }}><span aria-hidden>✦</span> Ask</button>
+                {!atHome&&<><ModuleLauncher onOpen={() => setHomeFor(null)} />
+                <button type="button" className={styles.dockAsk} onClick={() => { setHomeFor(null); setAssistantFocus(null); wm.open('assistant'); }}><span aria-hidden>✦</span> Ask</button></>}
                 {allowed.length > 0 && <div className={styles.appSwitches}>{allowed.map(w => <button type="button" key={w.id} aria-pressed={!atHome && active?.id === w.id} title={windowLabel(w, ModuleRegistry.get(w.moduleId))} onClick={() => select(w.id)}>
                     <span className={styles.switchDot} aria-hidden />{windowLabel(w, ModuleRegistry.get(w.moduleId))}{w.poppedOut ? ' ↗' : ''}
                 </button>)}</div>}
-                {atHome || active?.moduleId !== 'assistant' ? <VoiceButton inline /> : null}
+                {!atHome && active?.moduleId !== 'assistant' ? <VoiceButton inline /> : null}
             </nav>
-        </div>
-    </div>;
+        </div>}
+    </div></Activity>;
 }

@@ -10,9 +10,11 @@ const { installDisplayCapture } = require('./capture.cjs');
 const { startupUpdate } = require('./startup-update.cjs');
 const { supportsTaskbar, createQuestionQueue } = require('./taskbar-state.cjs');
 const { createTaskbar } = require('./taskbar.cjs');
+const { startAttention } = require('./attention.cjs');
+const { installWindowLifecycle } = require('./window-lifecycle.cjs');
 const taskbarSupported = supportsTaskbar(process.platform, require('node:os').release(), process.arch);
 const questions = createQuestionQueue();
-let taskbar, taskbarError = false;
+let taskbar, attention, taskbarError = false;
 const targets = new Map();
 const launcherFile = path.join(__dirname, 'renderer/index.html');
 const launcherUrl = pathToFileURL(launcherFile).href;
@@ -60,6 +62,7 @@ function trayMenu() {
   if (!tray) return;
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open Nucleas', click: showLauncher }, { label: 'Ask Nucleas', click: () => openModule({ moduleId: 'assistant' }) },
+    { label: 'Needs you & email summaries', click: () => attention?.show() },
     { type: 'separator' },
     { label: taskbarSupported ? 'Show Nucleas in the taskbar' : 'Taskbar bar requires Windows 11', type: 'checkbox', enabled: taskbarSupported, checked: taskbarSupported && saved.taskbarEnabled !== false, click: item => {
       saved.taskbarEnabled = item.checked; persist(); configureTaskbar(); trayMenu();
@@ -74,6 +77,7 @@ function configureTaskbar() {
   if (starting || quitting || testRun || !taskbarSupported || saved.taskbarEnabled === false) return;
   taskbar = createTaskbar({
     windows, openOffice: showLauncher, openAsk: () => openModule({ moduleId: 'assistant' }), submit: submitTaskbarQuestion,
+    attention: () => attention?.snapshot() ?? { count: 0 }, openAttention: () => attention?.show(),
     onFailure: () => { taskbarError = true; trayMenu(); },
   });
 }
@@ -189,11 +193,12 @@ function openModule(raw) {
     win.setAlwaysOnTop(true, 'floating');
   }
   secureWindow(win);
+  installWindowLifecycle(win);
   win.once('ready-to-show', () => win.show());
   win.on('close', event => {
     saved[value.key] = win.getNormalBounds(); persist();
-    // Closing the Office hides it to the tray, like the launcher did; quitting closes it for real.
-    if (isOffice && !quitting) { event.preventDefault(); win.hide(); officeHiddenAt = Date.now(); if (update.phase === 'ready' && openApps() === 0) installUpdate(); }
+    // Closing frees the renderer. The tray, taskbar and any app can open Office again.
+    if (isOffice) officeHiddenAt = Date.now();
   });
   win.on('closed', () => { windows.delete(value.key); targets.delete(win); broadcast(); });
   // Keep the taskbar event-driven: never enumerate every window on the computer.
@@ -307,8 +312,9 @@ else {
       if (result === 'ready') installUpdate(); else showLauncher();
     } else void checkUpdates();
     configureTaskbar();
+    if (!quitting && !testRun) attention = startAttention({ profile, catalog, openModule, changed: () => taskbar?.broadcast() });
   });
-  app.on('before-quit', () => { quitting = true; taskbar?.stop(); });
+  app.on('before-quit', () => { quitting = true; taskbar?.stop(); attention?.stop(); });
   app.on('will-quit', () => { if (persistTimer) flushBounds(); globalShortcut.unregisterAll(); });
   app.on('window-all-closed', () => {});
 }

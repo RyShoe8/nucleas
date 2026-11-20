@@ -152,8 +152,12 @@ export async function syncLinkOpportunities(input: {
   }
 }
 
-export async function listLinkOpportunities(jobId: Types.ObjectId): Promise<LinkOpportunityView[]> {
+export async function listLinkOpportunities(jobId: Types.ObjectId, focusId?:string): Promise<LinkOpportunityView[]> {
   const rows = await LinkOpportunity.find({ jobId }).sort({ updatedAt: -1 }).limit(200).lean<OpportunityLean[]>();
+  if(focusId&&Types.ObjectId.isValid(focusId)&&!rows.some(r=>String(r._id)===focusId)){
+    const focus=await LinkOpportunity.findOne({_id:new Types.ObjectId(focusId),jobId}).lean<OpportunityLean>();
+    if(focus)rows.unshift(focus);
+  }
   return rows.map(view);
 }
 

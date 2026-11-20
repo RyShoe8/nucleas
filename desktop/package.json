@@ -9,7 +9,7 @@
   "scripts": {
     "prepare": "node scripts/catalog.cjs",
     "start": "node scripts/catalog.cjs && electron .",
-    "test": "node --test policy.test.cjs startup-update.test.cjs taskbar-state.test.cjs taskbar.test.cjs",
+    "test": "node --test policy.test.cjs startup-update.test.cjs taskbar-state.test.cjs taskbar.test.cjs attention.test.cjs",
     "pack": "node scripts/catalog.cjs && electron-builder --win --dir",
     "dist": "node scripts/catalog.cjs && electron-builder --win nsis --publish never && node scripts/verify-release.cjs"
   },
@@ -38,6 +38,9 @@
       "taskbar.cjs",
       "taskbar-state.cjs",
       "taskbar-preload.cjs",
+      "attention.cjs",
+      "attention-preload.cjs",
+      "window-lifecycle.cjs",
       "licenses/**",
       "renderer/**"
     ],

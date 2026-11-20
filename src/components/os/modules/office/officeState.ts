@@ -13,8 +13,12 @@ import { memberOf, queueFor } from '../jobs/workQueue';
 export type MemberState = 'waiting' | 'working' | 'idle' | 'away';
 
 export interface Desk {
+    employeeId?: string;
+    human?: boolean;
+    reports?: {companyId:string;companyName:string;role:TeamRole;name:string}[];
     role: TeamRole;
     name: string;
+    specialty?: string;
     state: MemberState;
     /** What they are saying, in a few words: the oldest thing waiting, or what is running. */
     says: string | null;
@@ -27,6 +31,7 @@ export interface Desk {
 export interface Screen { label: string; value: string; change: number | null }
 
 export interface Room {
+    kind?: 'management';
     companyId: string;
     name: string;
     color: string;
@@ -70,6 +75,7 @@ export function buildOffice(input: {
     activity: ActivityItem[];
     today: TodayMetrics[];
     now?: number;
+    assignments?: { companyId: string; role: TeamRole; active: boolean; displayName: string; specialty?: string }[];
 }): Room[] {
     const rooms = input.companies.map((company): Room => {
         const jobs = input.jobs.filter((job) => job.companyId === company.id);
@@ -81,7 +87,9 @@ export function buildOffice(input: {
             const members = [...new Set(asks.flatMap(event => [event.from, event.to!]))].filter(role => OFFICE_ROLES.includes(role));
             return members.length >= 2 ? [{ id: job.id, title: job.design?.title ?? 'Team consultation', members, host: asks[0].to! }] : [];
         });
-        const desks = OFFICE_ROLES.map((role): Desk => {
+        const assigned = input.assignments?.filter(a => a.companyId === company.id && a.active);
+        const roles = assigned ? assigned.map(a => a.role) : OFFICE_ROLES.filter(role => jobs.some(j => memberOf(j) === role) || exchanges.some(e=>e.members.includes(role)) || (role === 'engineering' && activity.some(a => a.kind === 'build')));
+        const desks = roles.map((role): Desk => {
             const own = jobs.filter((job) => memberOf(job) === role);
             const queue = own.flatMap((job) => queueFor(job).map((item) => ({ item, job }))).sort((a, b) => a.item.since.localeCompare(b.item.since));
             const code = role === 'engineering' ? activity.filter((item) => item.kind === 'build') : [];
@@ -96,7 +104,8 @@ export function buildOffice(input: {
                 ?? (running ? `Working on ${running.design?.title ?? 'a job'}: ${running.runs.find((r) => r.status === 'running')?.progressState.label ?? 'starting'}` : null)
                 ?? (runningCode ? `Working on ${runningCode.title}` : null)
                 ?? (collaboration ? `Collaborating: ${collaboration.title}` : null);
-            return { role, name: TEAM[role].name, state, says, waiting, jobs: own.length + code.length, jobId: queue[0]?.job.id ?? running?.id ?? collaboration?.id, collaboration: waiting ? undefined : collaboration };
+            const member = assigned?.find(a => a.role === role);
+            return { role, name: member?.displayName ?? TEAM[role].name, specialty: member?.specialty, state, says, waiting, jobs: own.length + code.length, jobId: queue[0]?.job.id ?? running?.id ?? collaboration?.id, collaboration: waiting ? undefined : collaboration };
         });
         const metrics = input.today.find((row) => row.companyId === company.id)?.metrics ?? {};
         const screens = SCREEN_ORDER.filter((s) => metrics[s.key]).slice(0, 2).map((s) => ({ label: s.label, value: screenValue(metrics[s.key].current, metrics[s.key].unit), change: metrics[s.key].change }));

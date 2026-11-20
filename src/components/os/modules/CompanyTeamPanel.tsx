@@ -9,12 +9,13 @@ import BuildCard, { type BuildView } from './building/BuildCard';
 import ResponsibilityEditor from './jobs/ResponsibilityEditor';
 import JobCard, { scheduleLabel, type JobView } from './jobs/JobCard';
 import { STEPS, buildStage, jobStage, type Stage, type StageGroup } from './teamStages';
+import CompanyStaffEditor from './CompanyStaffEditor';
 
-type Member = { role: TeamRole; name: string; remit: string; process: string; active: boolean; lessons: string; playbook?: { craft: string[]; bar: string[]; avoids: string[]; sources: string } };
+type Member = { role: TeamRole; name: string; specialty?: string; reviewerEmployeeId?: string | null; remit: string; process: string; active: boolean; lessons: string; playbook?: { craft: string[]; bar: string[]; avoids: string[]; sources: string } };
 type TeamJob = JobView & { teamRole: TeamRole };
 type TeamBuild = BuildView & { teamRole?: 'design' | 'engineering' };
 type Board = { plan: { point: string; member: TeamRole; about?: string; at: string }[]; evidence: { fact: string; url: string; member: TeamRole; at: string }[] };
-type TeamData = { board?: Board; builds: TeamBuild[]; canManage: boolean; members: Member[]; jobs: TeamJob[] };
+type TeamData = { board?: Board; builds: TeamBuild[]; canManage: boolean; members: Member[]; jobs: TeamJob[]; reviewers?: { id: string; name: string }[] };
 const shortDay = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 const host = (url: string) => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return 'source'; } };
 
@@ -89,7 +90,7 @@ function Steps({ stage }: { stage: Stage }) {
   </ol>;
 }
 
-export default function CompanyTeamPanel({ companyId, companyName, focusJobId, initialRole }: { companyId: string; companyName: string; focusJobId?: string; initialRole?: TeamRole }) {
+export default function CompanyTeamPanel({ companyId, companyName, focusJobId, focusRunId, focusDeliveryId, focusOpportunityId, initialRole }: { companyId: string; companyName: string; focusJobId?: string; focusRunId?: string; focusDeliveryId?: string; focusOpportunityId?:string; initialRole?: TeamRole }) {
   const wm = useWindowManager();
   const [data, setData] = useState<TeamData | null>(null);
   const [role, setRole] = useState<TeamRole | 'all'>(initialRole ?? 'all');
@@ -112,9 +113,14 @@ export default function CompanyTeamPanel({ companyId, companyName, focusJobId, i
       const response = await fetch(`/api/os/companies/${companyId}/team`, { signal });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? 'Could not load team.');
+      if(focusJobId&&!body.builds.some((b:TeamBuild)=>b.id===focusJobId)){
+        const query=new URLSearchParams();if(focusRunId)query.set('runId',focusRunId);if(focusDeliveryId)query.set('deliveryId',focusDeliveryId);if(focusOpportunityId)query.set('opportunityId',focusOpportunityId);
+        const r=await fetch(`/api/os/jobs/${encodeURIComponent(focusJobId)}?${query}`,{signal});
+        if(r.ok){const {job}=await r.json();if(job?.companyId===companyId)body.jobs=[job,...body.jobs.filter((j:TeamJob)=>j.id!==job.id)];}
+      }
       if (!signal?.aborted) { setData(body); setError(''); }
     } catch (e) { if (!signal?.aborted) setError(e instanceof Error ? e.message : 'Could not load team.'); }
-  }, [companyId]);
+  }, [companyId,focusJobId,focusRunId,focusDeliveryId,focusOpportunityId]);
   useEffect(() => {
     const controller = new AbortController();
     void load(controller.signal);
@@ -122,10 +128,14 @@ export default function CompanyTeamPanel({ companyId, companyName, focusJobId, i
     return () => { controller.abort(); stop(); };
   }, [load, working]);
   useEffect(() => {
-    if (focusJobId && data) document.getElementById(`work-${focusJobId}`)?.scrollIntoView({ block: 'center' });
+    if (focusJobId && data) {
+      const root=document.getElementById(`work-${focusJobId}`);
+      const target=focusDeliveryId?root?.querySelector(`[data-delivery-id="${CSS.escape(focusDeliveryId)}"]`):focusOpportunityId?root?.querySelector(`[data-opportunity-id="${CSS.escape(focusOpportunityId)}"]`):root;
+      (target??root)?.scrollIntoView({block:'center'});
+    }
     // Only on first load of a focused item.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusJobId, Boolean(data)]);
+  }, [focusJobId, focusDeliveryId, focusOpportunityId, Boolean(data)]);
 
   async function act(body: Record<string, unknown>): Promise<{ role?: TeamRole; job?: { id: string }; build?: { id: string } } | null> {
     setBusy(true); setError(''); setNotice('');
@@ -134,6 +144,7 @@ export default function CompanyTeamPanel({ companyId, companyName, focusJobId, i
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? 'Could not save.');
       await load();
+      window.dispatchEvent(new Event('nucleas:jobs-changed'));
       return result;
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not save.'); return null; }
     finally { setBusy(false); }
@@ -195,13 +206,14 @@ export default function CompanyTeamPanel({ companyId, companyName, focusJobId, i
         onFollowUp={() => document.getElementById('team-request')?.focus()}
         onDismiss={() => setQuestions(list => list.filter(other => other.id !== item.id))} />)}
 
+      {data.canManage && <CompanyStaffEditor members={data.members} reviewers={data.reviewers ?? []} save={act} />}
       <div className="flex flex-wrap gap-2" role="group" aria-label="Team members">
         {(['all', ...data.members.map(m => m.role)] as const).map(key => {
           const member = key === 'all' ? null : data.members.find(m => m.role === key)!;
           const owned = key === 'all' ? rows : rows.filter(r => r.role === key);
           const needs = owned.filter(r => r.stage.group === 'you').length;
-          return <button key={key} type="button" disabled={member ? !member.active : false} aria-pressed={role === key} onClick={() => { setRole(key); setGuiding(false); }} className={`rounded-full border px-3 py-1.5 text-sm disabled:opacity-40 ${role === key ? 'border-primary bg-primary/15 text-primary' : 'border-border hover:bg-background-card'}`}>
-            {member ? member.name : 'Everyone'} <span className="text-xs text-text-secondary">{member && !member.active ? 'reserved' : owned.length}</span>
+          return <button key={key} type="button" disabled={member?.role === 'tester'} aria-pressed={role === key} onClick={() => { setRole(key); setGuiding(false); }} className={`rounded-full border px-3 py-1.5 text-sm disabled:opacity-40 ${role === key ? 'border-primary bg-primary/15 text-primary' : 'border-border hover:bg-background-card'}`}>
+            {member ? member.name : 'Everyone'} <span className="text-xs text-text-secondary">{member?.active ? `${TEAM[member.role].name} · ${owned.length}` : member ? member.role === 'tester' ? 'reserved' : 'not assigned' : owned.length}</span>
             {needs > 0 && <span className="ml-1.5 rounded-full bg-amber-300/20 px-1.5 text-xs text-amber-300">{needs}</span>}
           </button>;
         })}
@@ -210,7 +222,7 @@ export default function CompanyTeamPanel({ companyId, companyName, focusJobId, i
 
       {selected && <div className="rounded-2xl border border-border p-4 space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0"><h4 className="font-semibold">{selected.name}</h4><p className="text-sm text-text-secondary mt-1">{selected.remit}</p></div>
+          <div className="min-w-0"><h4 className="font-semibold">{selected.name} <span className="text-xs font-normal text-text-secondary">· {selected.specialty || TEAM[selected.role].name}</span></h4><p className="text-sm text-text-secondary mt-1">{selected.remit}</p></div>
           <div className="flex flex-wrap gap-2">
             {(TOOLS[selected.role] ?? []).map(([module, label]) => <button key={label} type="button" className="ui-button" onClick={() => openTool(module)}>{label}</button>)}
             {data.canManage && <button type="button" className="ui-button" aria-expanded={guiding} onClick={() => { setRemit(selected.remit); setLessons(selected.lessons); setGuiding(!guiding); }}>{guiding ? 'Close guidance' : 'Guide'}</button>}
@@ -256,7 +268,7 @@ export default function CompanyTeamPanel({ companyId, companyName, focusJobId, i
               {row.job && <>
                 {data.canManage && <label className="block text-xs">Owner <select aria-label={`Owner for ${row.title}`} disabled={busy} value={row.role} onChange={e => void act({ action: 'assign', role: e.target.value, jobId: row.id })} className="ml-2 rounded border border-border bg-background-card p-1">{TEAM_ROLES.filter(r => TEAM[r].active).map(r => <option value={r} key={r}>{TEAM[r].name}</option>)}</select></label>}
                 <ResponsibilityEditor job={row.job} onSaved={() => void load()} />
-                <JobCard job={row.job} onChange={() => void load()} headerShownAbove />
+                <JobCard focusRunId={row.id===focusJobId?focusRunId:undefined} job={row.job} onChange={() => void load()} headerShownAbove />
               </>}
               {row.build && <BuildCard build={row.build} onChange={() => void load()} />}
             </div>}

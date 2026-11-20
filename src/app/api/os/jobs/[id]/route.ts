@@ -33,7 +33,8 @@ type Context = { params: Promise<{ id: string }> };
 export async function GET(request: NextRequest, { params }: Context) {
   const viewer = await retryDatabaseRead('jobs.viewer', () => requireCompanyViewer(request));
   if (viewer instanceof NextResponse) return viewer;
-  const job = await getJob(viewer, (await params).id);
+  const query=request.nextUrl.searchParams;
+  const job = await getJob(viewer, (await params).id, query.get('runId') ?? undefined, {deliveryId:query.get('deliveryId')??undefined,opportunityId:query.get('opportunityId')??undefined});
   if (!job) return NextResponse.json({ error: 'Job not found.' }, { status: 404 });
   return NextResponse.json({ job }, { headers: { 'Cache-Control': 'no-store' } });
 }

@@ -3,6 +3,7 @@ import ModuleRegistry from '@/lib/os/moduleRegistry';
 import type { ModuleDefinition } from '@/lib/os/types';
 import dynamic from 'next/dynamic';
 const OfficeModule = dynamic(() => import('./OfficeModule'));
+const AttentionModule = dynamic(() => import('./AttentionModule'));
 const TeamModule = dynamic(() => import('./TeamModule'));
 const WorkModule = dynamic(() => import('./WorkModule'));
 const GrowthModule = dynamic(() => import('./GrowthModule'));
@@ -37,6 +38,17 @@ export function registerOsModules(): void {
 
     const definitions: ModuleDefinition[] = [
         {
+            id: 'attention',
+            title: 'Needs you',
+            icon: '◉',
+            defaultSize: { width: 600, height: 620 },
+            minSize: { width: 340, height: 300 },
+            canPopout: true,
+            permissions: 'member',
+            launcherHidden: true,
+            render: () => createElement(AttentionModule),
+        },
+        {
             id: 'office',
             title: 'Office',
             icon: '⌂',
@@ -44,7 +56,7 @@ export function registerOsModules(): void {
             minSize: { width: 420, height: 360 },
             canPopout: true,
             permissions: 'member',
-            render: () => createElement(OfficeModule),
+            render: ctx => createElement(OfficeModule, {windowId:ctx.windowId}),
         },
         {
             id: 'team',
@@ -226,7 +238,7 @@ export function registerOsModules(): void {
             canPopout: true,
             permissions: 'member',
             launcherHidden: true,
-            render: (ctx) => createElement(ContentModule, { initialTab: ctx.payload?.tab, initialCompanyId: ctx.payload?.companyId }),
+            render: (ctx) => createElement(ContentModule, { key:[ctx.payload?.tab,ctx.payload?.companyId,ctx.payload?.articleId].join(':'), initialTab: ctx.payload?.tab, initialCompanyId: ctx.payload?.companyId, initialArticleId:ctx.payload?.articleId }),
         },
         {
             id: 'animation', title: 'Animation Studio', icon: '🎞️',

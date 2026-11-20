@@ -35,13 +35,14 @@ describe('the office', () => {
     expect(rooms.filter(r => r.relationship !== 'client').map(r => r.name).sort()).toEqual(['Nucleas', 'PlayBound']);
     expect(rooms.filter(r => r.relationship === 'client').map(r => r.name)).toEqual(['Client business']);
     expect(rooms.find(r => r.name === 'PlayBound')?.desks.find(d => d.role === 'marketing')?.jobs).toBe(1);
-    expect(rooms.every(r => r.desks.length === OFFICE_ROLES.length)).toBe(true);
+    expect(rooms.find(r=>r.name==='PlayBound')?.desks.map(d=>d.role)).toEqual(['marketing']);
+    expect(rooms.filter(r=>r.name!=='PlayBound').every(r=>!r.desks.length)).toBe(true);
   });
 
-  it('gives every company a room with the whole team, and never the reserved tester', () => {
+  it('keeps unstaffed rooms without inventing employees, and never activates the reserved tester', () => {
     const rooms = build([]);
     expect(rooms.map((r) => r.name)).toEqual(['PlayBound', 'Tailnote']);
-    expect(rooms[0]?.desks.map((d) => d.role).sort()).toEqual([...OFFICE_ROLES].sort());
+    expect(rooms.every(r=>r.desks.length===0)).toBe(true);
     expect(OFFICE_ROLES).not.toContain('tester');
     expect(rooms[0]?.desks.every((d) => d.state === 'away')).toBe(true);
   });

@@ -86,7 +86,9 @@
 
 .officeSurface { margin: 0; border: 0; border-radius: 0; }
 
-.officeMode .workspaceHeader { position: absolute; top: 12px; right: 12px; min-height: 44px; padding: 0; z-index: 30; }
-.officeMode .wordmark, .officeMode .breadcrumb, .officeMode .dockArea { display: none; }
+.officeMode .workspaceHeader { position: relative; min-height: 48px; padding: 0 14px; gap: 12px; z-index: 30; background: var(--background-card); border-bottom: 1px solid var(--border); }
+.officeMode .breadcrumb { display: none; }
+.officeMode .wordmark { font-size: 20px; }
+.officeMode .dockArea { padding: 5px 12px; }
 .officeMode .headerActions { gap: 8px; }
-@media (max-width: 640px) { .officeMode .install { display: none; } }
+@media (max-width: 640px) { .officeMode .install { display: none; } .officeMode .workspaceHeader{padding:0 8px;gap:6px} .officeMode .wordmark{font-size:16px} }

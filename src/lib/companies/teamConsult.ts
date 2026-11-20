@@ -12,6 +12,7 @@ import { resolveCompanyContext, renderContext } from '@/lib/context/resolveCompa
 import { approvedMarketingPlan, marketingPlanContext } from '@/lib/jobs/marketingPlans';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { CompanyTeam } from '@/lib/models/CompanyTeam';
+import { companyAssignments } from './teamAssignments';
 import { TEAM, TEAM_ROLES, teamRoleFor, type TeamRole } from './teamRoles';
 import { PLAYBOOKS, playbookText } from './teamPlaybooks';
 import { addToBoard, evidenceFromFindings, splitPlanPoint, teamBoardContext } from './teamBoard';
@@ -77,12 +78,13 @@ export interface ConsultOptions {
 /** Who a member is for this company: remit, how they think, and the guidance a manager wrote for them. */
 export async function memberProfiles(organizationId: Types.ObjectId | string, companyId: string | null, roles: TeamRole[]): Promise<Map<TeamRole, string>> {
   const saved = companyId && roles.length
-    ? await CompanyTeam.find({ organizationId, companyId: new Types.ObjectId(companyId), role: { $in: roles } }).select('role remit lessons').lean().catch(() => [])
+    ? await CompanyTeam.find({ organizationId, companyId: new Types.ObjectId(companyId), role: { $in: roles } }).select('role remit lessons displayName identityName specialty').lean().catch(() => [])
     : [];
   return new Map(roles.map((role) => {
     const own = saved.find((profile) => profile.role === role);
     return [role, [
-      `You are ${TEAM[role].name} on this company's team. ${own?.remit ?? TEAM[role].remit}`,
+      `You are ${own?.displayName || own?.identityName || TEAM[role].name} on this company's team. ${own?.remit ?? TEAM[role].remit}`,
+      own?.specialty ? `Specialty: ${own.specialty}` : '',
       playbookText(role, 'full'),
       own?.lessons ? `Guidance your manager gave you for this company (preferences, not facts): ${own.lessons.slice(0, 1500)}` : '',
     ].filter(Boolean).join('\n')];
@@ -231,7 +233,9 @@ export async function askMembers(viewer: CompanyViewer, companyId: string | null
 
 /** The owner reads the task and decides which teammates, if any, to ask and what to ask them. */
 export async function consultTeammates(viewer: CompanyViewer, companyId: string, owner: TeamRole, task: string, options: ConsultOptions = {}): Promise<MemberAdvice[]> {
-  const others = ACTIVE_ROLES.filter((role) => role !== owner);
+  const assigned = await companyAssignments(viewer.organizationId, [companyId]);
+  const others = ACTIVE_ROLES.filter((role) => role !== owner && assigned.some(a => a.role === role && a.active));
+  if (!others.length) return [];
   options.onEvent?.({ kind: 'thinking', from: owner, text: `${TEAM[owner].name} is reading the request and deciding whether a teammate's field matters to it.` });
   const ownerProfile = (await memberProfiles(viewer.organizationId, companyId, [owner])).get(owner)!;
   const decision = await askEngine({
@@ -250,7 +254,7 @@ export async function consultTeammates(viewer: CompanyViewer, companyId: string,
   }).catch(() => null);
   if (decision?.costMicros) options.onCost?.(decision.costMicros);
   if (!decision) return [];
-  const asks = validConsults(extractJson(decision.text), owner);
+  const asks = validConsults(extractJson(decision.text), owner).filter(ask => others.includes(ask.member));
   if (!asks.length) options.onEvent?.({ kind: 'nobody', from: owner, text: `${TEAM[owner].name} judged this to sit within their own field and is not asking a teammate.` });
   return askMembers(viewer, companyId, asks, task, { ...options, asker: owner });
 }

@@ -14,6 +14,9 @@ function overflow() {
 }
 function render(state) {
   current = state;
+  const count = state.attention?.count ?? 0;
+  $('attention-count').textContent = count > 99 ? '99+' : String(count); $('attention-count').hidden = !count;
+  $('attention').title = `${count ? `${count} need you · ` : ''}Notifications & email summaries`;
   document.body.classList.toggle('light', !state.dark);
   document.body.classList.toggle('vertical', state.vertical);
   if (!initialized) { $('question').value = state.draft || ''; initialized = true; }
@@ -30,6 +33,7 @@ function render(state) {
   overflow();
 }
 $('office').onclick = () => act(() => api.office());
+$('attention').onclick = () => act(() => api.attention());
 $('compact-ask').onclick = () => act(() => api.openAsk());
 $('overflow').onclick = () => act(() => api.overflow());
 $('question').oninput = () => { void api.saveDraft($('question').value).catch(() => {}); };

@@ -48,8 +48,8 @@ function nextIn(last: string | null, intervalMinutes: number, now = Date.now()):
   return mins <= 0 ? 'on the next check' : mins < 60 ? `in ${mins} min` : `in ${Math.round(mins / 60)} h`;
 }
 
-async function watchItems(viewer: CompanyViewer): Promise<ActivityItem[]> {
-  const watches = (await listWatches(viewer)) ?? [];
+async function watchItems(viewer: CompanyViewer, complete = false): Promise<ActivityItem[]> {
+  const watches = (await listWatches(viewer, { complete })) ?? [];
   return watches.filter((w) => w.active).map((w): ActivityItem => {
     const base = { id: `watch:${w.id}`, kind: 'watch' as const, category: 'marketing' as const, title: w.name, companyId: w.companyId, companyName: w.companyName, open: { window: 'marketing', payload: { view: 'inboxes', watchId: w.id, ...(w.companyId ? { companyId: w.companyId } : {}) } } };
     if (w.scanning) return { ...base, group: 'working', status: 'Scanning', detail: `Inbox watch · ${w.scanProgress ?? `scanning ${w.mailboxEmail}`}` };
@@ -59,7 +59,7 @@ async function watchItems(viewer: CompanyViewer): Promise<ActivityItem[]> {
   });
 }
 
-async function articleItems(viewer: CompanyViewer, companies: Map<string, string>): Promise<ActivityItem[]> {
+async function articleItems(viewer: CompanyViewer, companies: Map<string, string>, complete = false): Promise<ActivityItem[]> {
   const rows = await ArticleDraft.find({
     organizationId: viewer.organizationId,
     archived: false,
@@ -67,7 +67,7 @@ async function articleItems(viewer: CompanyViewer, companies: Map<string, string
     $or: [{ status: { $in: ['queued', 'running'] } }, { status: 'failed', updatedAt: { $gt: new Date(Date.now() - RECENT_FAILURE_MS) } }],
   })
     .sort({ updatedAt: -1 })
-    .limit(30)
+    .limit(complete ? 0 : 30)
     .select('_id companyId topic title status progress error kind')
     .lean<{ _id: Types.ObjectId; companyId: Types.ObjectId; topic: string; title?: string; status: string; progress?: string; error?: string; kind?: string }[]>();
   return rows.map((a) => {
@@ -78,7 +78,7 @@ async function articleItems(viewer: CompanyViewer, companies: Map<string, string
       title: a.title || a.topic, status: failed ? 'Failed' : 'Writing',
       detail: failed ? `${label} · ${a.error ?? 'The run failed.'}` : `${label} · ${a.progress || 'Waiting to start'}`,
       companyId: String(a.companyId), companyName: companies.get(String(a.companyId)) ?? null,
-      open: { window: 'content', payload: { tab: 'articles' } },
+      open: { window: 'content', payload: { tab: 'articles', companyId:String(a.companyId), articleId:String(a._id) } },
     };
   });
 }
@@ -98,14 +98,14 @@ async function buildItems(viewer: CompanyViewer): Promise<ActivityItem[]> {
   return out;
 }
 
-async function overviewItems(viewer: CompanyViewer, companies: Map<string, string>): Promise<ActivityItem[]> {
+async function overviewItems(viewer: CompanyViewer, companies: Map<string, string>, complete = false): Promise<ActivityItem[]> {
   const rows = await PropertyOverview.find({
     organizationId: viewer.organizationId,
     companyId: { $in: [...companies.keys()].map((id) => new Types.ObjectId(id)) },
     $or: [{ status: { $in: ['queued', 'dispatching', 'crawling'] } }, { status: 'failed', updatedAt: { $gt: new Date(Date.now() - RECENT_FAILURE_MS) } }],
   })
     .sort({ createdAt: -1 })
-    .limit(20)
+    .limit(complete ? 0 : 20)
     .select('_id companyId rootUrl status progress error')
     .lean<{ _id: Types.ObjectId; companyId: Types.ObjectId; rootUrl?: string; status: string; progress?: string; error?: string }[]>();
   // A failure is old news once a newer overview of the same company is running.
@@ -126,8 +126,8 @@ async function overviewItems(viewer: CompanyViewer, companies: Map<string, strin
     });
 }
 
-async function roundupItems(viewer: CompanyViewer, companies: Map<string, string>): Promise<ActivityItem[]> {
-  const rows = await ReleaseRoundup.find({ organizationId: viewer.organizationId, companyId: { $in: [...companies.keys()] }, active: true }).sort({ updatedAt: -1 }).limit(30).lean();
+async function roundupItems(viewer: CompanyViewer, companies: Map<string, string>, complete = false): Promise<ActivityItem[]> {
+  const rows = await ReleaseRoundup.find({ organizationId: viewer.organizationId, companyId: { $in: [...companies.keys()] }, active: true }).sort({ updatedAt: -1 }).limit(complete ? 0 : 30).lean();
   return rows.map(row => {
     const working = ['queued', 'generating', 'publishing'].includes(row.status);
     const failed = row.status === 'failed';
@@ -139,14 +139,11 @@ async function roundupItems(viewer: CompanyViewer, companies: Map<string, string
 }
 
 /** All non-job activity the viewer can see. A source that fails is left out rather than failing the list. */
-export async function listActivity(viewer: CompanyViewer): Promise<ActivityItem[]> {
+export async function listActivity(viewer: CompanyViewer, options: { complete?: boolean; excludeBuilds?: boolean } = {}): Promise<ActivityItem[]> {
   const companies = new Map((await listCompanyProfiles(viewer)).map((c) => [c.id, c.name]));
-  const parts = await Promise.all([
-    watchItems(viewer).catch(() => []),
-    articleItems(viewer, companies).catch(() => []),
-    buildItems(viewer).catch(() => []),
-    overviewItems(viewer, companies).catch(() => []),
-    roundupItems(viewer, companies).catch(() => []),
-  ]);
+  const sources = [watchItems(viewer, options.complete), articleItems(viewer, companies, options.complete),
+    options.excludeBuilds ? Promise.resolve([]) : buildItems(viewer), overviewItems(viewer, companies, options.complete), roundupItems(viewer, companies, options.complete)];
+  // Digests must not silently claim completeness if one of their sources failed.
+  const parts = await Promise.all(sources.map(source => options.complete ? source : source.catch(() => [])));
   return parts.flat();
 }

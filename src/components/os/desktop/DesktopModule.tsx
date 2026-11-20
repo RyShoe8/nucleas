@@ -1,5 +1,6 @@
 'use client';
-import { useEffect, useSyncExternalStore } from 'react';
+import { Activity, useEffect, useSyncExternalStore } from 'react';
+import { usePageVisible } from '@/hooks/os/usePageVisible';
 import { useSearchParams } from 'next/navigation';
 import { useOsAuth } from '@/hooks/os/useOsAuth';
 import { registerOsModules } from '@/components/os/modules/registerModules';
@@ -21,6 +22,7 @@ function VoiceFromMainWindow() {
 registerOsModules();
 
 export default function DesktopModule() {
+    const visible=usePageVisible();
     const params = useSearchParams();
     // Present only inside the desktop app; false while rendering on the server so the first paint matches.
     const hasLauncher = useSyncExternalStore(() => () => {}, () => Boolean(window.nucleasDesktop?.showLauncher), () => false);
@@ -46,7 +48,7 @@ export default function DesktopModule() {
     // the main desktop window can also start listening there through the existing voice bridge.
     // Ask owns inline microphone/wake controls. Never float them over its composer.
     const talksHere = !hasLauncher && moduleId !== 'assistant';
-    return <WindowManagerProvider userId={auth.userId}><OsIntentLayer voiceControls={talksHere}>
+    return <Activity mode={visible?'visible':'hidden'}><WindowManagerProvider userId={auth.userId}><OsIntentLayer voiceControls={talksHere}>
         {hasLauncher && moduleId === 'assistant' ? <VoiceFromMainWindow /> : null}
         <div className={styles.window}>
             <header className={styles.header}>
@@ -60,5 +62,5 @@ export default function DesktopModule() {
                 {content ? <div className={styles.message}>{content}</div> : definition!.render({ windowId: `desktop-${moduleId}`, moduleId, payload })}
             </main>
         </div>
-    </OsIntentLayer></WindowManagerProvider>;
+    </OsIntentLayer></WindowManagerProvider></Activity>;
 }

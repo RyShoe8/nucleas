@@ -709,7 +709,7 @@ export function OpportunityTracker({ job, onChange }: { job: JobView; onChange: 
             <summary className="cursor-pointer text-xs font-medium">Current opportunity{current.length > 1 ? `s (${current.length})` : ''}</summary>
             <div className="mt-2 space-y-2">
                 {current.map((opportunity) => (
-                    <div key={opportunity.id} className="rounded border border-border/70 p-2 text-[11px] space-y-1">
+                    <div key={opportunity.id} data-opportunity-id={opportunity.id} className="rounded border border-border/70 p-2 text-[11px] space-y-1">
                         <div className="flex items-start gap-2">
                             <a href={opportunity.opportunityUrl} target="_blank" rel="noreferrer" className="underline break-all flex-1">{String(opportunity.values.opportunity_type ?? opportunity.opportunityUrl)}</a>
                             <span className="rounded border border-border px-1.5 py-0.5 whitespace-nowrap">{OPPORTUNITY_LABEL[opportunity.status]}</span>
@@ -795,7 +795,7 @@ export function SeoBriefEditor({ job }: { job: JobView }) {
  * One job in whatever state it is: questions to answer, a design to approve, a dry run to check,
  * results to review. Refreshes itself while Nucleas is working on it.
  */
-export default function JobCard({ job: initial, compact = false, onChange, onOpenJobs, readyShownAbove = false, headerShownAbove = false }: { job: JobView; compact?: boolean; onChange?: (j: JobView) => void; onOpenJobs?: () => void; readyShownAbove?: boolean; /** The row that opens this card already shows the job's name and status. */ headerShownAbove?: boolean }) {
+export default function JobCard({ job: initial, focusRunId, compact = false, onChange, onOpenJobs, readyShownAbove = false, headerShownAbove = false }: { job: JobView; focusRunId?: string; compact?: boolean; onChange?: (j: JobView) => void; onOpenJobs?: () => void; readyShownAbove?: boolean; /** The row that opens this card already shows the job's name and status. */ headerShownAbove?: boolean }) {
     const [job, setJob] = useState(initial);
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -829,7 +829,7 @@ export default function JobCard({ job: initial, compact = false, onChange, onOpe
     };
 
     const d = job.design;
-    const reviewRun = job.runs.find((r) => r.status === 'needs_review' || r.status === 'running')
+    const reviewRun = job.runs.find(r=>r.id===focusRunId) ?? job.runs.find((r) => r.status === 'needs_review' || r.status === 'running')
         ?? (job.runs[0]?.status === 'failed' ? job.runs[0] : undefined);
     const doneRuns = job.runs.filter((r) => r.status === 'completed');
     const historyRuns = job.runs.filter(r => r.id !== reviewRun?.id && r.status !== 'running' && r.status !== 'needs_review');

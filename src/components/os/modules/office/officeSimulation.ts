@@ -6,9 +6,10 @@ export type Point = { x: number; y: number };
 export type Suite = { room: Room; x: number; y: number; w: number; h: number; door: Point; lane: number };
 export type Destination = { key: string; point: Point; exit: Point[]; pose: 'idle' | 'seated' | 'pool' | 'coffee'; label: string; amenity?: Amenity; collaboration?: boolean; view?: 'rear'; depth?: number };
 export type Person = { id: string; room: Room; desk: Desk; home: Destination };
-export type World = { width: number; height: number; suites: Suite[]; people: Person[] };
+export type World = { width: number; height: number; suites: Suite[]; people: Person[]; layoutVersion?: number };
 export const personId = (company: string, role: string) => `${company}:${role}`;
-export const SPINE = 790;
+export const SPINE = 90;
+export const OFFICE_LAYOUT_VERSION = 2;
 export const AMENITY_POSITION: Record<Amenity, Point & { size: number }> = {
     conference: { x: 285, y: 320, size: 230 }, projector: { x: 285, y: 140, size: 150 },
     pool: { x: 770, y: 340, size: 195 }, gaming: { x: 1100, y: 230, size: 170 },
@@ -17,23 +18,43 @@ export const AMENITY_POSITION: Record<Amenity, Point & { size: number }> = {
 };
 
 export function makeWorld(rooms: Room[]): World {
-    const owned = rooms.filter(r => r.relationship !== 'client').sort((a,b) => a.companyId.localeCompare(b.companyId));
+    const owned = rooms.filter(r => r.relationship !== 'client').sort((a,b) => Number(b.kind==='management')-Number(a.kind==='management')||a.companyId.localeCompare(b.companyId));
     const clients = rooms.filter(r => r.relationship === 'client').sort((a,b) => a.companyId.localeCompare(b.companyId));
+    // The commons occupies the first two bays. Companies fill a compact grid, with
+    // the client wing alongside it; every row joins the same circulation aisle.
+    const humanCount=owned.find(r=>r.kind==='management')?.desks.length??0;
+    const humanColumns=Math.max(3,Math.min(5,Math.ceil(Math.sqrt(humanCount*1.5))));
+    const firstHeight=Math.max(575,Math.ceil(humanCount/humanColumns)*140+220);
+    const minimum=owned.some(r=>r.kind==='management')?3:2;
+    const candidates=Array.from({length:Math.max(1,Math.min(6,owned.length+2)-minimum+1)},(_,i)=>{
+      const columns=i+minimum,ownedRows=Math.ceil((owned.length+2)/columns),lastUsed=(owned.length+2)%columns||columns;
+      const lastCapacity=Math.floor((columns-lastUsed)*740/440),perClientRow=Math.floor(columns*740/440);
+      const rows=ownedRows+Math.ceil(Math.max(0,clients.length-lastCapacity)/perClientRow);
+      const width=150+columns*740,height=firstHeight+90+(rows-1)*530;
+      const unused=Math.max(0,(rows*columns-owned.length-2)*740-clients.length*440)/(rows*columns*740);
+      const score=Math.abs(Math.log((width*.86+height*.12)/(height*.9)/1.8))+unused*.7;
+      return {columns,ownedRows,lastUsed,lastCapacity,perClientRow,score};
+    });
+    const {columns,ownedRows,lastUsed,lastCapacity,perClientRow}=candidates.sort((a,b)=>a.score-b.score)[0];
+    const rowY = (row:number) => row === 0 ? 30 : firstHeight+90 + (row - 1) * 530;
+    const rowHeight = (row:number) => row === 0 ? firstHeight : 475;
     const suites: Suite[] = [...owned.map((room, index): Suite => {
-        const y = 665 + index * 525;
-        return {room,x:30,y,w:700,h:475,door:{x:730,y:y+420},lane:700};
+        const slot=index+2,row=Math.floor(slot/columns),x=150+(slot%columns)*740,y=rowY(row),h=rowHeight(row);
+        return {room,x,y,w:680,h,door:{x:x+680,y:y+h-35},lane:x+650};
     }), ...clients.map((room,index): Suite => {
-        const y=665+index*435;
-        return {room,x:850,y,w:400,h:385,door:{x:850,y:y+330},lane:872};
+        const inLast=index<lastCapacity,tail=index-lastCapacity,row=inLast?ownedRows-1:ownedRows+Math.floor(tail/perClientRow),x=inLast?150+lastUsed*740+index*440:150+(tail%perClientRow)*440,y=rowY(row),h=rowHeight(row);
+        return {room,x,y,w:380,h,door:{x,y:y+h-35},lane:x+22};
     })];
-    const people = suites.flatMap(suite => CHARACTER_ROLES.flatMap((role,index) => {
-        const desk = suite.room.desks.find(d=>d.role===role);
+    const people = suites.flatMap(suite => (suite.room.kind==='management'?suite.room.desks:CHARACTER_ROLES.map(role=>suite.room.desks.find(d=>d.role===role)).filter((d):d is Desk=>Boolean(d))).flatMap((desk,index) => {
         if (!desk) return [];
+        const role=desk.role;
         const client = suite.room.relationship === 'client';
-        const point = {x:suite.x+(client?85:135)+(index%3)*(client?110:190),y:suite.y+(client?135:172)+Math.floor(index/3)*(client?135:195)};
-        return [{ id: personId(suite.room.companyId,role), room:suite.room,desk,home:{key:`desk:${suite.room.companyId}:${role}`,point,pose:desk.state==='working'?'seated':'idle',label:desk.says ?? (desk.state==='waiting'?'Needs your review':desk.state==='away'?'No work assigned':'Available'), exit:[{x:point.x,y:point.y+34},{x:suite.lane,y:point.y+34},{x:suite.lane,y:suite.door.y},suite.door,{x:SPINE,y:suite.door.y}]} as Destination }];
+        const point = desk.human?{x:suite.x+75+(index%humanColumns)*(560/humanColumns),y:suite.y+160+Math.floor(index/humanColumns)*140}:{x:suite.x+(client?80:125)+(index%3)*(client?100:190),y:suite.y+160+Math.floor(index/3)*165};
+        const hallX=client?suite.x-30:suite.x+suite.w+30,hallY=suite.y+suite.h+30;
+        const id=desk.human?`human:${desk.employeeId}`:personId(suite.room.companyId,role);
+        return [{ id, room:suite.room,desk,home:{key:`desk:${id}`,point,pose:desk.human||desk.state==='working'?'seated':'idle',label:desk.says ?? (desk.state==='waiting'?'Needs your review':desk.state==='away'?'No work assigned':'Available'), exit:[{x:point.x,y:point.y+34},{x:suite.lane,y:point.y+34},{x:suite.lane,y:suite.door.y},suite.door,{x:hallX,y:suite.door.y},{x:hallX,y:hallY},{x:SPINE,y:hallY}]} as Destination }];
     }));
-    return {width:1280,height:Math.max(1100,...suites.map(s=>s.y+s.h+60)),suites,people};
+    return {width:Math.max(1320,...suites.map(s=>s.x+s.w+60)),height:Math.max(640,...suites.map(s=>s.y+s.h+60)),suites,people,layoutVersion:OFFICE_LAYOUT_VERSION};
 }
 
 export function amenityDestination(amenity: Amenity, slot: number): Destination {
@@ -93,6 +114,7 @@ export function chooseDestinations(world:World, elapsedSeconds:number, overrides
     const visitors=[...world.people].sort((a,b)=>Number(Boolean(overrides[b.id]))-Number(Boolean(overrides[a.id])));
     for(const p of visitors) {
         if(result.has(p.id)) continue;
+        if(p.desk.human){result.set(p.id,p.home);continue;}
         if(p.desk.state==='working'||p.desk.state==='waiting') {result.set(p.id,p.home);continue;}
         const preference=overrides[p.id];
         const seed=hash(p.id);
@@ -134,10 +156,21 @@ export function moveActor(actor:Actor, destination:Destination, seconds:number):
 
 export function officeTheme(room:Pick<Room,'name'|'description'|'domain'>):{label:string; objects:string[]} {
     const text=`${room.description??''} ${room.name} ${room.domain??''}`.toLowerCase();
-    if(/game|gaming|sports|casino|playbound/.test(text)) return {label:'Play & community',objects:['controller','trophy','arcade']};
+    if(/management|human team/.test(text)) return {label:'Team leadership',objects:['books','chart','globe']};
+    if(/casino|gambl|betting/.test(text)) return {label:'Odds & discovery',objects:['trophy','chart','globe']};
+    if(/game|gaming|sports|playbound/.test(text)) return {label:'Play & community',objects:['controller','trophy','arcade']};
     if(/bank|payment|finance|pay\b/.test(text)) return {label:'Commerce & payments',objects:['chart','globe','safe']};
     if(/media|marketing|creative|design|content|cinema|demo/.test(text)) return {label:'Creative studio',objects:['camera','palette','books']};
     if(/home|property|hearth|gutter|construction|service/.test(text)) return {label:'Places & services',objects:['house','tools','plant']};
-    if(/software|app|email|nucleas|tailnote|platform/.test(text)) return {label:'Product studio',objects:['laptop','mail','books']};
+    if(/email|signature|tailnote/.test(text)) return {label:'Identity & correspondence',objects:['mail','palette','books']};
+    if(/software|app|nucleas|platform/.test(text)) return {label:'Product studio',objects:['laptop','chart','globe']};
     return {label:'Company studio',objects:['books','globe','plant']};
+}
+
+/** Stable per-company finishes: adding staff never changes the company's identity. */
+export function studioStyle(room:Room) {
+    const seed=hash(room.companyId+room.name),theme=officeTheme(room);
+    const finishes=[['#8b9d8b','#4c776a','#c9af7d'],['#ae9d80','#627b71','#dec6a0'],['#718e86','#375f58','#b3bf9c'],['#b6b69b','#7b8b67','#cbb78c']];
+    const [floor,rug,trim]=finishes[seed%finishes.length];
+    return {seed,floor,rug,trim,theme};
 }

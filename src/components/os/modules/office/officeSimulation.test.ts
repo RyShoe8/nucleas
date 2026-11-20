@@ -1,7 +1,7 @@
 import {describe,it,expect} from 'vitest';
 import {makeWorld,chooseDestinations,moveActor,routeBetween,amenityDestination,type Actor} from './officeSimulation';
 import {buildOffice} from './officeState';
-const rooms=()=>buildOffice({companies:[{id:'owned',name:'PlayBound',relationship:'owned'},{id:'client',name:'Client',relationship:'client'}],jobs:[],activity:[],today:[]});
+const rooms=()=>buildOffice({companies:[{id:'owned',name:'PlayBound',relationship:'owned'},{id:'client',name:'Client',relationship:'client'}],jobs:[],activity:[],today:[],assignments:['owned', 'client'].flatMap(companyId=>(['design','creative','engineering','support','operations','marketing'] as const).map(role=>({companyId,role,active:true,displayName:role})))});
 describe('connected office simulation',()=>{
   it('keeps company locations stable when urgency changes their input order',()=>{
     const a=rooms(),b=[...a].reverse();

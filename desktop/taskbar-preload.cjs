@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('nucleasTaskbar', Object.freeze({
   state: () => ipcRenderer.invoke('taskbar:state'),
   office: () => ipcRenderer.invoke('taskbar:office'),
   openAsk: () => ipcRenderer.invoke('taskbar:open-ask'),
+  attention: () => ipcRenderer.invoke('taskbar:attention'),
   ask: text => ipcRenderer.invoke('taskbar:ask', text),
   saveDraft: text => ipcRenderer.invoke('taskbar:draft', text),
   restore: key => ipcRenderer.invoke('taskbar:restore', key),

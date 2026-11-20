@@ -11,7 +11,7 @@ export async function companyTeamContext(job: { _id?: Types.ObjectId; organizati
   const role = teamRoleFor(job);
   const scope = { organizationId: job.organizationId, companyId: job.companyId };
   const [profiles, work, board] = await Promise.all([
-    CompanyTeam.find({ ...scope, role: { $in: [role, 'operations'] } }).select('role remit lessons').lean(),
+    CompanyTeam.find({ ...scope, role: { $in: [role, 'operations'] } }).select('role remit lessons displayName identityName specialty active').lean(),
     Job.find(scope).select('teamRole request design.skill design.title design.category').sort({ updatedAt: -1 }).limit(200).lean(),
     teamBoardContext(job.organizationId, job.companyId, { plan: 8, evidence: 10 }).catch(() => ''),
   ]);
@@ -21,7 +21,8 @@ export async function companyTeamContext(job: { _id?: Types.ObjectId; organizati
   const feedback = ids.length ? await JobRun.find({ ...scope, jobId: { $in: ids }, decidedByUserId: { $exists: true }, status: { $in: ['completed', 'rejected'] }, decisionNote: { $exists: true, $ne: '' } })
     .select('status decisionNote updatedAt').sort({ updatedAt: -1 }).limit(6).lean() : [];
   return [
-    `# Company team member: ${TEAM[role].name}`,
+    `# Company team member: ${own?.displayName || own?.identityName || TEAM[role].name}`,
+    own?.specialty ? `Specialty: ${own.specialty}` : '',
     own?.remit ?? TEAM[role].remit,
     playbookText(role, 'full'),
     TEAM_THINKING,

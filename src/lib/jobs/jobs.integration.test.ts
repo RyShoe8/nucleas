@@ -143,6 +143,16 @@ async function proposed(design: JobDesign = DESIGN) {
 }
 
 describe('ongoing job settings', () => {
+  it('opens an older review from a notification without reading a different job’s run',async()=>{
+    const job=await proposed();
+    const runs=await JobRun.insertMany(Array.from({length:25},(_,i)=>({organizationId:org,companyId,jobId:job.id,status:'needs_review',startedAt:new Date(),createdAt:new Date(100000+i*1000)})));
+    const id=String(runs[0]._id);
+    expect((await getJob(admin,job.id))!.runs.some(r=>r.id===id)).toBe(false);
+    expect((await getJob(admin,job.id,id))!.runs[0].id).toBe(id);
+    const foreign=await JobRun.create({organizationId:org,companyId,jobId:new Types.ObjectId(),status:'needs_review',startedAt:new Date()});
+    expect((await getJob(admin,job.id,String(foreign._id)))!.runs.some(r=>r.id===String(foreign._id))).toBe(false);
+    expect(await getJob({...admin,organizationId:new Types.ObjectId()},job.id,id)).toBeNull();
+  });
   it('edits budget independently of schedule and enforces management rights', async () => {
     const job = await proposed();
     const nextRunAt = new Date(Date.now() + 86400000);

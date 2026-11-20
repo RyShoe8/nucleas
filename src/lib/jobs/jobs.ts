@@ -188,7 +188,7 @@ async function monthSpendByJob(ids: Types.ObjectId[]): Promise<Map<string, numbe
   return new Map(rows.map((row) => [String(row._id), row.total]));
 }
 
-async function toView(job: JobLean, company: { name: string; subreddit?: string }, canManage: boolean, runs: RunLean[], runSpendMicros?: number): Promise<JobView> {
+async function toView(job: JobLean, company: { name: string; subreddit?: string }, canManage: boolean, runs: RunLean[], runSpendMicros?: number, focus?: {deliveryId?:string;opportunityId?:string}): Promise<JobView> {
   const parsed = jobDesignSchema.safeParse(job.design);
   const design = parsed.success ? parsed.data : null;
   return {
@@ -218,8 +218,8 @@ async function toView(job: JobLean, company: { name: string; subreddit?: string 
     runs: runs.map(runView),
     canManage,
     // One job's extras failing to load must not take the whole Work list down with it.
-    opportunities: design?.skill === 'link_building' ? await listLinkOpportunities(job._id).catch((error: unknown) => { console.error('[jobs] link opportunities unavailable', { jobId: String(job._id), error }); return []; }) : [],
-    publishing: design?.skill === 'social_publish' || design?.skill === 'casino_discovery' || design?.skill === 'signature_outreach' ? await publishingView(job).catch((error: unknown) => { console.error('[jobs] publishing view unavailable', { jobId: String(job._id), error }); return null; }) : null,
+    opportunities: design?.skill === 'link_building' ? await listLinkOpportunities(job._id,focus?.opportunityId).catch((error: unknown) => { console.error('[jobs] link opportunities unavailable', { jobId: String(job._id), error }); return []; }) : [],
+    publishing: design?.skill === 'social_publish' || design?.skill === 'casino_discovery' || design?.skill === 'signature_outreach' ? await publishingView(job,focus?.deliveryId).catch((error: unknown) => { console.error('[jobs] publishing view unavailable', { jobId: String(job._id), error }); return null; }) : null,
   };
 }
 
@@ -261,14 +261,18 @@ export async function listJobs(viewer: CompanyViewer, options: { includeClosed?:
   return Promise.all(jobs.map((j) => toView(j, byCompany.get(String(j.companyId)) ?? { name: 'Company' }, canManage, byJob.get(String(j._id)) ?? [], spend.get(String(j._id)) ?? 0)));
 }
 
-export async function getJob(viewer: CompanyViewer, id: string): Promise<JobView | null> {
+export async function getJob(viewer: CompanyViewer, id: string, focusRunId?: string, focus?: {deliveryId?:string;opportunityId?:string}): Promise<JobView | null> {
   if (!Types.ObjectId.isValid(id)) return null;
   const job = await Job.findOne({ _id: new Types.ObjectId(id), organizationId: viewer.organizationId }).lean<JobLean>();
   if (!job) return null;
   const profile = await getCompanyProfile(viewer, String(job.companyId));
   if (!profile) return null;
   const runs = await JobRun.find({ jobId: job._id }).sort({ createdAt: -1 }).limit(20).lean<RunLean[]>();
-  return toView(job, { name: profile.name, subreddit: profile.subreddit }, isCompanyManager(viewer), runs);
+  if (focusRunId && Types.ObjectId.isValid(focusRunId) && !runs.some(r=>String(r._id)===focusRunId)) {
+    const focus=await JobRun.findOne({_id:new Types.ObjectId(focusRunId),jobId:job._id,organizationId:viewer.organizationId}).lean<RunLean>();
+    if(focus)runs.unshift(focus);
+  }
+  return toView(job, { name: profile.name, subreddit: profile.subreddit }, isCompanyManager(viewer), runs,undefined,focus);
 }
 
 // ---------- Designing ----------
