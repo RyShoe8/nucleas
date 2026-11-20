@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { CompanyFactsView, Competitor, FactKey, FactValues } from '@/lib/companies/companyFacts';
+import BrandAssetsPanel from './jobs/BrandAssetsPanel';
 
 const PARTS: { key: FactKey; title: string; hint: string; empty: string }[] = [
     { key: 'description', title: 'What it does', hint: 'The product or service, in plain words.', empty: 'Not described yet.' },
@@ -78,6 +79,7 @@ export default function CompanyAbout({ companyId, companyName, basics, overviewA
             <div><h3 className="text-lg font-semibold">About {companyName}</h3><p className="text-sm text-text-secondary">What your team and Ask work from. The Company Overview drafts it from the live site; correct anything and your version stands.</p></div>
         </header>
         {error ? <p role="alert" className="text-sm text-amber-300">{error}</p> : null}
+        <BrandAssetsPanel key={companyId} companyId={companyId} companyName={companyName}/>
 
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-3">
             <div className="min-w-0 text-sm">

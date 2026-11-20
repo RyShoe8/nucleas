@@ -5,40 +5,40 @@
 
 :root {
   /* Brand palette */
-  --nucleas-primary: #00c2e0;
-  --nucleas-primary-hover: #00a8c4;
-  --nucleas-primary-light: rgba(0, 194, 224, 0.12);
-  --nucleas-primary-dark: #008fa6;
+  --nucleas-primary: #9dcdb6;
+  --nucleas-primary-hover: #bde2ce;
+  --nucleas-primary-light: rgba(157, 205, 182, 0.12);
+  --nucleas-primary-dark: #69a88b;
 
-  --nucleas-secondary: #007bff;
-  --nucleas-secondary-hover: #0069d9;
-  --nucleas-secondary-light: rgba(0, 123, 255, 0.12);
-  --nucleas-secondary-dark: #0056b3;
+  --nucleas-secondary: #93c9b1;
+  --nucleas-secondary-hover: #b3dcc9;
+  --nucleas-secondary-light: rgba(147, 201, 177, 0.12);
+  --nucleas-secondary-dark: #619c83;
 
-  --nucleas-third: #7a22e0;
-  --nucleas-third-hover: #6b1dc7;
-  --nucleas-third-light: rgba(122, 34, 224, 0.12);
-  --nucleas-third-dark: #5c1aa8;
+  --nucleas-third: #b0d3a4;
+  --nucleas-third-hover: #cce5c3;
+  --nucleas-third-light: rgba(176, 211, 164, 0.12);
+  --nucleas-third-dark: #82a876;
 
-  --nucleas-fourth: #bd08d7;
-  --nucleas-fourth-hover: #a507be;
-  --nucleas-fourth-light: rgba(189, 8, 215, 0.12);
-  --nucleas-fourth-dark: #8e06a3;
+  --nucleas-fourth: #83bdad;
+  --nucleas-fourth-hover: #aad5c8;
+  --nucleas-fourth-light: rgba(131, 189, 173, 0.12);
+  --nucleas-fourth-dark: #5e9686;
 
-  --nucleas-ink: #202938;
+  --nucleas-ink: #14242a;
   --nucleas-white: #ffffff;
 
   /* Dark site defaults */
   --background: var(--nucleas-ink);
-  --background-card: #2a3348;
-  --background-elevated: #323d52;
+  --background-card: #203b3b;
+  --background-elevated: #29453f;
 
-  --text-primary: var(--nucleas-white);
-  --text-secondary: #a8b0c4;
-  --text-muted: #6b7589;
+  --text-primary: #e3eee8;
+  --text-secondary: #b8ccc4;
+  --text-muted: #91aaa0;
 
-  --border: #3d4659;
-  --border-dark: #4a556d;
+  --border: #405b52;
+  --border-dark: #637d71;
 
   /* Shared surface geometry and depth */
   --radius-control: 0.5rem;
@@ -81,26 +81,8 @@
   color-scheme: dark;
 }
 
-/* Shared desktop/web app palette, matched to the native launcher. */
+/* OS surfaces use the same office-green palette; only their geometry differs. */
 body.nucleas-os {
-  --background: #0e121c;
-  --background-card: #171c29;
-  --background-elevated: #202638;
-
-  --text-primary: #f2f4fc;
-  --text-secondary: #aeb7cc;
-  --text-muted: #8d98b0;
-
-  --border: #2b3245;
-  --border-dark: #48516b;
-  --primary: #beb3ff;
-  --primary-hover: #d3cbff;
-  --primary-light: #beb3ff18;
-  --primary-dark: #8f80e4;
-  --secondary: #a7bdff;
-  --secondary-hover: #c4d2ff;
-  --secondary-light: #a7bdff18;
-  --accent: #c6afff;
   --radius-control: 0.75rem;
   --radius-card: 1rem;
   --radius-panel: 1.25rem;

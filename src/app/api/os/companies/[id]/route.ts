@@ -13,6 +13,7 @@ import { recordActivity } from '@/lib/companies/activityLog';
 import { refetchSiteHistory } from '@/lib/metrics/siteHistory';
 import { CompanyAssistantTurn } from '@/lib/models/CompanyAssistantTurn';
 import { BrandVoice } from '@/lib/models/BrandVoice';
+import { BrandAsset } from '@/lib/models/BrandAsset';
 import { connectedSocialLinks, mergeSocialLinks } from '@/lib/companies/connectedSocialLinks';
 
 /** Company overview: resolved profile, its projects and its integrations. */
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const profile = await getCompanyProfile(viewer, id);
     if (!profile) return NextResponse.json({ error: 'Company not found' }, { status: 404 });
 
-    const [projects, connections, citationSources, voice, connectedLinks] = await Promise.all([
+    const [projects, connections, citationSources, voice, connectedLinks, logo] = await Promise.all([
       Project.aggregate<{ _id: Types.ObjectId; name: string; status: string; projectType: string; openTasks: number; totalTasks: number }>([
         { $match: { clientId: new Types.ObjectId(id) } },
         {
@@ -53,6 +54,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       ]),
       BrandVoice.findOne({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(id) }).select('status persona').lean<{ status?: string; persona?: string }>(),
       connectedSocialLinks(viewer.organizationId, id).catch(() => []),
+      BrandAsset.findOne({organizationId:viewer.organizationId,companyId:new Types.ObjectId(id),kind:'logo'}).select('url').lean<{url:string}>(),
     ]);
 
     const citationSeries = Array.from({ length: 28 }, (_, index) => {
@@ -67,7 +69,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     return NextResponse.json({
       canManage: isCompanyManager(viewer),
-      company: { ...profile, socialLinks: mergeSocialLinks(profile.socialLinks ?? [], connectedLinks) },
+      company: { ...profile, logo:logo?.url??profile.logo, socialLinks: mergeSocialLinks(profile.socialLinks ?? [], connectedLinks) },
       // Approved means a persona exists and was approved; anything else (none, draft) is not used by content tools.
       voiceStatus: voice?.status === 'approved' && voice.persona?.trim() ? 'approved' : voice?.persona?.trim() ? 'draft' : 'none',
       projects: projects.map((p) => ({

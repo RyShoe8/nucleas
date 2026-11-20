@@ -11,7 +11,7 @@ const SLOTS: { kind: 'logo' | 'icon'; label: string; hint: string }[] = [
 
 const size = (bytes: number) => (bytes >= 1_000_000 ? `${(bytes / 1_000_000).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1000))} KB`);
 
-/** Marketing → Assets: the company's own logo and icon. Both optional; every image or video job starts from them. */
+/** Shared company identity for About, office signage and creative work. */
 export default function BrandAssetsPanel({ companyId, companyName }: { companyId: string; companyName: string }) {
     const [assets, setAssets] = useState<AssetView[] | null>(null);
     const [canManage, setCanManage] = useState(false);
@@ -29,41 +29,58 @@ export default function BrandAssetsPanel({ companyId, companyName }: { companyId
             setError(null);
             setAssets(body.assets ?? []);
             setCanManage(Boolean(body.canManage));
-        })();
+        })().catch(() => { if (!cancelled) setError('Could not load brand assets. Please try again.'); });
         return () => {
             cancelled = true;
         };
     }, [companyId, reload]);
 
     const upload = async (kind: 'logo' | 'icon', file: File) => {
+        if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) {
+            setError('Choose a PNG, JPEG or WebP image up to 10 MB.');
+            return;
+        }
         setBusy(kind);
         setError(null);
-        const form = new FormData();
-        form.set('kind', kind);
-        form.set('file', file);
-        const res = await fetch(`/api/os/companies/${companyId}/assets`, { method: 'POST', body: form });
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setBusy(null);
-        if (!res.ok) return setError(body.error ?? `Upload failed (${res.status})`);
-        setReload((n) => n + 1);
+        try {
+            const form = new FormData();
+            form.set('kind', kind);
+            form.set('file', file);
+            const res = await fetch(`/api/os/companies/${companyId}/assets`, { method: 'POST', body: form });
+            const body = (await res.json().catch(() => ({}))) as { error?: string };
+            if (!res.ok) return setError(body.error ?? `Upload failed (${res.status})`);
+            setReload((n) => n + 1);
+            window.dispatchEvent(new Event('nucleas:companies-changed'));
+        } catch {
+            setError('Could not upload the image. Please try again.');
+        } finally {
+            setBusy(null);
+        }
     };
 
     const remove = async (kind: 'logo' | 'icon') => {
         if (!window.confirm(`Remove the ${kind}?`)) return;
         setBusy(kind);
-        const res = await fetch(`/api/os/companies/${companyId}/assets?kind=${kind}`, { method: 'DELETE' });
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setBusy(null);
-        setError(res.ok ? null : body.error ?? `Failed (${res.status})`);
-        setReload((n) => n + 1);
+        setError(null);
+        try {
+            const res = await fetch(`/api/os/companies/${companyId}/assets?kind=${kind}`, { method: 'DELETE' });
+            const body = (await res.json().catch(() => ({}))) as { error?: string };
+            if (!res.ok) return setError(body.error ?? `Failed (${res.status})`);
+            setReload((n) => n + 1);
+            window.dispatchEvent(new Event('nucleas:companies-changed'));
+        } catch {
+            setError('Could not remove the image. Please try again.');
+        } finally {
+            setBusy(null);
+        }
     };
 
     if (!assets) return <p className="text-sm text-text-secondary">{error ?? 'Loading…'}</p>;
     return (
         <section className="space-y-3">
             <div>
-                <h3 className="text-sm font-semibold">{companyName} assets</h3>
-                <p className="text-xs text-text-secondary">Both files are optional. When Nucleas writes a brief or makes an image or video for {companyName}, it starts from these files instead of inventing a look.</p>
+                <h3 className="text-sm font-semibold">Brand identity</h3>
+                <p className="text-xs text-text-secondary">Add {companyName}'s logo for its company header and office signage. Nucleas also uses these files when creating images, videos and creative briefs.</p>
             </div>
             {error ? <p role="alert" className="text-xs text-red-400">{error}</p> : null}
             <div className="grid gap-3 sm:grid-cols-2">
@@ -83,7 +100,7 @@ export default function BrandAssetsPanel({ companyId, companyName }: { companyId
                                     <span className="px-3 text-center text-xs text-text-secondary">{slot.hint}</span>
                                 )}
                             </div>
-                            {canManage ? <SlotButtons label={slot.label} hasAsset={Boolean(asset)} busy={busy === slot.kind} onFile={(file) => void upload(slot.kind, file)} onRemove={() => void remove(slot.kind)} /> : null}
+                            {canManage ? <SlotButtons label={slot.label} hasAsset={Boolean(asset)} busy={busy !== null} onFile={(file) => void upload(slot.kind, file)} onRemove={() => void remove(slot.kind)} /> : null}
                         </div>
                     );
                 })}
@@ -98,7 +115,7 @@ function SlotButtons({ label, hasAsset, busy, onFile, onRemove }: { label: strin
     return (
         <div className="flex gap-2">
             <input ref={input} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" aria-label={`${label} file`} onChange={(e) => { const file = e.target.files?.[0]; if (file) onFile(file); e.target.value = ''; }} />
-            <button type="button" className="ui-button-primary" disabled={busy} onClick={() => input.current?.click()}>{busy ? 'Uploading…' : hasAsset ? `Replace ${label.toLowerCase()}` : `Upload ${label.toLowerCase()}`}</button>
+            <button type="button" className="ui-button-primary" disabled={busy} onClick={() => input.current?.click()}>{busy ? 'Saving…' : hasAsset ? `Replace ${label.toLowerCase()}` : `Upload ${label.toLowerCase()}`}</button>
             {hasAsset ? <button type="button" className="ui-button" disabled={busy} onClick={onRemove}>Remove</button> : null}
         </div>
     );

@@ -57,3 +57,5 @@ next-env.d.ts
 /.rigby-*.log
 /vendor/rigby/branding/*.svg
 /vendor/rigby/branding/*.png
+
+/desktop/renderer/theme.css

@@ -28,7 +28,7 @@ import { fetchJob } from './jobApi';
 const MEMBER_TONE: Partial<Record<TeamRole, string>> = {
     marketing: 'bg-sky-500/15 text-sky-300',
     engineering: 'bg-emerald-500/15 text-emerald-300',
-    design: 'bg-violet-500/15 text-violet-300',
+    design: 'bg-primary/15 text-primary',
     creative: 'bg-amber-500/15 text-amber-300',
     support: 'bg-rose-500/15 text-rose-300',
     operations: 'bg-slate-500/20 text-slate-300',

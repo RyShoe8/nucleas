@@ -38,14 +38,14 @@ function Briefing({ text }: { text: string }) {
             <button type="button" className="text-xs text-primary hover:underline" onClick={() => setShowText(v => !v)}>{showText ? 'View slides' : 'Read full text'}</button>
         </div>
         {showText ? <IdeChatMarkdown text={plain} /> : <>
-            <div className="rounded-2xl border border-violet-400/25 bg-gradient-to-br from-violet-500/10 via-background to-background p-5 sm:p-7" aria-live="polite" aria-atomic="true">
-                <span className="text-xs tabular-nums text-violet-300">{String(current + 1).padStart(2, '0')} / {String(slides.length).padStart(2, '0')}</span>
+            <div className="rounded-2xl border border-primary/25 bg-gradient-to-br from-primary/10 via-background to-background p-5 sm:p-7" aria-live="polite" aria-atomic="true">
+                <span className="text-xs tabular-nums text-primary">{String(current + 1).padStart(2, '0')} / {String(slides.length).padStart(2, '0')}</span>
                 <h3 className="mt-4 mb-5 text-2xl sm:text-3xl font-semibold tracking-tight text-text-primary">{slide.title}</h3>
                 <IdeChatMarkdown text={slide.body} />
             </div>
             <nav aria-label="Briefing slides" className="mt-3 flex items-center justify-between gap-3">
                 <button type="button" className="rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40" disabled={current === 0} onClick={() => setIndex(current - 1)}>← Previous</button>
-                <div className="flex gap-1">{slides.map((s, i) => <button type="button" key={i} aria-label={s.title} aria-current={i === current ? 'step' : undefined} onClick={() => setIndex(i)} className="p-2"><span className={`block h-1.5 w-1.5 rounded-full ${i === current ? 'bg-violet-300' : 'bg-text-muted'}`} /></button>)}</div>
+                <div className="flex gap-1">{slides.map((s, i) => <button type="button" key={i} aria-label={s.title} aria-current={i === current ? 'step' : undefined} onClick={() => setIndex(i)} className="p-2"><span className={`block h-1.5 w-1.5 rounded-full ${i === current ? 'bg-primary' : 'bg-text-muted'}`} /></button>)}</div>
                 <button type="button" className="rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40" disabled={current === slides.length - 1} onClick={() => setIndex(current + 1)}>Next →</button>
             </nav>
         </>}

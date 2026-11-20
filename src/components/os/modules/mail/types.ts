@@ -53,7 +53,7 @@ export interface ThreadMessage {
     triage: Triage | null;
 }
 
-export const ACCOUNT_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+export const ACCOUNT_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#84a98c', '#ec4899', '#14b8a6', '#f97316'];
 
 export const accountColor = (account: Pick<Account, 'color' | 'id'>, all: Account[]): string =>
     account.color || ACCOUNT_COLORS[Math.max(0, all.findIndex((a) => a.id === account.id)) % ACCOUNT_COLORS.length];

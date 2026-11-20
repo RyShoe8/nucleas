@@ -56,9 +56,11 @@ export default function CompanyModule({ payload, windowId }: ModuleRenderContext
     useEffect(() => {
         window.addEventListener('nucleas:voice-changed', load);
         window.addEventListener('nucleas:voice-generated', load);
+        window.addEventListener('nucleas:companies-changed', load);
         return () => {
             window.removeEventListener('nucleas:voice-changed', load);
             window.removeEventListener('nucleas:voice-generated', load);
+            window.removeEventListener('nucleas:companies-changed', load);
         };
     }, [load]);
 

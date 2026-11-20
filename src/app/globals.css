@@ -4,6 +4,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Sage fills need dark lettering, including older controls with text-white. */
+.bg-primary.text-white { color: var(--nucleas-ink); }
+.inspector-light .bg-primary.text-white,
+.inspector-light .ui-button-primary { color: white; }
+
 html {
   scroll-behavior: smooth;
 }
@@ -16,8 +21,8 @@ html {
 
 .bg-grid-pattern {
   background-image:
-    linear-gradient(rgba(0, 194, 224, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 194, 224, 0.04) 1px, transparent 1px);
+    linear-gradient(color-mix(in srgb, var(--primary) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--primary) 4%, transparent) 1px, transparent 1px);
   background-size: 48px 48px;
 }
 
@@ -121,7 +126,7 @@ button:active:not(:disabled) {
   .ui-button-primary {
     border: 1px solid color-mix(in srgb, var(--primary) 78%, white);
     background: var(--primary);
-    color: #08232a;
+    color: var(--nucleas-ink);
     box-shadow: 0 8px 20px color-mix(in srgb, var(--primary) 18%, transparent);
   }
 
@@ -238,6 +243,9 @@ input[type='datetime-local']::-webkit-calendar-picker-indicator {
 
 /* Light surfaces (modals, inspector) — override dark-site tokens for descendants */
 .inspector-light {
+  --primary: #32664e;
+  --primary-hover: #234c3a;
+  --accent: #436b36;
   --text-primary: #111827;
   --text-secondary: #6b7280;
   --text-muted: #9ca3af;

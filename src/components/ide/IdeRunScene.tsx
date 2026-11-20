@@ -10,10 +10,10 @@ type Props = {
 
 const FLOOR = '#d8e4f0';
 const FLOOR_LINE = '#b8c8dc';
-const WALL_A = '#9b7ec8';
+const WALL_A = '#91ad98';
 const WALL_B = '#6eb8c8';
-const DESK = '#e8e0f0';
-const CHAIR = '#7a3db8';
+const DESK = '#e4ebe0';
+const CHAIR = '#528769';
 const SKIN = '#e8c4a8';
 
 /** Readable isometric workstation on shared floor. */
@@ -33,7 +33,7 @@ function IsoDesk({
   return (
     <div className="absolute flex flex-col items-center" style={style}>
       <p
-        className="mb-0.5 max-w-[9rem] truncate rounded bg-white/90 px-1.5 font-mono text-[11px] font-semibold leading-tight text-[#2a2040] shadow-sm"
+        className="mb-0.5 max-w-[9rem] truncate rounded bg-white/90 px-1.5 font-mono text-[11px] font-semibold leading-tight text-[#203b3b] shadow-sm"
         title={desk.modelLabel}
       >
         {desk.modelLabel}
@@ -42,10 +42,10 @@ function IsoDesk({
         <p
           className={`mb-1 max-w-[9rem] line-clamp-2 rounded px-1.5 py-0.5 font-mono text-sm font-semibold leading-snug shadow-sm ${
             typing
-              ? 'bg-[#1a1428]/90 text-[#a8e8f0]'
+              ? 'bg-[#14242a]/90 text-[#a8e8f0]'
               : done
-                ? 'bg-[#1a1428]/80 text-[#8fd4a8]'
-                : 'bg-[#1a1428]/75 text-[#e8dcf8]'
+                ? 'bg-[#14242a]/80 text-[#8fd4a8]'
+                : 'bg-[#14242a]/75 text-[#e3eee8]'
           }`}
           title={desk.activityLabel}
         >
@@ -55,17 +55,17 @@ function IsoDesk({
       <div className="relative h-[3.75rem] w-[5.25rem]" style={{ imageRendering: 'pixelated' }}>
         {/* Chair back */}
         <div
-          className="absolute bottom-1 left-[0.35rem] h-5 w-3 rounded-t-sm border border-[#5a2a90]"
+          className="absolute bottom-1 left-[0.35rem] h-5 w-3 rounded-t-sm border border-[#3d6955]"
           style={{ background: CHAIR, transform: 'skewY(-8deg)' }}
         />
         {/* Desk top */}
         <div
-          className="absolute bottom-4 left-2 right-1 h-3.5 border border-[#c0b0d8]"
+          className="absolute bottom-4 left-2 right-1 h-3.5 border border-[#bed1c4]"
           style={{ background: DESK, transform: 'skewX(-22deg)' }}
         />
         {/* Desk legs */}
-        <div className="absolute bottom-1 left-3 h-3 w-1 bg-[#a898c0]" />
-        <div className="absolute bottom-1 right-2 h-3 w-1 bg-[#a898c0]" />
+        <div className="absolute bottom-1 left-3 h-3 w-1 bg-[#a1b5a7]" />
+        <div className="absolute bottom-1 right-2 h-3 w-1 bg-[#a1b5a7]" />
         {/* Figure */}
         <div
           className="absolute bottom-[1.35rem] left-[0.55rem] h-2 w-2 rounded-sm"
@@ -88,7 +88,7 @@ function IsoDesk({
           </>
         ) : null}
         {/* Monitor */}
-        <div className="absolute bottom-[1.65rem] left-[2.1rem] w-8 border-2 border-[#2a2040] bg-[#1a1428] p-0.5">
+        <div className="absolute bottom-[1.65rem] left-[2.1rem] w-8 border-2 border-[#203b3b] bg-[#14242a] p-0.5">
           <div
             className={`relative h-4 overflow-hidden ${
               typing
@@ -113,7 +113,7 @@ function IsoDesk({
             )}
           </div>
         </div>
-        <div className="absolute bottom-[1.45rem] left-[3.4rem] h-1 w-1.5 bg-[#2a2040]" />
+        <div className="absolute bottom-[1.45rem] left-[3.4rem] h-1 w-1.5 bg-[#203b3b]" />
       </div>
     </div>
   );
@@ -155,10 +155,10 @@ export default function IdeRunScene({ activity }: Props) {
 
   return (
     <div
-      className="relative h-36 shrink-0 overflow-hidden border-t border-[#6a4a98]"
+      className="relative h-36 shrink-0 overflow-hidden border-t border-[#547b65]"
       style={{
         imageRendering: 'pixelated',
-        background: 'linear-gradient(180deg, #c8b8e0 0%, #b0c8d8 42%, #d8e4f0 42%, #c8d4e4 100%)',
+        background: 'linear-gradient(180deg, #c4d8cb 0%, #b0c8d8 42%, #d8e4f0 42%, #c8d4e4 100%)',
       }}
       aria-live="polite"
     >
@@ -170,23 +170,23 @@ export default function IdeRunScene({ activity }: Props) {
         }}
       />
       <div
-        className="absolute inset-x-0 top-[42%] h-px bg-[#5a3a88]/80"
+        className="absolute inset-x-0 top-[42%] h-px bg-[#446b59]/80"
         aria-hidden
       />
 
       {/* Side wall */}
       <div
-        className="absolute left-0 top-0 h-[42%] w-[14%] border-r-2 border-[#5a3a88]"
+        className="absolute left-0 top-0 h-[42%] w-[14%] border-r-2 border-[#446b59]"
         style={{
-          background: `repeating-linear-gradient(180deg, ${WALL_A} 0 10px, #8a6ab8 10px 20px)`,
+          background: `repeating-linear-gradient(180deg, ${WALL_A} 0 10px, #6c987c 10px 20px)`,
           clipPath: 'polygon(0 0, 100% 6%, 100% 100%, 0 94%)',
         }}
       />
 
       {/* NUCLEAS OFFICE sign */}
-      <div className="absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded border-2 border-[#2a2040] bg-[#1a1428] px-2 py-0.5 shadow">
+      <div className="absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded border-2 border-[#203b3b] bg-[#14242a] px-2 py-0.5 shadow">
         <p className="font-mono text-[10px] font-bold tracking-wide">
-          <span className="text-[#b794f6]">NUCLEAS</span>{' '}
+          <span className="text-[#9dcdb6]">NUCLEAS</span>{' '}
           <span className="text-[#00c2e0]">OFFICE</span>
         </p>
       </div>
@@ -208,10 +208,10 @@ export default function IdeRunScene({ activity }: Props) {
       />
 
       {/* Cabinets */}
-      <div className="absolute bottom-[26%] left-[3%] z-[1] h-9 w-4 border border-[#6a4a98] bg-[#d0c4e8]">
-        <div className="absolute inset-x-0.5 top-1 h-px bg-[#6a4a98]/60" />
-        <div className="absolute inset-x-0.5 top-3 h-px bg-[#6a4a98]/60" />
-        <div className="absolute inset-x-0.5 top-5 h-px bg-[#6a4a98]/60" />
+      <div className="absolute bottom-[26%] left-[3%] z-[1] h-9 w-4 border border-[#547b65] bg-[#d0e0d4]">
+        <div className="absolute inset-x-0.5 top-1 h-px bg-[#547b65]/60" />
+        <div className="absolute inset-x-0.5 top-3 h-px bg-[#547b65]/60" />
+        <div className="absolute inset-x-0.5 top-5 h-px bg-[#547b65]/60" />
       </div>
       {/* Plant */}
       <div className="absolute bottom-[28%] left-[9%] z-[1]">
@@ -224,10 +224,10 @@ export default function IdeRunScene({ activity }: Props) {
         <div className="h-4 w-3 border border-[#6a8aa0] bg-[#e8f0f8]" />
       </div>
       {/* Whiteboard */}
-      <div className="absolute right-[4%] top-[12%] z-[1] h-8 w-12 border-2 border-[#2a2040] bg-white">
-        <div className="absolute left-1 top-1 h-2 w-3 rounded-sm bg-[#7a3db8]/70" />
+      <div className="absolute right-[4%] top-[12%] z-[1] h-8 w-12 border-2 border-[#203b3b] bg-white">
+        <div className="absolute left-1 top-1 h-2 w-3 rounded-sm bg-[#528769]/70" />
         <div className="absolute right-1 top-1 h-2 w-2 rounded-full bg-[#00c2e0]/80" />
-        <div className="absolute inset-x-1 bottom-1 h-1 bg-[#9b7ec8]/50" />
+        <div className="absolute inset-x-1 bottom-1 h-1 bg-[#91ad98]/50" />
       </div>
 
       {desks.map((desk, index) => (
@@ -241,7 +241,7 @@ export default function IdeRunScene({ activity }: Props) {
       ))}
 
       {/* Floor phase (detail lives on desk chips) */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex items-center justify-center bg-[#1a1428]/75 px-2 py-0.5">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex items-center justify-center bg-[#14242a]/75 px-2 py-0.5">
         <p className="truncate font-mono text-[9px] text-[#a8e8f0]" aria-live="polite">
           {activity.label}
         </p>

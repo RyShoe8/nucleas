@@ -42,7 +42,7 @@ function moduleSender(event) { return localSender(event) || ([...windows.values(
 function secureWindow(win, local = false) {
   win.webContents.setWindowOpenHandler(({ url }) => {
     // App windows have no back button, so a full Nucleas page gets its own window, signed in as the same person.
-    if (!local && appPage(url)) return { action: 'allow', overrideBrowserWindowOptions: { width: 1120, height: 780, minWidth: 400, minHeight: 300, autoHideMenuBar: true, backgroundColor: '#0e121c' } };
+    if (!local && appPage(url)) return { action: 'allow', overrideBrowserWindowOptions: { width: 1120, height: 780, minWidth: 400, minHeight: 300, autoHideMenuBar: true, backgroundColor: '#14242a' } };
     if (externalUrl(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
@@ -134,8 +134,8 @@ function openModule(raw) {
   target.searchParams.set('payload', JSON.stringify(value.payload));
   const isOffice = value.key === OFFICE_KEY;
   const win = new BrowserWindow({ ...bounds(saved[value.key] || { width: value.moduleId === 'assistant' ? 720 : isOffice ? 1180 : 1120, height: isOffice ? 820 : 780 }), minWidth: 400, minHeight: 300, show: false,
-    title: definition.title, backgroundColor: '#0e121c', autoHideMenuBar: true, backgroundMaterial: 'mica',
-    titleBarStyle: 'hidden', titleBarOverlay: { color: '#141822', symbolColor: '#c6cedf', height: 47 },
+    title: definition.title, backgroundColor: '#14242a', autoHideMenuBar: true, backgroundMaterial: 'mica',
+    titleBarStyle: 'hidden', titleBarOverlay: { color: '#203b3b', symbolColor: '#b8ccc4', height: 47 },
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), partition: 'persist:nucleas', sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true } });
   windows.set(value.key, win);
   targets.set(win, target.href);

@@ -22,7 +22,7 @@
 .personPosition { position: absolute; z-index: 2; width: 84px; transform: translateX(-50%); }
 .personPosition:focus-within, .personPosition:hover { z-index: 4; }
 .person { position: relative; width: 84px; display: flex; flex-direction: column; align-items: center; outline-offset: 4px; border-radius: 12px; }
-.person:focus-visible { outline: 2px solid #d4c5ff; background: #b5a5ff1a; }
+.person:focus-visible { outline: 2px solid var(--primary-hover); background: var(--primary-light); }
 .personArt { display: block; filter: drop-shadow(0 5px 3px #0003); }
 .sprite { display: block; object-fit: contain; user-select: none; }
 .away { opacity: .66; filter: saturate(.65); }
@@ -114,7 +114,7 @@
     .roomScene { display: none; }
     .mobileRoster { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; padding: 10px; background: repeating-linear-gradient(90deg,#ffffff03 0 1px,transparent 1px 30px),#394744; }
     .mobileMember { display: flex; align-items: center; gap: 4px; min-width: 0; min-height: 64px; text-align: left; border-radius: 8px; border: 1px solid #9caf9f38; padding: 4px; background: #1d3035c9; }
-    .mobileMember:focus-visible { outline: 2px solid #d4c5ff; }.mobileMember img { width: 48px !important; height: 56px !important; flex-shrink: 0; }
+    .mobileMember:focus-visible { outline: 2px solid var(--primary-hover); }.mobileMember img { width: 48px !important; height: 56px !important; flex-shrink: 0; }
     .mobileMember span { min-width: 0; }.mobileMember strong { display: block; font-size: 11px; overflow-wrap: anywhere; }.mobileMember small { display: block; font-size: 10px; color: #b6cbbd; }.mobileMember .mobileAttention { color: #ffce85; }
     .clientSuite .mobileRoster { padding: 6px; gap: 4px; }.clientSuite .mobileMember { min-height: 52px; }.clientSuite .mobileMember img { width: 34px !important; height: 42px !important; }
     .activityPanel { margin-inline: 8px; padding: 10px; }.activityPanel p { line-height: 1.6; }.activityHeading button, .activityMember button, .companySelect select { min-height: 44px; }
