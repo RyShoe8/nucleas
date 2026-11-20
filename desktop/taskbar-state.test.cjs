@@ -1,11 +1,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { supportsTaskbar, minimizedWindows, restoreWindow, createQuestionQueue } = require('./taskbar-state.cjs');
+const { supportsTaskbar, supportsNativeTaskbar, minimizedWindows, restoreWindow, createQuestionQueue } = require('./taskbar-state.cjs');
 
 test('only supported Windows builds and architectures attempt taskbar embedding', () => {
   assert.equal(supportsTaskbar('win32', '10.0.26100', 'x64'), true);
   assert.equal(supportsTaskbar('win32', '10.0.22000', 'arm64'), true);
-  for (const args of [['win32', '10.0.19045', 'x64'], ['darwin', '24.0.0', 'arm64'], ['win32', '10.0.26100', 'ia32'], ['win32', 'unknown', 'x64']]) assert.equal(supportsTaskbar(...args), false);
+  assert.equal(supportsTaskbar('win32','10.0.19045','x64'),true);
+  assert.equal(supportsNativeTaskbar('win32','10.0.19045','x64'),false);
+  assert.equal(supportsNativeTaskbar('win32','10.0.26100','x64'),true);
+  for (const args of [['darwin', '24.0.0', 'arm64'], ['win32', '10.0.26100', 'ia32'], ['win32', 'unknown', 'x64']]) assert.equal(supportsTaskbar(...args), false);
 });
 const window = (title, minimized = false, destroyed = false) => ({
   isDestroyed: () => destroyed, isMinimized: () => minimized, getTitle: () => title,

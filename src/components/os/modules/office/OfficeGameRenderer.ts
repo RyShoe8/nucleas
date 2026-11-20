@@ -139,11 +139,10 @@ export class OfficeGameRenderer {
    if(id==='water'){this.sprite(SPRITE.water,930,185,58,90);if(this.motion&&this.time*1000-(this.recreation?.objects.water??0)<6000){const q=this.point(930,185);this.ctx.fillStyle='#9ad9f3';this.ctx.fillRect(q.x-2,q.y-39,2,10);this.ctx.fillStyle='#d5eced';this.ctx.fillRect(q.x-5,q.y-29,8,8);}return;}
    if(id==='plant'){this.plant(1200,140);if(this.motion&&this.time*1000-(this.recreation?.objects.plant??0)<6000){const q=this.point(1200,140);for(let i=0;i<4;i++){this.ctx.fillStyle='#93cfe2';this.ctx.fillRect(q.x-20+i*10,q.y-50+(this.time*18+i*7)%35,2,4);}}return;}
    if(id==='couch'){this.sprite(SPRITE.sofa,1100,475,190,100,'#b77e57');return;}
-   if(id==='conference'){for(let i=0;i<6;i++){const p=amenityDestination(id,i).point;this.chair(p.x,p.y,i>=3);}this.sprite(SPRITE.conference,285,385,245,130);return;}
+   if(id==='conference'){this.sprite(SPRITE.conference,285,385,245,130);return;}
   }
   if(id==='conference'){
    this.shadow(175,305,235,70);
-   for(let i=0;i<6;i++){const p=amenityDestination(id,i).point;this.chair(p.x,p.y,i>=3);}
    this.box(180,310,225,50,0,43,'#b9986b');this.box(175,305,235,60,43,6,'#d5b987');
    for(let i=0;i<4;i++){this.plane(190+i*47,320,22,20,50,'#e7e2cd');this.box(214+i*47,335,5,5,50,7,'#93aead');}
   } else if(id==='projector'){
@@ -191,6 +190,7 @@ export class OfficeGameRenderer {
   for(const id of Object.keys(AMENITIES) as Amenity[]){const p=id==='couch'?{x:1100,y:425}:id==='conference'?{x:290,y:350}:id==='pool'?{x:770,y:335}:id==='gaming'?{x:1100,y:230}:id==='coffee'?{x:755,y:150}:id==='water'?{x:930,y:170}:id==='plant'?{x:1200,y:140}:{x:285,y:140};if(id==='reception'){p.x=480;p.y=550;}
    this.prop(p.x,p.y,()=>{this.furniture(id);this.hit({kind:'amenity',id},p.x,p.y,20,id==='conference'?210:id==='pool'?190:id==='gaming'?145:100,100);},240,p.x+p.y,['pool','gaming','coffee','water','plant','projector','reception'].includes(id));
   }
+  for(let i=0;i<6;i++){const p=amenityDestination('conference',i).point;this.prop(p.x,p.y,()=>this.chair(p.x,p.y,i>=3,i<3?'south':'north'),90,p.x+p.y+(i<3?-5:6),true);}
   if(world.width>1700){this.prop(1400,240,()=>{this.shelf(1320,48);this.shelf(1410,48);this.box(1340,220,115,44,0,24,'#78987b');this.box(1340,258,115,8,24,29,'#a7b697');this.box(1355,160,78,35,0,25,'#c9b381');this.plant(1490,160);this.plant(1320,390);this.wallArt(1445,35,'poster');},300);}
   this.prop(132,420,()=>{this.sprite(SPRITE.coat,132,420,43,80);this.sprite(SPRITE.printer,140,220,64,80);},110);
   for(const suite of world.suites){const {x,y,w,h,room}=suite;const style=studioStyle(room);
@@ -213,10 +213,10 @@ export class OfficeGameRenderer {
 
   }
   for(const person of world.people){
-   const {x,y}=person.home.point,facing=person.home.facing??'north',v=DESK_VECTOR[facing],center={x:x+v.x*32,y:y+v.y*32},client=person.room.relationship==='client';
+   const {x,y}=person.home.point,facing=person.home.facing??'north',v=DESK_VECTOR[facing],client=person.room.relationship==='client',distance=client?42:56,center={x:x+v.x*distance,y:y+v.y*distance};
    const deskSprite=()=>{const displayFacing=this.camera.portrait?({north:'west',west:'north',south:'east',east:'south'} as const)[facing]:facing;
    return SPRITE[({north:'deskNorth',east:'deskEast',south:'deskSouth',west:'deskWest'} as const)[displayFacing]];};
-   this.prop(center.x,center.y,()=>{if(!this.sprite(deskSprite(),center.x,center.y+22,client?100:142,100))this.desk(x,y,person.desk.state==='working');this.hit({kind:'person',id:person.id},center.x,center.y+12,0,client?90:130,100);},150,center.x+center.y+22,true);
+   this.prop(center.x,center.y,()=>{if(!this.sprite(deskSprite(),center.x,center.y+22,client?(facing==='north'||facing==='south'?86:65):(facing==='north'||facing==='south'?130:96),client?85:100))this.desk(x,y,person.desk.state==='working');this.hit({kind:'person',id:person.id},center.x,center.y+12,0,client?90:130,100);},150,center.x+center.y+22,true);
    this.prop(x,y,()=>this.chair(x,y,facing==='north',facing,studioStyle(person.room).accent),90,x+y+(facing==='north'?6:-5),true);
   }
  }
@@ -254,9 +254,9 @@ export class OfficeGameRenderer {
   const depth=(p:Prop)=>p.depth===0?0:(this.camera.portrait?p.x+p.y*.01:p.y+p.x*.01)+(p.depth-p.x-p.y);
   ctx.drawImage(this.floorCache,0,0,width,height);ctx.save();ctx.translate(camera.x,camera.y);ctx.scale(camera.zoom,camera.zoom);
   const people=new Map(world.people.map(p=>[p.id,p]));
-  // Furniture and people share one depth pass. Static floors are cached; the small
-  // sprite atlas makes occlusion correct without storing full-size layers per object.
+  // Independent furniture and characters share one depth pass; floors and character frames are cached.
   const props=[...this.props];
+  const badges:{actor:Actor;name:string;waiting:number;selected:boolean}[]=[];
   for(const actor of actors){const p=people.get(actor.id);if(!p)continue;props.push({x:actor.point.x,y:actor.point.y,radius:110,depth:actor.point.x+actor.point.y+2,paint:()=>{
    const q=this.point(actor.point.x,actor.point.y),selected=this.selected?.kind==='person'&&this.selected.id===actor.id;
    this.ctx.fillStyle=selected?'#b4e6aa88':'#16392b30';this.ctx.beginPath();this.ctx.ellipse(q.x,q.y,18,8,0,0,Math.PI*2);this.ctx.fill();
@@ -266,9 +266,7 @@ export class OfficeGameRenderer {
    const pose=!actor.arrived?'walk':actor.destination.amenity==='gaming'?'game':actor.destination.pose==='seated'?(p.desk.state==='working'?'type':'sit'):actor.destination.pose;
    this.pixels.person(this.ctx,actor.id,q.x,q.y,facing,pose,motion?time:0);
    this.hit({kind:'person',id:actor.id},actor.point.x,actor.point.y,0,45,78);
-   if(p.desk.waiting||selected||(p.desk.human&&camera.zoom>.45))this.label(actor.point.x,actor.point.y,85,selected||p.desk.human?p.desk.name:`${p.desk.waiting} to review`,p.desk.waiting?'#ffe0a1':'#d7ebd9');
-   else if(p.desk.state==='working'&&camera.zoom>=.75)this.label(actor.point.x,actor.point.y,85,`${p.desk.name} · ${(p.desk.says??'Working').slice(0,38)}`);
-   if(actor.arrived&&actor.destination.collaboration)this.label(actor.point.x,actor.point.y,105,'•••');
+   badges.push({actor,name:p.desk.name,waiting:p.desk.waiting,selected});
   }});}
   props.sort((a,b)=>depth(a)-depth(b));
   for(const prop of props)if(this.visible(this.point(prop.x,prop.y),prop.radius))prop.paint();
@@ -279,6 +277,21 @@ export class OfficeGameRenderer {
    const box=this.label(lx,ly,lz,camera.zoom<.35?room.name:`${room.name}  ·  ${status}`,room.waiting?'#f4d294':'#daeadb','#1b3533',12,true);this.hits.push({target:{kind:'company',id:room.companyId},...box});
   }
 
+  const occupied=this.hits.filter(h=>h.target.kind==='company');
+  for(const badge of badges){
+   const a=badge.actor,full=badge.selected||camera.zoom>.85,short=badge.name.split(' ')[0],name=(full?badge.name:short)+(badge.waiting?' · '+badge.waiting:'');
+   const head=a.arrived&&a.destination.pose==='seated'?78:92;
+   let z=head,rect:{x:number;y:number;w:number;h:number}|undefined;
+   for(let attempt=0;attempt<5;attempt++){
+    const p=this.point(a.point.x,a.point.y,z),font=Math.max(10,Math.min(80,10/camera.zoom));this.ctx.font=`600 ${font}px "Segoe UI",sans-serif`;const w=this.ctx.measureText(name).width+18;
+    rect={x:p.x-w/2,y:p.y-font-4,w,h:font+10};
+    if(!occupied.some(r=>rect!.x<r.x+r.w&&rect!.x+rect!.w>r.x&&rect!.y<r.y+r.h&&rect!.y+rect!.h>r.y))break;
+    z+=15/camera.zoom;
+   }
+   const box=this.label(a.point.x,a.point.y,z,name,badge.waiting?'#ffe0a1':'#f0eee3','#273a3be8',10,true);
+   occupied.push({target:{kind:'person',id:a.id},...box});this.hits.push({target:{kind:'person',id:a.id},...box});
+   if(z>head)this.line(this.point(a.point.x,a.point.y,head-5),this.point(a.point.x,a.point.y,z-4),'#e6e0c980',.8);
+  }
   ctx.restore();return this.hits;
  }
  dispose(){this.pixels.dispose();this.shotFrames=[];this.clearArt();if(this.floorCache){this.floorCache.width=0;this.floorCache.height=0;}this.floorCache=null;for(const image of this.images.values())image.onload=null;this.images.clear();this.props=[];this.world=null;}

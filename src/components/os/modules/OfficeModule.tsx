@@ -8,7 +8,7 @@ import {useOsAuth} from '@/hooks/os/useOsAuth';
 import OfficeBuilding from './office/OfficeBuilding';
 import type {Desk,Room} from './office/officeState';
 
-type DesktopState={version:string;update:{phase:string;text:string}};
+type DesktopState={version:string;update:{phase:string;text:string};taskbar?:{enabled:boolean;supported:boolean;mode:string;detail:string}};
 function useDesktop(){
     const desktop=useSyncExternalStore(()=>()=>{},()=>typeof window!=='undefined'?window.nucleasDesktop??null:null,()=>null);
     const [state,setState]=useState<DesktopState|null>(null);
@@ -63,7 +63,7 @@ export default function OfficeModule({onNavigate,windowId='web-office'}:{onNavig
         {voiceError&&<p role="alert" className="absolute left-3 top-3 z-20 rounded bg-background-card p-2 text-xs text-red-400">{voiceError}</p>}
         <div className="h-full">
             <OfficeBuilding onOpenRoom={openRoom} onOpenDesk={openDesk}/>
-            {desktopState&&<button type="button" className="absolute bottom-1 left-3 text-[9px] text-text-secondary underline" onClick={()=>void(desktopState.update.phase==='ready'?desktop?.installUpdate?.():desktop?.checkUpdate?.())}>Nucleas {desktopState.version} · {desktopState.update.text}</button>}
+            {desktopState&&<div className="absolute bottom-1 left-3 flex gap-3 text-[9px] text-text-secondary"><button type="button" className="underline" onClick={()=>void(desktopState.update.phase==='ready'?desktop?.installUpdate?.():desktop?.checkUpdate?.())}>Nucleas {desktopState.version} · {desktopState.update.text}</button>{desktopState.taskbar?.supported&&<button type="button" title={desktopState.taskbar.detail} className="underline" onClick={()=>void desktop?.enableTaskbar?.()}>{desktopState.taskbar.mode==='taskbar'?'Taskbar connected':desktopState.taskbar.mode==='edge'?'Quick bar · retry taskbar':'Show Nucleas taskbar'}</button>}</div>}
         </div>
     </div>;
 }

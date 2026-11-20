@@ -14,6 +14,7 @@ if (local || location.origin === 'https://nucleas.app') {
       onTaskbarAsk: callback => { const listener = () => callback(); ipcRenderer.on('ask:available', listener); return () => ipcRenderer.removeListener('ask:available', listener); },
       startVoice: () => ipcRenderer.invoke('voice:start'),
       desktopState: () => ipcRenderer.invoke('launcher:state'),
+      enableTaskbar: () => ipcRenderer.invoke('taskbar:enable'),
       onDesktopState: callback => { const listener = (_event, state) => callback(state); ipcRenderer.on('launcher:state', listener); return () => ipcRenderer.removeListener('launcher:state', listener); },
       checkUpdate: () => ipcRenderer.invoke('update:check'),
       installUpdate: () => ipcRenderer.invoke('update:install'),

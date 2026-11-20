@@ -46,7 +46,9 @@ export async function organizationOffice(viewer:CompanyViewer,command?:Command):
     const refresh=!previous||Date.now()-previous.contextAt>=20000||Boolean(command&&'personId' in command);
     const context=refresh?await loadRooms(viewer,previous):null;
     const now=Date.now();
-    let scene=advanceScene(previous,context?.rooms,now);
+    // Rebuild positions for new layouts, retaining shared games and explicit visits.
+    const seed=previous??(current?.scene?{...current.scene,actors:[]}:null);
+    let scene=advanceScene(seed,context?.rooms,now);
     if(context?.metricsDue)scene.metricsAt=now;
     if(command&&'recreation' in command){
       try{scene.recreation=changeRecreation(scene.recreation??newRecreation(now),command.recreation,now);}catch(error){throw new OfficeConflict(error instanceof Error?error.message:'Could not update the game.');}

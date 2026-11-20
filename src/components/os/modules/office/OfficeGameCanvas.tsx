@@ -11,7 +11,7 @@ export interface GameView {camera:Camera;width:number;height:number}
 export interface GameControls {focus:(point:Point,zoom?:number)=>void;fit:()=>void;zoom:(factor:number)=>void}
 interface Props {world:World;frame:SharedOfficeFrame|null;motion:boolean;selection:Selection|null;onSelect:(target:Selection|null)=>void;onView:(view:GameView)=>void}
 
-/** Event-driven canvas: 12fps for motion, no animation loop at rest or when hidden. */
+/** Event-driven canvas: 20fps walking, 12fps ambient action, no loop at rest or when hidden. */
 const OfficeGameCanvas=forwardRef<GameControls,Props>(function OfficeGameCanvas(props,ref){
  const canvas=useRef<HTMLCanvasElement>(null),latest=useRef(props),wakeRef=useRef<()=>void>(()=>{});
  const controls=useRef<GameControls>({focus:()=>{},fit:()=>{},zoom:()=>{}});
@@ -56,7 +56,8 @@ const OfficeGameCanvas=forwardRef<GameControls,Props>(function OfficeGameCanvas(
    hits=renderer.paint(ctx,p.world,actors,now/1000,camera,width,height,p.selection,animate,rec);
    dirty=false;
    if(time-published>250&&keys.size){report();published=time;}
-   if(animate||keys.size)timer=setTimeout(()=>{timer=undefined;raf=requestAnimationFrame(tick);},1000/(keys.size?30:12));
+   const walking=animate&&actors.some(a=>!a.arrived);
+   if(animate||keys.size)timer=setTimeout(()=>{timer=undefined;raf=requestAnimationFrame(tick);},1000/(keys.size?30:walking?20:12));
   };
   const wake=()=>{dirty=true;clearTimeout(timer);timer=undefined;if(!document.hidden&&visible&&!raf)raf=requestAnimationFrame(tick);};wakeRef.current=wake;
   const observer=new IntersectionObserver(([entry])=>{visible=entry.isIntersecting;if(!visible){cancelAnimationFrame(raf);clearTimeout(timer);timer=undefined;raf=0;keys.clear();}else wake();});observer.observe(element);

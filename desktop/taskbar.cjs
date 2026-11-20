@@ -6,8 +6,8 @@ const file = path.join(__dirname, 'renderer/taskbar.html');
 const url = pathToFileURL(file).href;
 
 /** Owns only the local taskbar surface. No provider credentials, web content or general-purpose IPC. */
-function createTaskbar({ windows, openOffice, openAsk, submit, onFailure, attention = () => ({ count: 0 }), openAttention = () => {} }) {
-  let controller, draft = '', attached = false, vertical = false, stopping = false;
+function createTaskbar({ windows, openOffice, openAsk, submit, onFailure, onStatus=()=>{}, native=true, attention = () => ({ count: 0 }), openAttention = () => {} }) {
+  let controller, draft = '', attached = false, vertical = false, stopping = false, compatibility=!native, attachTimer;
   const snapshot = () => ({ windows: minimizedWindows(windows), draft, vertical, attention: attention(), dark: nativeTheme.shouldUseDarkColorsForSystemIntegratedUI });
   const senderAllowed = event => {
     const win = controller?.window;
@@ -38,6 +38,7 @@ function createTaskbar({ windows, openOffice, openAsk, submit, onFailure, attent
   function stop() {
     if (stopping) return;
     stopping = true;
+    clearTimeout(attachTimer);
     nativeTheme.removeListener('updated', broadcast);
     for (const channel of Object.keys(channels)) ipcMain.removeHandler(channel);
     const win = controller?.window;
@@ -45,14 +46,18 @@ function createTaskbar({ windows, openOffice, openAsk, submit, onFailure, attent
     catch { if (win && !win.isDestroyed()) win.destroy(); }
     finally { controller = undefined; }
   }
-  function fail() {
+  function fail(error) {
     if (stopping) return;
-    stop(); onFailure();
+    clearTimeout(attachTimer);
+    const reason=String(error?.errorMessage??error?.message??'Windows could not attach the taskbar toolbar.').slice(0,250);
+    if(!compatibility){compatibility=true;controller?.stop();onStatus({mode:'connecting',detail:'Trying compatible taskbar mode…'});start();return;}
+    stop(); onFailure(reason);
   }
-  try {
+  function start(){try {
     const { ElectronTaskbarWindowController, createTaskbarWindowOptions } = require('deskband11lib/electron');
     const { STRETCH, TaskbarContentPlacement, isVerticalTaskbarEdge } = require('deskband11lib');
-    controller = new ElectronTaskbarWindowController(() => {
+    const Controller=compatibility?require('./taskbar-compat.cjs').CompatibleTaskbarController:ElectronTaskbarWindowController;
+    controller = new Controller(() => {
       attached = false;
       const win = new BrowserWindow(createTaskbarWindowOptions({
         width: 600, height: 48, transparent: true, backgroundColor: '#00000000', title: 'Nucleas taskbar',
@@ -71,12 +76,14 @@ function createTaskbar({ windows, openOffice, openAsk, submit, onFailure, attent
       animateLayoutChanges: false, highRefreshRateMode: false,
       layoutRefreshInterval: 500, eventPollInterval: 250,
     });
-    controller.on('attached', () => { attached = true; broadcast(); });
-    controller.on('taskbarEdgeChanged', event => { vertical = isVerticalTaskbarEdge(event.taskbarEdge); broadcast(); });
+    controller.on('attached', event => { clearTimeout(attachTimer);attached = true;onStatus({mode:event?.mode??'taskbar',detail:event?.mode==='edge'?'Quick bar beside the taskbar — no safe space inside it.':'Nucleas is in your taskbar.'});broadcast(); });
+    controller.on('taskbarEdgeChanged', event => { vertical = event.taskbarEdge==='vertical'||(typeof event.taskbarEdge!=='string'&&isVerticalTaskbarEdge(event.taskbarEdge)); broadcast(); });
     controller.on('attachFailed', fail);
     controller.on('layoutError', fail);
     controller.start();
-  } catch { fail(); }
+    if(!compatibility)attachTimer=setTimeout(()=>{if(!attached)fail();},12000);
+  } catch(error) { fail(error); }}
+  start();
   return { stop, broadcast, get active() { return !stopping; }, get attached() { return attached && !stopping; } };
 }
 module.exports = { createTaskbar };

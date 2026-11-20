@@ -47,6 +47,9 @@ next-env.d.ts
 /desktop/release/
 /desktop/renderer/catalog.json
 /desktop/renderer/icon.png
+/desktop/renderer/icon.ico
+/desktop/renderer/tray.png
+/desktop/native/bin/
 
 # Rigby build output and upstream demo artwork (not redistributed)
 /public/animation-studio/

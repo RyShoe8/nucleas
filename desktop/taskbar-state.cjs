@@ -3,8 +3,9 @@ const { randomUUID } = require('node:crypto');
 const MAX_QUESTION_LENGTH = 4000;
 function supportsTaskbar(platform, release, arch) {
   const [major, , build] = release.split('.').map(Number);
-  return platform === 'win32' && ['x64', 'arm64'].includes(arch) && major >= 10 && build >= 22000;
+  return platform === 'win32' && ['x64', 'arm64'].includes(arch) && major >= 10 && build >= 10240;
 }
+function supportsNativeTaskbar(platform,release,arch){return supportsTaskbar(platform,release,arch)&&Number(release.split('.')[2])>=22000;}
 function minimizedWindows(windows) {
   return [...windows].filter(([key, win]) => key !== 'office:{}' && !win.isDestroyed() && win.isMinimized())
     .map(([key, win]) => ({ key, title: win.getTitle().slice(0, 160) || 'Nucleas' }));
@@ -37,4 +38,4 @@ function createQuestionQueue(limit = 8) {
     get size() { return queue.length; },
   };
 }
-module.exports = { supportsTaskbar, minimizedWindows, restoreWindow, createQuestionQueue, MAX_QUESTION_LENGTH };
+module.exports = { supportsTaskbar, supportsNativeTaskbar, minimizedWindows, restoreWindow, createQuestionQueue, MAX_QUESTION_LENGTH };

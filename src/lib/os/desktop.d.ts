@@ -12,8 +12,9 @@ declare global {
             onTaskbarAsk?: (callback: () => void) => () => void;
             /** The Office (main window) only: start voice in Ask, read and follow the app's version and update state. */
             startVoice?: () => Promise<void>;
-            desktopState?: () => Promise<{ version: string; update: { phase: string; text: string } }>;
-            onDesktopState?: (callback: (state: { version: string; update: { phase: string; text: string } }) => void) => () => void;
+            desktopState?: () => Promise<{ version: string; update: { phase: string; text: string }; taskbar?:{enabled:boolean;supported:boolean;mode:string;detail:string} }>;
+            onDesktopState?: (callback: (state: { version: string; update: { phase: string; text: string }; taskbar?:{enabled:boolean;supported:boolean;mode:string;detail:string} }) => void) => () => void;
+            enableTaskbar?:()=>Promise<void>;
             checkUpdate?: () => Promise<void>;
             installUpdate?: () => Promise<void>;
         };

@@ -7,11 +7,11 @@
   "author": "Nucleas",
   "main": "main.cjs",
   "scripts": {
-    "prepare": "node scripts/catalog.cjs",
-    "start": "node scripts/catalog.cjs && electron .",
-    "test": "node --test policy.test.cjs startup-update.test.cjs taskbar-state.test.cjs taskbar.test.cjs attention.test.cjs",
-    "pack": "node scripts/catalog.cjs && electron-builder --win --dir",
-    "dist": "node scripts/catalog.cjs && electron-builder --win nsis --publish never && node scripts/verify-release.cjs"
+    "prepare": "node scripts/catalog.cjs && node scripts/native.cjs",
+    "start": "node scripts/catalog.cjs && node scripts/native.cjs && electron .",
+    "test": "node --test policy.test.cjs startup-update.test.cjs taskbar-state.test.cjs taskbar.test.cjs attention.test.cjs taskbar-layout.test.cjs shortcut-icons.test.cjs",
+    "pack": "node scripts/catalog.cjs && node scripts/native.cjs && electron-builder --win --dir",
+    "dist": "node scripts/catalog.cjs && node scripts/native.cjs && electron-builder --win nsis --publish never && node scripts/verify-release.cjs"
   },
   "dependencies": {
     "deskband11lib": "1.5.1",
@@ -42,13 +42,18 @@
       "attention-preload.cjs",
       "window-lifecycle.cjs",
       "licenses/**",
-      "renderer/**"
+      "renderer/**",
+      "taskbar-compat.cjs",
+      "taskbar-layout.cjs",
+      "shortcut-icons.cjs"
     ],
     "asar": true,
-    "asarUnpack": ["**/node_modules/deskband11lib/bin/**"],
+    "asarUnpack": [
+      "**/node_modules/deskband11lib/bin/**"
+    ],
     "win": {
       "target": "nsis",
-      "icon": "renderer/icon.png",
+      "icon": "renderer/icon.ico",
       "artifactName": "Nucleas-Setup-${version}.${ext}",
       "verifyUpdateCodeSignature": false
     },
@@ -56,12 +61,24 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "installerIcon": "renderer/icon.ico",
+      "uninstallerIcon": "renderer/icon.ico"
     },
     "publish": [
       {
         "provider": "generic",
         "url": "https://nucleas.app/desktop/releases/windows/"
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "native/bin/TaskbarLayout.exe",
+        "to": "native/TaskbarLayout.exe"
+      },
+      {
+        "from": "renderer/icon.ico",
+        "to": "assets/nucleas-v2.ico"
       }
     ]
   }

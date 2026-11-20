@@ -61,6 +61,8 @@ test('packaged startup installs silently and relaunches before opening editable 
     destroy() { this.destroyed = true; }
     isDestroyed() { return !!this.destroyed; }
     setAlwaysOnTop() {}
+    setIcon() {}
+    setAppDetails() {}
     getTitle() { return ''; }
     show() {}
     focus() {}
@@ -71,9 +73,9 @@ test('packaged startup installs silently and relaunches before opening editable 
   const electron = { app, BrowserWindow: Window, ipcMain: { handle() {} }, screen: { getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }] },
     Tray: class extends EventEmitter { setToolTip() {} setContextMenu() {} }, Menu: { buildFromTemplate: v => v }, nativeImage: { createFromPath: () => ({ resize() {} }) }, globalShortcut: { register: () => true }, session: { fromPartition: () => profile } };
   const substitutes = { electron, 'electron-updater': { autoUpdater: source }, 'node:fs': { readFileSync: () => '{}', writeFileSync() {} },
-    './renderer/catalog.json': [{ id: 'office', title: 'Office' }], './auth.cjs': {}, './capture.cjs': { installDisplayCapture() {} }, './startup-update.cjs': { startupUpdate } };
+    './shortcut-icons.cjs': {repairShortcutIcons() {}}, './renderer/catalog.json': [{ id: 'office', title: 'Office' }], './auth.cjs': {}, './capture.cjs': { installDisplayCapture() {} }, './startup-update.cjs': { startupUpdate } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8'), {
-    require: id => id in substitutes ? substitutes[id] : require(id), __dirname, process: { argv: [] }, URL, setTimeout, clearTimeout, console,
+    require: id => id in substitutes ? substitutes[id] : require(id), __dirname, process: { argv: [], resourcesPath: 'test', platform:'win32',arch:'x64' }, URL, setTimeout, clearTimeout, console,
   });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(created.length, 1);

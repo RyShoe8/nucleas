@@ -8,13 +8,17 @@ const catalog = require('./renderer/catalog.json');
 const { signIn, authFile, authUrl } = require('./auth.cjs');
 const { installDisplayCapture } = require('./capture.cjs');
 const { startupUpdate } = require('./startup-update.cjs');
-const { supportsTaskbar, createQuestionQueue } = require('./taskbar-state.cjs');
+const { supportsTaskbar, supportsNativeTaskbar, createQuestionQueue } = require('./taskbar-state.cjs');
+const {repairShortcutIcons}=require('./shortcut-icons.cjs');
+const appIcon=path.join(__dirname,'renderer/icon.png');
+const shortcutIcon=app.isPackaged?path.join(process.resourcesPath,'assets/nucleas-v2.ico'):path.join(__dirname,'renderer/icon.ico');
 const { createTaskbar } = require('./taskbar.cjs');
 const { startAttention } = require('./attention.cjs');
 const { installWindowLifecycle } = require('./window-lifecycle.cjs');
 const taskbarSupported = supportsTaskbar(process.platform, require('node:os').release(), process.arch);
 const questions = createQuestionQueue();
 let taskbar, attention, taskbarError = false;
+let taskbarStatus={mode:'connecting',detail:'Starting the taskbar…'};
 const targets = new Map();
 const launcherFile = path.join(__dirname, 'renderer/index.html');
 const launcherUrl = pathToFileURL(launcherFile).href;
@@ -28,7 +32,7 @@ const bounds = value => visibleBounds(value, screen.getAllDisplays().map(d => d.
 let persistTimer;
 function persist() { clearTimeout(persistTimer); persistTimer = setTimeout(flushBounds, 350); }
 function flushBounds() { clearTimeout(persistTimer); persistTimer = undefined; try { fs.writeFileSync(settingsPath(), JSON.stringify(saved)); } catch { /* Read-only profiles still run. */ } }
-function state() { return { version: app.getVersion(), update, compact, apps: catalog.filter(m => !m.hidden), windows: [...windows].map(([key, w]) => ({ key, title: w.getTitle() })) }; }
+function state() { return { version: app.getVersion(), update, compact, taskbar:{...taskbarStatus,enabled:saved.taskbarEnabled!==false,supported:taskbarSupported},apps: catalog.filter(m => !m.hidden), windows: [...windows].map(([key, w]) => ({ key, title: w.getTitle() })) }; }
 function broadcast() {
   if (launcher && !launcher.isDestroyed()) launcher.webContents.send('launcher:state', state());
   const main = office();
@@ -64,9 +68,10 @@ function trayMenu() {
     { label: 'Open Nucleas', click: showLauncher }, { label: 'Ask Nucleas', click: () => openModule({ moduleId: 'assistant' }) },
     { label: 'Needs you & email summaries', click: () => attention?.show() },
     { type: 'separator' },
-    { label: taskbarSupported ? 'Show Nucleas in the taskbar' : 'Taskbar bar requires Windows 11', type: 'checkbox', enabled: taskbarSupported, checked: taskbarSupported && saved.taskbarEnabled !== false, click: item => {
+    { label: taskbarSupported ? 'Show Nucleas in the taskbar' : 'Taskbar bar requires Windows', type: 'checkbox', enabled: taskbarSupported, checked: taskbarSupported && saved.taskbarEnabled !== false, click: item => {
       saved.taskbarEnabled = item.checked; persist(); configureTaskbar(); trayMenu();
     } },
+    {label:taskbarStatus.detail,enabled:false},
     ...(taskbarError ? [{ label: 'Taskbar unavailable · retry', click: () => { configureTaskbar(); trayMenu(); } }] : []),
     { label: 'Check for updates', click: checkUpdates },
     { label: 'Quit Nucleas', click: () => { quitting = true; app.quit(); } },
@@ -74,14 +79,19 @@ function trayMenu() {
 }
 function configureTaskbar() {
   taskbar?.stop(); taskbar = undefined; taskbarError = false;
+  taskbarStatus={mode:saved.taskbarEnabled===false?'disabled':'connecting',detail:saved.taskbarEnabled===false?'Taskbar is turned off.':'Starting the taskbar…'};
   if (starting || quitting || testRun || !taskbarSupported || saved.taskbarEnabled === false) return;
   taskbar = createTaskbar({
+    native:supportsNativeTaskbar(process.platform,require('node:os').release(),process.arch),
     windows, openOffice: showLauncher, openAsk: () => openModule({ moduleId: 'assistant' }), submit: submitTaskbarQuestion,
     attention: () => attention?.snapshot() ?? { count: 0 }, openAttention: () => attention?.show(),
-    onFailure: () => { taskbarError = true; trayMenu(); },
+    onFailure: reason => { taskbarError = true;taskbarStatus={mode:'error',detail:reason};trayMenu();broadcast(); },
+    onStatus: value=>{taskbarStatus=value;trayMenu();broadcast();},
   });
 }
 function secureWindow(win, local = false) {
+  win.setIcon(appIcon);
+  if(process.platform==='win32')win.setAppDetails({appId:'app.nucleas.desktop',appIconPath:shortcutIcon,relaunchDisplayName:'Nucleas'});
   win.webContents.setWindowOpenHandler(({ url }) => {
     // App windows have no back button, so a full Nucleas page gets its own window, signed in as the same person.
     if (!local && appPage(url)) return { action: 'allow', overrideBrowserWindowOptions: { width: 1120, height: 780, minWidth: 400, minHeight: 300, autoHideMenuBar: true, backgroundColor: '#14242a' } };
@@ -237,6 +247,7 @@ else {
   app.on('second-instance', () => { showLauncher(); void checkUpdates(); });
   app.whenReady().then(async () => {
     app.setAppUserModelId('app.nucleas.desktop');
+    repairShortcutIcons(app,shell,shortcutIcon);
     try { const value = JSON.parse(fs.readFileSync(settingsPath(), 'utf8')); saved = value && typeof value === 'object' && !Array.isArray(value) ? value : {}; } catch { saved = {}; }
     const profile = session.fromPartition('persist:nucleas');
     installDisplayCapture(profile);
@@ -256,7 +267,7 @@ else {
       startupWindow.once('ready-to-show', () => startupWindow?.show());
       void startupWindow.loadFile(path.join(__dirname, 'renderer/startup.html'));
     } else if (testRun) createLauncher(); else showLauncher();
-    tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'renderer/icon.png')).resize({ width: 20, height: 20 }));
+    tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'renderer/tray.png')).resize({ width: 20, height: 20,quality:'best' }));
     tray.setToolTip('Nucleas · Alt+Space');
     trayMenu();
     tray.on('click', showLauncher);
@@ -277,6 +288,7 @@ else {
       'launcher:state': state, 'launcher:hide': () => launcher.hide(),
       'launcher:compact': value => { compact = Boolean(value); launcher.setSize(440, compact ? 92 : 600); launcher.setBounds(bounds(launcher.getBounds())); broadcast(); },
       'update:check': checkUpdates, 'update:install': installUpdate,
+      'taskbar:enable': () => {saved.taskbarEnabled=true;persist();configureTaskbar();trayMenu();broadcast();},
       // Voice starts from the main window and runs in Ask: open or focus it, then tell it to listen once its page is ready.
       'voice:start': () => {
         openModule({ moduleId: 'assistant' });
@@ -287,7 +299,7 @@ else {
       },
     })) ipcMain.handle(channel, (event, value) => {
       // The Office may read the app state, check or install updates, and start voice; only the old launcher may hide or resize itself.
-      const officeAllowed = ['launcher:state', 'update:check', 'update:install', 'voice:start'].includes(channel) && officeSender(event);
+      const officeAllowed = ['launcher:state', 'update:check', 'update:install', 'voice:start','taskbar:enable'].includes(channel) && officeSender(event);
       if (!localSender(event) && !officeAllowed) throw new Error('Not allowed');
       return handler(value);
     });

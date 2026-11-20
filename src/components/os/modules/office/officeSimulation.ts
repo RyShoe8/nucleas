@@ -10,7 +10,7 @@ export type Person = { id: string; room: Room; desk: Desk; home: Destination };
 export type World = { width: number; height: number; suites: Suite[]; people: Person[]; layoutVersion?: number };
 export const personId = (company: string, role: string) => `${company}:${role}`;
 export const SPINE = 90;
-export const OFFICE_LAYOUT_VERSION = 3;
+export const OFFICE_LAYOUT_VERSION = 4;
 export const DESK_VECTOR:Record<DeskFacing,Point>={north:{x:0,y:-1},east:{x:1,y:0},south:{x:0,y:1},west:{x:-1,y:0}};
 export const AMENITY_POSITION: Record<Amenity, Point & { size: number }> = {
     conference: { x: 285, y: 320, size: 230 }, projector: { x: 285, y: 140, size: 150 },
@@ -24,39 +24,43 @@ export function makeWorld(rooms: Room[]): World {
     const clients = rooms.filter(r => r.relationship === 'client').sort((a,b) => a.companyId.localeCompare(b.companyId));
     // The commons occupies the first two bays. Companies fill a compact grid, with
     // the client wing alongside it; every row joins the same circulation aisle.
-    const humanCount=owned.find(r=>r.kind==='management')?.desks.length??0;
-    const humanColumns=Math.max(3,Math.min(5,Math.ceil(Math.sqrt(humanCount*1.5))));
-    const firstHeight=Math.max(575,Math.ceil(humanCount/humanColumns)*140+220);
+    const roomHeight=(room:Room)=>{
+      const count=room.kind==='management'?room.desks.length:room.desks.filter(d=>CHARACTER_ROLES.some(r=>r===d.role)).length;
+      const rows=Math.ceil(count/(room.relationship==='client'?2:3));
+      return Math.max(475,140+Math.max(0,rows-1)*165+(room.kind==='management'?150:270));
+    };
     const minimum=owned.some(r=>r.kind==='management')?3:2;
     const candidates=Array.from({length:Math.max(1,Math.min(6,owned.length+2)-minimum+1)},(_,i)=>{
       const columns=i+minimum,ownedRows=Math.ceil((owned.length+2)/columns),lastUsed=(owned.length+2)%columns||columns;
       const lastCapacity=Math.floor((columns-lastUsed)*740/440),perClientRow=Math.floor(columns*740/440);
-      const rows=ownedRows+Math.ceil(Math.max(0,clients.length-lastCapacity)/perClientRow);
-      const width=150+columns*740,height=firstHeight+90+(rows-1)*530;
+      const placements=[...owned.map((room,index)=>({room,row:Math.floor((index+2)/columns),x:150+((index+2)%columns)*740,w:680})),...clients.map((room,index)=>{
+        const inLast=index<lastCapacity,tail=index-lastCapacity;
+        return {room,row:inLast?ownedRows-1:ownedRows+Math.floor(tail/perClientRow),x:inLast?150+lastUsed*740+index*440:150+(tail%perClientRow)*440,w:380};
+      })];
+      const rows=Math.max(1,...placements.map(p=>p.row+1));
+      const heights=Array.from({length:rows},(_,row)=>Math.max(row===0?575:475,...placements.filter(p=>p.row===row).map(p=>roomHeight(p.room))));
+      const width=150+columns*740,height=30+heights.reduce((sum,h)=>sum+h+60,0);
       const unused=Math.max(0,(rows*columns-owned.length-2)*740-clients.length*440)/(rows*columns*740);
       const score=Math.abs(Math.log((width*.86+height*.12)/(height*.9)/1.8))+unused*.7;
-      return {columns,ownedRows,lastUsed,lastCapacity,perClientRow,score};
+      return {placements,heights,score};
     });
-    const {columns,ownedRows,lastUsed,lastCapacity,perClientRow}=candidates.sort((a,b)=>a.score-b.score)[0];
-    const rowY = (row:number) => row === 0 ? 30 : firstHeight+90 + (row - 1) * 530;
-    const rowHeight = (row:number) => row === 0 ? firstHeight : 475;
-    const suites: Suite[] = [...owned.map((room, index): Suite => {
-        const slot=index+2,row=Math.floor(slot/columns),x=150+(slot%columns)*740,y=rowY(row),h=rowHeight(row);
-        return {room,x,y,w:680,h,door:{x:x+680,y:y+h-35},lane:x+650};
-    }), ...clients.map((room,index): Suite => {
-        const inLast=index<lastCapacity,tail=index-lastCapacity,row=inLast?ownedRows-1:ownedRows+Math.floor(tail/perClientRow),x=inLast?150+lastUsed*740+index*440:150+(tail%perClientRow)*440,y=rowY(row),h=rowHeight(row);
-        return {room,x,y,w:380,h,door:{x,y:y+h-35},lane:x+22};
-    })];
+    const {placements,heights}=candidates.sort((a,b)=>a.score-b.score)[0];
+    const suites:Suite[]=placements.map(({room,row,x,w})=>{
+      const y=30+heights.slice(0,row).reduce((sum,h)=>sum+h+60,0),h=heights[row],client=room.relationship==='client';
+      return {room,x,y,w,h,door:{x:client?x:x+w,y:y+h-35},lane:x+(client?22:650)};
+    });
     const people = suites.flatMap(suite => (suite.room.kind==='management'?suite.room.desks:CHARACTER_ROLES.map(role=>suite.room.desks.find(d=>d.role===role)).filter((d):d is Desk=>Boolean(d))).flatMap((desk,index) => {
         if (!desk) return [];
         const role=desk.role;
         const client = suite.room.relationship === 'client';
-        const center = desk.human?{x:suite.x+75+(index%humanColumns)*(560/humanColumns),y:suite.y+140+Math.floor(index/humanColumns)*140}:{x:suite.x+(client?80:125)+(index%3)*(client?100:190),y:suite.y+140+Math.floor(index/3)*165};
+        const columns=client?2:3;
+        const center={x:suite.x+(client?90:125)+(index%columns)*(client?165:190),y:suite.y+140+Math.floor(index/columns)*165};
         const facing:DeskFacing=(['north','east','south','west'] as const)[(hash(suite.room.companyId)+index)%4];
-        const vector=DESK_VECTOR[facing],point={x:center.x-vector.x*32,y:center.y-vector.y*32};
+        const distance=client?42:56;
+        const vector=DESK_VECTOR[facing],point={x:center.x-vector.x*distance,y:center.y-vector.y*distance};
         // Leave from behind the chair, then around the workstation's footprint to the row aisle.
         const back={x:point.x-vector.x*17,y:point.y-vector.y*17};
-        const edgeX=center.x+(client?-46:66),aisleY=center.y+70;
+        const edgeX=center.x+(client?-46:77),aisleY=center.y+77;
         const chairExit=facing==='south'?[back,{x:edgeX,y:back.y},{x:edgeX,y:aisleY}]:[back,{x:back.x,y:aisleY}];
         const hallX=client?suite.x-30:suite.x+suite.w+30,hallY=suite.y+suite.h+30;
         const id=desk.human?`human:${desk.employeeId}`:personId(suite.room.companyId,role);
@@ -68,7 +72,7 @@ export function makeWorld(rooms: Room[]): World {
 export function amenityDestination(amenity: Amenity, slot: number): Destination {
     const pos=AMENITY_POSITION[amenity];
     let point: Point;
-    if(amenity==='conference') point={x:210+(slot%3)*75,y:slot<3?290:385};
+    if(amenity==='conference') point={x:210+(slot%3)*75,y:slot<3?270:425};
     else if(amenity==='pool') point={x:slot%2?865:675,y:slot%2?370:390};
     else if(amenity==='gaming'||amenity==='couch') point={x:1055+slot*45,y:440-slot*15};
     else if(amenity==='coffee') point={x:730+slot*65,y:205};
@@ -78,11 +82,11 @@ export function amenityDestination(amenity: Amenity, slot: number): Destination 
     const door={x:left?530:980,y:520};
     const sofa=amenity==='gaming'||amenity==='couch';
     const exit=sofa ? [{x:1220,y:point.y},{x:1220,y:490},{x:980,y:490},door,{x:980,y:580},{x:SPINE,y:580}] : amenity==='reception' ? [{x:SPINE,y:577}] : amenity==='conference' ? [
-        {x:point.x,y:slot<3?240:440},{x:545,y:slot<3?240:440},{x:545,y:470},{x:door.x,y:470},door,{x:door.x,y:580},{x:SPINE,y:580},
+        {x:point.x,y:slot<3?225:460},{x:545,y:slot<3?225:460},{x:545,y:470},{x:door.x,y:470},door,{x:door.x,y:580},{x:SPINE,y:580},
     ] : [
         {x:point.x,y:amenity==='pool'?455:point.y+35}, {x:left?545:925,y:amenity==='pool'?455:point.y+35}, {x:left?545:925,y:470}, {x:door.x,y:470},door,{x:door.x,y:580},{x:SPINE,y:580},
     ];
-    return {key:`${amenity}:${slot}`,point,exit,amenity,pose:amenity==='pool'?'pool':amenity==='coffee'||amenity==='water'?'coffee':amenity==='conference'||sofa?'seated':'idle',label:AMENITIES[amenity].action,...(sofa?{view:'rear' as const,depth:475}:{})};
+    return {key:`${amenity}:${slot}`,point,exit,amenity,pose:amenity==='pool'?'pool':amenity==='coffee'||amenity==='water'?'coffee':amenity==='conference'||sofa?'seated':'idle',label:AMENITIES[amenity].action,...(amenity==='conference'?{facing:slot<3?'south' as const:'north' as const}:{}),...(sofa?{view:'rear' as const,depth:475}:{})};
 }
 
 /** Exit via a room's aisle and door; every inter-room route uses the same central spine. */

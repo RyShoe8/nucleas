@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 64 64">
+ <defs><linearGradient id="tile" x2=".8" y2="1"><stop stop-color="#244d40"/><stop offset="1" stop-color="#102b25"/></linearGradient><linearGradient id="orbit" x2="1" y2="1"><stop stop-color="#dcf3df"/><stop offset="1" stop-color="#70c8a3"/></linearGradient></defs>
+ <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#tile)"/>
+ <rect x="3" y="3" width="58" height="58" rx="14" fill="none" stroke="#8fbea4" stroke-opacity=".3"/>
+ <g fill="none" stroke="url(#orbit)" stroke-width="2.8"><ellipse cx="32" cy="32" rx="23" ry="10" transform="rotate(-34 32 32)"/><ellipse cx="32" cy="32" rx="23" ry="10" transform="rotate(42 32 32)"/></g>
+ <circle cx="32" cy="32" r="6.4" fill="#e3f4dc"/><circle cx="51" cy="19" r="4.2" fill="#8bdcb3" stroke="#163c30" stroke-width="1.5"/><circle cx="13" cy="20" r="3.2" fill="#d2e4ac" stroke="#163c30" stroke-width="1.5"/>
+</svg>

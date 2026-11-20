@@ -1,10 +1,12 @@
 # Living office scene
 
-The office keeps its compact shared layout and organization-wide employee positions. The renderer uses one 1536 × 1024 furniture atlas, cached floor materials and small procedural directional pixel characters. It no longer loads the Rigby texture set for this view; Rigby remains available to the animation tools. Company identity, names and appearances are unchanged.
+The office keeps its compact shared layout and organization-wide employee positions. The renderer loads 24 independent transparent WebP object images, cached floor materials and 40 × 64 directional character frames. It no longer loads the Rigby texture set for this view; Rigby remains available to the animation tools. Company identity, names and appearances are unchanged.
 
 Saved company/project `colorPalette` colors drive wall accents, rugs and chair fabric. A selected company color is the fallback. Standard setup blue/gray values without a palette are treated as unknown branding; those areas receive stable varied neutral finishes. The Nucleas UI accent remains green.
 
 Desks face four directions. The desk, chair, seated pose and exit route use the same orientation. Waiting for review does not prevent ambient movement. Active work takes priority even when the same employee has other results awaiting review. Human employees remain in Management; ambient breaks do not claim real human activity.
+
+Workstations have three columns in company/Management areas and two in smaller client areas. Row heights accommodate staff and leave a separate decoration zone. Conference chairs are independent props, sorted with people and the table; the near row faces the table and draws in front of it. Names draw after furniture, with compact first names at overview zoom and full names on selection/close-up. Characters have distinct hairstyles, clothing, accessories, six walking poses with articulated limbs, and lowered seated poses. Layout upgrades reset positions while retaining shared games and explicit visits.
 
 ## Interactions
 
@@ -13,11 +15,15 @@ Desks face four directions. The desk, chair, seated pose and exit route use the 
 - Coffee, water, plants and reception: shared interactions with short visual feedback. The projector cycles real visible office counts. Employees can still be invited to shared objects, subject to capacity and active work.
 - Commands are authenticated, organization-scoped and revision-checked. Stale game actions refresh the view and require a retry rather than overwriting another player.
 
-The canvas runs at 12 fps only while animated and visible. Pool's inspector runs at 24 fps only during a shot. Reduced-motion preferences set the initial choice; the user can explicitly enable animation. Hidden or closed views stop rendering, and decoded assets/caches are released on teardown. There are no always-running game servers or model calls.
+The canvas runs at 20 fps during walking and 12 fps during ambient actions, only while animated and visible. Pool's inspector runs at 24 fps only during a shot. Reduced-motion preferences set the initial choice; the user can explicitly enable animation. Hidden or closed views stop rendering, and decoded assets/caches are released on teardown. There are no always-running game servers or model calls. Character-frame and tinted-fabric caches are bounded; each object image is decoded once per view and reused.
 
 ## Art provenance
 
 `public/office/pixel/furniture.webp` was generated with the built-in image-generation tool, then encoded losslessly as WebP (1.45 MB). Original generated PNGs remain in Codex's generated-images directory. Character frames and fabric palettes are drawn/cached by the app at runtime.
+
+The current object files in `public/office/pixel/objects/` are extracted from a cleaned version produced by the same built-in tool. The original atlas remains for older clients but the new renderer does not request it. Each extraction uses the actual object's bounds to avoid neighboring-sprite fragments. Cleanup prompt:
+
+> Use case: background-extraction. Edit target: this 1536 x 1024 office sprite atlas. Keep every object, material detail, style, size and location exactly. Remove all colored rectangular background stains, halos and shadows outside the furniture. Return actual transparent alpha everywhere except the furniture. Preserve the exact 6-column, 4-row ordering and all 24 objects, with transparent gutters. No text, floor, backdrops or cast shadows. Keep crisp detailed pixel edges and warm wood/green upholstery. Only background removal and spacing cleanup.
 
 Generation prompt:
 

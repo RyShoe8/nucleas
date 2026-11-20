@@ -31,6 +31,27 @@ describe('connected office simulation',()=>{
     const world=makeWorld(rooms());expect(new Set(world.people.map(p=>p.home.facing)).size).toBe(4);
     for(const p of world.people){const v=DESK_VECTOR[p.home.facing!],first=p.home.exit[0];expect((first.x-p.home.point.x)*v.x+(first.y-p.home.point.y)*v.y).toBeLessThan(0);}
   });
+  it('allocates clearance for full company teams and larger human teams',()=>{
+    const input=rooms();input.unshift({...input[0],kind:'management',companyId:'management',desks:Array.from({length:12},(_,i)=>({...input[0].desks[0],human:true,employeeId:String(i),name:'Human '+i}))});
+    const world=makeWorld(input);
+    for(const suite of world.suites){
+      const people=world.people.filter(p=>p.room.companyId===suite.room.companyId);
+      const centers=people.map(p=>{const v=DESK_VECTOR[p.home.facing!],distance=p.room.relationship==='client'?42:56;return {x:p.home.point.x+v.x*distance,y:p.home.point.y+v.y*distance};});
+      for(let i=0;i<people.length;i++){
+        const p=people[i].home.point;
+        expect(p.x).toBeGreaterThan(suite.x+25);expect(p.x).toBeLessThan(suite.x+suite.w-25);
+        expect(p.y).toBeLessThan(suite.y+suite.h-110);
+        for(let j=i+1;j<people.length;j++)expect(Math.hypot(centers[i].x-centers[j].x,centers[i].y-centers[j].y)).toBeGreaterThanOrEqual(165);
+      }
+    }
+  });
+  it('keeps meeting chairs on opposite sides with people facing the table',()=>{
+    for(let i=0;i<3;i++){
+      const back=amenityDestination('conference',i),front=amenityDestination('conference',i+3);
+      expect(back.point.y).toBeLessThan(305);expect(front.point.y).toBeGreaterThan(385);
+      expect(back.facing).toBe('south');expect(front.facing).toBe('north');
+    }
+  });
   it('keeps a small review-only office alive without losing review state',()=>{
     const room=rooms()[0];room.desks=room.desks.slice(0,1);room.desks[0].state='waiting';room.desks[0].waiting=3;
     const world=makeWorld([room]),p=world.people[0];

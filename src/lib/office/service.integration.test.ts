@@ -12,6 +12,7 @@ import {CompanyTeam} from '@/lib/models/CompanyTeam';
 import {OfficeSceneModel} from '@/lib/models/OfficeScene';
 import Employee from '@/lib/models/Employee';
 import type {CompanyViewer} from '@/lib/companies/companyProfile';
+import {OFFICE_LAYOUT_VERSION} from '@/components/os/modules/office/officeSimulation';
 let db:MongoMemoryServer;
 const company='b'.repeat(24),org=new Types.ObjectId();
 const viewer:CompanyViewer={userId:'a'.repeat(24),organizationId:org,employeeId:null,role:'User'};
@@ -69,4 +70,14 @@ it('shares recreation between viewers, rejects stale actions and isolates other 
   await expect(organizationOffice(viewer,{recreation:{kind:'tv-card',revision:0,card:1}})).rejects.toThrow(/Someone else/);
   const otherOrg=await organizationOffice({...viewer,organizationId:new Types.ObjectId()});
   expect(otherOrg.scene.recreation?.tv.open).toEqual([]);
+});
+it('upgrades office geometry without resetting shared games or requested visits',async()=>{
+  const first=await organizationOffice(viewer,{personId:`${company}:design`,target:'coffee'});
+  const played=await organizationOffice(viewer,{recreation:{kind:'tv-card',revision:first.scene.recreation!.revision,card:0}});
+  await OfficeSceneModel.updateOne({_id:org},{$set:{'scene.world.layoutVersion':OFFICE_LAYOUT_VERSION-1,'scene.actors.0.point':{x:-900,y:-900}}});
+  const upgraded=await organizationOffice(viewer);
+  expect(upgraded.scene.world.layoutVersion).toBe(OFFICE_LAYOUT_VERSION);
+  expect(upgraded.scene.recreation).toEqual(played.scene.recreation);
+  expect(upgraded.scene.overrides[`${company}:design`]).toBe('coffee');
+  expect(upgraded.scene.actors.every(a=>a.point.x>0&&a.point.y>0)).toBe(true);
 });
