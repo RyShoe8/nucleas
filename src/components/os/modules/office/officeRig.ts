@@ -29,8 +29,8 @@ export function officeClip(actor:Actor,working:boolean) {
 }
 
 /** Called by the building's single clock, only for visible actors. No per-character RAF or GIF decoder. */
-export function drawOfficeRig(canvas:HTMLCanvasElement,role:string,actor:Actor,working:boolean,time:number) {
-    const textureKey=role+(actor.arrived&&actor.destination.view==='rear'?'-rear':'');
+export function drawOfficeRig(canvas:HTMLCanvasElement,role:string,actor:Actor,working:boolean,time:number,rear=actor.arrived&&actor.destination.view==='rear') {
+    const textureKey=role+(rear?'-rear':'');
     const texture=textures.get(textureKey);
     if(!motion||!texture)return false;
     const ctx=canvas.getContext('2d');if(!ctx)return false;
@@ -40,7 +40,9 @@ export function drawOfficeRig(canvas:HTMLCanvasElement,role:string,actor:Actor,w
     if(player.clip!==clip){player.from=player.last;player.clip=clip;player.started=0;player.change=time;player.lastFrame=-1;}
     const frames=motion.clips[clip]??motion.clips.idle;
     const index=Math.floor((time-player.started)*motion.fps)%frames.length;
-    const blend=Math.min(1,(time-player.change)/.28);
+    // Reduced motion or a scene reset can move the presentation clock backwards.
+    if(time<player.change){player.change=time;player.lastFrame=-1;player.from=[];}
+    const blend=Math.max(0,Math.min(1,(time-player.change)/.28));
     if(player.lastFrame===index&&blend===1&&player.facing===actor.facing&&player.texture===textureKey)return true;
     player.texture=textureKey;
     player.lastFrame=index;player.facing=actor.facing;

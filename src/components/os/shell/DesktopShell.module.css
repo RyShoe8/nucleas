@@ -83,3 +83,10 @@
 .appDescription { color: var(--text-secondary); font-size: 10px; line-height: 1.4; }
 .apps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .app:first-child, .app:nth-child(2) { background: linear-gradient(145deg, color-mix(in srgb, var(--primary) 7.8%, transparent), #ffffff04); border-color: color-mix(in srgb, var(--primary) 18.8%, transparent); }
+
+.officeSurface { margin: 0; border: 0; border-radius: 0; }
+
+.officeMode .workspaceHeader { position: absolute; top: 12px; right: 12px; min-height: 44px; padding: 0; z-index: 30; }
+.officeMode .wordmark, .officeMode .breadcrumb, .officeMode .dockArea { display: none; }
+.officeMode .headerActions { gap: 8px; }
+@media (max-width: 640px) { .officeMode .install { display: none; } }

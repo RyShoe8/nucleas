@@ -38,7 +38,7 @@ export default function OsShell({ children }: { children?: ReactNode }) {
         if (target?.poppedOut) wm.focusPopout(id);
         else wm.focus(id);
     };
-    return <div className={styles.workspace}>
+    return <div className={`${styles.workspace} ${atHome?styles.officeMode:''}`}>
         <header className={styles.workspaceHeader}>
             <button type="button" className={styles.wordmark} onClick={() => setHomeFor(wm.activeWindowId)} aria-label="Nucleas home">nucleas<span>.</span></button>
             <div className={styles.breadcrumb}>{atHome ? 'YOUR COMPANY. IN REACH.' : title}</div>
@@ -47,13 +47,13 @@ export default function OsShell({ children }: { children?: ReactNode }) {
                     {definition?.canPopout && <button type="button" onClick={() => { if (!wm.popOut(active.id)) setError('Allow pop-ups for Nucleas to open this app in a separate window.'); }} aria-label="Open in a separate window" title="Open in a separate window">↗</button>}
                     <button type="button" onClick={() => wm.close(active.id)} aria-label={'Close ' + title} title="Close app">×</button>
                 </div>}
-                <OsInstallButton /><OsAccountMenu />
+                <span className={styles.install}><OsInstallButton /></span><OsAccountMenu />
             </div>
         </header>
         <main className={styles.stage}>
             {/* Home is the Office: every company and its team at a glance, the same main view as the desktop app. */}
-            {atHome && <section aria-label="Office" className={styles.appSurface}>
-                <div className={`${styles.appBody} nucleas-app-content`}><OfficeModule /></div>
+            {atHome && <section aria-label="Office" className={`${styles.appSurface} ${styles.officeSurface}`}>
+                <div className={`${styles.appBody} nucleas-app-content`}><OfficeModule onNavigate={()=>setHomeFor(null)} /></div>
             </section>}
             {allowed.filter(w => !w.poppedOut).map(w => {
                 const mod = ModuleRegistry.get(w.moduleId)!;
