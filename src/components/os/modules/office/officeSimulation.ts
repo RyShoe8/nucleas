@@ -4,12 +4,14 @@ import { AMENITIES, type Amenity } from './officeActivities';
 
 export type Point = { x: number; y: number };
 export type Suite = { room: Room; x: number; y: number; w: number; h: number; door: Point; lane: number };
-export type Destination = { key: string; point: Point; exit: Point[]; pose: 'idle' | 'seated' | 'pool' | 'coffee'; label: string; amenity?: Amenity; collaboration?: boolean; view?: 'rear'; depth?: number };
+export type DeskFacing='north'|'east'|'south'|'west';
+export type Destination = { key: string; point: Point; exit: Point[]; pose: 'idle' | 'seated' | 'pool' | 'coffee'; label: string; amenity?: Amenity; collaboration?: boolean; view?: 'rear'; depth?: number; facing?:DeskFacing };
 export type Person = { id: string; room: Room; desk: Desk; home: Destination };
 export type World = { width: number; height: number; suites: Suite[]; people: Person[]; layoutVersion?: number };
 export const personId = (company: string, role: string) => `${company}:${role}`;
 export const SPINE = 90;
-export const OFFICE_LAYOUT_VERSION = 2;
+export const OFFICE_LAYOUT_VERSION = 3;
+export const DESK_VECTOR:Record<DeskFacing,Point>={north:{x:0,y:-1},east:{x:1,y:0},south:{x:0,y:1},west:{x:-1,y:0}};
 export const AMENITY_POSITION: Record<Amenity, Point & { size: number }> = {
     conference: { x: 285, y: 320, size: 230 }, projector: { x: 285, y: 140, size: 150 },
     pool: { x: 770, y: 340, size: 195 }, gaming: { x: 1100, y: 230, size: 170 },
@@ -49,10 +51,16 @@ export function makeWorld(rooms: Room[]): World {
         if (!desk) return [];
         const role=desk.role;
         const client = suite.room.relationship === 'client';
-        const point = desk.human?{x:suite.x+75+(index%humanColumns)*(560/humanColumns),y:suite.y+160+Math.floor(index/humanColumns)*140}:{x:suite.x+(client?80:125)+(index%3)*(client?100:190),y:suite.y+160+Math.floor(index/3)*165};
+        const center = desk.human?{x:suite.x+75+(index%humanColumns)*(560/humanColumns),y:suite.y+140+Math.floor(index/humanColumns)*140}:{x:suite.x+(client?80:125)+(index%3)*(client?100:190),y:suite.y+140+Math.floor(index/3)*165};
+        const facing:DeskFacing=(['north','east','south','west'] as const)[(hash(suite.room.companyId)+index)%4];
+        const vector=DESK_VECTOR[facing],point={x:center.x-vector.x*32,y:center.y-vector.y*32};
+        // Leave from behind the chair, then around the workstation's footprint to the row aisle.
+        const back={x:point.x-vector.x*17,y:point.y-vector.y*17};
+        const edgeX=center.x+(client?-46:66),aisleY=center.y+70;
+        const chairExit=facing==='south'?[back,{x:edgeX,y:back.y},{x:edgeX,y:aisleY}]:[back,{x:back.x,y:aisleY}];
         const hallX=client?suite.x-30:suite.x+suite.w+30,hallY=suite.y+suite.h+30;
         const id=desk.human?`human:${desk.employeeId}`:personId(suite.room.companyId,role);
-        return [{ id, room:suite.room,desk,home:{key:`desk:${id}`,point,pose:desk.human||desk.state==='working'?'seated':'idle',label:desk.says ?? (desk.state==='waiting'?'Needs your review':desk.state==='away'?'No work assigned':'Available'), exit:[{x:point.x,y:point.y+34},{x:suite.lane,y:point.y+34},{x:suite.lane,y:suite.door.y},suite.door,{x:hallX,y:suite.door.y},{x:hallX,y:hallY},{x:SPINE,y:hallY}]} as Destination }];
+        return [{ id, room:suite.room,desk,home:{key:`desk:${id}`,point,facing,pose:'seated',label:desk.says ?? (desk.state==='waiting'?'Needs your review':desk.state==='away'?'No work assigned':'Available'), exit:[...chairExit,{x:suite.lane,y:aisleY},{x:suite.lane,y:suite.door.y},suite.door,{x:hallX,y:suite.door.y},{x:hallX,y:hallY},{x:SPINE,y:hallY}]} as Destination }];
     }));
     return {width:Math.max(1320,...suites.map(s=>s.x+s.w+60)),height:Math.max(640,...suites.map(s=>s.y+s.h+60)),suites,people,layoutVersion:OFFICE_LAYOUT_VERSION};
 }
@@ -115,12 +123,14 @@ export function chooseDestinations(world:World, elapsedSeconds:number, overrides
     for(const p of visitors) {
         if(result.has(p.id)) continue;
         if(p.desk.human){result.set(p.id,p.home);continue;}
-        if(p.desk.state==='working'||p.desk.state==='waiting') {result.set(p.id,p.home);continue;}
+        if(p.desk.state==='working') {result.set(p.id,p.home);continue;}
         const preference=overrides[p.id];
         const seed=hash(p.id);
         // Stagger arrivals and rotate long breaks without a permanent crowd of every employee.
-        const epoch=Math.floor(elapsedSeconds/150);
-        const eligible=elapsedSeconds>8+seed%22 && (seed+epoch)%3===0;
+        const epoch=Math.floor((elapsedSeconds+seed%45)/90);
+        const available=world.people.filter(p=>!p.desk.human&&p.desk.state!=='working');
+        const lead=available[Math.floor(elapsedSeconds/90)%Math.max(1,available.length)];
+        const eligible=elapsedSeconds>8+seed%22 && ((seed+epoch)%3===0||lead?.id===p.id);
         const ambient: Amenity[]=['pool','pool','coffee','water','gaming','couch'];
         const amenity=preference && preference!=='desk' ? preference : preference==='desk'||!eligible ? null : ambient[((seed>>>4)+epoch)%ambient.length];
         const sofa=amenity==='gaming'||amenity==='couch';
@@ -170,7 +180,20 @@ export function officeTheme(room:Pick<Room,'name'|'description'|'domain'>):{labe
 /** Stable per-company finishes: adding staff never changes the company's identity. */
 export function studioStyle(room:Room) {
     const seed=hash(room.companyId+room.name),theme=officeTheme(room);
-    const finishes=[['#8b9d8b','#4c776a','#c9af7d'],['#ae9d80','#627b71','#dec6a0'],['#718e86','#375f58','#b3bf9c'],['#b6b69b','#7b8b67','#cbb78c']];
-    const [floor,rug,trim]=finishes[seed%finishes.length];
-    return {seed,floor,rug,trim,theme};
+    const finishes=[['#c0b39e','#6c8194','#c3a476'],['#ba9e82','#a8755d','#d7c4a4'],['#afb0aa','#7c8893','#d0b898'],['#b6a68e','#9a815c','#d4c9b1'],['#bfb5a8','#8f9393','#d3b996']];
+    const [floor,neutral,trim]=finishes[seed%finishes.length];
+    const palette=(room.colorPalette??[]).map(officeColor).filter((c):c is string=>Boolean(c));
+    const selected=officeColor(room.color);
+    // The standard setup colors are placeholders, not evidence of a blue/gray brand.
+    const accent=palette[0]??(selected&&!['#3b82f6','#64748b'].includes(selected)?selected:neutral);
+    const secondary=palette[1]??trim;
+    return {seed,floor,rug:mixColor(accent,'#333335',.18),trim:secondary,accent,wall:mixColor(accent,'#f5eee2',.78),theme};
 }
+export function officeColor(value:string|undefined):string|undefined{
+    if(!value)return;
+    const hex=value.trim().toLowerCase();if(/^#[a-f0-9]{6}$/.test(hex))return hex;
+    if(/^#[a-f0-9]{3}$/.test(hex))return '#'+[...hex.slice(1)].map(c=>c+c).join('');
+    const rgb=hex.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*[\d.]+)?\s*\)$/);
+    if(rgb)return '#'+rgb.slice(1,4).map(n=>Math.min(255,Number(n)).toString(16).padStart(2,'0')).join('');
+}
+export function mixColor(a:string,b:string,t:number){return '#'+[1,3,5].map(i=>Math.round(parseInt(a.slice(i,i+2),16)*(1-t)+parseInt(b.slice(i,i+2),16)*t).toString(16).padStart(2,'0')).join('');}

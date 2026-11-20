@@ -1,6 +1,7 @@
 import {chooseDestinations,makeWorld,routeBetween,type Actor,type World} from '@/components/os/modules/office/officeSimulation';
 import type {Room} from '@/components/os/modules/office/officeState';
 import type {Amenity} from '@/components/os/modules/office/officeActivities';
+import {newRecreation,changeRecreation,poolBusy,type Recreation} from './recreation';
 
 export type VisitTarget=Amenity|'desk';
 export interface OfficeScene {
@@ -10,6 +11,7 @@ export interface OfficeScene {
   world:World;
   actors:Actor[];
   overrides:Record<string,VisitTarget>;
+  recreation?:Recreation;
 }
 export interface OfficeSnapshot {revision:number;serverTime:number;scene:OfficeScene}
 
@@ -34,7 +36,7 @@ export function advanceScene(previous:OfficeScene|null,rooms:Room[]|undefined,no
   const people=new Map(world.people.map(p=>[p.id,p]));
   for(const id of Object.keys(overrides)) {
     const person=people.get(id);
-    if(!person||person.desk.state==='working'||person.desk.state==='waiting')delete overrides[id];
+    if(!person||person.desk.state==='working')delete overrides[id];
   }
   if(command)overrides[command.personId]=command.target;
   const desired=chooseDestinations(world,now/1000,overrides);
@@ -54,7 +56,13 @@ export function advanceScene(previous:OfficeScene|null,rooms:Room[]|undefined,no
     }
     return actor;
   });
-  return {at:now,contextAt:rooms?now:previous!.contextAt,metricsAt:previous?.metricsAt??now,world,actors,overrides};
+  let recreation=previous?.recreation??newRecreation(now);
+  // Ambient play uses the same game physics/state as humans. A human interaction reserves it for a minute.
+  if(now-recreation.updatedAt>60000&&!poolBusy(recreation,now)&&actors.filter(a=>a.arrived&&a.destination.amenity==='pool').length>=2){
+    const cue=recreation.pool.balls.find(b=>b.id===0)!,target=recreation.pool.balls.find(b=>b.id>0&&!b.pocketed);
+    recreation=changeRecreation(recreation,target?{kind:'pool-shot',revision:recreation.revision,angle:Math.atan2(target.y-cue.y,target.x-cue.x),power:220}:{kind:'pool-reset',revision:recreation.revision},now);
+  }
+  return {at:now,contextAt:rooms?now:previous!.contextAt,metricsAt:previous?.metricsAt??now,world,actors,overrides,recreation};
 }
 
 /** Filter after allocation: permissions must never reposition shared studios or reshuffle seats. */

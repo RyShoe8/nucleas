@@ -10,9 +10,10 @@ import {companyAssignments} from '@/lib/companies/teamAssignments';
 import {buildOffice} from '@/components/os/modules/office/officeState';
 import {chooseDestinations,OFFICE_LAYOUT_VERSION} from '@/components/os/modules/office/officeSimulation';
 import {advanceScene,type OfficeScene,type OfficeSnapshot,type VisitTarget} from './timeline';
+import {changeRecreation,newRecreation,type RecreationAction} from './recreation';
 
 export class OfficeConflict extends Error {}
-type Command={personId:string;target:VisitTarget};
+type Command={personId:string;target:VisitTarget}|{recreation:RecreationAction};
 
 async function loadRooms(viewer:CompanyViewer,previous:OfficeScene|null) {
   // Internal read-only projection across this org; caller permissions are reapplied to the response.
@@ -42,15 +43,17 @@ export async function organizationOffice(viewer:CompanyViewer,command?:Command):
     const current=await OfficeSceneModel.findById(viewer.organizationId).lean();
     const previous=current?.scene?.world.layoutVersion===OFFICE_LAYOUT_VERSION?current.scene:null;
     if(!command&&previous&&previous.contextAt>0&&Date.now()-previous.at<5000)return {revision:current!.revision,serverTime:Date.now(),scene:previous};
-    const refresh=!previous||Date.now()-previous.contextAt>=20000||Boolean(command);
+    const refresh=!previous||Date.now()-previous.contextAt>=20000||Boolean(command&&'personId' in command);
     const context=refresh?await loadRooms(viewer,previous):null;
     const now=Date.now();
     let scene=advanceScene(previous,context?.rooms,now);
     if(context?.metricsDue)scene.metricsAt=now;
-    if(command) {
+    if(command&&'recreation' in command){
+      try{scene.recreation=changeRecreation(scene.recreation??newRecreation(now),command.recreation,now);}catch(error){throw new OfficeConflict(error instanceof Error?error.message:'Could not update the game.');}
+    }else if(command) {
       const person=scene.world.people.find(p=>p.id===command.personId);
       if(!person)throw new OfficeConflict('This employee is no longer in the office.');
-      if(person.desk.state==='working'||person.desk.state==='waiting')throw new OfficeConflict('This employee has work to finish or review.');
+      if(person.desk.state==='working')throw new OfficeConflict('This employee is working. They can take a break when the run finishes.');
       const destinations=chooseDestinations(scene.world,now/1000,{...scene.overrides,[command.personId]:command.target});
       if(command.target!=='desk'&&destinations.get(command.personId)?.amenity!==command.target)throw new OfficeConflict('That shared space is full. Choose another space or return someone to their desk.');
       scene=advanceScene(scene,undefined,now,command);

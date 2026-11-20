@@ -1,6 +1,7 @@
 'use client';
 import {useCallback,useEffect,useRef,useState} from 'react';
 import type {OfficeSnapshot,VisitTarget} from '@/lib/office/timeline';
+import type {RecreationAction} from '@/lib/office/recreation';
 export interface SharedOfficeFrame {snapshot:OfficeSnapshot;receivedAt:number}
 export function useSharedOffice() {
   const [frame,setFrame]=useState<SharedOfficeFrame|null>(null);
@@ -55,6 +56,17 @@ export function useSharedOffice() {
     }catch(e){if(alive.current)setError(e instanceof Error?e.message:'Could not save the shared visit.');return false;}
     finally{if(alive.current)setSaving(false);}
   },[saving,frame,accept]);
-  return {frame,error,saving,visit};
+  const play=useCallback(async(action:RecreationAction)=>{
+    if(saving||!frame)return false;
+    setSaving(true);
+    try{
+      const response=await fetch('/api/os/office',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(action),signal:AbortSignal.timeout(20000)});
+      const body=await response.json();
+      if(!response.ok){if(response.status===409){const fresh=await fetch('/api/os/office',{cache:'no-store',signal:AbortSignal.timeout(20000)});if(fresh.ok)accept(await fresh.json());}throw Error(body.error??'Could not update the game.');}
+      accept(body);return true;
+    }catch(e){if(alive.current)setError(e instanceof Error?e.message:'Could not update the game.');return false;}
+    finally{if(alive.current)setSaving(false);}
+  },[saving,frame,accept]);
+  return {frame,error,saving,visit,play};
 }
 export type SharedOffice=ReturnType<typeof useSharedOffice>;

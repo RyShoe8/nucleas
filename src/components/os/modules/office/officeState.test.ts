@@ -14,6 +14,11 @@ const companies = [{ id: id('b'), name: 'PlayBound', color: '#378ADD' }, { id: i
 const build = (jobs: JobView[], activity: ActivityItem[] = [], today = []) => buildOffice({ companies, jobs, activity, today });
 
 describe('the office', () => {
+  it('keeps a member working when another assignment is awaiting review',()=>{
+    const rooms=build([job({opportunities:[{id:'o',status:'recommended',values:{opportunity_type:'Resource page'},updatedAt:'2026-11-09T00:00:00Z'}]}),job({id:id('d'),runs:[{id:'r',status:'running',progressState:{label:'Researching'}}]})]);
+    const member=rooms[0].desks.find(d=>d.role==='marketing')!;
+    expect(member.state).toBe('working');expect(member.waiting).toBe(1);expect(member.says).toContain('Researching');expect(rooms[0].working).toBe(1);
+  });
   it('uses only live outstanding consultations for collaboration', () => {
     const now=Date.parse('2026-11-19T15:00:00Z');
     const ask={at:new Date(now-1000).toISOString(),kind:'ask',from:'marketing',to:'design',text:'Review this campaign'};

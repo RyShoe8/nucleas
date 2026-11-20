@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {makeWorld,chooseDestinations,moveActor,routeBetween,amenityDestination,type Actor} from './officeSimulation';
+import {makeWorld,chooseDestinations,moveActor,routeBetween,amenityDestination,DESK_VECTOR,studioStyle,type Actor} from './officeSimulation';
 import {buildOffice} from './officeState';
 const rooms=()=>buildOffice({companies:[{id:'owned',name:'PlayBound',relationship:'owned'},{id:'client',name:'Client',relationship:'client'}],jobs:[],activity:[],today:[],assignments:['owned', 'client'].flatMap(companyId=>(['design','creative','engineering','support','operations','marketing'] as const).map(role=>({companyId,role,active:true,displayName:role})))});
 describe('connected office simulation',()=>{
@@ -20,11 +20,27 @@ describe('connected office simulation',()=>{
     }
     expect(actor.point).toEqual(pool.point);expect(actor.arrived).toBe(true);
   });
-  it('keeps working and waiting employees out of ambient breaks',()=>{
+  it('keeps active work at a desk while review queues can take a break',()=>{
     const world=makeWorld(rooms());world.people[0].desk.state='working';world.people[1].desk.state='waiting';
     const destinations=chooseDestinations(world,300,{[world.people[0].id]:'pool',[world.people[1].id]:'coffee'});
     expect(destinations.get(world.people[0].id)).toBe(world.people[0].home);
-    expect(destinations.get(world.people[1].id)).toBe(world.people[1].home);
+    expect(destinations.get(world.people[1].id)?.amenity).toBe('coffee');
+    expect(world.people[1].desk.state).toBe('waiting');
+  });
+  it('varies desk orientation and exits behind each chair before reaching the aisle',()=>{
+    const world=makeWorld(rooms());expect(new Set(world.people.map(p=>p.home.facing)).size).toBe(4);
+    for(const p of world.people){const v=DESK_VECTOR[p.home.facing!],first=p.home.exit[0];expect((first.x-p.home.point.x)*v.x+(first.y-p.home.point.y)*v.y).toBeLessThan(0);}
+  });
+  it('keeps a small review-only office alive without losing review state',()=>{
+    const room=rooms()[0];room.desks=room.desks.slice(0,1);room.desks[0].state='waiting';room.desks[0].waiting=3;
+    const world=makeWorld([room]),p=world.people[0];
+    expect(chooseDestinations(world,1700000000).get(p.id)?.amenity).toBeTruthy();expect(p.desk.waiting).toBe(3);
+  });
+  it('uses stored brand colors and varied neutral finishes for unknown companies',()=>{
+    const room=rooms()[0];room.colorPalette=['#ed6633','#113355'];
+    expect(studioStyle(room)).toMatchObject({accent:'#ed6633',trim:'#113355'});
+    room.colorPalette=[];room.color='#3b82f6';expect(studioStyle(room).accent).not.toBe('#3b82f6');
+    expect(new Set(Array.from({length:12},(_,i)=>studioStyle({...room,companyId:String(i)}).rug)).size).toBeGreaterThan(2);
   });
   it('places pairs at a desk and three collaborators in the conference room',()=>{
     const world=makeWorld(rooms()),people=world.people.slice(0,3);

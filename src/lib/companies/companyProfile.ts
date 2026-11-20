@@ -45,6 +45,7 @@ export interface CompanyProfile {
   name: string;
   description?: string;
   color?: string;
+  colorPalette?: string[];
   logo?: string;
   devUrl?: string;
   liveUrl?: string;
@@ -109,6 +110,7 @@ export function resolveCompanyProfile(company: Doc, hubProject: Doc | null): Com
     name: str(src.name) ?? str(company.name) ?? 'Untitled company',
     description: str(src.description),
     color: str(src.color),
+    colorPalette: Array.isArray(src.colorPalette) ? src.colorPalette.filter((v):v is string=>typeof v==='string').slice(0,8) : undefined,
     logo: str(src.logo),
     devUrl: str(src.devUrl),
     liveUrl: str(src.liveUrl),

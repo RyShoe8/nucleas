@@ -35,6 +35,7 @@ export interface Room {
     companyId: string;
     name: string;
     color: string;
+    colorPalette?: string[];
     relationship: 'owned' | 'internal' | 'client';
     logo?: string;
     description?: string;
@@ -70,7 +71,7 @@ export function screenValue(current: number, unit: string): string {
 export const OFFICE_ROLES: TeamRole[] = TEAM_ROLES.filter((role) => TEAM[role].active);
 
 export function buildOffice(input: {
-    companies: { id: string; name: string; color?: string; relationship?: Room['relationship']; logo?: string; description?: string; domain?: string }[];
+    companies: { id: string; name: string; color?: string; colorPalette?:string[]; relationship?: Room['relationship']; logo?: string; description?: string; domain?: string }[];
     jobs: JobView[];
     activity: ActivityItem[];
     today: TodayMetrics[];
@@ -98,14 +99,13 @@ export function buildOffice(input: {
             const runningCode = code.find((item) => item.group === 'working');
             const waiting = queue.length + waitingCode.length;
             const collaboration = exchanges.find(exchange => exchange.members.includes(role));
-            const state: MemberState = waiting ? 'waiting' : running || runningCode || collaboration ? 'working' : own.some((job) => ['ready', 'active', 'paused'].includes(job.status)) || code.length ? 'idle' : 'away';
-            const says = queue[0]?.item.label
-                ?? waitingCode[0]?.title
-                ?? (running ? `Working on ${running.design?.title ?? 'a job'}: ${running.runs.find((r) => r.status === 'running')?.progressState.label ?? 'starting'}` : null)
+            const state: MemberState = running || runningCode || collaboration ? 'working' : waiting ? 'waiting' : own.some((job) => ['ready', 'active', 'paused'].includes(job.status)) || code.length ? 'idle' : 'away';
+            const says = (running ? `Working on ${running.design?.title ?? 'a job'}: ${running.runs.find((r) => r.status === 'running')?.progressState.label ?? 'starting'}` : null)
                 ?? (runningCode ? `Working on ${runningCode.title}` : null)
-                ?? (collaboration ? `Collaborating: ${collaboration.title}` : null);
+                ?? (collaboration ? `Collaborating: ${collaboration.title}` : null)
+                ?? queue[0]?.item.label ?? waitingCode[0]?.title ?? null;
             const member = assigned?.find(a => a.role === role);
-            return { role, name: member?.displayName ?? TEAM[role].name, specialty: member?.specialty, state, says, waiting, jobs: own.length + code.length, jobId: queue[0]?.job.id ?? running?.id ?? collaboration?.id, collaboration: waiting ? undefined : collaboration };
+            return { role, name: member?.displayName ?? TEAM[role].name, specialty: member?.specialty, state, says, waiting, jobs: own.length + code.length, jobId: queue[0]?.job.id ?? running?.id ?? collaboration?.id, collaboration };
         });
         const metrics = input.today.find((row) => row.companyId === company.id)?.metrics ?? {};
         const screens = SCREEN_ORDER.filter((s) => metrics[s.key]).slice(0, 2).map((s) => ({ label: s.label, value: screenValue(metrics[s.key].current, metrics[s.key].unit), change: metrics[s.key].change }));
@@ -113,6 +113,7 @@ export function buildOffice(input: {
             companyId: company.id,
             name: company.name,
             color: company.color || '#64748b',
+            colorPalette: company.colorPalette,
             relationship: company.relationship ?? 'client',
             logo: company.logo,
             description: company.description,

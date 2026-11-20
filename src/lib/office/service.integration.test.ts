@@ -61,3 +61,12 @@ it('creates the Management area from real employees and links their assigned vir
   expect(snapshot.scene.actors.find(a=>a.id===person.id)?.destination).toEqual(person.home);
   expect(JSON.stringify(snapshot)).not.toContain('Outside employee');
 });
+it('shares recreation between viewers, rejects stale actions and isolates other organizations',async()=>{
+  const first=await organizationOffice(viewer);
+  const played=await organizationOffice(viewer,{recreation:{kind:'tv-card',revision:first.scene.recreation!.revision,card:0}});
+  const otherViewer=await organizationOffice({...viewer,userId:'c'.repeat(24)});
+  expect(otherViewer.scene.recreation).toEqual(played.scene.recreation);
+  await expect(organizationOffice(viewer,{recreation:{kind:'tv-card',revision:0,card:1}})).rejects.toThrow(/Someone else/);
+  const otherOrg=await organizationOffice({...viewer,organizationId:new Types.ObjectId()});
+  expect(otherOrg.scene.recreation?.tv.open).toEqual([]);
+});
