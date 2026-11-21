@@ -9,6 +9,8 @@ import type { CompanyProfile, CompanyViewer } from '@/lib/companies/companyProfi
 import { getCompanyMetrics } from '@/lib/metrics/query';
 import type { ExtraToolSet } from '@/lib/ai/tools/runToolLoop';
 import { listJobs, type JobView } from '@/lib/jobs/jobs';
+import { listResponsibilities } from '@/lib/work/responsibilities';
+import { workRegisterOutput } from '@/lib/work/registerOutput';
 import { TEAM, teamRoleFor } from '@/lib/companies/teamRoles';
 import { cachedLookup } from '@/lib/seo/cache';
 import { keywordIdeas } from '@/lib/seo/keywordIdeas';
@@ -22,7 +24,6 @@ import { pageOutline } from '@/lib/seo/pageOutline';
  */
 
 const MAX_TOOL_OUTPUT = 6000;
-const MAX_JOBS_OUTPUT = 16000;
 /** SEO lookups return long lists; the writer still gets a compact version through the fact sheet. */
 const MAX_SEO_OUTPUT = 14000;
 /** Free SEO sources are cached for the organization this long. */
@@ -57,7 +58,7 @@ export function summarizeJobs(jobs: JobView[]) {
     const running = job.runs.find((r) => r.status === 'running');
     return {
       name: job.design?.title ?? job.request.slice(0, 120),
-      owner: TEAM[job.teamRole ?? teamRoleFor(job)]?.name,
+      owner: job.ownerName ?? TEAM[job.teamRole ?? teamRoleFor(job)]?.name,
       status: running ? `working now (${running.progressState.label})` : job.status,
       schedule: scheduleOf(job),
       lastRun: job.lastRunAt,
@@ -267,7 +268,8 @@ export async function buildAssistantTools(
     if (name === 'nucleas_jobs') {
       const one = matchCompany(companies, args.company);
       const jobs = await listJobs(viewer, { ...(one ? { companyId: one.id } : {}), includeClosed: args.includeFinished === true });
-      return JSON.stringify({ ok: true, scope: one ? one.name : 'all companies', jobs: summarizeJobs(jobs) }).slice(0, MAX_JOBS_OUTPUT);
+      const responsibilities = (await listResponsibilities(viewer, one?.id, args.includeFinished === true)).map(r => ({ id: r.id, company: r.companyName, outcome: r.agreement.outcome, owner: r.agreement.role, assignedMemberId: r.agreement.assignedMemberId, status: r.status, totalTargets: r.targets.length, verifiedTargets: r.targets.filter(t => t.status === 'current').length, awaitingReview: r.targets.filter(t => ['review', 'blocked'].includes(t.status)).length, error: r.error, monthlyBudgetUsd: r.monthlyBudgetMicros / 1e6, recordedThisMonthUsd: r.recordedMicros / 1e6, reservedUsd: r.reservedMicros / 1e6, unverifiedCostReservations: r.unknownReservations }));
+      return workRegisterOutput({ scope: one ? one.name : 'all companies', jobs: summarizeJobs(jobs), responsibilities, registerLimitReached: jobs.length >= 200 });
     }
 
     if (name === 'keyword_ideas') {

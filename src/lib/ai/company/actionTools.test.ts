@@ -44,12 +44,13 @@ describe('action tools for any Ask model', () => {
     expect(JSON.parse(await toolSet.execute('plan_code_change', JSON.stringify({ company: 'Frugal Gambler', request: 'change something on the site' }), ctx)).error).toMatch(/already planned|no repository/);
   });
 
-  it('designs jobs through the job designer and relays its questions', async () => {
+  it('proposes the shared agreement without starting work or scheduling it', async () => {
     mocks.createJob.mockResolvedValue({ ok: true, job: { id: 'j1', status: 'needs_answers', design: { title: 'Daily backlink', questions: [{ question: 'Which address sends outreach?' }] } } });
     const { toolSet, results } = await withActionTools(base, { viewer, companies, level: 'low' });
     const out = JSON.parse(await toolSet.execute('design_job', JSON.stringify({ company: 'Frugal Gambler', request: 'Every day earn one dofollow backlink' }), ctx));
-    expect(out).toMatchObject({ ok: true, status: 'needs_answers', questions: ['Which address sends outreach?'] });
-    expect(results.job).toMatchObject({ id: 'j1' });
+    expect(out).toMatchObject({ ok: true, status: 'agreement_draft' });
+    expect(results.workDraft).toMatchObject({ companyName: 'Frugal Gambler', mode: 'repeating', outcome: 'Every day earn one dofollow backlink' });
+    expect(mocks.createJob).not.toHaveBeenCalled();
     expect(JSON.parse(await toolSet.execute('design_job', JSON.stringify({ company: 'Nobody', request: 'something to do daily' }), ctx)).error).toBe('Unknown company.');
   });
 });

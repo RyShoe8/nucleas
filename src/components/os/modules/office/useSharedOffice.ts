@@ -46,11 +46,11 @@ export function useSharedOffice() {
     window.addEventListener('nucleas:employees-changed',refresh);
     return()=>{stopped=true;alive.current=false;controller.abort();clearInterval(timer);document.removeEventListener('visibilitychange',visibility);window.removeEventListener('nucleas:jobs-changed',refresh);window.removeEventListener('nucleas:employees-changed',refresh);};
   },[accept]);
-  const visit=useCallback(async(companyId:string,role:string,target:VisitTarget)=>{
+  const visit=useCallback(async(companyId:string,role:string,target:VisitTarget,memberId?:string)=>{
     if(saving||!frame)return false;
     setSaving(true);
     try {
-      const response=await fetch('/api/os/office',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({companyId,role,target}),signal:AbortSignal.timeout(20000)});
+      const response=await fetch('/api/os/office',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({companyId,role,target,...(memberId?{memberId}:{})}),signal:AbortSignal.timeout(20000)});
       const body=await response.json();
       if(!response.ok)throw Error(body.error??'Could not save the shared visit.');
       accept(body);return true;

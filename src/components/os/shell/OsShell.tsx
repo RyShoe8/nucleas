@@ -16,11 +16,13 @@ import { VoiceButton } from '@/components/voice/VoiceOverlay';
 import { setAssistantFocus } from '@/lib/os/assistantFocus';
 import styles from './DesktopShell.module.css';
 import { TITLE_SLOT_ID } from '@/lib/os/titleSlot';
+import { useActiveCapture } from '@/lib/os/activeCapture';
 import { usePageVisible } from '@/hooks/os/usePageVisible';
 
 /** A focused web workspace. The native desktop owns its independent OS windows. */
 export default function OsShell({ children }: { children?: ReactNode }) {
     const pageVisible=usePageVisible();
+    const captureOwner = useActiveCapture();
     const wm = useWindowManager();
     const auth = useOsAuth();
     const [homeFor, setHomeFor] = useState<string | null>(null);
@@ -41,11 +43,11 @@ export default function OsShell({ children }: { children?: ReactNode }) {
         if (target?.poppedOut) wm.focusPopout(id);
         else wm.focus(id);
     };
-    return <Activity mode={pageVisible?'visible':'hidden'}><div className={`${styles.workspace} ${atHome?styles.officeMode:''}`}>
+    return <Activity mode={pageVisible || captureOwner ?'visible':'hidden'}><div className={`${styles.workspace} ${atHome?styles.officeMode:''}`}>
         <header className={styles.workspaceHeader}>
             <button type="button" className={styles.wordmark} onClick={() => setHomeFor(wm.activeWindowId)} aria-label="Nucleas home">nucleas<span>.</span></button>
             {atHome ? <div id={TITLE_SLOT_ID} data-window-id="web-office" className="flex min-w-0 flex-1 items-center justify-end"/> : <div className={styles.breadcrumb}>{title}</div>}
-            <div className={styles.headerActions}>
+            <div className={styles.headerActions}>{captureOwner && <button className="ui-button" onClick={() => select(captureOwner)}>● Recording</button>}
                 {!atHome && active && <div className={styles.viewActions}>
                     {definition?.canPopout && <button type="button" onClick={() => { if (!wm.popOut(active.id)) setError('Allow pop-ups for Nucleas to open this app in a separate window.'); }} aria-label="Open in a separate window" title="Open in a separate window">↗</button>}
                     <button type="button" onClick={() => wm.close(active.id)} aria-label={'Close ' + title} title="Close app">×</button>
@@ -55,15 +57,15 @@ export default function OsShell({ children }: { children?: ReactNode }) {
         </header>
         <main className={styles.stage}>
             {/* Home is the Office: every company and its team at a glance, the same main view as the desktop app. */}
-            {atHome && <section aria-label="Office" className={`${styles.appSurface} ${styles.officeSurface}`}>
+            {atHome && <Activity mode={pageVisible ? 'visible' : 'hidden'}><section aria-label="Office" className={`${styles.appSurface} ${styles.officeSurface}`}>
                 <div className={`${styles.appBody} nucleas-app-content`}><OfficeModule onNavigate={()=>setHomeFor(null)} /></div>
-            </section>}
+            </section></Activity>}
             {allowed.filter(w => !w.poppedOut).map(w => {
                 const mod = ModuleRegistry.get(w.moduleId)!;
                 const visible = !atHome && active?.id === w.id;
-                return <Activity key={w.id} mode={visible ? 'visible' : 'hidden'}>
+                return <Activity key={w.id} mode={(visible && pageVisible) || captureOwner === w.id ? 'visible' : 'hidden'}>
                     <section hidden={!visible} aria-label={windowLabel(w, mod)} className={styles.appSurface}>
-                        <div className={`${styles.appBody} nucleas-app-content`}>{mod.render({ windowId: w.id, moduleId: w.moduleId, payload: w.payload })}</div>
+                        <div className={`${styles.appBody} nucleas-app-content ${w.moduleId === 'office' ? '' : 'nucleas-workflow'}`}>{mod.render({ windowId: w.id, moduleId: w.moduleId, payload: w.payload })}</div>
                     </section>
                 </Activity>;
             })}

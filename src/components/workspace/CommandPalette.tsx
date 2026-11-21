@@ -12,6 +12,7 @@ interface CommandPaletteProps {
     isOpen: boolean;
     onClose: () => void;
     workspaceIntentContext: WorkspaceIntentContextPayload;
+    getWorkspaceIntentContext?: () => WorkspaceIntentContextPayload;
     nlError: string | null;
 }
 
@@ -39,6 +40,7 @@ export default function CommandPalette({
     isOpen,
     onClose,
     workspaceIntentContext,
+    getWorkspaceIntentContext,
     nlError,
 }: CommandPaletteProps) {
     const intentCtx = useIntentConfirmation();
@@ -81,10 +83,11 @@ export default function CommandPalette({
             setAskBusy(true);
             setAskParseError(null);
             try {
-                const llm = await parseIntentWithContext(trimmed, workspaceIntentContext);
+                const context = getWorkspaceIntentContext?.() ?? workspaceIntentContext;
+                const llm = await parseIntentWithContext(trimmed, context);
 
                 let intent = llm.ok ? llm.intent : null;
-                let parseSource: 'llm' | 'rules' = 'llm';
+                let parseSource: 'llm' | 'rules' = llm.ok ? llm.source : 'rules';
 
                 if (!llm.ok) {
                     if (llm.status !== 503) {
@@ -110,14 +113,14 @@ export default function CommandPalette({
                     intent,
                     parseSource,
                     origin: 'palette',
-                    contextSnapshot: workspaceIntentContext,
+                    contextSnapshot: context,
                 });
                 onClose();
             } finally {
                 setAskBusy(false);
             }
         },
-        [workspaceIntentContext, intentCtx, onClose]
+        [workspaceIntentContext, getWorkspaceIntentContext, intentCtx, onClose]
     );
 
     const handleKeyDown = useCallback(

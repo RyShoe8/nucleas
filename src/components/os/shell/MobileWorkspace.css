@@ -1,0 +1,14 @@
+/* Shared touch ergonomics for workspaces; the Office scene keeps its own layout. */
+.nucleas-workflow { min-width: 0; }
+@media (max-width: 640px) {
+  .nucleas-workflow { overscroll-behavior-y: contain; overflow-wrap: anywhere; }
+  .nucleas-workflow :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+    font-size: 16px; max-width: 100%; min-width: 0;
+  }
+  .nucleas-workflow :where(button, summary, .ui-button, .ui-button-primary) { min-height: 44px; }
+  .nucleas-workflow :where(.ui-button, .ui-button-primary) { white-space: normal; overflow-wrap: normal; flex-shrink: 0; max-width: 100%; }
+  .nucleas-workflow :where(input:not([type="checkbox"]):not([type="radio"]), select) { min-height: 44px; }
+  .nucleas-workflow :where(table) { overflow-wrap: normal; }
+  .nucleas-workflow :where(img, video, canvas) { max-width: 100%; }
+  .nucleas-workflow :where(form) { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+}

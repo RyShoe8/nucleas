@@ -15,6 +15,7 @@ type WorkspaceProjectOption = {
 };
 
 export type WorkspaceIntentContextPayload = {
+  os?: import('./osVoiceIntent').OsVoiceScope;
   projectId: string | null;
   projectName: string | null;
   phase: string | null;

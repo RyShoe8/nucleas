@@ -1,4 +1,4 @@
-import { withItemCap } from '@/lib/ai/control/itemCap';
+import { withWorkBudget, WorkBudgetUnavailable } from '@/lib/work/budgets';
 import { companyTeamContext } from '@/lib/companies/teamContext';
 import { renderAdvice, teamAdviceForJob } from '@/lib/companies/teamConsult';
 import { teamLogWriter } from './jobs';
@@ -392,7 +392,19 @@ async function earlierRecords(jobId: Types.ObjectId, excludeRun: Types.ObjectId)
 /** Executes a run that is in 'running'. Safe to call once per run; the caller claimed it. */
 /** One run: every paid call it makes counts toward the cap on a single piece of work. */
 export async function executeJobRun(...args: Parameters<typeof executeJobRunUncapped>): ReturnType<typeof executeJobRunUncapped> {
-  return withItemCap('run', () => executeJobRunUncapped(...args));
+  if (!Types.ObjectId.isValid(args[0])) return;
+  const run = await JobRun.findById(args[0]).select('jobId status dryRun').lean();
+  if (!run || run.status !== 'running') return;
+  try { return await withWorkBudget(String(run.jobId), 'run', () => executeJobRunUncapped(...args)); }
+  catch (error) {
+    if (!(error instanceof WorkBudgetUnavailable)) throw error;
+    if (error.retryLater) return;
+    const claim = await claimJobRunExecution(args[0]);
+    if (claim) {
+      await JobRun.updateOne({ _id: run._id, leaseOwner: claim.owner }, { $set: { status: 'failed', error: error.message, finishedAt: new Date() }, $unset: { leaseExpiresAt: 1 } });
+      if (run.dryRun) await Job.updateOne({ _id: run.jobId, status: 'testing' }, { $set: { status: 'proposed' } });
+    }
+  }
 }
 
 async function executeJobRunUncapped(runId: string): Promise<void> {
@@ -409,6 +421,7 @@ async function executeJobRunUncapped(runId: string): Promise<void> {
     companyId: Types.ObjectId;
     projectId?: Types.ObjectId;
     createdByUserId: Types.ObjectId;
+    workAgreement?: import('@/lib/work/agreements').WorkAgreement;
     design?: unknown;
     completion?: 'review' | 'automatic';
     level?: 'free' | 'low' | 'medium' | 'high';
@@ -462,6 +475,10 @@ async function executeJobRunUncapped(runId: string): Promise<void> {
   const viewer = await loadCompanyViewer(String(job.createdByUserId));
   const profile = viewer ? await getCompanyProfile(viewer, String(job.companyId)) : null;
   if (!viewer || !profile) return fail('The company is no longer accessible.');
+  if (job.workAgreement) {
+    try { activeDesign.instructions += '\n\n' + await (await import('@/lib/work/resources')).workResourceContext(viewer, String(job.companyId), job.workAgreement); }
+    catch (error) { return fail(error instanceof Error ? error.message : 'Could not read reference files.'); }
+  }
   // Asked once and kept with the responsibility: a scheduled run reuses the answers instead of asking again.
   let adviceCost = 0;
   const advice = renderAdvice(await teamAdviceForJob(job, viewer, { onEvent: teamLogWriter(job._id), onCost: (micros) => { adviceCost += micros; }, save: (teamAdvice) => Job.updateOne({ _id: job._id }, { $set: { teamAdvice } }) }));

@@ -15,6 +15,8 @@ vi.mock('@vercel/blob', () => ({
   },
 }));
 const describe_ = vi.hoisted(() => vi.fn());
+const saveAsset = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/models/Asset', () => ({ default: { create: saveAsset } }));
 vi.mock('./describeImage', () => ({ describeImage: (...args: unknown[]) => describe_(...args) }));
 
 import { attachmentKind, extractAttachment, renderAttachments, MAX_TEXT_PER_FILE } from './extract';
@@ -113,6 +115,7 @@ describe('processing uploads', () => {
     blobs.store.clear();
     blobs.deleted.length = 0;
     describe_.mockReset();
+    saveAsset.mockReset();
   });
 
   it('reads each file, describes images, and deletes every upload afterwards', async () => {
@@ -156,5 +159,14 @@ describe('processing uploads', () => {
     });
     expect(result.items[0].error).toMatch(/No vision model/);
     expect(result.block).toContain('Could not be used');
+  });
+  it('retains an original work file privately while deleting its temporary upload', async () => {
+    const pathname = `${uploadPrefix(user)}source.txt`, bytes = enc('Source evidence for this assignment.');
+    blobs.store.set(pathname, bytes);
+    saveAsset.mockResolvedValue({ _id: 'retained-file' });
+    const result = await processAttachments({ refs: [{ pathname, name: 'source.txt', mime: 'text/plain', size: bytes.byteLength, access: 'private' }], organizationId: 'org', projectId: new Types.ObjectId(), userId: user, level: 'free', preserveForWork: true });
+    expect(saveAsset).toHaveBeenCalledWith(expect.objectContaining({ userId: user, tags: ['work-attachment'], fileUrl: `data:text/plain;base64,${Buffer.from(bytes).toString('base64')}`, textContent: 'Source evidence for this assignment.' }));
+    expect(saveAsset.mock.calls[0][0].linkedClientId).toBeUndefined();
+    expect(result.items[0].assetId).toBe('retained-file'); expect(blobs.deleted).toContain(pathname);
   });
 });

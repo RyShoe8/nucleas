@@ -22,6 +22,9 @@ const eventSchema = new Schema(
 const buildSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, required: true },
+    assignedMemberId: Schema.Types.ObjectId,
+    workAgreement: Schema.Types.Mixed,
+    sourceTurnId: { type: Schema.Types.ObjectId, index: true },
     teamRole: { type: String, enum: ['design', 'engineering'] },
     teamAdvice: { at: { type: Date }, items: { type: [new Schema({ member: String, question: { type: String, maxlength: 400 }, advice: { type: String, maxlength: 2000 }, model: String, research: { type: String, maxlength: 3000 }, researchModel: String, sources: { type: [String], default: undefined } }, { _id: false })], default: undefined } },
     companyId: { type: Schema.Types.ObjectId, ref: 'Client', required: true },

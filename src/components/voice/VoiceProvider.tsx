@@ -29,6 +29,7 @@ export interface VoiceContextValue {
     resultMessage: string | null;
     startListening: () => void;
     stopListening: () => void;
+    cancelListening: () => void;
     confirmAction: () => Promise<void>;
     cancelAction: () => void;
     /** After intent modal closed cancel (intent layer already cleared). */
@@ -60,6 +61,7 @@ export function useVoice(): VoiceContextValue {
             resultMessage: null,
             startListening: () => {},
             stopListening: () => {},
+            cancelListening: () => {},
             confirmAction: async () => {},
             cancelAction: () => {},
             resetAfterExternalIntentCancel: () => {},
@@ -84,9 +86,10 @@ interface VoiceProviderProps {
     getWorkspaceContext?: () => WorkspaceIntentContextPayload | null;
     /** Voice is enabled only when the feature flag is on and the user is a platform admin. */
     isPlatformAdmin?: boolean;
+    allowWakeWord?: boolean;
 }
 
-export default function VoiceProvider({ children, getWorkspaceContext, isPlatformAdmin = false }: VoiceProviderProps) {
+export default function VoiceProvider({ children, getWorkspaceContext, isPlatformAdmin = false, allowWakeWord = true }: VoiceProviderProps) {
     const intentCtx = useIntentConfirmation();
     const pageActivity = usePageActivity();
     const enabled = isFeatureEnabled('voiceEnabled') && isPlatformAdmin;
@@ -98,14 +101,14 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
     const [pendingActionDescription, setPendingActionDescription] = useState<string | null>(null);
     const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
     const speechCaptureRef = useRef<SpeechCapture | null>(null);
+    const requestEpoch = useRef(0);
+    const commandContext = useRef<WorkspaceIntentContextPayload | null>(null);
+    const messageTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [wakeWordSupported, setWakeWordSupported] = useState(true);
     useEffect(() => {
-        const timer = setTimeout(() => setWakeWordSupported(!usesServerSpeech()), 0);
-        return () => {
-            clearTimeout(timer);
-            speechCaptureRef.current?.cancel();
-        };
-    }, []);
+        const timer = setTimeout(() => setWakeWordSupported(allowWakeWord && !usesServerSpeech()), 0);
+        return () => clearTimeout(timer);
+    }, [allowWakeWord]);
     const wakeRecognitionRef = useRef<SpeechRecognitionInstance | null>(null);
     const wakeCooldownUntilRef = useRef<number>(0);
     const accumulatedTranscriptRef = useRef<string>('');
@@ -126,7 +129,8 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
     const [wakeLastScore, setWakeLastScore] = useState(0);
 
     const clearMessages = useCallback(() => {
-        setTimeout(() => {
+        if (messageTimer.current) clearTimeout(messageTimer.current);
+        messageTimer.current = setTimeout(() => {
             setError(null);
             setResultMessage(null);
         }, 5000);
@@ -184,8 +188,10 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
         async (text: string) => {
             setState('processing');
 
-            const wsCtx = getWorkspaceContext?.() ?? null;
+            const epoch = ++requestEpoch.current;
+            const wsCtx = commandContext.current ?? getWorkspaceContext?.() ?? null;
             const llmResult = await fetchLlmVoiceIntent(text, wsCtx);
+            if (epoch !== requestEpoch.current) return;
 
             let intent: ParsedIntent | null = null;
             let source: 'llm' | 'rules' = 'rules';
@@ -193,7 +199,7 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
 
             if (llmResult.ok && llmResult.intent) {
                 intent = llmResult.intent;
-                source = 'llm';
+                source = llmResult.source === 'rules' ? 'rules' : 'llm';
             } else {
                 if (!llmResult.ok) {
                     rulesFallbackReason =
@@ -218,7 +224,7 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
                 let hint = '';
                 if (rulesFallbackReason === 'openai_not_configured') {
                     hint =
-                        ' AI parsing is not configured on the server (set OPENAI_API_KEY on Vercel). Try phrasing like: add task review docs to project Acme.';
+                        ' Voice interpretation is unavailable. Open Ask Nucleas to continue.';
                 } else if (rulesFallbackReason === 'llm_json_unmapped') {
                     hint = ' Try phrasing like: add task review docs to project Acme.';
                 }
@@ -256,6 +262,10 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
         lastFinalSegmentRef.current = '';
         if (recognitionRef.current) {
             try {
+                recognitionRef.current.onend = null;
+                recognitionRef.current.onresult = null;
+                recognitionRef.current.onerror = null;
+                recognitionRef.current.onstart = null;
                 recognitionRef.current.stop();
             } catch {}
             recognitionRef.current = null;
@@ -269,7 +279,9 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
     }, [processTranscript, dedupeTrailingTranscript]);
 
     const startListening = useCallback(() => {
-        if (!enabled) return;
+        if (!enabled || stateRef.current !== 'idle') return;
+        commandContext.current = getWorkspaceContext?.() ?? null;
+        stateRef.current = 'listening';
         if (wakeRecognitionRef.current) {
             try {
                 wakeRecognitionRef.current.onend = null;
@@ -322,7 +334,8 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
         if (isWebSpeechAvailable()) {
             const SpeechRecognition = getSpeechRecognitionConstructor();
             if (!SpeechRecognition) {
-                setError('Web Speech API not available. Server STT fallback not yet configured.');
+                stateRef.current = 'idle'; setState('idle');
+                setError('Voice is unavailable in this browser. You can type the same request in Ask Nucleas.');
                 clearMessages();
                 return;
             }
@@ -358,9 +371,9 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
                     }
                 }
 
+                lastInterimRef.current = interimTranscript;
                 if (interimTranscript) {
                     hadNewContent = true;
-                    lastInterimRef.current = interimTranscript;
                     setTranscript(
                         (accumulatedTranscriptRef.current + ' ' + interimTranscript).trim()
                     );
@@ -378,6 +391,11 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
                     endOfUtteranceTimerRef.current = null;
                 }
                 accumulatedTranscriptRef.current = '';
+                lastInterimRef.current = '';
+                recognition.onend = null;
+                recognition.onresult = null;
+                recognitionRef.current = null;
+                try { recognition.stop(); } catch { /* Already stopped. */ }
                 setError(`Voice error: ${event.error}`);
                 setState('idle');
                 clearMessages();
@@ -397,12 +415,14 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
             };
 
             recognitionRef.current = recognition;
-            recognition.start();
+            try { recognition.start(); }
+            catch { recognitionRef.current = null; stateRef.current = 'idle'; setState('idle'); setError('Could not start the microphone. Check browser access and try again.'); clearMessages(); }
         } else {
-            setError('Web Speech API not available. Server STT fallback not yet configured.');
+            stateRef.current = 'idle'; setState('idle');
+            setError('Voice is unavailable in this browser. You can type the same request in Ask Nucleas.');
             clearMessages();
         }
-    }, [enabled, flushAndProcess, clearMessages, intentCtx, resetVoiceChrome]);
+    }, [enabled, getWorkspaceContext, flushAndProcess, clearMessages, intentCtx, resetVoiceChrome]);
 
     useEffect(() => {
         startListeningRef.current = startListening;
@@ -418,23 +438,37 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
             clearTimeout(endOfUtteranceTimerRef.current);
             endOfUtteranceTimerRef.current = null;
         }
-        accumulatedTranscriptRef.current = '';
+        flushAndProcess();
+    }, [flushAndProcess]);
+
+    const cancelListening = useCallback(() => {
+        requestEpoch.current++;
+        const capture = speechCaptureRef.current; speechCaptureRef.current = null; capture?.cancel();
+        if (endOfUtteranceTimerRef.current) clearTimeout(endOfUtteranceTimerRef.current);
+        endOfUtteranceTimerRef.current = null;
         if (recognitionRef.current) {
-            try {
-                recognitionRef.current.stop();
-            } catch {}
+            recognitionRef.current.onend = null;
+            recognitionRef.current.onresult = null;
+            recognitionRef.current.onerror = null;
+            recognitionRef.current.onstart = null;
+            try { recognitionRef.current.stop(); } catch { /* Already stopped. */ }
             recognitionRef.current = null;
         }
-        if (stateRef.current === 'listening') {
-            setState('idle');
-        }
-        setTranscript('');
+        accumulatedTranscriptRef.current = ''; lastInterimRef.current = '';
+        stateRef.current = 'idle'; setState('idle'); setTranscript('');
     }, []);
+
+    useEffect(() => {
+        const hide = () => { if (document.hidden && ['listening', 'processing'].includes(stateRef.current)) cancelListening(); };
+        document.addEventListener('visibilitychange', hide);
+        return () => document.removeEventListener('visibilitychange', hide);
+    }, [cancelListening]);
 
     useEffect(() => {
         if (
             !enabled ||
             !wakeWordEnabled ||
+            !allowWakeWord ||
             state !== 'idle' ||
             !pageActivity.isActive ||
             usesServerSpeech()
@@ -545,11 +579,15 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
             if (restartTimer) clearTimeout(restartTimer);
             stopWake();
         };
-    }, [enabled, wakeWordEnabled, state, pageActivity.isActive]);
+    }, [enabled, wakeWordEnabled, allowWakeWord, state, pageActivity.isActive]);
 
     // Tear down recognition sessions on unmount so long-lived tabs don't leak mic/CPU.
     useEffect(() => {
+        const epoch = requestEpoch;
         return () => {
+            epoch.current++;
+            const capture = speechCaptureRef.current; speechCaptureRef.current = null; capture?.cancel();
+            if (messageTimer.current) clearTimeout(messageTimer.current);
             if (endOfUtteranceTimerRef.current) {
                 clearTimeout(endOfUtteranceTimerRef.current);
                 endOfUtteranceTimerRef.current = null;
@@ -557,6 +595,8 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
             if (recognitionRef.current) {
                 try {
                     recognitionRef.current.onend = null;
+                    recognitionRef.current.onresult = null;
+                    recognitionRef.current.onerror = null;
                     recognitionRef.current.stop();
                 } catch {
                     // ignore
@@ -613,6 +653,7 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
             resultMessage,
             startListening,
             stopListening,
+            cancelListening,
             confirmAction,
             cancelAction,
             resetAfterExternalIntentCancel,
@@ -636,6 +677,7 @@ export default function VoiceProvider({ children, getWorkspaceContext, isPlatfor
             resultMessage,
             startListening,
             stopListening,
+            cancelListening,
             confirmAction,
             cancelAction,
             resetAfterExternalIntentCancel,

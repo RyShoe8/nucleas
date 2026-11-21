@@ -39,13 +39,12 @@ export function registerOsModules(): void {
     const definitions: ModuleDefinition[] = [
         {
             id: 'attention',
-            title: 'Needs you',
+            title: 'Inbox',
             icon: '◉',
             defaultSize: { width: 600, height: 620 },
             minSize: { width: 340, height: 300 },
             canPopout: true,
             permissions: 'member',
-            launcherHidden: true,
             render: () => createElement(AttentionModule),
         },
         {
@@ -61,6 +60,7 @@ export function registerOsModules(): void {
         {
             id: 'team',
             title: 'Team',
+            launcherHidden: true,
             icon: '◈',
             defaultSize: { width: 1040, height: 760 },
             minSize: { width: 480, height: 360 },
@@ -70,13 +70,13 @@ export function registerOsModules(): void {
         },
         {
             id: 'work',
-            title: 'Review & work',
+            title: 'Work',
             icon: '▤',
             defaultSize: { width: 1000, height: 720 },
             minSize: { width: 480, height: 360 },
             canPopout: true,
             permissions: 'member',
-            render: () => createElement(WorkModule),
+            render: (ctx) => createElement(WorkModule, ctx),
         },
         {
             id: 'growth',
@@ -102,6 +102,7 @@ export function registerOsModules(): void {
         {
             id: 'today',
             title: 'Today',
+            launcherHidden: true,
             icon: '☀️',
             defaultSize: { width: 980, height: 560 },
             minSize: { width: 520, height: 320 },
@@ -197,7 +198,7 @@ export function registerOsModules(): void {
         },
         {
             id: 'brand-voice',
-            title: 'Voice',
+            title: 'Brand voice',
             icon: '🗣️',
             defaultSize: { width: 760, height: 660 },
             minSize: { width: 460, height: 360 },
@@ -254,8 +255,7 @@ export function registerOsModules(): void {
             minSize: { width: 440, height: 420 },
             canPopout: true,
             permissions: 'member',
-            launcherHidden: true,
-            render: () => createElement(ToolsModule),
+            render: (ctx) => createElement(ToolsModule, ctx),
         },
         {
             id: 'integrations',
@@ -271,7 +271,7 @@ export function registerOsModules(): void {
         },
         {
             id: 'voice',
-            title: 'Voice',
+            title: 'Talk',
             icon: '🎙️',
             defaultSize: { width: 420, height: 360 },
             minSize: baseMin,

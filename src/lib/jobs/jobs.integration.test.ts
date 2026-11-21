@@ -1,4 +1,5 @@
 import { PublishItem, PublishDelivery } from '@/lib/models/Publishing';
+import { WorkBudget } from '@/lib/models/WorkBudget';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import mongoose, { Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
@@ -111,6 +112,7 @@ beforeEach(async () => {
   mocks.verify.mockReset().mockResolvedValue({ hard: [], soft: [] });
   await BrandVoice.deleteMany({});
   await ArtifactRevision.deleteMany({});
+  await WorkBudget.deleteMany({});
   mocks.models.mockResolvedValue([]);
   mocks.select.mockImplementation(async (_org: string, need: string) => ({
     primary: need === 'review' ? { profileId: 'r'.repeat(24), model: 'gpt-6-sol', free: false, label: 'OpenAI' } : { profileId: 'w'.repeat(24), model: 'Qwen/Qwen2.5-Coder-14B-Instruct-AWQ', free: true, label: 'Rogly' },
@@ -143,6 +145,15 @@ async function proposed(design: JobDesign = DESIGN) {
 }
 
 describe('ongoing job settings', () => {
+  it('rejects another run before creating it when the responsibility target allowance was closed', async () => {
+    const job = await proposed();
+    await WorkBudget.create({ organizationId: org, responsibilityId: new Types.ObjectId(), jobId: job.id, limitMicros: 2e6, closedAt: new Date() });
+    const approved = await approveJob(admin, job.id, { completion: 'review', monthlyBudgetMicros: 2e6 });
+    expect(approved).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('reopen the target') });
+    await Job.updateOne({ _id: job.id }, { $set: { status: 'ready' } });
+    expect(await runNow(admin, job.id)).toMatchObject({ ok: false, status: 409 });
+    expect(await JobRun.countDocuments({ jobId: job.id })).toBe(0);
+  });
   it('opens an older review from a notification without reading a different job’s run',async()=>{
     const job=await proposed();
     const runs=await JobRun.insertMany(Array.from({length:25},(_,i)=>({organizationId:org,companyId,jobId:job.id,status:'needs_review',startedAt:new Date(),createdAt:new Date(100000+i*1000)})));

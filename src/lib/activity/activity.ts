@@ -18,6 +18,8 @@ export type ActivityGroup = 'you' | 'working' | 'set' | 'failed';
 export type ActivityKind = 'watch' | 'article' | 'build' | 'overview' | 'roundup';
 
 export interface ActivityItem {
+  assignedMemberId?: string;
+  teamRole?: string;
   id: string;
   kind: ActivityKind;
   /** Which windows show it besides Jobs: Marketing (marketing), Content (content); code and research only in Jobs. */
@@ -87,7 +89,7 @@ async function buildItems(viewer: CompanyViewer): Promise<ActivityItem[]> {
   const builds = await listBuilds(viewer);
   const out: ActivityItem[] = [];
   for (const b of builds) {
-    const base = { id: `build:${b.id}`, kind: 'build' as const, category: 'building' as const, title: b.title || b.request, companyId: b.companyId, companyName: b.companyName, open: { window: 'building' } };
+    const base = { assignedMemberId: b.assignedMemberId, teamRole: b.teamRole, id: `build:${b.id}`, kind: 'build' as const, category: 'building' as const, title: b.title || b.request, companyId: b.companyId, companyName: b.companyName, open: { window: 'building' } };
     const repo = b.repository.fullName;
     if (b.status === 'proposed') out.push({ ...base, group: 'you', status: 'Plan ready', detail: `Building · ${repo} · review the plan to start` });
     else if (b.status === 'queued') out.push({ ...base, group: 'working', status: 'Queued', detail: `Building · ${repo} · waiting for the build worker` });

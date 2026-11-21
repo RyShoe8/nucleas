@@ -13,9 +13,9 @@ function render(state) {
   const gridKey = JSON.stringify([query, state.apps, state.windows.map(w => w.key)]);
   if (gridKey === lastGrid) return;
   lastGrid = gridKey;
-  const order = ['companies', 'team', 'work', 'today', 'mail', 'agenda', 'settings'];
+  const order = ['office', 'companies', 'work', 'attention', 'tools', 'mail', 'settings'];
   const apps = [...state.apps].sort((a,b) => order.indexOf(a.id) - order.indexOf(b.id)).filter(app => app.id !== 'assistant' && app.title.toLowerCase().includes(query));
-  $('count').textContent = 'COMPANIES → TEAM → WORK';
+  $('count').textContent = 'OFFICE · COMPANIES · WORK · INBOX';
   $('empty').hidden = apps.length !== 0;
   $('apps').replaceChildren(...apps.map((app, i) => {
     const button = document.createElement('button'); button.className = 'app'; button.setAttribute('role', 'listitem');

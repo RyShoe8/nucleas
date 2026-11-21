@@ -30,7 +30,7 @@ import { AiModelCatalogSnapshot, AiPricingRegistryCache } from '@/lib/ai/engine/
 import { encryptModelSecret } from '@/lib/ai/modelSecrets';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
 import { getCompanyCode, setProjectRepository } from './companyCode';
-import { approveBuild, editPlan, getBuild, listBuilds, openPullRequest, proposeCodeChange, rejectBuild, runBuild, startCodeChange, sweepBuilds } from './builds';
+import { approveBuild, buildTask, editPlan, getBuild, listBuilds, openPullRequest, proposeCodeChange, rejectBuild, runBuild, startCodeChange, sweepBuilds } from './builds';
 
 let replica: MongoMemoryReplSet;
 const org = new Types.ObjectId();
@@ -162,6 +162,12 @@ describe('proposing and deciding', () => {
 });
 
 describe('running builds', () => {
+  it('reserves bounded room for reference evidence even when the approved plan fills the worker input', () => {
+    const task = buildTask({ title: 'Apply the design', planMarkdown: 'Approved implementation detail. '.repeat(1000) }, 'Project conventions', 'Verified reference: use the attached layout.');
+    expect(task).toContain('Verified reference: use the attached layout.');
+    expect(task).toContain('Never commit, push, or deploy');
+    expect(task.length).toBeLessThanOrEqual(12_000);
+  });
   async function queued() {
     const build = await proposed();
     await approveBuild(admin, build.id);

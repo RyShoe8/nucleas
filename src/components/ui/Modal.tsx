@@ -113,7 +113,7 @@ export default function Modal({
 
   const themeClass = appearance === 'light' ? 'inspector-light' : '';
   const panelClass =
-    `${themeClass} ui-panel bg-background-card overflow-hidden flex flex-col animate-fade-in animate-in slide-in-from-bottom-2 duration-200 ease-out`;
+    `${themeClass} ${appearance === 'theme' ? 'nucleas-workflow' : ''} ui-panel bg-background-card overflow-hidden flex flex-col animate-fade-in animate-in slide-in-from-bottom-2 duration-200 ease-out`;
 
   const header = title ? (
     <div className="flex items-center justify-between p-4 sm:p-6 border-b border-border flex-shrink-0">
@@ -154,7 +154,7 @@ export default function Modal({
         data-portal-overlay
       >
         <div
-          className={`${panelClass} w-full mx-auto max-h-[90vh] rounded-lg ${maxWidthClass(maxWidth)}`}
+          className={`${panelClass} w-full mx-auto max-h-[90dvh] rounded-lg ${maxWidthClass(maxWidth)}`}
           onClick={(e) => e.stopPropagation()}
         >
           {header}

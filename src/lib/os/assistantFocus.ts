@@ -28,19 +28,17 @@ export function subscribeAssistantFocus(listener: () => void): () => void {
 }
 
 /** A question another screen wants Ask to answer. Taken once by the Ask window. */
-let pendingAsk: { id: string; text: string } | null = null;
+const pendingAsks: { id: string; text: string; focus: AssistantFocus | null }[] = [];
 const askListeners = new Set<() => void>();
 
-export function askNucleas(text: string, focus?: AssistantFocus): void {
-  if (focus) setAssistantFocus(focus);
-  pendingAsk = { id: `${Date.now()}:${text.length}`, text };
+export function askNucleas(text: string, focus?: AssistantFocus | null): void {
+  if (focus !== undefined) setAssistantFocus(focus);
+  pendingAsks.push({ id: crypto.randomUUID(), text, focus: focus === undefined ? current : focus });
   askListeners.forEach((l) => l());
 }
 
-export function takePendingAsk(): { id: string; text: string } | null {
-  const ask = pendingAsk;
-  pendingAsk = null;
-  return ask;
+export function takePendingAsk(): { id: string; text: string; focus: AssistantFocus | null } | null {
+  return pendingAsks.shift() ?? null;
 }
 
 export function subscribePendingAsk(listener: () => void): () => void {

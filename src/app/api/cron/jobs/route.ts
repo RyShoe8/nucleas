@@ -1,5 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
+import { WorkResponsibility } from '@/lib/models/WorkResponsibility';
+import { advanceResponsibility } from '@/lib/work/responsibilities';
 import connectDB from '@/lib/db/mongodb';
 import { claimDueJobRuns, executeJobRun, sweepJobs } from '@/lib/jobs/jobs';
 import { nextQueuedRunId } from '@/lib/jobs/runLifecycle';
@@ -24,6 +26,8 @@ export async function GET(request: NextRequest) {
     await connectDB();
     const swept = await sweepJobs();
     const postsRecovered = await recoverStuckDeliveries();
+    const responsibility = await WorkResponsibility.findOne({ status: { $in: ['active', 'monitoring'] }, $and: [{ $or: [{ leaseExpiresAt: { $exists: false } }, { leaseExpiresAt: { $lte: new Date() } }] }, { $or: [{ nextCheckAt: { $exists: false } }, { nextCheckAt: { $lte: new Date() } }] }] }).sort({ updatedAt: 1 }).select('_id').lean();
+    if (responsibility) after(() => advanceResponsibility(String(responsibility._id)));
     const scheduledRunIds = await claimDueJobRuns(new Date(), 2);
     // A finishing run wakes the next queued one. This is the safety net in case that request was lost.
     const queuedRunId = await nextQueuedRunId();

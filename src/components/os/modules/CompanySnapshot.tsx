@@ -1,5 +1,5 @@
 'use client';
-import Modal from '@/components/ui/Modal';
+import AnalyticsBreakdown from './workspace/AnalyticsBreakdown';
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { useOsAuth } from '@/hooks/os/useOsAuth';
@@ -60,7 +60,7 @@ export interface OsMetric {
 const nf = new Intl.NumberFormat('en-US');
 export function formatMetric(unit: OsMetric['unit'], value: number | null | undefined): string {
     if (value == null) return '–';
-    if (unit === 'money') return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value / 100);
+    if (unit === 'money') return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value / 100);
     return nf.format(Math.round(value));
 }
 
@@ -173,15 +173,15 @@ const METRIC_GROUPS: { title: string; metrics: MetricSlot[] }[] = [
 ];
 
 
-function MetricCard({ m, slot }: { m?: OsMetric; slot: MetricSlot }) {
-    const [open, setOpen] = useState(false);
+function MetricCard({ m, slot, onExplore, expanded = false }: { m?: OsMetric; slot: MetricSlot; onExplore?: (key: string) => void; expanded?: boolean }) {
+    const [open, setOpen] = useState(expanded);
     const c = m?.coverage;
     const shown = (n: number) => m?.unit === 'money' && m.currency ? new Intl.NumberFormat('en-US', { style: 'currency', currency: m.currency }).format(n / 100) : formatMetric(m?.unit ?? 'count', n);
     const value = !m ? '–' : m.unit === 'money' ? m.currency && !m.warning ? new Intl.NumberFormat('en-US', { style: 'currency', currency: m.currency }).format(m.current / 100) : '–' : formatMetric(m.unit, m.current);
     return <div className="rounded-xl border border-border bg-background-card/40 p-3 min-w-0 space-y-1">
         <div className="flex items-baseline justify-between gap-2"><span className="text-xs text-text-secondary">{slot.label}</span><ChangeBadge change={m?.warning ? null : m?.change ?? null} /></div>
-        {m?.series.length ? <button type="button" className="block text-left text-2xl font-semibold tabular-nums hover:text-primary" onClick={() => setOpen(true)} title={`Open ${slot.label}: each day, the source and how complete it is`}>{value} <span className="align-middle text-xs font-normal text-primary">Details →</span></button> : <div className="text-2xl font-semibold tabular-nums">{value}</div>}
-        {m && open ? <Modal isOpen onClose={() => setOpen(false)} title={slot.label} maxWidth="3xl" appearance="theme">
+        {m?.series.length ? <button type="button" className="block text-left text-2xl font-semibold tabular-nums hover:text-primary" onClick={() => onExplore ? onExplore(slot.key) : setOpen(v => !v)} title={`Open ${slot.label}: each day, the source and how complete it is`}>{value} <span className="align-middle text-xs font-normal text-primary">{open ? 'Hide details' : 'Details →'}</span></button> : <div className="text-2xl font-semibold tabular-nums">{value}</div>}
+        {m && open ? <section aria-label={`${slot.label} details`} className="py-4">
             <div className="space-y-4 text-sm">
                 <p><span className="text-3xl font-semibold tabular-nums">{value}</span> <ChangeBadge change={m.warning ? null : m.change ?? null} /><span className="ml-2 text-text-secondary">{c ? `${c.start} to ${c.end}${m.previous !== null && m.previous !== undefined ? `, against ${shown(m.previous)} in the ${c.days} days before` : ''}` : `Latest value${m.asOf ? `, ${m.asOf}` : ''}`}</span></p>
                 {m.warning ? <p className="text-amber-300">{m.warning}</p> : <Sparkline series={m.series} label={slot.label} start={c?.start} end={c?.end} format={shown} height={180} />}
@@ -190,12 +190,12 @@ function MetricCard({ m, slot }: { m?: OsMetric; slot: MetricSlot }) {
                     <table className="w-full text-left text-sm"><thead className="sticky top-0 bg-background text-xs text-text-secondary"><tr><th className="px-3 py-2 font-normal">Day</th><th className="px-3 py-2 text-right font-normal">{slot.label}</th></tr></thead>
                         <tbody>{[...m.series].reverse().map((point) => <tr key={point.date} className="border-t border-border"><td className="px-3 py-1.5">{new Date(point.date + 'T00:00:00Z').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })}</td><td className="px-3 py-1.5 text-right tabular-nums">{shown(point.value)}</td></tr>)}</tbody></table>
                 </div>
-                <p className="text-xs text-text-secondary">Source: {m.source ?? 'Company evidence'}{m.updatedAt ? ` · stored ${new Date(m.updatedAt).toLocaleString()}` : ''}. Use the timeframe at the top of Performance to see a longer or shorter period.</p>
+                <p className="text-xs text-text-secondary">Source: {m.source ?? 'Company evidence'}{m.updatedAt ? ` · stored ${new Date(m.updatedAt).toLocaleString()}` : ''}. Use the timeframe at the top of Analytics to see a longer or shorter period.</p>
             </div>
-        </Modal> : null}
+        </section> : null}
         <p className="text-[11px] text-text-secondary">{!m ? 'No observations for this period' : c ? `${c.start} → ${c.end}` : `Latest observation${m.asOf ? ` · ${m.asOf}` : ''}`}</p>
         {c && <p className={`text-[11px] ${c.observed < c.days ? 'text-amber-300' : 'text-text-secondary'}`}>{c.observed}/{c.days} days recorded{c.observed < c.days ? ' · partial total' : ''}</p>}
-        {m?.series.length && !m.warning ? <Sparkline series={m.series} label={slot.label} start={c?.start} end={c?.end} format={(value) => m.unit === 'money' && m.currency ? new Intl.NumberFormat('en-US', { style: 'currency', currency: m.currency, maximumFractionDigits: 0 }).format(value / 100) : formatMetric(m.unit, value)} /> : null}
+        {m?.series.length && !m.warning ? <Sparkline series={m.series} label={slot.label} start={c?.start} end={c?.end} format={(value) => m.unit === 'money' && m.currency ? new Intl.NumberFormat('en-US', { style: 'currency', currency: m.currency, maximumFractionDigits: 2 }).format(value / 100) : formatMetric(m.unit, value)} /> : null}
         {m && <details className="text-[11px] text-text-secondary"><summary className="cursor-pointer">Source & accuracy</summary>
             <p>{m.source ?? 'Company evidence'}{m.updatedAt ? ` · stored ${new Date(m.updatedAt).toLocaleString()}` : ''}</p>
             {m.warning && <p className="text-amber-300">{m.warning}</p>}
@@ -207,12 +207,12 @@ function MetricCard({ m, slot }: { m?: OsMetric; slot: MetricSlot }) {
     </div>;
 }
 
-function MetricGroup({ title, slots, metrics }: { title: string; slots: MetricSlot[]; metrics: Map<string, OsMetric> }) {
+function MetricGroup({ title, slots, metrics, onExplore }: { title: string; slots: MetricSlot[]; metrics: Map<string, OsMetric>; onExplore?: (key: string) => void }) {
     return (
         <details className="space-y-2" open>
             <summary className="cursor-pointer text-[11px] uppercase tracking-wider text-text-secondary">{title}</summary>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2">
-                {slots.map((slot) => <MetricCard key={slot.key} m={metrics.get(slot.key)} slot={slot} />)}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 pt-2">
+                {slots.map((slot) => <MetricCard key={slot.key} m={metrics.get(slot.key)} slot={slot} onExplore={onExplore} />)}
             </div>
         </details>
     );
@@ -246,6 +246,7 @@ export default function CompanySnapshot({
     aiCitationSeries,
     onActivity,
     site = null,
+    initialPeriod = 7,
     onAllSites = () => {},
 }: {
     companyId: string;
@@ -255,29 +256,38 @@ export default function CompanySnapshot({
     onActivity: () => void;
     /** One website's numbers; null for every website together. */
     site?: string | null;
+    initialPeriod?: number;
     onAllSites?: () => void;
 }) {
     const auth = useOsAuth();
     const has = (provider: string) => connections.some((c) => c.provider === provider);
     const hasPerformanceConnection = ['ga4', 'gsc', 'brevo', 'stripe', 'adsense', 'admanager', 'ahrefs', 'mercury', 'signups'].some(has);
-    const [data, setData] = useState<{ lastSyncedAt: string | null; metrics: OsMetric[]; changes: string[]; site?: string | null; companyWideOnly?: string[] } | null>(null);
-    const [period, setPeriod] = useState(7);
-    const [loadError, setLoadError] = useState<string | null>(null);
+    type MetricsResponse = { lastSyncedAt: string | null; metrics: OsMetric[]; changes: string[]; site?: string | null; companyWideOnly?: string[] };
+    const [result, setResult] = useState<{ key: string; data: MetricsResponse | null; error: string | null } | null>(null);
+    const [period, setPeriod] = useState([7, 14, 28, 90].includes(initialPeriod) ? initialPeriod : 7);
+    const [exploring, setExploring] = useState(false), [selectedMetric, setSelectedMetric] = useState<string | null>(null), [category, setCategory] = useState('All');
+    const [start, setStart] = useState(''), [end, setEnd] = useState(''), [range, setRange] = useState<{ start: string; end: string } | null>(null);
+    const explore = (key: string) => { setExploring(true); setSelectedMetric(key); };
     const [reloadKey, setReloadKey] = useState(0);
     const [serviceBusiness, setServiceBusiness] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
     const [seo, setSeo] = useState<string | null>(null);
     const [cash, setCash] = useState<string | null>(null);
+    const requestUrl = `/api/os/companies/${companyId}/metrics?period=${period}${site ? `&site=${encodeURIComponent(site)}` : ''}${range ? `&start=${range.start}&end=${range.end}` : ''}`;
+    const requestKey = `${requestUrl}#${reloadKey}`;
+    // Never label a previous company's or period's response with the newly selected range.
+    const data = result?.key === requestKey ? result.data : null;
+    const loadError = result?.key === requestKey ? result.error : null;
 
     useEffect(() => {
         const controller = new AbortController();
-        void fetch(`/api/os/companies/${companyId}/metrics?period=${period}${site ? `&site=${encodeURIComponent(site)}` : ''}`, { signal: controller.signal })
-            .then(async res => { if (!res.ok) throw new Error(`Could not load metrics (${res.status}).`); return res.json(); })
-            .then(body => { if (!controller.signal.aborted) { setData(body); setLoadError(null); } })
-            .catch(error => { if (!controller.signal.aborted) setLoadError(error.message); });
+        void fetch(requestUrl, { signal: controller.signal })
+            .then(async res => { const body = await res.json(); if (!res.ok) throw new Error(body.error ?? `Could not load metrics (${res.status}).`); return body; })
+            .then(body => { if (!controller.signal.aborted) setResult({ key: requestKey, data: body, error: null }); })
+            .catch(error => { if (!controller.signal.aborted) setResult({ key: requestKey, data: null, error: error.message }); });
         return () => controller.abort();
-    }, [companyId, period, reloadKey, site]);
+    }, [requestUrl, requestKey]);
 
     const syncNow = async () => {
         setSyncing(true);
@@ -331,14 +341,24 @@ export default function CompanySnapshot({
         change: null,
         lastDay: null,
     };
-    const metrics = new Map([...(data?.metrics ?? []), citationMetric].map((metric) => [metric.key, metric]));
+    const metrics = new Map([...(data?.metrics ?? []), ...(!range && (aiCitations > 0 || aiCitationSeries.length > 0) ? [citationMetric] : [])].map((metric) => [metric.key, metric]));
+    const selected = selectedMetric ? metrics.get(selectedMetric) : undefined;
+    const summaryMetrics = ['revenue_total', 'sessions', 'leads_new', 'customers_new', 'bookings_new', 'search_clicks'].map(k => metrics.get(k)).filter((m): m is OsMetric => Boolean(m) && (m!.unit !== 'money' || revenueMetricVisible(m!.key, connections))).slice(0, 4);
+    const exportData = () => {
+        const cell = (v: unknown) => `"${String(v ?? '').replaceAll('"', '""').replace(/^[=+@-]/, "'")}"`;
+        const lines = [['Metric', 'Date', 'Value', 'Unit', 'Currency', 'Source'], ...[...metrics.values()].filter(m => !m.warning).flatMap(m => m.series.map(p => [m.label, p.date, m.unit === 'money' ? p.value / 100 : p.value, m.unit, m.currency ?? '', m.source ?? '']))];
+        const url = URL.createObjectURL(new Blob([lines.map(row => row.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+        const link = document.createElement('a'); link.href = url; link.download = `company-${companyId}-analytics.csv`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
 
     return (
         <section className="space-y-2">
+            <div className="flex flex-wrap justify-between gap-2">{exploring ? <button className="ui-button" onClick={() => { setExploring(false); setSelectedMetric(null); }}>← Summary</button> : <button className="ui-button-primary" onClick={() => setExploring(true)}>Explore analytics →</button>}{exploring && <button className="ui-button" disabled={!data} onClick={exportData}>Export observed data</button>}</div>
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div><h3 className="font-medium">{site ? `${site} performance` : 'Company performance'}</h3><p className="text-xs text-text-secondary">Completed reporting days · compare with the preceding equal period. Source timezones may differ.</p></div>
-                <label className="text-xs">Timeframe <select aria-label="Performance timeframe" value={period} onChange={e => { setData(null); setLoadError(null); setPeriod(Number(e.target.value)); }} className="ml-2 rounded-lg border border-border bg-background-card p-2">{[7, 14, 28, 90].map(days => <option value={days} key={days}>{days} days</option>)}</select></label>
+                <label className="text-xs">Timeframe <select aria-label="Performance timeframe" value={range ? 'custom' : period} onChange={e => { if (e.target.value === 'custom') return; setRange(null); setPeriod(Number(e.target.value)); }} className="ml-2 rounded-lg border border-border bg-background-card p-2">{range && <option value="custom">{range.start} → {range.end}</option>}{[7, 14, 28, 90].map(days => <option value={days} key={days}>{days} days</option>)}</select></label>
             </div>
+            {exploring && <><form className="flex gap-2 flex-wrap items-end" onSubmit={e => { e.preventDefault(); setSelectedMetric(null); setRange({ start, end }); }}><label className="text-xs">From<input required type="date" className="ui-control block" value={start} onChange={e => setStart(e.target.value)} /></label><label className="text-xs">Through<input required type="date" className="ui-control block" value={end} onChange={e => setEnd(e.target.value)} /></label><button className="ui-button">Apply dates</button></form><div className="flex flex-wrap gap-2">{['All', 'Traffic', 'Audience', 'Revenue', 'Social'].map(c => <button key={c} aria-pressed={category === c} className={category === c ? 'ui-button-primary' : 'ui-button'} onClick={() => { setCategory(c); setSelectedMetric(null); }}>{c}</button>)}</div></>}
             {site ? <p className="flex flex-wrap items-center gap-2 rounded-md border border-primary/40 bg-primary/5 px-3 py-2 text-xs">
                 <span>Showing <strong>{site}</strong> only.</span>
                 {data?.companyWideOnly?.length ? <span className="text-text-secondary">Kept for the whole company, not per site: {data.companyWideOnly.slice(0, 6).join(', ')}{data.companyWideOnly.length > 6 ? '…' : ''}.</span> : null}
@@ -370,13 +390,19 @@ export default function CompanySnapshot({
                 </ul>
             ) : null}
 
-            <ServiceDataPanel period={period} companyId={companyId} onEnabled={setServiceBusiness} />
-            {METRIC_GROUPS.map((group) => {
-                if (serviceBusiness && group.title === 'Audience') return null;
+            {!range && <ServiceDataPanel period={period} companyId={companyId} onEnabled={setServiceBusiness} />}
+            {!exploring && <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">{(summaryMetrics.length ? summaryMetrics : [...metrics.values()].slice(0, 4)).map(m => <MetricCard key={m.key} m={m} slot={m} onExplore={explore} />)}</div>}
+            {exploring && selected && <div><button className="ui-button mb-2" onClick={() => setSelectedMetric(null)}>← All metrics</button><MetricCard key={`${selected.key}:${period}:${range?.end}`} m={selected} slot={selected} expanded /></div>}
+            {exploring && !selectedMetric && METRIC_GROUPS.map((group) => {
+                if (category !== 'All' && group.title !== category) return null;
+                if (serviceBusiness && !range && group.title === 'Audience') return null;
                 const slots = group.title === 'Revenue' ? group.metrics.filter(slot => revenueMetricVisible(slot.key, connections) && (!serviceBusiness || !['subscriber_revenue', 'mrr', 'yrr'].includes(slot.key))) : group.metrics;
-                return slots.length ? <MetricGroup key={group.title} title={group.title} slots={slots} metrics={metrics} /> : null;
+                return slots.length ? <MetricGroup key={group.title} title={group.title} slots={slots} metrics={metrics} onExplore={explore} /> : null;
             })}
-            <MetricGroup title="Social" slots={[...SOCIAL_PLATFORMS, { id: 'other', label: 'Other social' }].map(({ id, label }) => ({ key: `social_sessions_${id}`, label: `${label} visits`, unit: 'count', kind: 'daily' }))} metrics={metrics} />
+            {exploring && !selectedMetric && ['All', 'Social'].includes(category) && <MetricGroup title="Social" slots={[...SOCIAL_PLATFORMS, { id: 'other', label: 'Other social' }].map(({ id, label }) => ({ key: `social_sessions_${id}`, label: `${label} visits`, unit: 'count', kind: 'daily' }))} metrics={metrics} onExplore={explore} />}
+            {exploring && !selectedMetric && category === 'All' && <MetricGroup title="Additional observed metrics" slots={[...metrics.values()].filter(m => !METRIC_GROUPS.some(g => g.metrics.some(s => s.key === m.key)) && !m.key.startsWith('social_sessions_'))} metrics={metrics} onExplore={explore} />}
+            {exploring && !range && !site && <AnalyticsBreakdown key={`${companyId}:${period}`} companyId={companyId} days={period} traffic={has('ga4')} search={has('gsc')} />}
+            {exploring && (range || site) && <p className="text-xs text-text-secondary">Provider breakdowns use the company’s connected property and recent periods. Return to all websites and a preset period to query them. Stored daily data above respects this selection.</p>}
             {hasPerformanceConnection && data === null && !loadError ? <p className="text-xs text-text-secondary">Loading connected performance data…</p> : data && data.metrics.length === 0 && hasPerformanceConnection ? <p className="text-xs text-text-secondary">No connected performance history yet. The first sync backfills 90 days{auth.isManagerOrAdmin ? '; use Sync now to start it.' : '.'}</p> : null}
 
             {has('ahrefs') || (has('mercury') && auth.isManagerOrAdmin) ? (

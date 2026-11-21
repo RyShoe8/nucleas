@@ -1,13 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useTitleSlot } from '@/lib/os/titleSlot';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
 import { useOsAuth } from '@/hooks/os/useOsAuth';
+import { useVoiceWorkspace } from '../voice/VoiceWorkspace';
 import type { ModuleRenderContext } from '@/lib/os/types';
 import { RELATIONSHIP_LABEL, type OsCompanyDetail, type OsCompanySummary, type OsConnection } from './companyTypes';
-import CompanyTeamPanel from './CompanyTeamPanel';
+import CompanyPeople from './workspace/CompanyPeople';
 import CompanySwitcher from './CompanySwitcher';
 import CompanyAbout from './CompanyAbout';
 import CompanySnapshot from './CompanySnapshot';
@@ -20,12 +21,18 @@ import PropertyOverviewButton from './PropertyOverviewReport';
 import SocialIcon from '@/components/projects/SocialIcon';
 import { SOCIAL_NETWORK_LABELS } from '@/lib/utils/socialUrls';
 import type { SocialNetwork } from '@/lib/models/Project';
+import { companySection } from '@/lib/os/workspaceRoutes';
+import WorkspaceNavigation from './workspace/WorkspaceNavigation';
+import RetainedSection from './workspace/RetainedSection';
+import CompanyLibrary from './workspace/CompanyLibrary';
+import WorkModule from './WorkModule';
 
 export default function CompanyModule({ payload, windowId }: ModuleRenderContext) {
     // The screen can move to another company in place, keeping the tab you are on.
     const [companyId, setCompanyId] = useState(payload?.companyId);
-    const [section, setSection] = useState(payload?.section ?? 'performance');
+    const [section, setSection] = useState(payload?.jobId ? 'work' : companySection(payload?.section));
     const [detail, setDetail] = useState<OsCompanyDetail | null>(null);
+    useVoiceWorkspace({ moduleId: 'company', companyId: companyId ?? '', companyName: detail && detail.company.id === companyId ? detail.company.name : payload?.companyName, section });
     const [error, setError] = useState<string | null>(null);
     const [activityKey, setActivityKey] = useState(0);
     const [focusJobId, setFocusJobId] = useState<string | undefined>(typeof payload?.jobId === 'string' ? payload.jobId : undefined);
@@ -37,20 +44,26 @@ export default function CompanyModule({ payload, windowId }: ModuleRenderContext
     const [archived, setArchived] = useState<{ id: string; name: string } | null>(null);
     const auth = useOsAuth();
 
+    const loadVersion = useRef(0);
     const load = useCallback(async () => {
         if (!companyId) return;
+        const version = ++loadVersion.current;
         try {
             const res = await fetch(`/api/os/companies/${companyId}`);
             if (!res.ok) throw new Error(res.status === 404 ? 'Company not found' : `HTTP ${res.status}`);
-            setDetail((await res.json()) as OsCompanyDetail);
+            const next = await res.json() as OsCompanyDetail;
+            if (version !== loadVersion.current) return;
+            setDetail(next);
             setError(null);
         } catch (err) {
+            if (version !== loadVersion.current) return;
             setError(err instanceof Error ? err.message : 'unknown');
         }
     }, [companyId]);
 
     useEffect(() => {
         void load();
+        return () => { loadVersion.current += 1; };
     }, [load]);
 
     useEffect(() => {
@@ -75,8 +88,8 @@ export default function CompanyModule({ payload, windowId }: ModuleRenderContext
     if (titleSlot && typeof document !== 'undefined') document.title = company.name;
 
     return (
-        <div className="h-full overflow-y-auto p-5 space-y-5 text-text-primary">
-            <header className="flex items-start gap-3">
+        <WorkspaceNavigation companyId={company.id} companyName={company.name}><div className="h-full overflow-y-auto p-4 sm:p-5 space-y-5 text-text-primary">
+            <header className="grid grid-cols-[3rem_minmax(0,1fr)] items-start gap-3 sm:flex">
                 <button type="button" onClick={() => setSite(null)} title={websites.length > 1 ? 'Show every website together' : company.name} aria-label={websites.length > 1 ? 'Show every website together' : company.name} aria-pressed={websites.length > 1 && !site}
                     className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border ${websites.length > 1 && !site ? 'border-primary' : 'border-border'} bg-background-card hover:border-primary`}>
                     {company.logo
@@ -91,7 +104,7 @@ export default function CompanyModule({ payload, windowId }: ModuleRenderContext
                         {websites.length ? websites.map((host, i) => (
                             <span key={host} className="inline-flex items-center gap-1">
                                 {websites.length > 1
-                                    ? <button type="button" onClick={() => { setSite(site === host ? null : host); setSection('performance'); }} aria-pressed={site === host} title={site === host ? 'Back to every website' : `Show only ${host}`}
+                                    ? <button type="button" onClick={() => { setSite(site === host ? null : host); setSection('overview'); }} aria-pressed={site === host} title={site === host ? 'Back to every website' : `Show only ${host}`}
                                         className={`rounded px-1.5 ${site === host ? 'bg-primary/15 font-medium text-primary' : i === 0 && !site ? 'font-medium text-text-primary' : 'text-text-secondary'} hover:text-primary`}>{host}</button>
                                     : <span className="font-medium">{host}</span>}
                                 <a href={`https://${host}`} target="_blank" rel="noreferrer" className="text-xs text-text-secondary hover:text-primary" title={`Open ${host}`} aria-label={`Open ${host}`}>↗</a>
@@ -105,24 +118,20 @@ export default function CompanyModule({ payload, windowId }: ModuleRenderContext
                     </button>
                     <SocialLinks links={company.socialLinks ?? []} />
                 </div>
-                <div className="flex flex-col gap-2">
-                    <CompanyContentButton companyId={company.id} companyName={company.name} />
-                    <details className="text-xs">
-                    <summary className="cursor-pointer text-text-secondary">Brand and planning</summary>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                    <VoiceButton companyId={company.id} companyName={company.name} status={detail.voiceStatus ?? 'none'} />
-                    <PropertyOverviewButton companyId={company.id} companyName={company.name} canManage={detail.canManage} />
-                    <MarketingPlanButton companyId={company.id} companyName={company.name} />
+                <div className="col-span-2 grid grid-cols-2 gap-2 sm:flex sm:flex-col">
                     <AskButton companyId={company.id} companyName={company.name} />
-                    </div>
-                    </details>
+                    <button className="ui-button" onClick={() => setSection('work')}>Work →</button>
                 </div>
             </header>
 
-            <nav aria-label="Company workspace" className="sticky top-0 z-10 flex gap-1 rounded-xl border border-border bg-background p-1">
-                {[['performance', 'Performance'], ['team', 'Team'], ['activity', 'Activity'], ['about', 'About'], ['setup', 'Setup']].map(([id, label]) => <button key={id} aria-pressed={section === id} onClick={() => setSection(id)} className={`flex-1 rounded-lg px-3 py-2 text-sm ${section === id ? 'bg-primary/15 text-primary font-medium' : 'text-text-secondary hover:bg-background-card'}`}>{label}</button>)}
+            <nav aria-label="Company workspace" className="sticky top-0 z-10 flex gap-1 overflow-x-auto rounded-xl border border-border bg-background p-1">
+                {[['overview', 'Overview'], ['work', 'Work'], ['people', 'People'], ['library', 'Library'], ['connections', 'Connections']].map(([id, label]) => <button key={id} aria-pressed={section === id} onClick={() => setSection(id)} className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-sm sm:flex-1 ${section === id ? 'bg-primary/15 text-primary font-medium' : 'text-text-secondary hover:bg-background-card'}`}>{label}</button>)}
             </nav>
-            {section === 'about' && <CompanyAbout key={company.id} companyId={company.id} companyName={company.name}
+            {['about', 'activity'].includes(section) && <button className="ui-button" onClick={() => setSection('overview')}>← Overview</button>}
+            {section === 'overview' && <div className="flex flex-wrap gap-2"><button className="ui-button" onClick={() => setSection('about')}>About & brand</button><button className="ui-button" onClick={() => setSection('activity')}>Activity & receipts</button></div>}
+            <RetainedSection key={company.id + 'work'} active={section === 'work'}><WorkModule key={`${company.id}:${focusJobId ?? ''}`} payload={{ companyId: company.id, companyName: company.name, ...(focusJobId ? { jobId: focusJobId } : {}), ...(payload?.runId ? { runId: payload.runId } : {}), ...(payload?.deliveryId ? { deliveryId: payload.deliveryId } : {}) }} /></RetainedSection>
+            <RetainedSection key={company.id + 'library'} active={section === 'library'}><CompanyLibrary key={company.id} companyId={company.id} companyName={company.name} /></RetainedSection>
+            <RetainedSection key={company.id + 'about'} active={section === 'about'}><CompanyAbout key={company.id} companyId={company.id} companyName={company.name}
                 overviewAction={<PropertyOverviewButton companyId={company.id} companyName={company.name} canManage={detail.canManage} />}
                 basics={<>
                     <SubredditEditor
@@ -153,19 +162,20 @@ export default function CompanyModule({ payload, windowId }: ModuleRenderContext
                             setActivityKey((key) => key + 1);
                         }}
                     />
-                </>} />}
-            {section === 'team' && <CompanyTeamPanel key={`${company.id}:${focusJobId ?? ''}`} companyId={company.id} companyName={company.name} focusJobId={focusJobId} />}
-            {section === 'performance' && <CompanySnapshot
+                </>} /></RetainedSection>
+            <RetainedSection key={company.id + 'people'} active={section === 'people'}><CompanyPeople key={company.id} companyId={company.id} companyName={company.name} /></RetainedSection>
+            <RetainedSection key={company.id + 'overview'} active={section === 'overview'}><CompanySnapshot
                 key={company.id}
                 companyId={company.id}
                 site={site}
+                initialPeriod={Number(payload?.period)}
                 onAllSites={() => setSite(null)}
                 connections={connections.filter((c) => c.status === 'connected')}
                 aiCitations={detail.stats?.aiCitations ?? 0}
                 aiCitationSeries={detail.stats?.aiCitationSeries ?? []}
                 onActivity={() => setActivityKey((k) => k + 1)}
-            />}
-            {section === 'setup' && <section className="ui-card p-3">
+            /></RetainedSection>
+            <RetainedSection key={company.id + 'connections'} active={section === 'connections'}><section className="ui-card p-3">
             <h3 className="text-sm font-medium">Connections and setup</h3>
             <div className="mt-3 space-y-4">
             <ProjectsSection projects={projects} />
@@ -175,9 +185,9 @@ export default function CompanyModule({ payload, windowId }: ModuleRenderContext
             <IntegrationsSummary companyId={company.id} companyName={company.name} connections={connections} />
             <AccountWebsites companyId={company.id} websites={websites} connections={connections} canManage={detail.canManage} onSaved={() => void load()} />
             </div>
-            </section>}
-            {section === 'activity' && <CompanyTimeline key={company.id} companyId={company.id} refreshKey={activityKey} onOpenJob={(jobId) => { setFocusJobId(jobId); setSection('team'); }} />}
-        </div>
+            </section></RetainedSection>
+            <RetainedSection key={company.id + 'activity'} active={section === 'activity'}><CompanyTimeline key={company.id} companyId={company.id} refreshKey={activityKey} onOpenJob={(jobId) => { setFocusJobId(jobId); setSection('work'); }} /></RetainedSection>
+        </div></WorkspaceNavigation>
     );
 }
 
@@ -407,25 +417,6 @@ function AskButton({ companyId, companyName }: { companyId: string; companyName:
     );
 }
 
-const VOICE_INDICATOR = {
-    approved: { dot: 'bg-emerald-400', label: 'Voice: approved. Content tools write in it.' },
-    draft: { dot: 'bg-red-400', label: 'Voice: a draft exists but is not approved yet, so content tools do not use it.' },
-    none: { dot: 'bg-red-400', label: 'Voice: not set up yet. Content tools have no brand voice to write in.' },
-} as const;
-
-/** Opens the company's Voice. The dot is green once a Voice is approved, red until then. */
-function VoiceButton({ companyId, companyName, status }: { companyId: string; companyName: string; status: 'approved' | 'draft' | 'none' }) {
-    const wm = useWindowManager();
-    const indicator = VOICE_INDICATOR[status];
-    return (
-        <button type="button" title={indicator.label} onClick={(e) => { e.stopPropagation(); wm.open('brand-voice', { payload: { companyId, companyName } }); }} className="ui-button flex-shrink-0 inline-flex items-center gap-1.5">
-            <span aria-hidden className={`h-2 w-2 rounded-full ${indicator.dot}`} />
-            Brand voice
-            <span className="sr-only">{indicator.label}</span>
-        </button>
-    );
-}
-
 /** One button per linked account; each goes straight to that page in a new tab. */
 function SocialLinks({ links }: { links: { network: string; url: string }[] }) {
     const seen = new Set<string>();
@@ -457,16 +448,6 @@ function SocialLinks({ links }: { links: { network: string; url: string }[] }) {
             })}
         </div>
     );
-}
-
-function MarketingPlanButton({ companyId, companyName }: { companyId: string; companyName: string }) {
-    const wm = useWindowManager();
-    return <button type="button" onClick={(e) => { e.stopPropagation(); wm.open('marketing', { payload: { companyId, companyName, kind: 'marketing_plan' } }); }} className="ui-button flex-shrink-0">Marketing plan</button>;
-}
-
-function CompanyContentButton({ companyId, companyName }: { companyId: string; companyName: string }) {
-    const wm = useWindowManager();
-    return <button type="button" className="ui-button-primary" onClick={() => wm.open('content', { payload: { companyId, companyName, tab: 'updates' } })}>Create content</button>;
 }
 
 /** One line: connection counts, problems highlighted, and a link to the Integrations window. */

@@ -1,4 +1,5 @@
 'use client';
+import { useVoiceWorkspace } from '../voice/VoiceWorkspace';
 import {useEffect,useState,useSyncExternalStore} from 'react';
 import {createPortal} from 'react-dom';
 import {useTitleSlot} from '@/lib/os/titleSlot';
@@ -37,13 +38,14 @@ export function AppsSelector({onOpen}:{onOpen?:()=>void}={}){
 }
 
 export default function OfficeModule({onNavigate,windowId='web-office'}:{onNavigate?:()=>void;windowId?:string}){
+    useVoiceWorkspace({ moduleId: 'office', companyId: '', companyName: '' });
     const wm=useWindowManager();
     const open=(...args:Parameters<typeof wm.open>)=>{onNavigate?.();return wm.open(...args);};
     const {desktop,state:desktopState}=useDesktop();
     const [voiceError,setVoiceError]=useState<string|null>(null);
     const titleSlot=useTitleSlot(windowId);
     const openRoom=(room:Room)=>open('company',{payload:{companyId:room.companyId,companyName:room.name}});
-    const openDesk=(room:Room,desk:Desk)=>open('team',{payload:{companyId:room.companyId,companyName:room.name,role:desk.role,...(desk.jobId?{jobId:desk.jobId}:{})}});
+    const openDesk=(room:Room,desk:Desk)=>open(desk.instanceId?'work':'team',{payload:{companyId:room.companyId,companyName:room.name,role:desk.role,...(desk.instanceId?{assignedMemberId:desk.instanceId,ownerKind:'additional'}:{}),...(desk.jobId?{jobId:desk.jobId}:{})}});
     const startVoice=async()=>{
         setVoiceError(null);
         if(desktop?.startVoice){try{await desktop.startVoice();}catch{setVoiceError('Could not start voice. Open Ask and try again.');}}

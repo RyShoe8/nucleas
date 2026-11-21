@@ -20,6 +20,7 @@ const turnSchema = new Schema(
     mode: { type: String, enum: ['orchestrated', 'direct'] },
     /** Per-step record: which model handled each step and what it cost. */
     stages: { type: Schema.Types.Mixed },
+    workDraft: { type: Schema.Types.Mixed },
     /** Files attached to a user message: what they were and the text models were given (capped). */
     attachments: {
       type: [
@@ -31,6 +32,8 @@ const turnSchema = new Schema(
           text: { type: String, maxlength: 20_000 },
           error: String,
           describedBy: String,
+          assetId: String,
+          retentionError: String,
           _id: false,
         },
       ],

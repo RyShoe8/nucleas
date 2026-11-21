@@ -17,6 +17,7 @@ const { startAttention } = require('./attention.cjs');
 const { installWindowLifecycle } = require('./window-lifecycle.cjs');
 const taskbarSupported = supportsTaskbar(process.platform, require('node:os').release(), process.arch);
 const questions = createQuestionQueue();
+const captureWindows = new Set();
 let taskbar, attention, taskbarError = false;
 let taskbarStatus={mode:'connecting',detail:'Starting the taskbar…'};
 const targets = new Map();
@@ -85,6 +86,9 @@ function configureTaskbar() {
     native:supportsNativeTaskbar(process.platform,require('node:os').release(),process.arch),
     windows, openOffice: showLauncher, openAsk: () => openModule({ moduleId: 'assistant' }), submit: submitTaskbarQuestion,
     attention: () => attention?.snapshot() ?? { count: 0 }, openAttention: () => attention?.show(),
+    recording: () => captureWindows.size > 0,
+    openTool: tool => { const capture = [...captureWindows].find(w => !w.isDestroyed()); if (tool === 'recording' && capture) { capture.restore(); capture.show(); capture.focus(); return; } return openModule({ moduleId: 'tools', payload: { tool } }); },
+    openVoice: () => openModule({ moduleId: 'voice' }),
     onFailure: reason => { taskbarError = true;taskbarStatus={mode:'error',detail:reason};trayMenu();broadcast(); },
     onStatus: value=>{taskbarStatus=value;trayMenu();broadcast();},
   });
@@ -203,7 +207,11 @@ function openModule(raw) {
     // Closing frees the renderer. The tray, taskbar and any app can open Office again.
     if (isOffice) officeHiddenAt = Date.now();
   });
-  win.on('closed', () => { windows.delete(value.key); targets.delete(win); broadcast(); });
+  win.on('closed', () => { captureWindows.delete(win); windows.delete(value.key); targets.delete(win); broadcast(); });
+  // A crashed/reloaded renderer has lost its MediaRecorder. Never leave a phantom recording indicator.
+  const clearCapture = () => { if (captureWindows.delete(win)) taskbar?.broadcast(); };
+  win.webContents.on('render-process-gone', clearCapture);
+  win.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) clearCapture(); });
   // Keep the taskbar event-driven: never enumerate every window on the computer.
   for (const event of ['minimize', 'restore', 'show', 'hide']) win.on(event, broadcast);
   if (isOffice) win.on('minimize', () => { officeHiddenAt = Date.now(); });
@@ -266,6 +274,7 @@ else {
     trayMenu();
     tray.on('click', showLauncher);
     if (!globalShortcut.register('Alt+Space', () => testRun ? (launcher?.isVisible() ? launcher.hide() : showLauncher()) : toggleMain())) status('notice', 'Alt+Space is in use · open Nucleas from the tray');
+    ipcMain.handle('capture:state', (event, active) => { if (!moduleSender(event) || typeof active !== 'boolean') throw new Error('Not allowed'); const win = BrowserWindow.fromWebContents(event.sender); if (!win) return; if (active) captureWindows.add(win); else captureWindows.delete(win); taskbar?.broadcast(); });
     ipcMain.handle('launcher:show', event => { if (!moduleSender(event)) throw new Error('Not allowed'); showLauncher(); });
     ipcMain.handle('module:open', (event, value) => { if (!moduleSender(event)) throw new Error('Not allowed'); return openModule(value); });
     ipcMain.handle('ask:pending', event => { if (!askSender(event)) throw new Error('Not allowed'); return questions.peek(); });

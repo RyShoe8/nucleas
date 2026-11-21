@@ -5,7 +5,8 @@ import type { CostLevel } from '@/lib/ai/engine/select';
 import type { ExtraToolSet } from '@/lib/ai/tools/runToolLoop';
 import type { ProgressFn } from '@/lib/ai/progress';
 import { startCodeChange, type BuildView } from '@/lib/building/builds';
-import { createJob, type JobView } from '@/lib/jobs/jobs';
+import type { JobView } from '@/lib/jobs/jobs';
+import { proposeWork, type WorkDraft } from '@/lib/work/drafts';
 import { companiesWithRepositories } from '@/lib/building/companyCode';
 import { matchCompany } from './companyTools';
 
@@ -18,6 +19,7 @@ import { matchCompany } from './companyTools';
 export interface ActionResults {
   build?: BuildView;
   job?: JobView;
+  workDraft?: WorkDraft;
 }
 
 export async function withActionTools(
@@ -54,7 +56,7 @@ export async function withActionTools(
       function: {
         name: 'design_job',
         description:
-          'Have Nucleas design a job: non-code work for a company (research and collect details, add items to a catalog, content, outreach like earning backlinks, anything repeating such as "every day…"). Nucleas investigates, asks what it must, and a person approves it.',
+          'Propose a Give work agreement for a company: non-code work, content, outreach or repeating responsibilities. The user confirms its outcome, owner, quality standard and schedule in the shared form before planning begins. This tool does not start or schedule anything.',
         parameters: {
           type: 'object',
           properties: {
@@ -91,17 +93,14 @@ export async function withActionTools(
       return JSON.stringify({ ok: true, planning: proposal.build.title, next: 'The plan is being drafted in the background and will appear in Building in a few minutes for the user to approve, edit or reject. Tell them that; do not describe the plan as finished.' });
     }
 
-    if (results.job) return JSON.stringify({ ok: false, error: 'A job was already designed in this reply.' });
-    options.onProgress?.(`Designing a job for ${company.name}`);
-    const created = await createJob(options.viewer, { companyId: company.id, request, level: options.level, signal: options.signal, onProgress: options.onProgress });
-    if (!created.ok) return JSON.stringify({ ok: false, error: created.error });
-    results.job = created.job;
+    if (results.workDraft) return JSON.stringify({ ok: false, error: 'A work agreement was already proposed in this reply.' });
+    results.workDraft = proposeWork(company, request);
+    results.workDraft.level = options.level;
     return JSON.stringify({
       ok: true,
-      status: created.job.status,
-      title: created.job.design?.title,
-      questions: created.job.design?.questions.map((q) => q.question) ?? [],
-      next: created.job.status === 'needs_answers' ? 'The questions are shown to the user to answer.' : 'The design is shown to the user to approve.',
+      status: 'agreement_draft',
+      title: request.slice(0, 120),
+      next: 'The Give work agreement is shown for the user to confirm the owner, definition of done, and timing. Nothing is started or scheduled.',
     });
   };
 

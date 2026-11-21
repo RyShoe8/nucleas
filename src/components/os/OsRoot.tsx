@@ -1,4 +1,5 @@
 'use client';
+import './shell/MobileWorkspace.css';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import VoiceProvider from '@/components/voice/VoiceProvider';
@@ -19,6 +20,9 @@ import { OsInstallProvider } from './shell/OsInstallProvider';
 import { OsCommandPaletteProvider } from './shell/OsCommandPaletteContext';
 import { warmPopoutScreenCache } from '@/lib/os/popoutPlacement';
 import { registerOsServiceWorker } from '@/lib/os/pwaServiceWorker';
+import { VoiceWorkspaceContext } from './voice/VoiceWorkspace';
+import { executeOsVoiceIntent, type OsVoiceScope } from '@/lib/voice/osVoiceIntent';
+import { askNucleas, setAssistantFocus } from '@/lib/os/assistantFocus';
 
 // Register modules once at module load so the registry is ready before any
 // render. `registerOsModules` itself is idempotent.
@@ -51,7 +55,7 @@ export default function OsRoot({ children }: OsRootProps) {
  * Inner layer that wires intent confirmation + voice. Must live inside
  * WindowManagerProvider so it can read window state for voice context.
  */
-export function OsIntentLayer({ children, voiceControls = true }: { children: ReactNode; voiceControls?: boolean }) {
+export function OsIntentLayer({ children, voiceControls = true, moduleContext }: { children: ReactNode; voiceControls?: boolean; moduleContext?: OsVoiceScope }) {
     const auth = useOsAuth();
     const wm = useWindowManager();
     const [paletteOpen, setPaletteOpen] = useState(false);
@@ -61,21 +65,53 @@ export function OsIntentLayer({ children, voiceControls = true }: { children: Re
     // (voice, command palette, registered commands) can read fresh state
     // without re-binding their identity every render.
     const wmRef = useRef(wm);
+    const moduleRef = useRef(moduleContext);
+    useEffect(() => { moduleRef.current = moduleContext; }, [moduleContext]);
+    const scopes = useRef(new Map<symbol, { scope: OsVoiceScope; priority: number }>());
+    const registerScope = useCallback((scope: OsVoiceScope, priority: number) => {
+        const id = Symbol(); scopes.current.set(id, { scope, priority });
+        return () => { scopes.current.delete(id); };
+    }, []);
     useEffect(() => {
         wmRef.current = wm;
     }, [wm]);
 
     const getOsVoiceContext = useCallback(() => {
         const current = wmRef.current;
+        const scoped = [...scopes.current.values()].sort((a, b) => a.priority - b.priority).reduce<OsVoiceScope>((result, value) => ({ ...result, ...value.scope }), {});
         return buildOsVoiceContext({
             openModuleIds: current.windows.map((w) => w.moduleId),
             focusedModuleId: current.activeWindow?.moduleId ?? null,
             focusedWindowId: current.activeWindowId,
-        });
+        }, { ...moduleRef.current, ...current.activeWindow?.payload, moduleId: moduleRef.current?.moduleId ?? current.activeWindow?.moduleId, ...scoped });
     }, []);
 
-    const handleOsIntent = useCallback((intent: ParsedIntent) => {
+    const handleOsIntent = useCallback(async (intent: ParsedIntent) => {
         const current = wmRef.current;
+
+        if (intent.type === 'OS_NAVIGATE' || intent.type === 'ASK_NUCLEAS') {
+            try {
+                return await executeOsVoiceIntent(intent, {
+                    companies: async () => { const response = await fetch('/api/os/companies'); if (!response.ok) throw Error('Could not read your companies. Try again.'); return (await response.json()).companies; },
+                    open: (moduleId, payload) => {
+                        const mod = ModuleRegistry.get(moduleId);
+                        if (!mod || (mod.permissions === 'admin' && !auth.isAdmin && auth.role !== 'Administrator') || (mod.permissions === 'manager' && !auth.isManagerOrAdmin)) throw Error('Your account cannot open that workspace.');
+                        if (moduleId === 'assistant') setAssistantFocus(payload?.companyId ? { companyId: payload.companyId, companyName: payload.companyName } : null);
+                        current.open(moduleId, { payload });
+                    },
+                    ask: (text, company) => {
+                        const focus = company ? { companyId: company.id, companyName: company.name } : null;
+                        setAssistantFocus(focus);
+                        if (window.nucleasDesktop && getOsVoiceContext().os?.moduleId !== 'assistant') {
+                            current.open('assistant', { payload: { ask: text, askId: crypto.randomUUID(), ...(focus ?? {}) } });
+                        } else {
+                            askNucleas(text, focus);
+                            if (!window.nucleasDesktop) current.open('assistant');
+                        }
+                    },
+                });
+            } catch (error) { return { success: false, message: error instanceof Error ? error.message : 'Could not open this workspace.' }; }
+        }
 
         if (intent.type === 'RUN_COMMAND') {
             const id = intent.slots.commandId;
@@ -103,9 +139,9 @@ export function OsIntentLayer({ children, voiceControls = true }: { children: Re
 
         return {
             success: false,
-            message: 'OS Phase 1 cannot execute that yet. Try opening a module or running a command.',
+            message: 'Ask Nucleas to help with this request; work and changes use the usual review process.',
         };
-    }, []);
+    }, [auth.isAdmin, auth.role, auth.isManagerOrAdmin, getOsVoiceContext]);
 
     const onPaletteExecuted = useCallback(
         (r: { success: boolean; message: string }) => {
@@ -174,18 +210,20 @@ export function OsIntentLayer({ children, voiceControls = true }: { children: Re
             <VoiceProvider
                 isPlatformAdmin={auth.isAdmin}
                 getWorkspaceContext={getOsVoiceContext}
+                allowWakeWord={!moduleContext || moduleContext.moduleId === 'assistant'}
             >
                 <OsCommandPaletteProvider
                     openCommandPalette={openPalette}
                     toggleCommandPalette={togglePalette}
                 >
-                    {children}
+                    <VoiceWorkspaceContext.Provider value={registerScope}>{children}</VoiceWorkspaceContext.Provider>
                 </OsCommandPaletteProvider>
                 {auth.isAdmin ? (
                 <CommandPalette
                     isOpen={paletteOpen}
                     onClose={() => setPaletteOpen(false)}
                     workspaceIntentContext={voiceContextSnapshot}
+                    getWorkspaceIntentContext={getOsVoiceContext}
                     nlError={paletteNlError}
                 />
                 ) : null}

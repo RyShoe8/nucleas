@@ -4,9 +4,20 @@ vi.mock('server-only', () => ({}));
 const caps: Record<string, number | null> = { acme: 500_000, other: 3_000_000, unset: null };
 vi.mock('./settings', () => ({ readBudgetSettings: async (organizationId: string) => ({ value: { itemCapMicros: caps[organizationId] ?? null } }) }));
 
-import { DEFAULT_ITEM_CAP_MICROS, itemCapRefusal, itemSpend, readItemCapMicros, recordItemSpend, withItemCap } from './itemCap';
+import { DEFAULT_ITEM_CAP_MICROS, itemCapRefusal, itemSpend, readItemCapMicros, recordItemSpend, withItemCap, withItemAllowance } from './itemCap';
 
 describe('the cap on a single piece of work', () => {
+  it('honors a smaller enclosing request cap as well as the target allowance', async () => {
+    await withItemCap('question', async () => {
+      recordItemSpend(480_000);
+      await withItemAllowance('target', 1_000_000, async () => {
+        recordItemSpend(20_000);
+        expect(itemSpend()?.spentMicros).toBe(20_000);
+        expect(await itemCapRefusal('acme')).toContain('question');
+      });
+      expect(itemSpend()?.spentMicros).toBe(500_000);
+    });
+  });
   it('lets paid calls run until the total reaches the organization cap, then refuses with a budget message', async () => {
     await withItemCap('question', async () => {
       expect(await itemCapRefusal('acme')).toBeNull();

@@ -7,17 +7,19 @@ import { teamBoardContext } from './teamBoard';
 import { playbookText } from './teamPlaybooks';
 
 /** Bounded, company-scoped memory. Human review notes are feedback, never facts or new permissions. */
-export async function companyTeamContext(job: { _id?: Types.ObjectId; organizationId: Types.ObjectId; companyId: Types.ObjectId; teamRole?: string | null; request?: string; design?: unknown }): Promise<string> {
+export async function companyTeamContext(job: { _id?: Types.ObjectId; organizationId: Types.ObjectId; companyId: Types.ObjectId; assignedMemberId?: Types.ObjectId; teamRole?: string | null; request?: string; design?: unknown }): Promise<string> {
   const role = teamRoleFor(job);
   const scope = { organizationId: job.organizationId, companyId: job.companyId };
   const [profiles, work, board] = await Promise.all([
-    CompanyTeam.find({ ...scope, role: { $in: [role, 'operations'] } }).select('role remit lessons displayName identityName specialty active').lean(),
-    Job.find(scope).select('teamRole request design.skill design.title design.category').sort({ updatedAt: -1 }).limit(200).lean(),
+    CompanyTeam.find({ ...scope, role: { $in: [role, 'operations'] } }).select('role remit lessons displayName identityName specialty active specialists').lean(),
+    Job.find(scope).select('teamRole assignedMemberId request design.skill design.title design.category').sort({ updatedAt: -1 }).limit(200).lean(),
     teamBoardContext(job.organizationId, job.companyId, { plan: 8, evidence: 10 }).catch(() => ''),
   ]);
-  const own = profiles.find(p => p.role === role);
+  const primary = profiles.find(p => p.role === role);
+  const specialist = primary?.specialists?.find(s => String(s._id) === String(job.assignedMemberId));
+  const own = specialist ? { ...primary, ...specialist, identityName: specialist.displayName } : primary;
   const operations = profiles.find(p => p.role === 'operations');
-  const ids = work.filter(j => teamRoleFor(j) === role).map(j => j._id);
+  const ids = work.filter(j => teamRoleFor(j) === role && (specialist ? String(j.assignedMemberId) === String(specialist._id) : !j.assignedMemberId || String(j.assignedMemberId) === String(primary?._id))).map(j => j._id);
   const feedback = ids.length ? await JobRun.find({ ...scope, jobId: { $in: ids }, decidedByUserId: { $exists: true }, status: { $in: ['completed', 'rejected'] }, decisionNote: { $exists: true, $ne: '' } })
     .select('status decisionNote updatedAt').sort({ updatedAt: -1 }).limit(6).lean() : [];
   return [

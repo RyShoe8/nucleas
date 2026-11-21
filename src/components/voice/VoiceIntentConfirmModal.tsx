@@ -20,6 +20,7 @@ function intentNeedsProject(intent: ParsedIntent): boolean {
 function formatContextSummary(ctx: PendingIntentConfirmation['contextSnapshot']): string | null {
   if (!ctx) return null;
   const parts: string[] = [];
+  if (ctx.view.lens === 'os') return [ctx.os?.companyName || 'All companies', ctx.os?.section || ctx.os?.moduleId].filter(Boolean).join(' · ');
   if (ctx.projectName) parts.push(`Project: ${ctx.projectName}`);
   else if (ctx.projectId) parts.push(`Project id: ${ctx.projectId}`);
   if (ctx.phase) parts.push(`Phase: ${ctx.phase}`);
@@ -48,25 +49,29 @@ export default function VoiceIntentConfirmModal({
 
   const needProject = intentNeedsProject(pending.intent);
   const projects = pending.contextSnapshot?.projects ?? [];
-  const summary = formatContextSummary(pending.contextSnapshot);
+  const summary = pending.intent.type === 'OS_NAVIGATE'
+    ? [pending.intent.slots.companyQuery || pending.intent.slots.companyName, pending.intent.slots.section || pending.intent.slots.tool || pending.intent.slots.moduleId, pending.intent.slots.period ? `${pending.intent.slots.period} days` : ''].filter(Boolean).join(' · ')
+    : formatContextSummary(pending.contextSnapshot);
 
   const selectedProjectId = pending.intent.slots.projectId?.trim() ?? '';
 
   const canConfirm = !needProject || (!!selectedProjectId && projects.length > 0);
+  const os = ['OS_NAVIGATE', 'ASK_NUCLEAS'].includes(pending.intent.type);
+  const asking = pending.intent.type === 'ASK_NUCLEAS';
 
   return (
-    <Modal isOpen={open} onClose={onCancel} title="Confirm action" maxWidth="md" stackAboveOverlays>
+    <Modal isOpen={open} onClose={onCancel} title={os ? asking ? 'Send to Ask Nucleas' : 'Open workspace' : 'Confirm action'} maxWidth="md" appearance={os ? 'theme' : 'light'} stackAboveOverlays>
       <div className="space-y-4">
-        <p className="text-sm text-text-secondary">
+        {!os && <p className="text-sm text-text-secondary">
           Source:{' '}
           <span className="text-text-primary font-medium">
             {pending.parseSource} ({pending.origin})
           </span>
-        </p>
+        </p>}
         {summary && (
           <div>
             <p className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-1">
-              Current context
+              {os ? 'Workspace' : 'Current context'}
             </p>
             <p className="text-sm text-text-primary">{summary}</p>
           </div>
@@ -75,14 +80,16 @@ export default function VoiceIntentConfirmModal({
           <p className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-1">
             {pending.origin === 'voice' ? 'Transcript' : 'Your command'}
           </p>
-          <p className="text-sm text-text-primary italic">&ldquo;{pending.sourceText}&rdquo;</p>
+          {asking ? <textarea aria-label="Your request" className="ui-control min-h-28 w-full text-base" value={pending.intent.slots.text ?? pending.sourceText} onChange={e => onPatchSlots({ text: e.target.value })} /> : <p className="text-sm text-text-primary italic break-words">&ldquo;{pending.sourceText}&rdquo;</p>}
         </div>
-        <div>
+        <details>
+          <summary className="cursor-pointer text-sm text-text-secondary">Command details</summary>
           <p className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-1">Parsed intent</p>
           <pre className="text-xs bg-background-secondary border border-border rounded-lg p-3 overflow-x-auto max-h-48 text-text-primary">
             {JSON.stringify({ type: pending.intent.type, slots: pending.intent.slots }, null, 2)}
           </pre>
-        </div>
+        </details>
+        {asking && <p className="text-sm text-text-secondary">Uses your current Ask mode and model level. Work agreements and external changes still follow their normal review steps.</p>}
 
         {needProject && projects.length > 0 && (
           <div>
@@ -123,8 +130,8 @@ export default function VoiceIntentConfirmModal({
           <Button type="button" variant="secondary" onClick={onCancel}>
             Cancel
           </Button>
-          <Button type="button" variant="primary" onClick={onConfirm} disabled={!canConfirm}>
-            Confirm
+          <Button type="button" variant="primary" onClick={onConfirm} disabled={!canConfirm || (asking && !pending.intent.slots.text?.trim())}>
+            {os ? asking ? 'Send request' : 'Open' : 'Confirm'}
           </Button>
         </div>
       </div>

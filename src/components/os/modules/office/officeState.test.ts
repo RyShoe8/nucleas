@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ActivityItem } from '@/lib/activity/types-client';
 import type { JobView } from '../jobs/JobCard';
-import { OFFICE_ROLES, buildOffice } from './officeState';
+import { OFFICE_ROLES, buildOffice, screenValue } from './officeState';
 
 const id = (c: string) => c.repeat(24);
 const job = (overrides: Record<string, unknown> = {}) => ({
@@ -14,6 +14,11 @@ const companies = [{ id: id('b'), name: 'PlayBound', color: '#378ADD' }, { id: i
 const build = (jobs: JobView[], activity: ActivityItem[] = [], today = []) => buildOffice({ companies, jobs, activity, today });
 
 describe('the office', () => {
+  it('renders Hearth AdX hundredths as dollars without inflating revenue', () => {
+    expect(screenValue(34_737, 'money')).toBe('$347.37');
+    expect(screenValue(0, 'money')).toBe('$0.00');
+    expect(screenValue(-12_345, 'money')).toBe('-$123.45');
+  });
   it('keeps a member working when another assignment is awaiting review',()=>{
     const rooms=build([job({opportunities:[{id:'o',status:'recommended',values:{opportunity_type:'Resource page'},updatedAt:'2026-11-09T00:00:00Z'}]}),job({id:id('d'),runs:[{id:'r',status:'running',progressState:{label:'Researching'}}]})]);
     const member=rooms[0].desks.find(d=>d.role==='marketing')!;
@@ -72,6 +77,6 @@ describe('the office', () => {
     const rooms = buildOffice({ companies, jobs: [], activity, today: [{ companyId: id('b'), metrics: { sessions: { current: 4120, change: 12, unit: 'count' }, revenue_total: { current: 1500, change: -3, unit: 'money' } } }] });
     const engineering = rooms[0]?.desks.find((d) => d.role === 'engineering');
     expect(engineering).toMatchObject({ state: 'waiting', says: 'Friend View fixes', waiting: 1 });
-    expect(rooms[0]?.screens).toEqual([{ label: 'Sessions', value: '4.1K', change: 12 }, { label: 'Revenue', value: '$1.5K', change: -3 }]);
+    expect(rooms[0]?.screens).toEqual([{ label: 'Sessions', value: '4.1K', change: 12 }, { label: 'Revenue', value: '$15.00', change: -3 }]);
   });
 });

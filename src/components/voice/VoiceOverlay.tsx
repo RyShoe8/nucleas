@@ -12,17 +12,18 @@ export function VoiceButton({ inline = false }: { inline?: boolean }) {
         <button
             type="button"
             onClick={voice.state === 'listening' ? voice.stopListening : voice.startListening}
+            disabled={voice.state === 'processing' || voice.state === 'confirming'}
             className={`${inline ? 'inline-flex h-11 w-11 sm:h-8 sm:w-8 shrink-0 self-end rounded-md' : 'hidden md:flex fixed bottom-20 md:bottom-6 right-6 z-[90] p-4 rounded-full shadow-2xl scale-110'} transition-colors items-center justify-center ${voice.state === 'listening'
                 ? 'bg-red-500 text-white animate-pulse ring-4 ring-red-500/20'
                 : voice.state === 'processing'
                     ? 'bg-yellow-500 text-white'
                     : voice.state === 'confirming'
                         ? 'bg-amber-600 text-white ring-4 ring-amber-500/25'
-                        : 'bg-indigo-600 text-white hover:bg-indigo-500'
+                        : 'bg-primary text-white hover:bg-primary-hover'
                 }`}
-            aria-label={voice.state === 'listening' ? 'Stop listening' : 'Start voice command'}
+            aria-label={voice.state === 'listening' ? 'Finish speaking' : 'Talk to Nucleas'}
             data-tour="voice-button"
-            title="Voice command (hold V)"
+            title="Ask a question, open a workspace, or describe work"
         >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -100,9 +101,9 @@ export default function VoiceOverlay({ controls = true }: { controls?: boolean }
                 </button>
             )}
             {voice.enabled &&
-                (voice.state !== 'idle' || voice.error || voice.resultMessage) && (
+                (voice.state === 'listening' || voice.state === 'processing' || voice.error || voice.resultMessage) && (
                     <div
-                        className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[100] w-full max-w-md"
+                        className="fixed bottom-[max(6rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-[100] w-[calc(100%_-_1rem)] max-w-md max-h-[50dvh] overflow-y-auto break-words"
                         role="status"
                         aria-live="polite"
                     >
@@ -127,19 +128,15 @@ export default function VoiceOverlay({ controls = true }: { controls?: boolean }
                                             <p className="text-gray-400 text-sm mt-1 italic">&ldquo;{voice.transcript}&rdquo;</p>
                                         )}
                                     </div>
-                                    <button
-                                        onClick={voice.stopListening}
-                                        className="text-gray-500 hover:text-white text-xs"
-                                    >
-                                        Cancel
-                                    </button>
+                                    <div className="flex flex-col gap-1"><button onClick={voice.stopListening} className="min-h-11 px-2 text-white text-sm">Finish</button><button onClick={voice.cancelListening} className="min-h-11 px-2 text-gray-300 hover:text-white text-xs">Cancel</button></div>
                                 </div>
                             )}
 
                             {voice.state === 'processing' && (
                                 <div className="flex items-center gap-3">
                                     <div className="w-5 h-5 border-2 border-yellow-400/30 border-t-yellow-400 rounded-full animate-spin" />
-                                    <p className="text-yellow-400 text-sm">Processing: &ldquo;{voice.transcript}&rdquo;</p>
+                                    <p className="flex-1 text-yellow-400 text-sm">Processing: &ldquo;{voice.transcript}&rdquo;</p>
+                                    <button type="button" className="min-h-11 px-2 text-sm text-white" onClick={voice.cancelListening}>Cancel</button>
                                 </div>
                             )}
 

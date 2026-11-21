@@ -19,7 +19,8 @@ import { formatResearchResultContext } from '@/lib/ai/tools/serverBrowseAssist';
 import { companiesWithRepositories } from '@/lib/building/companyCode';
 import { startCodeChange, type BuildView } from '@/lib/building/builds';
 import { describeToolCall, shortModel, type ProgressFn } from '@/lib/ai/progress';
-import { createJob, type JobView } from '@/lib/jobs/jobs';
+import type { JobView } from '@/lib/jobs/jobs';
+import { proposeWork, workDraftFields, type WorkDraft } from '@/lib/work/drafts';
 import { requestNeedsJob } from './responseRouting';
 import { addImage, addSource, emptyEvidence, finishEvidence, mergeEvidence, type AnswerEvidence } from '@/lib/ai/evidence';
 import { addChecksToEvidence, checkAnswerLinks, checkPages, describeChecks, describeSizes, linksToCheck, siteSizes, sitesIn, type PageCheck } from '@/lib/ai/research/pageChecks';
@@ -72,7 +73,7 @@ const planSchema = z.object({
   /** A change to a company's website or app code; planned against its repository and queued for approval. */
   codeChange: z.object({ company: z.string().max(200), request: z.string().min(5).max(4000) }).optional(),
   /** Non-code work to set up as a job (once or repeating); Nucleas designs it and a person approves. */
-  job: z.object({ company: z.string().max(200), request: z.string().min(5).max(4000) }).optional(),
+  job: workDraftFields.extend({ company: z.string().max(200), request: z.string().min(5).max(4000) }).optional(),
   /** Nothing Nucleas has can answer this: what is missing, and the tool it would build for itself. */
   capabilityGap: z.object({ need: z.string().min(5).max(1000), proposal: z.string().min(5).max(3000) }).optional(),
 });
@@ -177,6 +178,7 @@ export interface OrchestratedAnswer {
   build?: BuildView;
   /** A job Nucleas designed (or is asking questions about). */
   job?: JobView;
+  workDraft?: WorkDraft;
   /** What the answer is based on, for a person to check. */
   evidence?: AnswerEvidence;
 }
@@ -298,10 +300,15 @@ export function factSheet(results: { company: string; tool: string; result: Reco
       continue;
     }
     if (tool === 'nucleas_jobs' && Array.isArray(result.jobs)) {
+      if (result.coverage) lines.push(`Register coverage: ${JSON.stringify(result.coverage)}`);
       type JobLine = { name: string; owner?: string; status: string; schedule: string; lastRun: string | null; nextRun: string | null; waitingForYou: string[]; resultsGoOut: string | null; spentThisMonthUsd: number };
       const groups = result.jobs as { company: string; count: number; jobs: JobLine[] }[];
-      lines.push(`Nucleas jobs (${String(result.scope)}): ${groups.reduce((n, g) => n + g.count, 0)} in total.`);
-      if (!groups.length) lines.push('  No jobs are set up.');
+      lines.push(`Nucleas jobs (${String(result.scope)}): ${groups.reduce((n, g) => n + g.count, 0)} returned by the register.`);
+      if (!groups.length) lines.push('  No one-off or repeating jobs are included in this result. Check the coverage before claiming there are none.');
+      if (Array.isArray(result.responsibilities)) {
+        lines.push('Ongoing responsibilities (reserved allocation is not actual spend):');
+        for (const r of result.responsibilities) lines.push(`  - ${JSON.stringify(r)}`);
+      }
       for (const group of groups) {
         lines.push(`${group.company} (${group.count}):`);
         for (const job of group.jobs) {
@@ -341,6 +348,7 @@ function plannerPrompt(context: PortfolioContext, toolCatalog: string, today: st
     `- fetch: at most ${MAX_FETCH_JOBS} jobs, only for company data. Prefer company_metrics. Only request tools listed for that company. Put a tool's own arguments (listed after "Args:") in args, e.g. {"company":"<name>","tool":"search_results_read","args":{"query":"best slot apps","outlineTop":3}}.`,
     '- SEO data, cheapest first: keyword_ideas (free) for discovery and long-tail ideas from a seed; search_opportunities_read (free, the company\'s own Search Console) for what to improve, striking-distance queries, competing pages and declining pages; page_outline (free) for one page\'s structure; search_results_read (paid: one credit per phrase) only for a few shortlisted phrases, at most 3 per answer, with outlineTop 3 when the user wants a content brief or to know what ranks. keyword_ideas and page_outline need no company: set company to the company the question is about, or "general". Autocomplete has no search volumes; never invent volumes.',
     `- actions: only when the user explicitly asks for a change; at most ${MAX_ACTIONS}.`,
+    '- A job is a draft of the shared Give work agreement, not permission to start. Include mode once/repeating/ongoing, the owner role, and a concrete standard when supported by the request. Ongoing means improving a bounded collection until a measurable quality standard is met. Include a structured schedule only when the user specifies timing; do not invent a timezone or time. The user confirms missing details in Give work.',
     '- job: only for work that repeats or keeps watching ("every day…", "weekly…", "let me know when…"), work that acts outside this chat (adds to a catalog or site, publishes, sends, outreach such as earning backlinks), or when the user asks for a job. Restate the full request (what, for which company, how often, where results should go if said). Nucleas designs the job, asks what it must, and a person approves it. Leave fetch, research and actions empty when you set it. A one-time request for information is NEVER a job, however large: "find", "list", "rank", "compare", "research" and "build me a list" are answered right here with research or deepResearch. A change to site code is a codeChange.',
     '- codeChange: when the user asks to change, fix, add to or plan an edit of a company website or app (its code), OR reports something wrong on it that code would fix ("X shows up where it should not", "remove the listing under Y", a page URL plus a problem), and that company has a code repository listed below. Restate the full request so it stands alone, including any URL, what is wrong and what they want instead. It is planned against the repository and waits for approval; nothing is changed yet. Leave fetch, research and actions empty when you set it. Never answer such a report from guesses about the code.',
     `- team: the company's specialists. Bring one in whenever the answer needs judgement in their field: advice, a recommendation, a plan, a critique, a "should we" or "how do we" question. Bring in several (at most ${MAX_TEAM}) when the question crosses fields, for example a redesign that affects sign-ups needs design and marketing, and a new feature needs engineering and design. Give each the exact question for them. Each member has an intern who searches the web for them first. For "what should we do", "should we" and "how do we" questions always bring in the member whose field it is, and also request the company figures the answer will turn on (fetch). Leave team empty only for plain lookups of a fact or figure. Members: ${ACTIVE_ROLES.map((role) => `${role} (${TEAM[role].remit})`).join('; ')}`,
@@ -605,19 +613,10 @@ async function runAskOrchestratorUncapped(
     if (!company) {
       return { role: 'assistant', text: `I couldn't tell which company "${plan.job.company}" is. Which company is this job for?`, stages, invocationIds: [], costMicros, runId: planTurn.runId };
     }
-    const request = input.attachments ? `${plan.job.request}\n\nAttached by the user:\n${input.attachments}`.slice(0, 6000) : plan.job.request;
-    say(`Designing a job for ${company.name}`);
-    const created = await createJob(viewer, { companyId: company.id, request, level: input.level, signal: input.signal, onProgress: input.onProgress });
-    if (!created.ok) return { role: 'status', text: `I couldn't set up that job: ${created.error}`, stages, invocationIds: [], costMicros, runId: planTurn.runId };
-    const job = created.job;
-    stages.push({ stage: 'job', note: job.status === 'needs_answers' ? `${job.design?.questions.length ?? 0} question(s)` : job.status });
-    const text =
-      job.status === 'needs_answers'
-        ? `I looked into **${company.name}** to set this up. A few things only you can decide are below — answer them and I'll finish the design.`
-        : job.status === 'proposed'
-          ? `Here's the job I designed for **${company.name}**: **${job.design?.title}**. Choose review or automatic completion and approve it to start a dry run; nothing runs for real until you accept the sample.`
-          : `I couldn't finish preparing this responsibility: ${job.error ?? 'unknown error'}`;
-    return { role: job.status === 'failed' ? 'status' : 'assistant', text, stages, invocationIds: [], costMicros, runId: planTurn.runId, job };
+    const workDraft = proposeWork(company, plan.job.request, plan.job);
+    workDraft.level = input.level;
+    stages.push({ stage: 'job', note: 'Prepared a Give work draft; no work started or scheduled.' });
+    return { role: 'assistant', text: `Review the work agreement for **${company.name}** below. Confirm the owner, definition of done, and timing before preparing the execution plan.`, stages, invocationIds: [], costMicros, runId: planTurn.runId, workDraft };
   }
 
   // Code change: plan it against the company's repository and hold it for approval.

@@ -23,7 +23,7 @@ export default function ContentModule({ initialTab, initialCompanyId, initialArt
                     <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'ui-button-primary' : 'ui-button'} onClick={() => setTab(t.id)}>{t.label}</button>
                 ))}
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto">{tab === 'articles' ? <ArticlesPanel key={initialArticleId} initialArticleId={initialArticleId} /> : tab === 'updates' ? <ReleaseUpdatesPanel initialCompanyId={initialCompanyId} /> : <JobsModule categories={['content']} title="Content" initialCompanyId={initialCompanyId} />}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto">{tab === 'articles' ? <ArticlesPanel key={`${initialCompanyId}:${initialArticleId}`} initialCompanyId={initialCompanyId} initialArticleId={initialArticleId} /> : tab === 'updates' ? <ReleaseUpdatesPanel initialCompanyId={initialCompanyId} /> : <JobsModule categories={['content']} title="Content" initialCompanyId={initialCompanyId} />}</div>
         </div>
     );
 }

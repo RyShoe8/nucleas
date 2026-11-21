@@ -778,10 +778,10 @@ describe('jobs from Ask', () => {
     const steps: string[] = [];
     const context = await resolvePortfolioContext(admin, { message: 'Every day build a follow link for Frugal Gambler' });
     const answer = await runAskOrchestrator(admin, { text: 'Every day build a follow link for Frugal Gambler', context, projectId: new Types.ObjectId(), history: [], level: 'low', onProgress: (t) => steps.push(t) });
-    expect(createJob).toHaveBeenCalledWith(admin, expect.objectContaining({ request: 'Every day, earn one dofollow backlink to a Frugal Gambler page', level: 'low' }));
-    expect(answer.job).toMatchObject({ id: 'j1', status: 'needs_answers' });
-    expect(answer.text).toContain('only you can decide');
-    expect(steps).toContain('Designing a job for Frugal Gambler');
+    expect(createJob).not.toHaveBeenCalled();
+    expect(answer.workDraft).toMatchObject({ companyName: 'Frugal Gambler', mode: 'repeating', outcome: 'Every day, earn one dofollow backlink to a Frugal Gambler page' });
+    expect(answer.text).toContain('work agreement');
+    expect(answer.job).toBeUndefined();
     expect(chat).toHaveBeenCalledTimes(1);
   });
 });

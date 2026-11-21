@@ -7,16 +7,16 @@ import { readServiceData } from '@/lib/companies/serviceData';
 import { periodDates, summarizePeriod, type PeriodCoverage } from './period';
 import type { ServiceReport } from '@/lib/companies/serviceReport';
 
-function withServiceMetrics(views: MetricView[], report: ServiceReport | null, periodDays = 7, now = new Date()): MetricView[] {
+function withServiceMetrics(views: MetricView[], report: ServiceReport | null, periodDays = 7, now = new Date(), through?: string): MetricView[] {
   if (!report) return views;
   const replaced = new Set(['leads_new', 'customers_new', 'contacts_total', 'subscribers_active', 'subscriber_revenue', 'mrr', 'yrr']);
   const out = views.filter(v => !replaced.has(v.key));
   for (const [key, label, rows] of [
     ['leads_new', 'New leads', report.leads], ['bookings_new', 'Bookings created', report.bookings], ['customers_new', 'New customers', report.customers],
   ] as const) {
-    out.push({ key, label, unit: 'count', kind: 'daily', ...summarizePeriod(rows, periodDates(periodDays * 2, now, report.timezone), periodDays), source: 'Connected service admin', timezone: report.timezone, updatedAt: report.generatedAt });
+    out.push({ key, label, unit: 'count', kind: 'daily', ...summarizePeriod(rows, periodDates(periodDays * 2, now, through ? 'UTC' : report.timezone), periodDays), source: 'Connected service admin', timezone: report.timezone, updatedAt: report.generatedAt });
   }
-  out.push({ key: 'customers_total', label: 'Customers', unit: 'count', kind: 'snapshot', series: [], current: report.customersTotal, previous: null, change: null, lastDay: null, source: 'Connected service admin', asOf: report.generatedAt.slice(0, 10), updatedAt: report.generatedAt });
+  if (!through || report.generatedAt.slice(0, 10) <= through) out.push({ key: 'customers_total', label: 'Customers', unit: 'count', kind: 'snapshot', series: [], current: report.customersTotal, previous: null, change: null, lastDay: null, source: 'Connected service admin', asOf: report.generatedAt.slice(0, 10), updatedAt: report.generatedAt });
   return out;
 }
 
@@ -156,11 +156,11 @@ export interface CompanyMetricsView {
 export async function getCompanyMetrics(
   viewer: CompanyViewer,
   companyId: string,
-  options: { days?: number; periodDays?: number; includeSensitive?: boolean; now?: Date; site?: string | null } = {}
+  options: { days?: number; periodDays?: number; includeSensitive?: boolean; now?: Date; site?: string | null; through?: string } = {}
 ): Promise<CompanyMetricsView | null> {
   const profile = await getCompanyProfile(viewer, companyId);
   if (!profile) return null;
-  const now = options.now ?? new Date();
+  const now = options.through ? new Date(Date.parse(`${options.through}T00:00:00Z`) + 86_400_000) : options.now ?? new Date();
   const days = Math.min(Math.max(options.days ?? 28, 14), 365);
   const periodDays = Math.min(Math.max(Math.floor(options.periodDays ?? 7), 1), 90);
   const defs = METRICS.filter((m) => !m.sensitive || options.includeSensitive);
@@ -175,15 +175,15 @@ export async function getCompanyMetrics(
     const rows = await MetricSiteSnapshot.find({ companyId: cid, site, metricKey: { $in: defs.map((m) => m.key) }, date: { $gte: since } })
       .select('metricKey date value breakdown updatedAt')
       .lean<{ metricKey: string; date: string; value: number; breakdown?: Record<string, number>; updatedAt?: Date }[]>();
-    const views = withTotalRevenue(defs.map((m) => buildView(m, rows.filter((r) => r.metricKey === m.key), now, days, periodDays)).filter((v): v is MetricView => v !== null));
+    const views = withTotalRevenue(defs.map((m) => buildView(m, rows.filter((r) => r.metricKey === m.key && (!options.through || r.date <= options.through)), now, days, periodDays)).filter((v): v is MetricView => v !== null));
     const shown = new Set(views.map((v) => v.key));
     const companyWideOnly = defs.filter((m) => !shown.has(m.key) && !m.key.startsWith('social_sessions_')).map((m) => m.label);
     return { lastSyncedAt: state?.lastSuccessAt?.toISOString() ?? null, metrics: views, changes: whatChanged(views), sites, site, companyWideOnly };
   }
   const rows = await loadRows([cid], defs.map((m) => m.key), since);
   const views = withServiceMetrics(withTotalRevenue(
-    defs.map((m) => buildView(m, rows.filter((r) => r.metricKey === m.key), now, days, periodDays)).filter((v): v is MetricView => v !== null)
-  ), await readServiceData(viewer.organizationId, companyId), periodDays, now);
+    defs.map((m) => buildView(m, rows.filter((r) => r.metricKey === m.key && (!options.through || r.date <= options.through)), now, days, periodDays)).filter((v): v is MetricView => v !== null)
+  ), await readServiceData(viewer.organizationId, companyId), periodDays, now, options.through);
   return { lastSyncedAt: state?.lastSuccessAt?.toISOString() ?? null, metrics: views, changes: whatChanged(views), sites, site: null, companyWideOnly: [] };
 }
 

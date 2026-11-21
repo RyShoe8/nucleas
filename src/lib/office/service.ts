@@ -31,7 +31,7 @@ async function loadRooms(viewer:CompanyViewer,previous:OfficeScene|null) {
   const assignments=await companyAssignments(viewer.organizationId,companies.map(c=>c.id));
   const rooms=buildOffice({companies:companies.map(c=>({...c,logo:logoByCompany.get(c.id)??c.logo})),jobs,activity,today:today?.rows??[],assignments,now:Date.now()});
   rooms.unshift({kind:'management',companyId:'management',name:'Management',relationship:'internal',color:'#6eae83',description:'The human team',waiting:0,working:0,screens:[],desks:humans.map(person=>{
-    const reports=assignments.filter(a=>a.active&&(a.reviewerEmployeeId===String(person._id)||(!a.reviewerEmployeeId&&String(person.userId)===String(scope.organizationId)))).map(a=>({companyId:a.companyId,companyName:companies.find(c=>c.id===a.companyId)?.name??'Company',role:a.role,name:a.displayName}));
+    const reports=assignments.filter(a=>a.active&&(a.reviewerEmployeeId===String(person._id)||(!a.reviewerEmployeeId&&String(person.userId)===String(scope.organizationId)))).map(a=>({instanceId:a.additional?a.id:undefined,companyId:a.companyId,companyName:companies.find(c=>c.id===a.companyId)?.name??'Company',role:a.role,name:a.displayName}));
     return {human:true,employeeId:String(person._id),role:'operations',name:person.name,specialty:person.jobTitle||person.role,state:'idle',says:'Human teammate',jobs:reports.length,waiting:0,reports};
   })});
   if(!metricsDue)for(const room of rooms)room.screens=previous!.world.suites.find(s=>s.room.companyId===room.companyId)?.room.screens??[];

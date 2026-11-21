@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const local = location.protocol === 'file:';
 if (local || location.origin === 'https://nucleas.app') {
   contextBridge.exposeInMainWorld('nucleasDesktop', Object.freeze({
+    captureState: active => ipcRenderer.invoke('capture:state', Boolean(active)),
     showLauncher: () => ipcRenderer.invoke('launcher:show'),
     openModule: (moduleId, payload) => ipcRenderer.invoke('module:open', { moduleId, payload }),
     // An app window can be told to start listening; it cannot start voice in another window itself.

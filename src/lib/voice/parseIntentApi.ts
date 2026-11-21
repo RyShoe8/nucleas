@@ -2,9 +2,10 @@ import type { ParsedIntent } from '@/lib/voice/IntentParser';
 import type { WorkspaceIntentContextPayload } from '@/lib/voice/workspaceIntentContext';
 import { rescueCreateTaskIntent, voiceLlmIntentToParsedIntent } from '@/lib/voice/llmIntentAdapter';
 import { enrichIntentWithContext } from '@/lib/voice/enrichIntentWithContext';
+import { parseOsVoiceIntent } from './osVoiceIntent';
 
 export type ParseIntentWithContextResult =
-  | { ok: true; intent: ParsedIntent | null; source: 'llm'; llmRaw?: unknown }
+  | { ok: true; intent: ParsedIntent | null; source: 'llm' | 'rules'; llmRaw?: unknown }
   | { ok: false; status: number; error: string };
 
 function contextForApi(ctx: WorkspaceIntentContextPayload | undefined): Record<string, unknown> | undefined {
@@ -18,6 +19,7 @@ export async function parseIntentWithContext(
   input: string,
   workspaceContext?: WorkspaceIntentContextPayload | null
 ): Promise<ParseIntentWithContextResult> {
+  if (workspaceContext?.view.lens === 'os') return { ok: true, intent: parseOsVoiceIntent(input, workspaceContext), source: 'rules' };
   try {
     const apiContext = contextForApi(workspaceContext ?? undefined);
 

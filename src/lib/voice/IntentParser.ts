@@ -4,6 +4,8 @@
  */
 
 type IntentType =
+    | 'OS_NAVIGATE'
+    | 'ASK_NUCLEAS'
     | 'NAVIGATE'
     | 'SET_TIMEFRAME'
     | 'FILTER_PHASE'

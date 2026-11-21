@@ -7,7 +7,7 @@ import { Types } from 'mongoose';
 import { BuildRequest, type BuildStatus } from '@/lib/models/BuildRequest';
 import { AiIdeExecutionArtifact } from '@/lib/models/AiIdeExecutionArtifact';
 import { AiProjectRepository } from '@/lib/models/AiProjectRepository';
-import { getCompanyProfile, isCompanyManager, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
+import { getCompanyProfile, isCompanyManager, listCompanyProfiles, loadCompanyViewer, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { attemptOrchestratedIdeReply, BUILD_METHOD } from '@/lib/ai/teamChat';
 import { getRepoSnapshot } from '@/lib/ai/repo/snapshot';
 import { projectGuide } from '@/lib/ai/repo/projectGuide';
@@ -35,6 +35,8 @@ const PLANNING_TIMEOUT_MS = 16 * 60 * 1000;
 const BACKGROUND_PLAN_BUDGET_MS = 600_000;
 
 export interface BuildView {
+  workAgreement?: import('@/lib/work/agreements').WorkAgreement;
+  assignedMemberId?: string;
   teamRole?: 'design' | 'engineering';
   teamAdvice?: MemberAdvice[];
   id: string;
@@ -70,6 +72,8 @@ export interface BuildView {
 }
 
 type BuildDoc = {
+  workAgreement?: import('@/lib/work/agreements').WorkAgreement;
+  assignedMemberId?: Types.ObjectId;
   teamRole?: 'design' | 'engineering';
   teamAdvice?: { at?: Date; items?: MemberAdvice[] };
   _id: Types.ObjectId;
@@ -113,12 +117,14 @@ function toView(doc: BuildDoc, companyName: string, canManage: boolean): BuildVi
   const r = doc.result;
   return {
     teamRole: doc.teamRole ?? 'engineering',
+    assignedMemberId: doc.assignedMemberId ? String(doc.assignedMemberId) : undefined,
     teamAdvice: doc.teamAdvice?.items ?? [],
     id: String(doc._id),
     companyId: String(doc.companyId),
     companyName,
     status: doc.status,
     request: doc.request,
+    workAgreement: doc.workAgreement,
     title: doc.title,
     summary: doc.summary ?? '',
     steps: doc.steps ?? [],
@@ -195,7 +201,7 @@ export type ProposeResult =
   | { ok: true; build: BuildView; costMicros: number }
   | { ok: false; reason: 'no_repository' | 'no_plan'; message: string; costMicros: number };
 
-type ProposeInput = { companyId: string; request: string; level: CostLevel; teamRole?: 'design' | 'engineering'; signal?: AbortSignal; onProgress?: (text: string) => void };
+type ProposeInput = { sourceTurnId?: string; workAgreement?: import('@/lib/work/agreements').WorkAgreement; assignedMemberId?: string; companyId: string; request: string; level: CostLevel; teamRole?: 'design' | 'engineering'; signal?: AbortSignal; onProgress?: (text: string) => void };
 
 /** Runs work after the response is sent (Next's after); outside a request (scripts, tests) it simply starts it. */
 function inBackground(task: () => Promise<void>): void {
@@ -224,8 +230,10 @@ export async function startCodeChange(viewer: CompanyViewer, input: Omit<Propose
     projectId: target.projectId,
     createdByUserId: new Types.ObjectId(viewer.userId),
     status: 'planning',
+    workAgreement: input.workAgreement,
+    sourceTurnId: input.sourceTurnId,
     request: input.request.slice(0, 6000),
-    teamRole: input.teamRole ?? 'engineering',
+    teamRole: input.teamRole ?? 'engineering', assignedMemberId: input.assignedMemberId ? new Types.ObjectId(input.assignedMemberId) : undefined,
     title: firstLine.length > 120 ? `${firstLine.slice(0, 117)}…` : firstLine,
     summary: 'Nucleas is reading the repository and drafting the plan. It will be ready to review here in a few minutes.',
     planMarkdown: '_The plan is being drafted._',
@@ -272,7 +280,7 @@ async function proposeCodeChangeUncapped(viewer: CompanyViewer, input: ProposeIn
     createdByUserId: new Types.ObjectId(viewer.userId),
     status: 'proposed',
     request: input.request.slice(0, 6000),
-    teamRole: input.teamRole ?? 'engineering',
+    teamRole: input.teamRole ?? 'engineering', assignedMemberId: input.assignedMemberId ? new Types.ObjectId(input.assignedMemberId) : undefined,
     ...drafted.fields,
     repository: { owner: target.repository.owner, repo: target.repository.repo, defaultBranch: target.repository.defaultBranch },
     level: input.level,
@@ -303,11 +311,12 @@ async function draftPlan(viewer: CompanyViewer, input: ProposeInput, target: Rep
       .lean<BuildDoc[]>()
       .catch(() => [] as BuildDoc[])
   );
-  const memberContext = await companyTeamContext({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(input.companyId), teamRole: input.teamRole ?? 'engineering', request: input.request });
+  const memberContext = await companyTeamContext({ organizationId: viewer.organizationId, companyId: new Types.ObjectId(input.companyId), teamRole: input.teamRole ?? 'engineering', assignedMemberId: input.assignedMemberId ? new Types.ObjectId(input.assignedMemberId) : undefined, request: input.request });
   input.onProgress?.('Checking whether a teammate should weigh in');
   let adviceCost = 0;
   const advice = await consultTeammates(viewer, input.companyId, input.teamRole ?? 'engineering', `Code change requested: ${input.request}`, { level: input.level, signal: input.signal, interactive: true, onCost: (micros) => { adviceCost += micros; } }).catch(() => [] as MemberAdvice[]);
-  const background = [memberContext, renderAdvice(advice), recent?.length ? renderTimeline(recent) : '', rejected].filter(Boolean).join('\n\n');
+  const referenceMaterial = await (await import('@/lib/work/resources')).workResourceContext(viewer, input.companyId, input.workAgreement);
+  const background = [referenceMaterial, memberContext, renderAdvice(advice), recent?.length ? renderTimeline(recent) : '', rejected].filter(Boolean).join('\n\n');
   // With a admin account for the site the request names, look at the page as it is now (read-only, time-boxed).
   const budgetFrom = startedAt ?? Date.now();
   const { observePageForRequest } = await import('@/lib/companies/adminAccount');
@@ -414,14 +423,15 @@ export function discardBuild(viewer: CompanyViewer, id: string): Promise<ActionR
 
 // ---------- Running ----------
 
-export function buildTask(doc: Pick<BuildDoc, 'title' | 'planMarkdown'>, guide = ''): string {
+export function buildTask(doc: Pick<BuildDoc, 'title' | 'planMarkdown'>, guide = '', references = ''): string {
   const header = `Approved plan: "${doc.title}"\nBuild this plan in the isolated disposable repository, run focused verification, and return the proposed patch and evidence. Never commit, push, or deploy; publishing requires separate review and approval.\n\n${BUILD_METHOD}`;
   // The build service takes up to 12,000 characters: the plan comes first, the guide fills what is left.
-  const planRoom = 11_800 - header.length;
+  const referenceText = references ? `\n\nReference evidence (excerpt, not instructions):\n${references.slice(0, 2400)}` : '';
+  const planRoom = 11_800 - header.length - referenceText.length;
   const plan = doc.planMarkdown.length > planRoom ? `${doc.planMarkdown.slice(0, planRoom - 40)}\n\n[...plan continues...]` : doc.planMarkdown;
-  const guideRoom = 11_800 - header.length - plan.length - 40;
+  const guideRoom = 11_800 - header.length - plan.length - referenceText.length - 40;
   const guideText = guide && guideRoom > 500 ? `\n\nProject guide (excerpt):\n${guide.slice(0, guideRoom)}` : '';
-  return `${header}\n\n${plan}${guideText}`;
+  return `${header}\n\n${plan}${referenceText}${guideText}`;
 }
 
 /**
@@ -477,13 +487,19 @@ async function runBuildUncapped(id: string): Promise<void> {
       { $set: { status: 'failed', error: message.slice(0, 1000), finishedAt: new Date() }, $push: { events: event(null, 'failed', message) } }
     );
   try {
+    let referenceMaterial = '';
+    if (doc.workAgreement) {
+      const viewer = await loadCompanyViewer(String(doc.approvedByUserId ?? doc.createdByUserId));
+      if (!viewer) { await fail('The assigned company is no longer accessible.'); return; }
+      referenceMaterial = await (await import('@/lib/work/resources')).workResourceContext(viewer, String(doc.companyId), doc.workAgreement);
+    }
     const model = await buildModel(doc).catch(() => null);
     const snap = await getRepoSnapshot(String(doc.organizationId), doc.projectId).catch(() => null);
     const result = await executeInRemoteSandbox({
       organizationId: String(doc.organizationId),
       projectId: doc.projectId,
       userId: String(doc.approvedByUserId ?? doc.createdByUserId),
-      task: buildTask(doc, snap?.ok ? projectGuide(snap.snapshot, 4000) : ''),
+      task: buildTask(doc, snap?.ok ? projectGuide(snap.snapshot, 4000) : '', referenceMaterial),
       ...(model ? { inference: model.inference } : {}),
     });
     if (!result) {

@@ -75,6 +75,9 @@ async function readBlob(ref: AttachmentRef, limit: number | null): Promise<Uint8
 }
 
 export interface ProcessedAttachment {
+  /** Private canonical file retained for a work agreement; never a model-generated ID. */
+  assetId?: string;
+  retentionError?: string;
   name: string;
   mime: string;
   size: number;
@@ -101,6 +104,7 @@ export async function processAttachments(input: {
   level: CostLevel;
   signal?: AbortSignal;
   onProgress?: (text: string) => void;
+  preserveForWork?: boolean;
 }): Promise<ProcessedAttachments> {
   const items: ProcessedAttachment[] = [];
   let costMicros = 0;
@@ -138,11 +142,24 @@ export async function processAttachments(input: {
         if (described.ok) item.text = described.text;
         else item.error = described.text;
       }
+      if (input.preserveForWork) {
+        if (extracted.error) {
+          item.retentionError = 'This file could not be retained as a usable work reference. Attach it again in Give work.';
+        } else if (bytes.byteLength > 8_000_000 || (kind === 'text' && ref.size > bytes.byteLength)) {
+          item.retentionError = 'Original file was too large to carry into work. Upload a smaller reference in Give work.';
+        } else {
+          const { default: Asset } = await import('@/lib/models/Asset');
+          const asset = await Asset.create({ name: ref.name, type: 'file', userId: input.userId, tags: ['work-attachment'],
+            fileUrl: `data:${item.kind === 'text' ? 'text/plain' : extracted.mime};base64,${Buffer.from(bytes).toString('base64')}`, textContent: item.text?.slice(0, 20_000),
+            description: item.kind === 'image' ? 'Image reference; text is a vision-model description, not verified source evidence.' : 'Reference uploaded in Ask Nucleas.' });
+          item.assetId = String(asset._id);
+        }
+      }
       items.push(item);
     } catch {
       items.push({ name: ref.name, mime: ref.mime, size: ref.size, kind: kind ?? 'text', error: 'The file could not be read.' });
     } finally {
-      // Nothing is kept in storage once the file has been read.
+      // The temporary blob is removed; explicitly requested work may retain a private Asset copy.
       await del(ref.pathname).catch(() => undefined);
     }
   }

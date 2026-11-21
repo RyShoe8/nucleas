@@ -1,6 +1,9 @@
 'use client';
+import { useVoiceWorkspace } from '../voice/VoiceWorkspace';
+import type { AssistantFocus } from '@/lib/os/assistantFocus';
 
 import type { AnswerEvidence } from '@/lib/ai/evidence';
+import type { WorkDraft } from '@/lib/work/drafts';
 import AnswerDetails from './assistant/AnswerDetails';
 import { visibleInterval } from '@/lib/os/visibleInterval';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
@@ -40,6 +43,7 @@ interface Turn {
     build?: BuildView | null;
     /** A job this answer designed. */
     job?: JobView | null;
+    workDraft?: WorkDraft;
     /** Files attached to a user message. */
     attachments?: { name: string; kind?: string; size: number; error?: string | null }[];
     /** While answering: what Nucleas has done so far, newest last. */
@@ -149,6 +153,7 @@ const ACTION_TONE: Record<string, string> = {
  */
 export default function AssistantModule({ payload }: { payload?: Record<string, string> }) {
     const focus = useSyncExternalStore(subscribeAssistantFocus, getAssistantFocus, () => null);
+    useVoiceWorkspace({ moduleId: 'assistant', companyId: focus?.companyId ?? '', companyName: focus?.companyName });
     const wm = useWindowManager();
     const [turns, setTurns] = useState<Turn[] | null>(null);
     const { providers } = useEngineProviders();
@@ -196,7 +201,7 @@ export default function AssistantModule({ payload }: { payload?: Record<string, 
         endRef.current?.scrollIntoView({ block: 'end' });
     }, [turns]);
 
-    const send = async (message: string, attachments: AttachmentRef[] = [], taskbarQuestionId?: string): Promise<boolean> => {
+    const send = async (message: string, attachments: AttachmentRef[] = [], taskbarQuestionId?: string, focusOverride?: AssistantFocus | null): Promise<boolean> => {
         const trimmed = message.trim();
         if ((!trimmed && !attachments.length) || sending.current || busy || (mode === 'direct' && !selection)) return false;
         sending.current = true;
@@ -219,7 +224,7 @@ export default function AssistantModule({ payload }: { payload?: Record<string, 
                 headers: { 'content-type': 'application/json', accept: 'application/x-ndjson' },
                 body: JSON.stringify({
                     text: trimmed,
-                    focusCompanyId: focus?.companyId,
+                    focusCompanyId: (focusOverride === undefined ? focus : focusOverride)?.companyId,
                     mode,
                     ...(mode === 'orchestrated' ? levelParam(cost) : {}),
                     ...(mode === 'direct' && selection ? { modelProfileId: selection.profileId, model: selection.model } : {}),
@@ -280,24 +285,28 @@ export default function AssistantModule({ payload }: { payload?: Record<string, 
     }, [taskbarReady]);
     const askedId = useRef<string | null>(null);
     useEffect(() => {
+        if (!taskbarReady) return;
         const take = () => {
+            if (sending.current) return;
             const ask = takePendingAsk();
             if (!ask || askedId.current === ask.id) return;
             askedId.current = ask.id;
-            void sendLatest.current(ask.text);
+            void sendLatest.current(ask.text, [], undefined, ask.focus);
         };
         take();
         return subscribePendingAsk(take);
-    }, []);
+    }, [taskbarReady]);
     const handedQuestion = payload?.ask;
     const handedCompanyId = payload?.companyId;
     const handedCompanyName = payload?.companyName;
+    const handedId = payload?.askId ?? handedQuestion;
     useEffect(() => {
-        if (!handedQuestion || askedId.current === `payload:${handedQuestion}`) return;
-        askedId.current = `payload:${handedQuestion}`;
-        if (handedCompanyId && handedCompanyName) setAssistantFocus({ companyId: handedCompanyId, companyName: handedCompanyName });
-        void sendLatest.current(handedQuestion);
-    }, [handedQuestion, handedCompanyId, handedCompanyName]);
+        if (!taskbarReady || sending.current || !handedQuestion || askedId.current === `payload:${handedId}`) return;
+        askedId.current = `payload:${handedId}`;
+        const nextFocus = handedCompanyId && handedCompanyName ? { companyId: handedCompanyId, companyName: handedCompanyName } : null;
+        setAssistantFocus(nextFocus);
+        void sendLatest.current(handedQuestion, [], undefined, nextFocus);
+    }, [taskbarReady, handedQuestion, handedId, handedCompanyId, handedCompanyName]);
 
     const suggestions = focus
         ? [`How is ${focus.companyName} doing this week?`, 'What changed recently, and what might explain it?', 'What should we focus on next to grow?']
@@ -418,6 +427,7 @@ export default function AssistantModule({ payload }: { payload?: Record<string, 
                                     />
                                 </div>
                             ) : null}
+                            {t.workDraft && <div className="mt-3 rounded-xl border border-border p-4 space-y-2"><p className="font-medium">{t.workDraft.companyName} · Work agreement</p><p className="text-sm text-text-secondary">{t.workDraft.outcome}</p><p className="text-xs text-text-secondary">{t.workDraft.assetIds?.length ?? 0} reference files retained · open the agreement to see its current state</p><button className="ui-button-primary" onClick={() => wm.open('work', { payload: { companyId: t.workDraft!.companyId, companyName: t.workDraft!.companyName, create: '1', draftTurnId: t.id } })}>Review work agreement</button></div>}
                             {t.job ? (
                                 <div className="mt-2">
                                     <JobCard

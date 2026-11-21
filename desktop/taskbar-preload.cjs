@@ -9,5 +9,7 @@ contextBridge.exposeInMainWorld('nucleasTaskbar', Object.freeze({
   saveDraft: text => ipcRenderer.invoke('taskbar:draft', text),
   restore: key => ipcRenderer.invoke('taskbar:restore', key),
   overflow: () => ipcRenderer.invoke('taskbar:overflow'),
+  tools: () => ipcRenderer.invoke('taskbar:tools'),
+  voice: () => ipcRenderer.invoke('taskbar:voice'),
   onState: callback => { const listener = (_event, state) => callback(state); ipcRenderer.on('taskbar:state', listener); return () => ipcRenderer.removeListener('taskbar:state', listener); },
 }));

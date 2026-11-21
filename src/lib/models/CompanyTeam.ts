@@ -12,6 +12,12 @@ const schema = new Schema({
   reviewerEmployeeId: { type: Schema.Types.ObjectId, ref: 'Employee' },
   remit: { type: String, maxlength: 2000, required: true },
   lessons: { type: String, maxlength: 4000, default: '' },
+  /** Additional named specialists share the skill family, not the primary member's identity or work. */
+  specialists: { type: [new Schema({
+    displayName: { type: String, required: true, maxlength: 60 }, specialty: { type: String, maxlength: 120 },
+    active: { type: Boolean, default: true }, reviewerEmployeeId: { type: Schema.Types.ObjectId, ref: 'Employee' },
+    remit: { type: String, required: true, maxlength: 2000 }, lessons: { type: String, maxlength: 4000, default: '' },
+  })], default: undefined },
   updatedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
 }, { timestamps: true });
 schema.index({ organizationId: 1, companyId: 1, role: 1 }, { unique: true });

@@ -3,10 +3,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { visibleInterval } from '@/lib/os/visibleInterval';
 import IdeChatMarkdown from '@/components/ide/IdeChatMarkdown';
+import WorkReferences from '../workspace/WorkReferences';
 
 export type BuildStatus = 'planning' | 'proposed' | 'rejected' | 'queued' | 'building' | 'ready' | 'failed' | 'pr_opened' | 'discarded';
 
 export interface BuildView {
+    workAgreement?: import('@/lib/work/agreements').WorkAgreement;
     teamAdvice?: import('@/lib/companies/teamConsult').MemberAdvice[];
     id: string;
     companyId: string;
@@ -18,7 +20,7 @@ export interface BuildView {
     steps: string[];
     planMarkdown: string;
     repository: { owner: string; repo: string; defaultBranch: string; fullName: string };
-    level: 'low' | 'medium' | 'high' | null;
+    level: 'free' | 'low' | 'medium' | 'high' | null;
     createdAt: string;
     updatedAt: string;
     approvedAt: string | null;
@@ -143,6 +145,7 @@ export default function BuildCard({
             </div>
 
             {build.summary && !editing ? <p className="text-xs text-text-secondary">{build.summary}</p> : null}
+            {build.workAgreement && <WorkReferences companyId={build.companyId} agreement={build.workAgreement} />}
 
             {editing ? (
                 <textarea

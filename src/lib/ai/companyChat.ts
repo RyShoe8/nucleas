@@ -215,9 +215,15 @@ import { contextBudgetChars, contextWindowFor, contextWindowFromProviderMessage,
  */
 export async function attemptCompanyCredentialChat(input: Parameters<typeof chatUncapped>[0] & { standIn?: StandInOptions | false }): Promise<TeamChatTurn> {
   const once = async (call: Parameters<typeof chatUncapped>[0]) => {
-    const turn = await withCacheTally((tally) => chatUncapped(call, tally));
-    recordItemSpend(turn?.costMicros);
-    return turn;
+    try {
+      const turn = await withCacheTally((tally) => chatUncapped(call, tally));
+      recordItemSpend(turn?.noProviderFee === true ? 0 : turn?.costMicros);
+      return turn;
+    } catch (error) {
+      // A transport exception may happen after the provider did billable work.
+      recordItemSpend(null);
+      throw error;
+    }
   };
   const first = await once(input);
   if (input.standIn === false || !providerRefusedAccount(first) || mongoose.connection.readyState !== 1) return first;

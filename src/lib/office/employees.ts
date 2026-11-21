@@ -36,6 +36,7 @@ export async function removeOfficeEmployee(viewer:CompanyViewer,id:string){
     await Invitation.updateMany({organizationId,employeeId:person._id,status:'pending'},{$set:{status:'expired',expiresAt:new Date()}},{session});
     // Missing reviewer already routes work to the organization owner; keep every virtual employee/job.
     await CompanyTeam.updateMany({organizationId:viewer.organizationId,reviewerEmployeeId:person._id},{$unset:{reviewerEmployeeId:1}},{session});
+    await CompanyTeam.updateMany({organizationId:viewer.organizationId,'specialists.reviewerEmployeeId':person._id},{$unset:{'specialists.$[member].reviewerEmployeeId':1}},{session,arrayFilters:[{'member.reviewerEmployeeId':person._id}]});
     await Employee.deleteOne({_id:person._id,organizationId},{session});
     await OfficeSceneModel.updateOne({_id:viewer.organizationId},{$set:{'scene.contextAt':0},$inc:{revision:1}},{session});
   });

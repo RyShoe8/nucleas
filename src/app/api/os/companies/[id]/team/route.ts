@@ -14,12 +14,14 @@ import { readBoard } from '@/lib/companies/teamBoard';
 import { PLAYBOOKS } from '@/lib/companies/teamPlaybooks';
 import { availableReviewers, companyAssignments, ensureTeamAssignment, ensureEmployeeIdentity } from '@/lib/companies/teamAssignments';
 import { OfficeSceneModel } from '@/lib/models/OfficeScene';
+import { saveSpecialist, validateWorkOwner } from '@/lib/companies/teamSpecialists';
 
 export const maxDuration = 800;
 const edit = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('specialist'), role: z.enum(TEAM_ROLES), memberId: z.string().regex(/^[a-f\d]{24}$/i).optional(), active: z.boolean(), displayName: z.string().trim().min(1).max(60), specialty: z.string().trim().max(120), reviewerEmployeeId: z.string().regex(/^[a-f\d]{24}$/i).nullable(), remit: z.string().trim().min(10).max(2000), lessons: z.string().trim().max(4000) }),
   z.object({ action: z.literal('staff'), role: z.enum(TEAM_ROLES), active: z.boolean(), displayName: z.string().trim().min(1).max(60), specialty: z.string().trim().max(120), reviewerEmployeeId: z.string().regex(/^[a-f\d]{24}$/i).nullable() }),
   z.object({ action: z.literal('profile'), role: z.enum(TEAM_ROLES), remit: z.string().trim().min(10).max(2000), lessons: z.string().trim().max(4000) }),
-  z.object({ action: z.literal('assign'), role: z.enum(TEAM_ROLES), jobId: z.string().regex(/^[a-f\d]{24}$/i) }),
+  z.object({ action: z.literal('assign'), role: z.enum(TEAM_ROLES), jobId: z.string().regex(/^[a-f\d]{24}$/i), assignedMemberId: z.string().regex(/^[a-f\d]{24}$/i).optional() }),
   z.object({ action: z.literal('delegate'), role: z.enum(TEAM_ROLES).optional(), request: z.string().trim().min(10).max(6000) }),
 ]);
 
@@ -36,9 +38,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     readBoard(viewer.organizationId, id),
     availableReviewers(viewer.organizationId, company),
   ]);
-  return NextResponse.json({ board, reviewers, canManage: isCompanyManager(viewer), members: TEAM_ROLES.map(role => {
-    const saved = profiles.find(p => p.role === role);
-    return { role, ...TEAM[role], ...saved, name: saved?.displayName ?? TEAM[role].name, playbook: { craft: PLAYBOOKS[role].craft, bar: PLAYBOOKS[role].bar, avoids: PLAYBOOKS[role].avoids, sources: PLAYBOOKS[role].sources } };
+  return NextResponse.json({ board, reviewers, canManage: isCompanyManager(viewer), specialists: profiles.filter(p => p.additional).map(saved => ({ ...TEAM[saved.role], ...saved, name: saved.displayName })), members: profiles.filter(p => !p.additional).map(saved => {
+    const role = saved.role;
+    return { ...TEAM[role], ...saved, name: saved?.displayName ?? TEAM[role].name, playbook: { craft: PLAYBOOKS[role].craft, bar: PLAYBOOKS[role].bar, avoids: PLAYBOOKS[role].avoids, sources: PLAYBOOKS[role].sources } };
   }), builds: builds.filter(build => build.companyId === id), jobs: jobs.map(job => ({ ...job, teamRole: teamRoleFor(job) })) }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
@@ -52,6 +54,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const parsed = edit.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
   const body = parsed.data;
+  if (body.action === 'specialist') {
+    try { return NextResponse.json({ ok: true, memberId: await saveSpecialist(viewer, id, body) }); }
+    catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 409 }); }
+  }
   // With no member named, the request text decides who owns it.
   const role = body.role ?? teamRoleFor({ request: body.request });
   if (!TEAM[role].active) return NextResponse.json({ error: 'Tester is reserved and inactive.' }, { status: 409 });
@@ -71,7 +77,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   } else if (body.action === 'profile') {
     await CompanyTeam.updateOne({ ...scope, role: body.role }, { $set: { remit: body.remit, lessons: body.lessons, updatedBy: new Types.ObjectId(viewer.userId) } }, { upsert: true, runValidators: true });
   } else if (body.action === 'assign') {
-    const result = await Job.updateOne({ ...scope, _id: new Types.ObjectId(body.jobId) }, { $set: { teamRole: body.role }, $unset: { teamAdvice: '' }, $push: { events: { at: new Date(), userId: new Types.ObjectId(viewer.userId), action: 'team_assigned', note: `Assigned to ${TEAM[body.role].name}; applies to future runs.` } } });
+    try { await validateWorkOwner(viewer, id, body.role, body.assignedMemberId); }
+    catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 400 }); }
+    const result = await Job.updateOne({ ...scope, _id: new Types.ObjectId(body.jobId) }, { $set: { teamRole: body.role, ...(body.assignedMemberId ? { assignedMemberId: new Types.ObjectId(body.assignedMemberId) } : {}) }, $unset: { teamAdvice: '', ...(!body.assignedMemberId ? { assignedMemberId: '' } : {}) }, $push: { events: { at: new Date(), userId: new Types.ObjectId(viewer.userId), action: 'team_assigned', note: `Assigned to ${TEAM[body.role].name}; applies to future runs.` } } });
     if (!result.matchedCount) return NextResponse.json({ error: 'Responsibility not found in this company.' }, { status: 404 });
     await ensureTeamAssignment(viewer.organizationId, id, role, viewer.userId);
   } else if (role === 'engineering' || role === 'design') {

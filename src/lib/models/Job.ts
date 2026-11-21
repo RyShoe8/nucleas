@@ -21,6 +21,11 @@ const jobSchema = new Schema(
     companyId: { type: Schema.Types.ObjectId, ref: 'Client', required: true },
     /** Durable company specialist; older jobs resolve from their field without changing schedules. */
     teamRole: { type: String, enum: TEAM_ROLES },
+    assignedMemberId: { type: Schema.Types.ObjectId },
+    workAgreement: { type: Schema.Types.Mixed },
+    sourceTurnId: { type: Schema.Types.ObjectId, index: true },
+    responsibilityId: { type: Schema.Types.ObjectId, ref: 'WorkResponsibility' },
+    targetKey: { type: String, maxlength: 100 },
     /** The exchange between team members as it happens: who asked whom, what an intern read, the facts used, the answer. Newest last. */
     teamLog: { type: [new Schema({ at: Date, kind: String, from: String, to: String, text: { type: String, maxlength: 2400 }, facts: { type: [String], default: undefined }, sources: { type: [String], default: undefined } }, { _id: false })], default: undefined },
     /** What teammates advised when the owner asked them; asked once and reused by every run. */

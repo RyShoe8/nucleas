@@ -7,8 +7,8 @@ import { useOsAuth } from '@/hooks/os/useOsAuth';
 import { setAssistantFocus } from '@/lib/os/assistantFocus';
 import styles from './DesktopShell.module.css';
 
-const order = ['companies', 'team', 'work', 'today', 'mail', 'agenda', 'settings'];
-const descriptions: Record<string, string> = { companies: 'Performance & context', team: 'Delegate & guide', work: 'Decisions & results', today: 'Portfolio briefing', mail: 'Conversations', agenda: 'Your schedule', settings: 'Engine & connections' };
+const order = ['office', 'companies', 'work', 'attention', 'tools', 'mail', 'settings'];
+const descriptions: Record<string, string> = { office: 'Your shared office', companies: 'Performance, people & context', work: 'Outcomes & responsibilities', attention: 'Decisions assigned to you', tools: 'Capture & record', mail: 'Conversations', settings: 'Engine & budgets' };
 const icons: Record<string, string> = { team: '◈', today: '◷', companies: '▦', work: '▤', growth: '↗', mail: '✉', agenda: '▤', settings: '⚙' };
 
 export function AppLauncherPanel({ onOpen }: { onOpen?: () => void }) {
@@ -33,7 +33,7 @@ export function AppLauncherPanel({ onOpen }: { onOpen?: () => void }) {
             <span aria-hidden>✦</span><span><strong>What’s next?</strong><small>Set direction. Give your team an outcome.</small></span><span aria-hidden>↗</span>
         </button>}
         <label className={styles.search}><span aria-hidden>⌕</span><input type="search" aria-label="Find a workspace" placeholder="Find a workspace…" value={query} onChange={e => setQuery(e.target.value)} /></label>
-        <div className={styles.sectionTitle}><span>YOUR WORKSPACE</span><span>COMPANIES → TEAM → WORK</span></div>
+        <div className={styles.sectionTitle}><span>YOUR WORKSPACE</span><span>OFFICE · COMPANIES · WORK · INBOX</span></div>
         <div className={styles.apps}>{apps.map(app => <button key={app.id} type="button" className={styles.app} onClick={() => open(app.id)}>
             <span className={styles.glyph} aria-hidden>{icons[app.id] ?? '◇'}</span><span>{app.title}</span><small className={styles.appDescription}>{descriptions[app.id]}</small>
             {wm.windows.some(w => w.moduleId === app.id) && <span className={styles.running} role="img" aria-label="Running" />}

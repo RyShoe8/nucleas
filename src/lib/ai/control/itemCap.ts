@@ -17,6 +17,9 @@ interface Scope {
   /** The organization's cap, read the first time a paid call is about to start. */
   capMicros?: number;
   spentMicros: number;
+  costUnknown?: boolean;
+  parent?: Scope;
+  stopOnUnknown?: boolean;
 }
 const scopes = new AsyncLocalStorage<Scope>();
 
@@ -34,18 +37,28 @@ export function withItemCap<T>(label: string, work: () => Promise<T>, capMicros?
 }
 
 export function recordItemSpend(micros: number | null | undefined): void {
-  const scope = scopes.getStore();
-  if (scope && micros && micros > 0) scope.spentMicros += micros;
+  for (let scope = scopes.getStore(); scope; scope = scope.parent) {
+    if (typeof micros === 'number' && Number.isFinite(micros) && micros >= 0) scope.spentMicros += micros;
+    else scope.costUnknown = true;
+  }
 }
+
+/** A durable target's remaining allowance, also charged to any enclosing request. */
+export function withItemAllowance<T>(label: string, capMicros: number, work: () => Promise<T>): Promise<T> {
+  return scopes.run({ label, capMicros, spentMicros: 0, parent: scopes.getStore(), stopOnUnknown: true }, work);
+}
+export function itemCostUnknown(): boolean { return scopes.getStore()?.costUnknown === true; }
 
 /** The message a paid call gets instead of running, or null while there is room. Worded as a budget refusal so callers stop retrying on paid models. */
 export async function itemCapRefusal(organizationId: string): Promise<string | null> {
-  const scope = scopes.getStore();
-  if (!scope) return null;
-  scope.capMicros ??= await readItemCapMicros(organizationId);
-  if (scope.spentMicros < scope.capMicros) return null;
-  const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(2)}`;
-  return `AI budget cannot reserve more for this ${scope.label}: it has spent ${usd(scope.spentMicros)} of the ${usd(scope.capMicros)} your organization allows for any single piece of work. Free models can still finish it; raise the cap in AI budgets to allow more.`;
+  for (let scope = scopes.getStore(); scope; scope = scope.parent) {
+    scope.capMicros ??= await readItemCapMicros(organizationId);
+    if (scope.stopOnUnknown && scope.costUnknown) return `AI budget cannot reserve more for this ${scope.label}: a paid model did not report its cost. Free models can still finish it; its reservation is retained for reconciliation.`;
+    if (scope.spentMicros < scope.capMicros) continue;
+    const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(2)}`;
+    return `AI budget cannot reserve more for this ${scope.label}: it has spent ${usd(scope.spentMicros)} of the ${usd(scope.capMicros)} allowed for this piece of work. Free models can still finish it; review its allowance and the organization cap before retrying.`;
+  }
+  return null;
 }
 
 export function itemSpend(): { spentMicros: number; capMicros?: number } | null {

@@ -17,7 +17,7 @@ const lines = (value: string) => value.split('\n').map((v) => v.trim()).filter(B
 const STATUS_LABEL: Record<ArticleView['status'], string> = { queued: 'Waiting', running: 'Writing', done: 'Ready', failed: 'Stopped' };
 
 /** Articles: pick a company, say what to write about, and get a draft in that company's Voice. */
-export default function ArticlesPanel({initialArticleId}:{initialArticleId?:string}) {
+export default function ArticlesPanel({initialArticleId, initialCompanyId}:{initialArticleId?:string; initialCompanyId?: string}) {
     const { companies } = useOsCompanies();
     const [articles, setArticles] = useState<ArticleView[] | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -35,12 +35,12 @@ export default function ArticlesPanel({initialArticleId}:{initialArticleId?:stri
             if (cancelled) return;
             if (!res.ok) return setError(body.error ?? `Failed (${res.status})`);
             setError(null);
-            setArticles(body.articles ?? []);
+            setArticles((body.articles ?? []).filter(a => !initialCompanyId || a.companyId === initialCompanyId));
         })();
         return () => {
             cancelled = true;
         };
-    }, [reload]);
+    }, [reload, initialCompanyId]);
 
     useEffect(() => {
         if (!working) return;
@@ -59,7 +59,7 @@ export default function ArticlesPanel({initialArticleId}:{initialArticleId?:stri
                 <h3 className="ui-kicker flex-1">Articles</h3>
                 {!creating ? <button type="button" className="ui-button-primary" onClick={() => setCreating(true)}>New article</button> : null}
             </div>
-            {creating ? <NewArticle onCancel={() => setCreating(false)} onCreated={(id) => { setCreating(false); setOpenId(id); }} /> : null}
+            {creating ? <NewArticle initialCompanyId={initialCompanyId} onCancel={() => setCreating(false)} onCreated={(id) => { setCreating(false); setOpenId(id); }} /> : null}
             {articles.length === 0 && !creating ? <p className="text-sm text-text-secondary">No articles yet. Nucleas researches the topic, writes it in the company’s approved Voice, and checks that it sounds like them.</p> : null}
             <ul className="space-y-2">
                 {articles.map((a) => (
@@ -75,9 +75,9 @@ export default function ArticlesPanel({initialArticleId}:{initialArticleId?:stri
     );
 }
 
-function NewArticle({ onCreated, onCancel }: { onCreated: (id: string) => void; onCancel: () => void }) {
+function NewArticle({ onCreated, onCancel, initialCompanyId }: { onCreated: (id: string) => void; onCancel: () => void; initialCompanyId?: string }) {
     const { companies } = useOsCompanies();
-    const [companyId, setCompanyId] = useState('');
+    const [companyId, setCompanyId] = useState(initialCompanyId ?? '');
     const [topic, setTopic] = useState('');
     const [length, setLength] = useState<(typeof LENGTHS)[number]['id']>('standard');
     const [notes, setNotes] = useState('');

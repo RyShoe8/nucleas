@@ -82,6 +82,16 @@ beforeEach(async () => {
 });
 
 describe('metric sync', () => {
+  it('keeps Hearth cents exact and excludes later observations from a custom historical range', async () => {
+    await MetricSnapshot.create([
+      { organizationId: orgId, companyId, metricKey: 'adx_revenue', date: '2026-09-20', value: 34737, breakdown: { USD: 34737 } },
+      { organizationId: orgId, companyId, metricKey: 'adx_revenue', date: '2026-09-21', value: 999999, breakdown: { EUR: 999999 } },
+    ]);
+    const report = await getCompanyMetrics(admin, String(companyId), { periodDays: 7, through: '2026-09-20', now: NOW });
+    const adx = report?.metrics.find(m => m.key === 'adx_revenue');
+    expect(adx?.current).toBe(34737); expect(adx?.currency).toBe('USD'); expect(adx?.warning).toBeUndefined();
+    expect(adx?.coverage?.end).toBe('2026-09-20'); expect(adx?.coverage?.observed).toBe(1); expect(adx?.change).toBeNull();
+  });
   it('backfills 90 days on first run, then refreshes 3, and writes zero days explicitly', async () => {
     const requested: number[] = [];
     const first = await runCompanySync({ _id: companyId, organizationId: orgId }, { now: NOW, fetchImpl: fakeProviders(requested) });

@@ -1,5 +1,7 @@
-import { withItemCap } from '@/lib/ai/control/itemCap';
+import { withWorkBudget, WorkBudgetUnavailable } from '@/lib/work/budgets';
+import { WorkBudget } from '@/lib/models/WorkBudget';
 import { TEAM, teamRoleFor, type TeamRole } from '@/lib/companies/teamRoles';
+import { CompanyTeam } from '@/lib/models/CompanyTeam';
 import { companyTeamContext } from '@/lib/companies/teamContext';
 import { renderAdvice, teamAdviceForJob, type MemberAdvice, type TeamEvent } from '@/lib/companies/teamConsult';
 import { PublishDelivery, PublishItem } from '@/lib/models/Publishing';
@@ -69,6 +71,9 @@ export interface JobRunView {
 }
 
 export interface JobView {
+  assignedMemberId?: string;
+  ownerName?: string;
+  workAgreement?: import('@/lib/work/agreements').WorkAgreement;
   teamRole?: TeamRole;
   /** Teammates the owner asked before starting, and what they said. */
   teamAdvice?: MemberAdvice[];
@@ -104,6 +109,9 @@ export interface JobView {
 }
 
 type JobLean = {
+  assignedMemberId?: Types.ObjectId;
+  ownerName?: string;
+  workAgreement?: import('@/lib/work/agreements').WorkAgreement;
   teamRole?: TeamRole;
   teamAdvice?: { at?: Date; items?: MemberAdvice[] };
   teamLog?: (TeamEvent & { at: Date })[];
@@ -192,6 +200,9 @@ async function toView(job: JobLean, company: { name: string; subreddit?: string 
   const parsed = jobDesignSchema.safeParse(job.design);
   const design = parsed.success ? parsed.data : null;
   return {
+    workAgreement: job.workAgreement,
+    ownerName: job.ownerName,
+    assignedMemberId: job.assignedMemberId ? String(job.assignedMemberId) : undefined,
     teamRole: teamRoleFor(job),
     teamAdvice: job.teamAdvice?.items ?? [],
     teamLog: (job.teamLog ?? []).map((entry) => ({ ...entry, at: new Date(entry.at).toISOString() })),
@@ -249,13 +260,19 @@ export async function listJobs(viewer: CompanyViewer, options: { includeClosed?:
   const ids = jobs.map((j) => j._id);
   // Only each job's five newest runs leave the database, and this month's spend for every job in one query:
   // an hourly job has thousands of runs, and this list is reloaded every few seconds.
-  const [recent, spend] = await Promise.all([
+  const [recent, spend, members] = await Promise.all([
     JobRun.aggregate<{ _id: Types.ObjectId; runs: RunLean[] }>([
       { $match: { jobId: { $in: ids } } },
       { $group: { _id: '$jobId', runs: { $topN: { n: 5, sortBy: { createdAt: -1 }, output: '$$ROOT' } } } },
     ]),
     monthSpendByJob(ids),
+    CompanyTeam.find({ organizationId: viewer.organizationId, companyId: { $in: allowed } }).select('companyId role displayName identityName specialists').lean(),
   ]);
+  for (const job of jobs) {
+    const primary = members.find(m => String(m.companyId) === String(job.companyId) && m.role === teamRoleFor(job));
+    const specialist = primary?.specialists?.find(m => String(m._id) === String(job.assignedMemberId));
+    job.ownerName = specialist?.displayName || primary?.displayName || primary?.identityName || undefined;
+  }
   const byJob = new Map(recent.map((row) => [String(row._id), row.runs]));
   const canManage = isCompanyManager(viewer);
   return Promise.all(jobs.map((j) => toView(j, byCompany.get(String(j.companyId)) ?? { name: 'Company' }, canManage, byJob.get(String(j._id)) ?? [], spend.get(String(j._id)) ?? 0)));
@@ -282,7 +299,7 @@ export type CreateResult = { ok: true; job: JobView } | { ok: false; status: 400
 /** Creates a job from a request and designs it (Nucleas investigates, then designs or asks). */
 export async function createJob(
   viewer: CompanyViewer,
-  input: { companyId: string; request: string; teamRole?: TeamRole; level?: CostLevel; signal?: AbortSignal; onProgress?: ProgressFn; background?: boolean; understanding?: ConfirmedUnderstanding }
+  input: { sourceTurnId?: string; companyId: string; request: string; teamRole?: TeamRole; workAgreement?: import('@/lib/work/agreements').WorkAgreement; level?: CostLevel; signal?: AbortSignal; onProgress?: ProgressFn; background?: boolean; understanding?: ConfirmedUnderstanding }
 ): Promise<CreateResult> {
   const request = input.request.trim();
   if (request.length < 10 || request.length > 6000) return { ok: false, status: 400, error: 'Describe the job in 10–6000 characters.' };
@@ -294,7 +311,10 @@ export async function createJob(
     companyId: new Types.ObjectId(input.companyId),
     createdByUserId: new Types.ObjectId(viewer.userId),
     status: 'designing',
+    sourceTurnId: input.sourceTurnId,
     ...(input.teamRole ? { teamRole: input.teamRole } : {}),
+    ...(input.workAgreement ? { workAgreement: input.workAgreement } : {}),
+    ...(input.workAgreement?.assignedMemberId ? { assignedMemberId: input.workAgreement.assignedMemberId } : {}),
     request,
     ...(input.understanding ? { understanding: input.understanding } : {}),
     level,
@@ -366,12 +386,19 @@ export function teamLogWriter(jobId: Types.ObjectId): (event: TeamEvent) => void
 /** Designs (or redesigns with the person's answers) a job that is in 'designing'. */
 /** One plan: every paid call it makes counts toward the cap on a single piece of work. */
 export async function runDesign(...args: Parameters<typeof runDesignUncapped>): ReturnType<typeof runDesignUncapped> {
-  return withItemCap('plan', () => runDesignUncapped(...args));
+  try { return await withWorkBudget(args[1], 'plan', () => runDesignUncapped(...args)); }
+  catch (error) {
+    if (!(error instanceof WorkBudgetUnavailable)) throw error;
+    if (!error.retryLater) await Job.updateOne({ _id: args[1], status: 'designing' }, { $set: { status: 'failed', error: error.message } });
+  }
 }
 
 async function runDesignUncapped(viewer: CompanyViewer, jobId: string, options: { signal?: AbortSignal; onProgress?: ProgressFn } = {}): Promise<void> {
   const job = await Job.findById(jobId).lean<JobLean>();
   if (!job) return;
+  let referenceMaterial = '';
+  try { referenceMaterial = await (await import('@/lib/work/resources')).workResourceContext(viewer, String(job.companyId), job.workAgreement); }
+  catch (error) { await Job.updateOne({ _id: job._id }, { $set: { status: 'failed', error: error instanceof Error ? error.message : 'Could not read reference files.' } }); return; }
   const previous = jobDesignSchema.safeParse(job.design);
   options.onProgress?.('Checking whether a teammate should weigh in');
   let adviceCost = 0;
@@ -383,7 +410,7 @@ async function runDesignUncapped(viewer: CompanyViewer, jobId: string, options: 
   note({ kind: 'progress', from: owner, text: `${TEAM[owner].name} is writing the plan from the request, the company context${advice.length ? ` and what ${advice.map((item) => TEAM[item.member].name).join(' and ')} advised` : ''}.` });
   const result = await designJob(viewer, {
     companyId: String(job.companyId),
-    request: [job.request, await companyTeamContext(job), renderAdvice(advice)].filter(Boolean).join('\n\n'),
+    request: [job.request, referenceMaterial, await companyTeamContext(job), renderAdvice(advice)].filter(Boolean).join('\n\n'),
     understanding: job.understanding,
     level: job.level ?? 'low',
     answers: job.answers,
@@ -395,6 +422,11 @@ async function runDesignUncapped(viewer: CompanyViewer, jobId: string, options: 
   if (!result.ok) {
     await Job.updateOne({ _id: job._id }, { $set: { status: 'failed', error: result.error }, $inc: { designCostMicros: result.costMicros }, $push: { events: event(null, 'design_failed', result.error) } });
     return;
+  }
+  if (job.workAgreement) {
+    const { constrainDesign, workAgreementSchema } = await import('@/lib/work/agreements');
+    const agreement = workAgreementSchema.safeParse(job.workAgreement);
+    if (agreement.success) result.design = constrainDesign(result.design, agreement.data);
   }
   const status: JobStatus = result.design.questions.length ? 'needs_answers' : 'proposed';
   await Job.updateOne(
@@ -424,6 +456,12 @@ async function done(viewer: CompanyViewer, id: string): Promise<ActionResult> {
   return view ? { ok: true, job: view } : { ok: false, status: 404, error: 'Job not found.' };
 }
 
+async function closedTargetBudget(viewer: CompanyViewer, id: string): Promise<ActionResult | null> {
+  return await WorkBudget.exists({ jobId: id, organizationId: viewer.organizationId, closedAt: { $exists: true } })
+    ? { ok: false, status: 409, error: 'This target’s allowance has been closed. Open its ongoing responsibility and reopen the target to prepare another attempt.' }
+    : null;
+}
+
 /** Moves a job only from the expected states, so double clicks and races do nothing. */
 async function transition(viewer: CompanyViewer, job: JobLean, from: JobStatus[], set: Record<string, unknown>, action: string, note?: string): Promise<ActionResult> {
   const updated = await Job.findOneAndUpdate({ _id: job._id, status: { $in: from } }, { $set: set, $push: { events: event(viewer, action, note) } }, { new: true });
@@ -449,6 +487,8 @@ export async function answerQuestions(viewer: CompanyViewer, id: string, answers
 export async function approveJob(viewer: CompanyViewer, id: string, input: { completion: 'review' | 'automatic'; monthlyBudgetMicros?: number }): Promise<ActionResult & { dryRunId?: string }> {
   const found = await managed(viewer, id);
   if (!found.ok) return found;
+  const closed = await closedTargetBudget(viewer, id);
+  if (closed) return closed;
   if (input.completion !== 'review' && input.completion !== 'automatic') return { ok: false, status: 400, error: 'Choose review or automatic completion.' };
   const parsedDesign = jobDesignSchema.safeParse(found.job.design);
   // Voice and Marketing plan are generated once (or a few times) and reviewed, so they have no spending cap (0 means uncapped).
@@ -487,6 +527,8 @@ export function rejectJob(viewer: CompanyViewer, id: string, note?: string): Pro
 export async function runNow(viewer: CompanyViewer, id: string): Promise<ActionResult & { runId?: string }> {
   const found = await managed(viewer, id);
   if (!found.ok) return found;
+  const closed = await closedTargetBudget(viewer, id);
+  if (closed) return closed;
   const design = jobDesignSchema.safeParse(found.job.design);
   if (!design.success) return { ok: false, status: 409, error: 'This job has no design yet.' };
   if (!['ready', 'active'].includes(found.job.status)) return { ok: false, status: 409, error: 'Approve the job and its dry run first.' };

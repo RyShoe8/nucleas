@@ -6,9 +6,9 @@ const file = path.join(__dirname, 'renderer/taskbar.html');
 const url = pathToFileURL(file).href;
 
 /** Owns only the local taskbar surface. No provider credentials, web content or general-purpose IPC. */
-function createTaskbar({ windows, openOffice, openAsk, submit, onFailure, onStatus=()=>{}, native=true, attention = () => ({ count: 0 }), openAttention = () => {} }) {
+function createTaskbar({ windows, openOffice, openAsk, submit, onFailure, onStatus=()=>{}, native=true, attention = () => ({ count: 0 }), openAttention = () => {}, openVoice = () => {}, openTool = () => {}, recording = () => false }) {
   let controller, draft = '', attached = false, vertical = false, stopping = false, compatibility=!native, attachTimer;
-  const snapshot = () => ({ windows: minimizedWindows(windows), draft, vertical, attention: attention(), dark: nativeTheme.shouldUseDarkColorsForSystemIntegratedUI });
+  const snapshot = () => ({ windows: minimizedWindows(windows), draft, vertical, attention: attention(), recording: recording(), dark: nativeTheme.shouldUseDarkColorsForSystemIntegratedUI });
   const senderAllowed = event => {
     const win = controller?.window;
     return Boolean(win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === event.sender.mainFrame && event.senderFrame.url === url);
@@ -22,6 +22,12 @@ function createTaskbar({ windows, openOffice, openAsk, submit, onFailure, onStat
     'taskbar:office': openOffice,
     'taskbar:open-ask': openAsk,
     'taskbar:attention': openAttention,
+    'taskbar:voice': openVoice,
+    'taskbar:tools': () => Menu.buildFromTemplate([
+      { label: 'Screenshot', click: () => openTool('screenshot') },
+      { label: recording() ? '● Recording — open controls' : 'Record screen', click: () => openTool('recording') },
+      { label: 'Recent captures', click: () => openTool('recent') },
+    ]).popup({ window: controller.window }),
     'taskbar:ask': text => { submit(text); draft = ''; },
     'taskbar:draft': value => { if (typeof value === 'string' && value.length <= MAX_QUESTION_LENGTH) draft = value; },
     'taskbar:restore': key => { if (!restoreWindow(windows, key)) throw new Error('This window has closed. Open it from Office.'); },

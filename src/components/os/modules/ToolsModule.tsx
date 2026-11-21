@@ -5,18 +5,27 @@ import RecordingToolPanel from '@/components/shared/RecordingToolPanel';
 import ScreenshotToolPanel from '@/components/shared/ScreenshotToolPanel';
 import type { IProject } from '@/lib/models/Project';
 import { useWindowManager } from '@/hooks/os/useWindowManager';
+import type { ModuleRenderContext } from '@/lib/os/types';
+import { useRecordingUpload } from '@/hooks/useRecordingUpload';
+import { setActiveCapture } from '@/lib/os/activeCapture';
+import RecentCaptures from './workspace/RecentCaptures';
 
-type Tool = 'screenshot' | 'recording';
+type Tool = 'screenshot' | 'recording' | 'recent';
 
 const TOOLS: { id: Tool; label: string; icon: string; description: string }[] = [
     { id: 'screenshot', label: 'Screenshot', icon: '📸', description: 'Capture a window, region, or full webpage.' },
     { id: 'recording', label: 'Screen recorder', icon: '⏺️', description: 'Record your screen with system or microphone audio.' },
+    { id: 'recent', label: 'Recent captures', icon: '▧', description: 'Your saved screenshots and recordings.' },
 ];
 
 /** Built-in capture tools, available directly from the OS module launcher. */
-export default function ToolsModule() {
+export default function ToolsModule({ payload, windowId = 'tools' }: Partial<ModuleRenderContext>) {
     const wm = useWindowManager();
-    const [active, setActive] = useState<Tool>('screenshot');
+    const recording = useRecordingUpload(null);
+    const recordingActive = recording.isBusy || recording.isNaming;
+    useEffect(() => { setActiveCapture(windowId, recordingActive); }, [windowId, recordingActive]);
+    useEffect(() => () => setActiveCapture(windowId, false), [windowId]);
+    const [active, setActive] = useState<Tool>(payload?.tool === 'recording' || payload?.tool === 'recent' ? payload.tool : 'screenshot');
     const [projects, setProjects] = useState<IProject[]>([]);
     const [projectError, setProjectError] = useState<string | null>(null);
 
@@ -45,6 +54,7 @@ export default function ToolsModule() {
                     <button type="button" onClick={() => wm.open('animation')} className="mt-3 rounded border border-border px-3 py-2 text-sm">Open Animation Studio · Rigby2D</button>
                 </div>
 
+                <div>{recordingActive && <button className="ui-button-primary" onClick={() => setActive('recording')}>● Recording · {recording.elapsedLabel} · Show controls</button>}</div>
                 <div className="grid grid-cols-2 gap-2" role="tablist" aria-label="Capture tools">
                     {TOOLS.map((tool) => (
                         <button
@@ -73,7 +83,7 @@ export default function ToolsModule() {
                 ) : null}
 
                 <section role="tabpanel" className="rounded-lg border border-border bg-background-elevated p-4">
-                    {active === 'screenshot' ? (
+                    {active === 'recent' ? <RecentCaptures /> : active === 'screenshot' ? (
                         <ScreenshotToolPanel
                             key="screenshot"
                             target={null}
@@ -84,6 +94,7 @@ export default function ToolsModule() {
                     ) : (
                         <RecordingToolPanel
                             key="recording"
+                            recordingControl={recording}
                             target={null}
                             projects={projects}
                             allowAssignment

@@ -14,6 +14,8 @@ function overflow() {
 }
 function render(state) {
   current = state;
+  $('tools').classList.toggle('recording', Boolean(state.recording));
+  $('tools').title = state.recording ? 'Recording in progress — Tools' : 'Tools';
   const count = state.attention?.count ?? 0;
   $('attention-count').textContent = count > 99 ? '99+' : String(count); $('attention-count').hidden = !count;
   $('attention').title = `${count ? `${count} need you · ` : ''}Notifications & email summaries`;
@@ -36,6 +38,8 @@ $('office').onclick = () => act(() => api.office());
 $('attention').onclick = () => act(() => api.attention());
 $('compact-ask').onclick = () => act(() => api.openAsk());
 $('overflow').onclick = () => act(() => api.overflow());
+$('tools').onclick = () => act(() => api.tools());
+$('voice').onclick = () => act(() => api.voice());
 $('question').oninput = () => { void api.saveDraft($('question').value).catch(() => {}); };
 $('notice').onclick = () => { $('notice').hidden = true; };
 $('ask-form').onsubmit = async event => {

@@ -24,7 +24,10 @@ input::placeholder { color: inherit; opacity: .7; }
 #notice { position: absolute; inset: 4px 6px 4px 48px; z-index: 2; background: var(--bar-field); border: 1px solid var(--bar-line); border-radius: 8px; padding: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 [hidden] { display: none !important; }
 @media (max-width: 290px) { form { flex: 1; } #windows { display: none; } }
-@media (max-width: 190px) { form { display: none; } #compact-ask { display: block; } }
+@media (max-width: 330px) { form { display: none; } #compact-ask { display: block; } }
+#tools { padding: 0 7px; }
+#voice { width: 30px; order: 0; }
+@media (max-width: 240px) { main { gap: 1px; padding: 2px; } #office, #attention { width: 29px; } #tools { padding: 0 4px; } }
 body.vertical main { flex-direction: column; padding: 4px; }
 body.vertical form { display: none; }
 body.vertical #compact-ask { display: block; }
@@ -32,3 +35,5 @@ body.vertical #windows { flex-direction: column; width: 100%; }
 body.vertical .window { min-width: 0; width: 100%; padding: 0 3px; }
 body.vertical .window::before { display: none; }
 body.vertical #notice { inset: 0; white-space: normal; }
+
+#tools.recording { color: #ef4444; box-shadow: inset 0 -2px #ef4444; }

@@ -49,7 +49,7 @@ export function makeWorld(rooms: Room[]): World {
       const y=30+heights.slice(0,row).reduce((sum,h)=>sum+h+60,0),h=heights[row],client=room.relationship==='client';
       return {room,x,y,w,h,door:{x:client?x:x+w,y:y+h-35},lane:x+(client?22:650)};
     });
-    const people = suites.flatMap(suite => (suite.room.kind==='management'?suite.room.desks:CHARACTER_ROLES.map(role=>suite.room.desks.find(d=>d.role===role)).filter((d):d is Desk=>Boolean(d))).flatMap((desk,index) => {
+    const people = suites.flatMap(suite => (suite.room.kind==='management'?suite.room.desks:CHARACTER_ROLES.flatMap(role=>suite.room.desks.filter(d=>d.role===role).sort((a,b)=>(a.instanceId??'').localeCompare(b.instanceId??'')))).flatMap((desk,index) => {
         if (!desk) return [];
         const role=desk.role;
         const client = suite.room.relationship === 'client';
@@ -63,7 +63,7 @@ export function makeWorld(rooms: Room[]): World {
         const edgeX=center.x+(client?-46:77),aisleY=center.y+77;
         const chairExit=facing==='south'?[back,{x:edgeX,y:back.y},{x:edgeX,y:aisleY}]:[back,{x:back.x,y:aisleY}];
         const hallX=client?suite.x-30:suite.x+suite.w+30,hallY=suite.y+suite.h+30;
-        const id=desk.human?`human:${desk.employeeId}`:personId(suite.room.companyId,role);
+        const id=desk.human?`human:${desk.employeeId}`:personId(suite.room.companyId,desk.instanceId ?? role);
         return [{ id, room:suite.room,desk,home:{key:`desk:${id}`,point,facing,pose:'seated',label:desk.says ?? (desk.state==='waiting'?'Needs your review':desk.state==='away'?'No work assigned':'Available'), exit:[...chairExit,{x:suite.lane,y:aisleY},{x:suite.lane,y:suite.door.y},suite.door,{x:hallX,y:suite.door.y},{x:hallX,y:hallY},{x:SPINE,y:hallY}]} as Destination }];
     }));
     return {width:Math.max(1320,...suites.map(s=>s.x+s.w+60)),height:Math.max(640,...suites.map(s=>s.y+s.h+60)),suites,people,layoutVersion:OFFICE_LAYOUT_VERSION};

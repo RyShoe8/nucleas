@@ -5,6 +5,7 @@ import { useWindowManager } from '@/hooks/os/useWindowManager';
 import { useOsAuth } from '@/hooks/os/useOsAuth';
 import AddCompanyForm from './AddCompanyForm';
 import { RELATIONSHIP_LABEL, type OsCompanySummary } from './companyTypes';
+import WorkspaceNavigation from './workspace/WorkspaceNavigation';
 
 export function useOsCompanies() {
     const [companies, setCompanies] = useState<OsCompanySummary[] | null>(null);
@@ -41,6 +42,9 @@ export function useOsCompanies() {
 const GROUP_ORDER: OsCompanySummary['relationship'][] = ['internal', 'owned', 'client'];
 
 export default function CompaniesModule() {
+    return <WorkspaceNavigation><CompanyList /></WorkspaceNavigation>;
+}
+function CompanyList() {
     const wm = useWindowManager();
     const { companies, error } = useOsCompanies();
     const auth = useOsAuth();

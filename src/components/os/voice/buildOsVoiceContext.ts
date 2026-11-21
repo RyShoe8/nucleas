@@ -13,10 +13,10 @@ function localTodayIso(): string {
  * Build the workspace intent context payload from OS shell state. The shape
  * matches `WorkspaceIntentContextPayload` so the existing voice/palette
  * pipeline (parser, confirmation modal, intent executor) works unchanged.
- * OS-specific fields are encoded into `view` as a JSON tail so the LLM can
- * still rely on the canonical `lens`/`pathname` keys.
+ * The explicit OS scope follows the visible company/editor. OS commands use
+ * deterministic navigation or the existing Ask engine, rather than the legacy parser.
  */
-export function buildOsVoiceContext(snapshot: OsContextSnapshot): WorkspaceIntentContextPayload {
+export function buildOsVoiceContext(snapshot: OsContextSnapshot, scope?: WorkspaceIntentContextPayload['os']): WorkspaceIntentContextPayload {
     return {
         projectId: null,
         projectName: null,
@@ -27,8 +27,8 @@ export function buildOsVoiceContext(snapshot: OsContextSnapshot): WorkspaceInten
         },
         referenceDate: localTodayIso(),
         projects: [],
-        // Attach OS-specific hints as a structured extension. The parser
-        // tolerates extra keys; the LLM sees them and can route accordingly.
+        os: { moduleId: snapshot.focusedModuleId ?? undefined, ...scope },
+        // Preserve shell hints for older context consumers.
         ...({
             osOpenModuleIds: snapshot.openModuleIds,
             osFocusedModuleId: snapshot.focusedModuleId,

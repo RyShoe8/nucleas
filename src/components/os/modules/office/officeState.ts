@@ -1,6 +1,6 @@
 import type { ActivityItem } from '@/lib/activity/types-client';
 import { TEAM, TEAM_ROLES, type TeamRole } from '@/lib/companies/teamRoles';
-import type { JobView } from '../jobs/JobCard';
+import type { JobView } from '@/components/os/modules/workspace/workTypes';
 import { jobIsBusy } from '@/lib/jobs/busy';
 import { memberOf, queueFor } from '../jobs/workQueue';
 
@@ -13,9 +13,10 @@ import { memberOf, queueFor } from '../jobs/workQueue';
 export type MemberState = 'waiting' | 'working' | 'idle' | 'away';
 
 export interface Desk {
+    instanceId?: string;
     employeeId?: string;
     human?: boolean;
-    reports?: {companyId:string;companyName:string;role:TeamRole;name:string}[];
+    reports?: {instanceId?:string;companyId:string;companyName:string;role:TeamRole;name:string}[];
     role: TeamRole;
     name: string;
     specialty?: string;
@@ -64,7 +65,10 @@ const SCREEN_ORDER: { key: string; label: string }[] = [
 const compact = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
 
 export function screenValue(current: number, unit: string): string {
-    return unit === 'money' ? `$${compact.format(current)}` : compact.format(current);
+    // MetricSnapshot monetary values are hundredths, including AdX revenue.
+    return unit === 'money'
+        ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(current / 100)
+        : compact.format(current);
 }
 
 /** The members who work in every office, in a steady order. Tester is reserved and never shown. */
@@ -76,7 +80,7 @@ export function buildOffice(input: {
     activity: ActivityItem[];
     today: TodayMetrics[];
     now?: number;
-    assignments?: { companyId: string; role: TeamRole; active: boolean; displayName: string; specialty?: string }[];
+    assignments?: { id?: string; additional?: boolean; companyId: string; role: TeamRole; active: boolean; displayName: string; specialty?: string }[];
 }): Room[] {
     const rooms = input.companies.map((company): Room => {
         const jobs = input.jobs.filter((job) => job.companyId === company.id);
@@ -90,22 +94,22 @@ export function buildOffice(input: {
         });
         const assigned = input.assignments?.filter(a => a.companyId === company.id && a.active);
         const roles = assigned ? assigned.map(a => a.role) : OFFICE_ROLES.filter(role => jobs.some(j => memberOf(j) === role) || exchanges.some(e=>e.members.includes(role)) || (role === 'engineering' && activity.some(a => a.kind === 'build')));
-        const desks = roles.map((role): Desk => {
-            const own = jobs.filter((job) => memberOf(job) === role);
+        const desks = roles.map((role, index): Desk => {
+            const member = assigned?.[index];
+            const own = jobs.filter((job) => memberOf(job) === role && (member?.additional ? job.assignedMemberId === member.id : !job.assignedMemberId || job.assignedMemberId === member?.id));
             const queue = own.flatMap((job) => queueFor(job).map((item) => ({ item, job }))).sort((a, b) => a.item.since.localeCompare(b.item.since));
-            const code = role === 'engineering' ? activity.filter((item) => item.kind === 'build') : [];
+            const code = ['engineering', 'design'].includes(role) ? activity.filter(item => item.kind === 'build' && (item.teamRole ?? 'engineering') === role && (member?.additional ? item.assignedMemberId === member.id : !item.assignedMemberId || item.assignedMemberId === member?.id)) : [];
             const waitingCode = code.filter((item) => item.group === 'you' || item.group === 'failed');
             const running = own.find((job) => jobIsBusy(job) || job.status === 'testing');
             const runningCode = code.find((item) => item.group === 'working');
             const waiting = queue.length + waitingCode.length;
-            const collaboration = exchanges.find(exchange => exchange.members.includes(role));
+            const collaboration = exchanges.find(exchange => exchange.members.includes(role) && (!member?.additional || own.some(j => j.id === exchange.id)));
             const state: MemberState = running || runningCode || collaboration ? 'working' : waiting ? 'waiting' : own.some((job) => ['ready', 'active', 'paused'].includes(job.status)) || code.length ? 'idle' : 'away';
             const says = (running ? `Working on ${running.design?.title ?? 'a job'}: ${running.runs.find((r) => r.status === 'running')?.progressState.label ?? 'starting'}` : null)
                 ?? (runningCode ? `Working on ${runningCode.title}` : null)
                 ?? (collaboration ? `Collaborating: ${collaboration.title}` : null)
                 ?? queue[0]?.item.label ?? waitingCode[0]?.title ?? null;
-            const member = assigned?.find(a => a.role === role);
-            return { role, name: member?.displayName ?? TEAM[role].name, specialty: member?.specialty, state, says, waiting, jobs: own.length + code.length, jobId: queue[0]?.job.id ?? running?.id ?? collaboration?.id, collaboration };
+            return { instanceId: member?.additional ? member.id : undefined, role, name: member?.displayName ?? TEAM[role].name, specialty: member?.specialty, state, says, waiting, jobs: own.length + code.length, jobId: queue[0]?.job.id ?? running?.id ?? collaboration?.id, collaboration };
         });
         const metrics = input.today.find((row) => row.companyId === company.id)?.metrics ?? {};
         const screens = SCREEN_ORDER.filter((s) => metrics[s.key]).slice(0, 2).map((s) => ({ label: s.label, value: screenValue(metrics[s.key].current, metrics[s.key].unit), change: metrics[s.key].change }));

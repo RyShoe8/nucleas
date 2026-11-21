@@ -91,4 +91,16 @@
 .officeMode .wordmark { font-size: 20px; }
 .officeMode .dockArea { padding: 5px 12px; }
 .officeMode .headerActions { gap: 8px; }
+@media (max-width: 640px) {
+ .workspace { height: 100dvh; bottom: auto; }
+ .workspaceHeader { padding-top: env(safe-area-inset-top); padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+ .headerActions, .appSwitches, .dock { min-width: 0; }
+ .install { display: none; }
+ .dockArea { padding: 6px max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left)); }
+ .dock { width: 100%; gap: 4px; padding: 4px; border-radius: 14px; }
+ .dock > button, .viewActions button, .wordmark { min-height: 44px; }
+ .appSwitches { flex: 1; }
+ .appSwitches button { min-height: 44px; flex-shrink: 0; }
+ .dockAsk { padding: 8px 10px; }
+}
 @media (max-width: 640px) { .officeMode .install { display: none; } .officeMode .workspaceHeader{padding:0 8px;gap:6px} .officeMode .wordmark{font-size:16px} }

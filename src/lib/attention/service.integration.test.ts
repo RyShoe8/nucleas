@@ -46,6 +46,25 @@ it('never leaks another organization or inaccessible company through assignments
  const items=await attentionFor(owner);expect(items).toHaveLength(1);expect(items[0].payload.jobId).toBe(String(job._id));
  mocks.companies.mockResolvedValue([]);expect(await attentionFor(owner)).toEqual([]);
 });
+it('keeps specialists in the same field distinct in assignments, office desks and review recipients', async () => {
+ const specialist = new Types.ObjectId();
+ const lead = await CompanyTeam.create({ organizationId: org, companyId: company, role: 'marketing', active: true, displayName: 'Morgan', remit: 'Grow the company', updatedBy: org,
+   specialists: [{ _id: specialist, displayName: 'Avery', active: true, specialty: 'Content editor', remit: 'Improve casino review quality', reviewerEmployeeId: employee }] });
+ await createJob({ status: 'proposed', assignedMemberId: specialist });
+ await createJob({ status: 'proposed' });
+ expect((await attentionFor(colleague)).map(i => i.employeeName)).toEqual(['Avery']);
+ expect((await attentionFor(owner)).map(i => i.employeeName)).toEqual(['Morgan']);
+ const assignments = await companyAssignments(org, [String(company)]);
+ const marketing = assignments.filter(m => m.role === 'marketing' && m.active);
+ expect(marketing.map(m => m.id)).toEqual([String(lead._id), String(specialist)]);
+ const rooms = buildOffice({ companies: [{ id: String(company), name: 'Our company' }], assignments, jobs: [], today: [], activity: [] });
+ const people = makeWorld(rooms).people;
+ expect(people.map(p => p.desk.name)).toEqual(['Morgan', 'Avery']);
+ expect(new Set(people.map(p => p.id)).size).toBe(2);
+ expect(people[0].id).toBe(`${company}:marketing`);
+ expect(people[1].id).toBe(`${company}:${specialist}`);
+ expect(people[0].home.point).not.toEqual(people[1].home.point);
+});
 it('falls back to the organization owner if the linked employee no longer exists',async()=>{
  await createJob({status:'failed'});
  await CompanyTeam.create({organizationId:org,companyId:company,role:'marketing',remit:'Grow audience',reviewerEmployeeId:foreign,updatedBy:org});

@@ -33,7 +33,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     const orgUserIds = await getOrganizationUserIds(session.userId, user.organizationId);
     const asset = await Asset.findOne({ _id: id, userId: { $in: orgUserIds } })
-      .select('url fileUrl type')
+      .select('url fileUrl type userId linkedClientId linkedProjectId linkedContentItemId')
       .lean();
     if (!asset) {
       return NextResponse.json({ error: 'Asset not found' }, { status: 404 });

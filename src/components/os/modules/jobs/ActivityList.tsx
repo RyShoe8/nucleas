@@ -12,30 +12,34 @@ import type { ActivityGroup, ActivityItem } from '@/lib/activity/types-client';
  */
 
 export interface Activity {
+    error?: string;
     items: ActivityItem[];
     busy: boolean;
 }
 
 /** The activity list, refreshed every 5 seconds while something runs and every minute otherwise. */
-export function useActivity(reloadKey: number): Activity | null {
+export function useActivity(reloadKey: number, enabled = true): Activity | null {
     const [state, setState] = useState<Activity | null>(null);
     const [tick, setTick] = useState(0);
     useEffect(() => {
+        if (!enabled) return;
         let cancelled = false;
         void (async () => {
-            const body = (await fetch('/api/os/activity', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : { items: [] })).catch(() => ({ items: [] }))) as { items?: ActivityItem[] };
+            const body = (await fetch('/api/os/activity', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : { error: 'Some activity could not be loaded.' })).catch(() => ({ error: 'Some activity could not be loaded.' }))) as { items?: ActivityItem[]; error?: string };
             if (cancelled) return;
+            if (body.error) { setState(old => ({ items: old?.items ?? [], busy: old?.busy ?? false, error: body.error })); return; }
             const items = body.items ?? [];
             setState({ items, busy: items.some((i) => i.group === 'working') });
         })();
         return () => {
             cancelled = true;
         };
-    }, [reloadKey, tick]);
+    }, [reloadKey, tick, enabled]);
     useEffect(() => {
+        if (!enabled) return;
         const stopPolling = visibleInterval(() => setTick((t) => t + 1), state?.busy ? 5000 : 60_000);
         return stopPolling;
-    }, [state?.busy]);
+    }, [state?.busy, enabled]);
     return state;
 }
 
