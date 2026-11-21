@@ -1,0 +1,13 @@
+{
+  "sets": [
+    {"id": "tower", "label": "Beach · Lifeguard tower", "file": "../../../data/story_tower.json", "actions": [{"id": "descent", "label": "Descend stairs with rail contact"}]}
+  ],
+  "sequences": [
+    {"id": "disc-pass", "label": "Disc pass · Keno → Mick", "file": "scenes/disc-pass.json", "set": "sets/beach-lane.json", "arcHeight": 65, "note": "Existing throw/catch poses with socket-bound props"},
+    {"id": "jump-catch", "label": "Jump catch · Mick → Tango", "file": "scenes/jump-catch.json", "set": "sets/beach-lane.json", "arcHeight": 80, "note": "Focus, continuous leap, catch at the apex, then land"}
+  ],
+  "actors": [
+    {"id": "tiffany", "label": "Tiffany", "file": "actors/tiffany.json", "note": "Existing staircase rig"},
+    {"id": "mick", "label": "Mick", "file": "actors/mick.json", "note": "Derived interaction rig · motion study"}
+  ]
+}

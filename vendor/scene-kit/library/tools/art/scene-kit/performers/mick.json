@@ -1,0 +1,8 @@
+{
+  "format": "rigby-performance-binding/1", "name": "Mick",
+  "source": "../../story/projects/mick.rigby", "metadata": "../../../../assets/art/characters/mick.json",
+  "sockets": {
+    "hand": {"atlasSlot": "authored poses", "marker": "hand", "bone": "acting_hand_front", "meshAttachments": {"full body acting": ["acting"]}},
+    "head": {"atlasSlot": "authored poses", "marker": "head", "bone": "acting_head", "meshAttachments": {"full body acting": ["acting"]}}
+  }
+}

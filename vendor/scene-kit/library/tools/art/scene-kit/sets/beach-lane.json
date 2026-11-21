@@ -1,0 +1,7 @@
+{
+  "format": "rigby-contact-set/1", "name": "Beach · Throwing lane",
+  "transform": [1, 0, 0, 1, 0, 0],
+  "art": {"file": "../../../../assets/art/story/beach-sunset.png", "position": [-350, -100], "size": [3900, 1300]},
+  "anchors": {"thrower": [430, 880], "receiver": [1210, 880], "jump-start": [975, 880], "jump-land": [1120, 880]},
+  "paths": {"throwing-lane": ["thrower", "receiver"], "jump": ["jump-start", "jump-land"]}
+}

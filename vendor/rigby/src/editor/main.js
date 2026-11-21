@@ -695,7 +695,10 @@ function setText(el, text) {
   if (el.textContent !== text) el.textContent = text;
 }
 
+let nucleasFramePending = true;
 function frame(now) {
+  nucleasFramePending = false;
+  if (document.hidden || app.nucleasVisible === false || app.nucleasRendering) { lastFrame = now; stopAudio(); return; }
   const dt = (now - lastFrame) / 1000;
   lastFrame = now;
   app.advancePlayback(dt);
@@ -765,10 +768,18 @@ function frame(now) {
     if (inTauri) getCurrentWindow().setTitle(title).catch(() => {});
   }
   sync.syncPanels();
+  nucleasFramePending = true;
   requestAnimationFrame(frame);
 }
 
 requestAnimationFrame(frame);
+const resumeNucleasFrame = () => {
+  if (!document.hidden && app.nucleasVisible !== false && !app.nucleasRendering && !nucleasFramePending) {
+    lastFrame = performance.now(); nucleasFramePending = true; requestAnimationFrame(frame);
+  }
+};
+document.addEventListener('visibilitychange', resumeNucleasFrame);
+addEventListener('nucleas-visibility', resumeNucleasFrame);
 
 // Desktop: the splash screen shows this window once the panels are built, so it never opens blank.
 // (Built here, not in the frame loop: a hidden window may not get animation frames.)

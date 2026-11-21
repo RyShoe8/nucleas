@@ -1,0 +1,15 @@
+{
+  "format": "rigby-interaction-binding/1",
+  "name": "Tiffany",
+  "source": "../../story/projects/tiffany.rigby",
+  "root": "ground",
+  "scale": 1.15,
+  "facing": -1,
+  "fitRoot": false,
+  "visible": {"stair performance": "stair-descent"},
+  "feet": [
+    {"upper": "stairs_front_hip", "lower": "stairs_front_knee", "target": "stairs_front_ankle", "sole": [11, -18]},
+    {"upper": "stairs_back_hip", "lower": "stairs_back_knee", "target": "stairs_back_ankle", "sole": [12, -24]}
+  ],
+  "hand": {"upper": "stairs_shoulder", "target": "stairs_hand_front", "path": "handrail", "towardEnd": true}
+}

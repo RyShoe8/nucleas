@@ -386,7 +386,7 @@ export async function renderJob(doc, images, job, progress = () => true) {
  * background colour in the settings frames are opaque (and smaller), without one the see-through
  * pixels stay see-through. `progress(done, total)` may return false to cancel (then null).
  */
-export async function renderGif(doc, images, job, progress = () => true) {
+export async function renderGif(doc, images, job, progress = () => true, encode) {
   const { encodeGif } = await import('../gif.js');
   const range = frameRange(doc, job.animation, job.settings.fps, job.start, job.end);
   const r = new FrameRenderer(doc, images, job);
@@ -400,7 +400,7 @@ export async function renderGif(doc, images, job, progress = () => true) {
       // Let the progress bar draw.
       if (f % 4 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    return { name: `${job.name}.gif`, bytes: encodeGif({ width: r.width, height: r.height, frames, fps: job.settings.fps, transparent: !job.settings.background }) };
+    return { name: `${job.name}.gif`, bytes: await (encode ?? encodeGif)({ width: r.width, height: r.height, frames, fps: job.settings.fps, transparent: !job.settings.background }) };
   } finally {
     r.dispose();
   }

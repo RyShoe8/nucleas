@@ -51,7 +51,7 @@ export async function newScene(app) {
 }
 
 /** Adds an actor from a work file's bytes at the view's center, selects it and keys nothing yet. */
-async function addFrom(app, name, bytes) {
+export async function addFrom(app, name, bytes) {
   try {
     const actor = await addActor(app, name, bytes, [-app.view.panX / app.view.zoom, 0]);
     const lib = actors.get(actor.id);
@@ -63,8 +63,10 @@ async function addFrom(app, name, bytes) {
     app.select({ bone: app.doc.boneIndex(actor.bone) });
     count('editor-add-actor');
     app.setStatus(t("Added {name}: move it with the transform tools, and add clips in the inspector or the dopesheet's actor lane.", { name: actor.name }));
+    return actor;
   } catch (e) {
     app.setStatus(t('Could not add the actor: {error}', { error: e.message }));
+    return null;
   }
 }
 

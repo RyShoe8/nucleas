@@ -1,0 +1,9 @@
+{
+  "format": "rigby-performance-binding/1", "name": "Tango",
+  "source": "../../story/projects/tango.rigby", "metadata": "../../../../assets/art/characters/tango.json",
+  "sockets": {
+    "mouth": {"atlasSlot": "authored poses", "marker": "hand", "atlasOffset": [18, 2], "bone": "acting_jaw", "boneOffset": [10, 0], "meshAttachments": {"dog acting": ["acting"]}, "variants": [{"slot":"dog acting","attachment":"flight","bone":"flight_jaw","offset":[10,0]}]},
+    "head": {"atlasSlot": "authored poses", "marker": "head", "bone": "acting_head", "meshAttachments": {"dog acting": ["acting"]}, "variants": [{"slot":"dog acting","attachment":"flight","bone":"flight_head"}]},
+    "intercept": {"atlasSlot":"authored poses","marker":"head","atlasOffset":[-30,28],"bone":"acting_spine","meshAttachments":{"dog acting":["acting"]},"variants":[{"slot":"dog acting","attachment":"flight","bone":"flight_head","offset":[-30,28]}]}
+  }
+}

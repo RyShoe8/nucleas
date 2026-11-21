@@ -10,6 +10,10 @@ export default defineConfig({
   resolve: { alias: { '@demo-sources': path.join(root, 'src/editor/demo-sources-remote.js') } },
   worker: { format: 'es' },
   plugins: [{ name: 'rigby-runtime-assets', generateBundle() {
+    const library = path.resolve('vendor/scene-kit/library');
+    for (const file of JSON.parse(fs.readFileSync(path.resolve('vendor/scene-kit/library-files.json'), 'utf8'))) {
+      this.emitFile({ type:'asset', fileName:`scene-library/${file}`, source:fs.readFileSync(path.join(library,file)) });
+    }
     for (const name of ['pyodide.mjs','pyodide.asm.mjs','pyodide.asm.wasm','python_stdlib.zip','pyodide-lock.json']) {
       this.emitFile({ type:'asset', fileName:`pyodide/${name}`, source:fs.readFileSync(path.join(root,'node_modules/pyodide',name)) });
     }

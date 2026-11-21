@@ -4,7 +4,7 @@ import { requireCompanyViewer } from '@/lib/companies/osRouteContext';
 import { getCompanyProfile } from '@/lib/companies/companyProfile';
 import Asset from '@/lib/models/Asset';
 import { inspectRigby, RIGBY_MAX_BYTES, RIGBY_TAG } from '@/lib/animation/rigbyProject';
-import {readAnimationBytes,saveAnimationVersion} from '@/lib/animation/animationStorage';
+import {readAnimationBytes,saveAnimationVersion,animationDownloadUrl} from '@/lib/animation/animationStorage';
 
 export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
@@ -17,6 +17,8 @@ export async function GET(request: NextRequest) {
     if (!Types.ObjectId.isValid(id)) return NextResponse.json({error:'Project not found.'},{status:404});
     const asset = await Asset.findOne({_id:id,linkedClientId:companyId,tags:RIGBY_TAG}).select('_id').lean();
     if (!asset) return NextResponse.json({error:'Project not found.'},{status:404});
+    const url = await animationDownloadUrl(viewer,companyId,id);
+    if(url)return NextResponse.redirect(url,{status:307,headers:{'Cache-Control':'private, no-store','Referrer-Policy':'no-referrer'}});
     const bytes = await readAnimationBytes(viewer,companyId,id);
     if(!bytes)return NextResponse.json({error:'Project file not found.'},{status:404});
     return new NextResponse(bytes,{headers:{'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="animation.rigby"','Cache-Control':'private, no-store'}});

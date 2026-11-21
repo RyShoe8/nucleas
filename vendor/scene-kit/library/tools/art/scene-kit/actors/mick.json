@@ -1,0 +1,29 @@
+{
+  "format": "rigby-interaction-binding/1",
+  "name": "Mick",
+  "source": "../../story/projects/mick.rigby",
+  "root": "root",
+  "scale": 1.15,
+  "facing": -1,
+  "rootOffset": [4, -5],
+  "fitRoot": true,
+  "visible": {"interaction": "interaction"},
+  "feet": [
+    {"upper": "front_hip", "lower": "front_knee", "target": "front_ankle", "sole": [12, -15]},
+    {"upper": "back_hip", "lower": "back_knee", "target": "back_ankle", "sole": [11, -15]}
+  ],
+  "hand": {"upper": "shoulder", "lower": "elbow", "target": "palm", "path": "handrail", "reachFraction": 0.88},
+  "prepare": {
+    "name": "Mick interaction rig",
+    "mesh": "acting",
+    "origin": [256, 450],
+    "shoeTop": 416,
+    "armRegion": {"minX": 291, "minY": 267, "maxY": 340},
+    "bendPositive": {"front_hip": false, "back_hip": false, "shoulder": true},
+    "pins": {
+      "front_hip": [279, 341], "front_knee": [293, 375], "front_ankle": [291, 419],
+      "back_hip": [237, 340], "back_knee": [215, 374], "back_ankle": [197, 419],
+      "shoulder": [290, 267], "elbow": [302, 301], "palm": [338, 319]
+    }
+  }
+}

@@ -18,7 +18,7 @@ const TOOLS: { id: Tool; label: string; icon: string; description: string }[] = 
     { id: 'recent', label: 'Recent captures', icon: '▧', description: 'Your saved screenshots and recordings.' },
 ];
 
-/** Built-in capture tools, available directly from the OS module launcher. */
+/** Capture and animation tools share the same desktop/web entry point. */
 export default function ToolsModule({ payload, windowId = 'tools' }: Partial<ModuleRenderContext>) {
     const wm = useWindowManager();
     const recording = useRecordingUpload(null);
@@ -49,9 +49,15 @@ export default function ToolsModule({ payload, windowId = 'tools' }: Partial<Mod
                 <div>
                     <h2 className="text-base font-semibold">Tools</h2>
                     <p className="mt-1 text-xs text-text-secondary">
-                        Capture locally or save media to Nucleas and attach it to your work.
+                        Capture, create and animate media for your companies.
                     </p>
-                    <button type="button" onClick={() => wm.open('animation')} className="mt-3 rounded border border-border px-3 py-2 text-sm">Open Animation Studio · Rigby2D</button>
+                    <div className="mt-4 grid gap-2 sm:grid-cols-3" aria-label="Animation tools">
+                        {[
+                            { tool: 'create', title: 'Animation Studio', detail: 'Create with your own artwork, rigs, layers and keyframes.' },
+                            { tool: 'gif', title: 'GIF & video', detail: 'Export animations with dimensions, timing and transparency controls.' },
+                            { tool: 'examples', title: 'Scene examples', detail: 'Explore Hyperdisc’s editable choreography and contact tools.' },
+                        ].map(({ tool, title, detail }) => <button key={tool} type="button" onClick={() => wm.open('animation', { payload: { tool, ...(payload?.companyId ? { companyId: payload.companyId } : {}) } })} className="rounded-xl border border-border bg-background-elevated p-3 text-left hover:border-primary"><span className="block text-sm font-medium">{title}</span><span className="mt-1 block text-xs text-text-secondary">{detail}</span></button>)}
+                    </div>
                 </div>
 
                 <div>{recordingActive && <button className="ui-button-primary" onClick={() => setActive('recording')}>● Recording · {recording.elapsedLabel} · Show controls</button>}</div>

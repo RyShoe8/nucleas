@@ -1,0 +1,11 @@
+{
+  "format": "rigby-contact-sequence/1", "name": "Keno → Mick · Disc pass",
+  "set": "../sets/beach-lane.json", "duration": 4.5,
+  "cast": [
+    {"id": "keno", "binding": "../performers/keno.json", "at": "thrower", "scale": 1.15, "facing": 1,
+      "clips": [{"animation": "hold", "start": 0}, {"animation": "throw", "start": 1, "speed": 0.5}, {"animation": "idle", "start": 1.65}]},
+    {"id": "mick", "binding": "../performers/mick.json", "at": "receiver", "scale": 1.15, "facing": -1,
+      "clips": [{"animation": "idle", "start": 0}, {"animation": "catch", "start": 2.22, "speed": 0.4}, {"animation": "hold", "start": 2.7}]}
+  ],
+  "props": [{"id": "disc", "asset": "../props/disc.json", "from": {"actor": "keno", "socket": "hand", "grip": [-25, 0]}, "to": {"actor": "mick", "socket": "hand", "grip": [25, 0]}, "release": 1.16, "catch": 2.24, "arcHeight": 65, "turns": 3}]
+}
