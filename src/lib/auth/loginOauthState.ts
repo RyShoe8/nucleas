@@ -1,4 +1,5 @@
 import { SignJWT, jwtVerify } from 'jose';
+import { randomBytes } from 'node:crypto';
 
 const secret = process.env.NEXTAUTH_SECRET;
 if (!secret) {
@@ -10,14 +11,17 @@ const key = new TextEncoder().encode(secret);
 type LoginOAuthStatePayload = {
   purpose: 'google-login';
   invitationToken?: string;
+  desktopRequestId?: string;
 };
 
 /** CSRF protection for the Google login OAuth flow: short-lived signed state. */
-export async function createLoginOAuthState(invitationToken?: string): Promise<string> {
+export async function createLoginOAuthState(invitationToken?: string, desktopRequestId?: string): Promise<string> {
   return new SignJWT({
     purpose: 'google-login',
     ...(invitationToken ? { invitationToken } : {}),
+    ...(desktopRequestId ? { desktopRequestId } : {}),
   } satisfies LoginOAuthStatePayload)
+    .setJti(randomBytes(16).toString('hex'))
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('10m')
@@ -32,7 +36,8 @@ export async function verifyLoginOAuthState(
     if (payload.purpose !== 'google-login') return null;
     const invitationToken =
       typeof payload.invitationToken === 'string' ? payload.invitationToken : undefined;
-    return { purpose: 'google-login', ...(invitationToken ? { invitationToken } : {}) };
+    const desktopRequestId = typeof payload.desktopRequestId === 'string' && /^[a-f0-9]{64}$/.test(payload.desktopRequestId) ? payload.desktopRequestId : undefined;
+    return { purpose: 'google-login', ...(invitationToken ? { invitationToken } : {}), ...(desktopRequestId ? { desktopRequestId } : {}) };
   } catch {
     return null;
   }

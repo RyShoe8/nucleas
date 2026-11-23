@@ -38,9 +38,9 @@ export async function getSession(): Promise<SessionPayload | null> {
   return decrypt(session);
 }
 
-export async function createSession(userId: string, email: string): Promise<void> {
+export async function createSession(userId: string, email: string, desktopSessionId?: string): Promise<void> {
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
-  const session = await encrypt({ userId, email, expiresAt });
+  const session = await encrypt({ userId, email, expiresAt, ...(desktopSessionId ? { desktopSessionId } : {}) });
 
   const cookieStore = await cookies();
   cookieStore.set('session', session, {
@@ -54,5 +54,12 @@ export async function createSession(userId: string, email: string): Promise<void
 
 export async function deleteSession(): Promise<void> {
   const cookieStore = await cookies();
+  const value = cookieStore.get('session')?.value;
+  const session = value ? await decrypt(value) : null;
+  if (typeof session?.desktopSessionId === 'string') {
+    const { revokeDesktopSession } = await import('./desktopSession');
+    await revokeDesktopSession(session.desktopSessionId, session.userId);
+  }
+  cookieStore.set('nucleas-desktop-refresh', '', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/api/auth/desktop', maxAge: 0 });
   cookieStore.delete('session');
 }

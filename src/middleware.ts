@@ -28,7 +28,7 @@ export function middleware(request: NextRequest) {
   const desktopReturn = request.cookies.get('desktop-login-return')?.value;
   if ((pathname === '/' || pathname === '/os') && request.cookies.get('session') && desktopReturn && /^[a-f0-9]{64}$/.test(desktopReturn)) {
     const response = NextResponse.redirect(new URL(`/desktop/connect?request=${desktopReturn}`, request.url));
-    response.cookies.delete('desktop-login-return');
+    // The handoff validates this cookie. Its final approval/completion clears it.
     return response;
   }
   // Installers and update metadata must be reachable before a desktop session exists.

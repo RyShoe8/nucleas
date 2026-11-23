@@ -13,7 +13,17 @@ npm run desktop:dev
 
 If npm is configured to skip dependency install scripts, run `node desktop/node_modules/electron/install.js` once.
 
-The floating launcher is bundled locally. App windows load `https://nucleas.app/os/desktop`; deploy that route from this change before using the app windows in production. Sign in once in an app window using the normal Nucleas login. All app windows share an isolated persistent cookie profile. Your browser login is not imported.
+The floating launcher is bundled locally. App windows load `https://nucleas.app/os/desktop`. All app windows share an isolated persistent cookie profile.
+
+## Sign-in
+
+Choose **Continue with Google** in an app window. Nucleas opens the system browser directly into Google sign-in, or returns immediately if that browser is already signed into Nucleas. Account selection and security checks remain with Google. There is no Nucleas code-matching screen or separate desktop approval. The initiating app window restores and focuses automatically. **Use email instead** keeps email/password login available; **Cancel sign-in** allows a fresh attempt if the browser was closed.
+
+A short-lived listener binds only to `127.0.0.1` with a random callback path. Completing sign-in requires both a one-time browser callback secret and the original native proof. Session credentials never appear in browser URLs or renderer IPC. Existing launchers retain their original approval protocol; a legacy grant cannot use automatic approval.
+
+The main process renews the shared session before opening app windows and hourly while running. Chromium persists a Secure, HttpOnly refresh cookie in `persist:nucleas`; the server stores only its hash. The device expires after 90 days without renewal. Signing out revokes that device and clears its saved cookies; account rejection/deletion or credential changes prevent renewal. Temporary network failures retain the saved login for a later retry. Existing valid desktop sessions upgrade silently when first opened with this version.
+
+Deploy the authentication routes before releasing this desktop build. The existing Google web OAuth redirect URI stays the same; no new provider key or callback registration is required. These changes do not remove Google account or MFA requirements when Google asks for them.
 
 - The microphone in the launcher starts voice: it opens Ask and listens there. Other app windows do not show a microphone.
 - Alt+Space toggles the launcher. The tray remains available if another app owns that shortcut.

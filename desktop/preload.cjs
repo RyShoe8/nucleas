@@ -21,7 +21,8 @@ if (local || location.origin === 'https://nucleas.app') {
       installUpdate: () => ipcRenderer.invoke('update:install'),
     } : {}),
     ...(local ? {
-      signIn: () => ipcRenderer.invoke('auth:signin'),
+      signIn: method => ipcRenderer.invoke('auth:signin', method),
+      cancelSignIn: () => ipcRenderer.invoke('auth:cancel'),
       startVoice: () => ipcRenderer.invoke('voice:start'),
       onAuthStatus: callback => { const listener = (_event, message) => callback(message); ipcRenderer.on('auth:status', listener); return () => ipcRenderer.removeListener('auth:status', listener); },
       state: () => ipcRenderer.invoke('launcher:state'),

@@ -34,6 +34,9 @@ export async function GET(request: NextRequest) {
     if (!statePayload) {
       return NextResponse.redirect(new URL('/login?error=invalid_state', request.url));
     }
+    if (statePayload.desktopRequestId && (request.cookies.get('desktop-oauth-state')?.value !== state || request.cookies.get('desktop-login-return')?.value !== statePayload.desktopRequestId)) {
+      return NextResponse.redirect(new URL('/login?error=invalid_state', request.url));
+    }
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -307,7 +310,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL('/setup-organization', request.url));
     }
 
-    return NextResponse.redirect(new URL('/', request.url));
+    const response = NextResponse.redirect(new URL(statePayload.desktopRequestId ? `/api/auth/desktop/complete?request=${statePayload.desktopRequestId}` : '/', request.url));
+    if (statePayload.desktopRequestId) response.cookies.delete('desktop-oauth-state');
+    return response;
   } catch {
     // Google OAuth callback error
     return NextResponse.redirect(new URL('/login?error=oauth_error', request.url));

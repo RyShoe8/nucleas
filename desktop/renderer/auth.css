@@ -8,4 +8,6 @@ h1 { font-size: 32px; letter-spacing: -1px; }
 p { color: var(--text-secondary); line-height: 1.6; }
 button { border: 0; background: var(--primary); color: var(--background); border-radius: 12px; padding: 14px 22px; font: inherit; cursor: pointer; }
 button:disabled { opacity: .6; cursor: wait; }
+.secondary { display:block; margin-top:12px; background:transparent; color:var(--text-secondary); padding:10px 0; }
+[hidden] { display:none; }
 #status { min-height: 70px; }

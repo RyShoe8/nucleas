@@ -5,7 +5,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { ORIGIN, trustedRemote, externalUrl, appPage, moduleRequest, visibleBounds } = require('./policy.cjs');
 const catalog = require('./renderer/catalog.json');
-const { signIn, authFile, authUrl } = require('./auth.cjs');
+const { signIn, authFor, authFile, authUrl } = require('./auth.cjs');
 const { installDisplayCapture } = require('./capture.cjs');
 const { startupUpdate } = require('./startup-update.cjs');
 const { supportsTaskbar, supportsNativeTaskbar, createQuestionQueue } = require('./taskbar-state.cjs');
@@ -24,6 +24,7 @@ const targets = new Map();
 const launcherFile = path.join(__dirname, 'renderer/index.html');
 const launcherUrl = pathToFileURL(launcherFile).href;
 let launcher, tray, quitting = false, compact = false;
+let desktopAuth, authRefreshTimer;
 let starting = app.isPackaged, startupWindow;
 let update = { phase: 'idle', text: 'Checking for updates…' };
 const windows = new Map();
@@ -225,7 +226,8 @@ function openModule(raw) {
   win.webContents.on('did-fail-load', (_event, code, _description, _url, mainFrame) => {
     if (mainFrame && code !== -3) status('error', 'An app could not connect. Check your connection and reopen it.');
   });
-  void win.loadURL(target.href);
+  // Renew the shared session before a stale access cookie sends this window to login.
+  void (async () => { await desktopAuth?.restore(); if (!win.isDestroyed()) await win.loadURL(target.href); })().catch(() => status('error', 'An app could not connect. Check your connection and reopen it.'));
   broadcast();
 }
 async function checkUpdates() {
@@ -252,6 +254,16 @@ else {
     repairShortcutIcons(app,shell,shortcutIcon);
     try { const value = JSON.parse(fs.readFileSync(settingsPath(), 'utf8')); saved = value && typeof value === 'object' && !Array.isArray(value) ? value : {}; } catch { saved = {}; }
     const profile = session.fromPartition('persist:nucleas');
+    if (!testRun) {
+      desktopAuth = authFor(profile);
+      authRefreshTimer = setInterval(() => { void desktopAuth.restore(true); }, 3600000);
+      authRefreshTimer.unref();
+      profile.webRequest.onCompleted({ urls: [`${ORIGIN}/api/auth/logout`] }, details => {
+        if (details.statusCode >= 200 && details.statusCode < 300) void desktopAuth.forget().then(() => {
+          for (const win of windows.values()) if (!win.isDestroyed()) void win.loadFile(authFile).catch(() => {});
+        }).catch(() => status('error', 'Could not finish signing out. Please quit and reopen Nucleas.'));
+      });
+    }
     installDisplayCapture(profile);
     const allowedThisRun = new Set();
     profile.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => trustedRemote(requestingOrigin) && ['media', 'notifications', 'clipboard-sanitized-write'].includes(permission));
@@ -279,13 +291,19 @@ else {
     ipcMain.handle('module:open', (event, value) => { if (!moduleSender(event)) throw new Error('Not allowed'); return openModule(value); });
     ipcMain.handle('ask:pending', event => { if (!askSender(event)) throw new Error('Not allowed'); return questions.peek(); });
     ipcMain.handle('ask:accept', (event, id) => { if (!askSender(event)) throw new Error('Not allowed'); return questions.accept(id); });
-    ipcMain.handle('auth:signin', async event => {
+    ipcMain.handle('auth:signin', async (event, method = 'google') => {
       const win = [...windows.values()].find(w => w.webContents === event.sender);
-      if (!win || event.senderFrame !== event.sender.mainFrame || event.senderFrame.url !== authUrl) throw new Error('Not allowed');
+      if (!win || event.senderFrame !== event.sender.mainFrame || event.senderFrame.url !== authUrl || !['google', 'email'].includes(method)) throw new Error('Not allowed');
       await signIn(profile, message => {
         for (const w of windows.values()) if (!w.isDestroyed() && w.webContents.getURL() === authUrl) w.webContents.send('auth:status', message);
-      }, () => quitting || windows.size === 0);
-      for (const [w, target] of targets) if (!w.isDestroyed() && w.webContents.getURL() === authUrl) void w.loadURL(target);
+      }, () => quitting || ![...windows.values()].some(w => !w.isDestroyed() && w.webContents.getURL() === authUrl), method);
+      for (const [w, target] of targets) if (!w.isDestroyed() && w.webContents.getURL() === authUrl) void w.loadURL(target).catch(() => status('error', 'Signed in, but this window could not connect. Please reopen it.'));
+      if (!win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+    });
+    ipcMain.handle('auth:cancel', event => {
+      const win = [...windows.values()].find(w => w.webContents === event.sender);
+      if (!win || event.senderFrame !== event.sender.mainFrame || event.senderFrame.url !== authUrl) throw new Error('Not allowed');
+      desktopAuth?.stop();
     });
     for (const [channel, handler] of Object.entries({
       'launcher:state': state, 'launcher:hide': () => launcher.hide(),
@@ -329,7 +347,7 @@ else {
     configureTaskbar();
     if (!quitting && !testRun) attention = startAttention({ profile, catalog, openModule, changed: () => taskbar?.broadcast() });
   });
-  app.on('before-quit', () => { quitting = true; taskbar?.stop(); attention?.stop(); });
+  app.on('before-quit', () => { quitting = true; clearInterval(authRefreshTimer); desktopAuth?.stop(); taskbar?.stop(); attention?.stop(); });
   app.on('will-quit', () => { if (persistTimer) flushBounds(); globalShortcut.unregisterAll(); });
   app.on('window-all-closed', () => {});
 }
