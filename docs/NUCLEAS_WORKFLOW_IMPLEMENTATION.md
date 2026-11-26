@@ -34,7 +34,7 @@ Implemented locally against the approved workflow proposal. No deployment, produ
 - Each target allows three attempts before blocking. Pausing/archiving stops new work and retains history. In-flight execution uses the existing job controls.
 - Human assessments retain evidence, reviewer, rubric version, and a hash of the live page. A passing score also requires every mandatory check. Accepting a draft alone does not establish that the published page meets the standard.
 - Changing a quality agreement creates a retained version and returns it to proposed status. Existing assessment history is retained; prior current targets need assessment against the revised standard.
-- When all targets are current, the controller checks small page batches without model calls. Changed or stale evidence reopens targets. Review saturation and exhausted allocations defer checking; explicit decisions can advance immediately.
+- Each target that passes assessment receives a full 30-day cooldown: no automatic page fetches, research, or model calls. When all targets are current, the controller sleeps until the earliest target is due. Due pages are checked in small batches and queued for reassessment, including unchanged pages whose source evidence may have aged. An unreadable due page retains its last assessment and retries tomorrow. Explicit reopen or a revised quality agreement can resume work sooner.
 - Ask's existing job-register tool also returns ongoing responsibility coverage, status, review counts, and allocation (identified separately from actual spend).
 
 ### Durable target budgets and maintenance

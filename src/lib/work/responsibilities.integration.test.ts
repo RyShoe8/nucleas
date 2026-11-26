@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, beforeEach, expect, it, vi } from 'vitest';
+import { beforeAll, afterAll, beforeEach, afterEach, expect, it, vi } from 'vitest';
 import mongoose, { Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server-core';
 vi.mock('server-only', () => ({}));
@@ -10,7 +10,7 @@ vi.mock('@/lib/ai/engine/select', () => ({ readEngineSettings: async () => ({ de
 vi.mock('@/lib/ai/control/settings', () => ({ readBudgetSettings: async () => ({ value: { itemCapMicros: 2e6 } }) }));
 import { WorkBudget } from '@/lib/models/WorkBudget';
 import { WorkResponsibility, WorkAssessment, WorkAgreementVersion } from '@/lib/models/WorkResponsibility';
-import { Job } from '@/lib/models/Job';
+import { Job, JobRun } from '@/lib/models/Job';
 import { workAgreementSchema } from './agreements';
 import { createResponsibility, listResponsibilities, updateResponsibility, advanceResponsibility } from './responsibilities';
 import type { CompanyViewer } from '@/lib/companies/companyProfile';
@@ -21,8 +21,9 @@ const profile = { id: String(cid), name: 'Company', domain: 'example.com', websi
 const agreement = workAgreementSchema.parse({ mode: 'ongoing', role: 'marketing', outcome: 'Improve every review page.', standard: 'Useful original analysis with verified evidence.', gates: ['Verify every material claim.'], threshold: 85, maxPending: 1, targets: ['https://example.com/reviews/a', 'https://example.com/reviews/b'] });
 beforeAll(async () => { repl = await MongoMemoryReplSet.create({ replSet: { count: 1, ip: '127.0.0.1', storageEngine: 'wiredTiger' } }); await mongoose.connect(repl.getUri('responsibilities_test')); }, 120_000);
 afterAll(async () => { await mongoose.disconnect(); await repl?.stop(); });
+afterEach(() => vi.useRealTimers());
 beforeEach(async () => {
-    await Promise.all([Job.deleteMany({}), WorkResponsibility.deleteMany({}), WorkAssessment.deleteMany({}), WorkAgreementVersion.deleteMany({}), WorkBudget.deleteMany({})]); vi.resetAllMocks();
+    await Promise.all([Job.deleteMany({}), JobRun.deleteMany({}), WorkResponsibility.deleteMany({}), WorkAssessment.deleteMany({}), WorkAgreementVersion.deleteMany({}), WorkBudget.deleteMany({})]); vi.resetAllMocks();
     mocks.profile.mockImplementation(async (v: CompanyViewer, id: string) => String(v.organizationId) === String(org) && id === String(cid) ? profile : null);
     mocks.profiles.mockImplementation(async (v: CompanyViewer) => String(v.organizationId) === String(org) ? [profile] : []);
     mocks.viewer.mockResolvedValue(viewer); mocks.page.mockResolvedValue({ text: 'Verified complete page content', thin: false });
@@ -46,6 +47,24 @@ it('bounds concurrent planning, reserves budget once, and stops when the review 
     const row = await WorkResponsibility.findById(id);
     expect(row?.allocatedMicros).toBe(2e6); expect(row?.targets.filter(t => t.status === 'review')).toHaveLength(1);
     expect(mocks.approve).toHaveBeenCalledWith(viewer, expect.any(String), { completion: 'review', monthlyBudgetMicros: 2e6 });
+});
+it('surfaces a finished sample for review without first requiring acceptance of its parent job', async () => {
+    const id = await active(); await advanceResponsibility(id);
+    const job = (await Job.findOne({ responsibilityId: id }))!;
+    await Job.updateOne({ _id: job._id }, { $set: { status: 'testing' } });
+    const run = await JobRun.create({ organizationId: org, companyId: cid, jobId: job._id, status: 'needs_review', dryRun: true, startedAt: new Date(), quality: { status: 'incomplete' } });
+    // A newer in-progress retry takes precedence over an older result waiting for review.
+    const retry = await JobRun.create({ organizationId: org, companyId: cid, jobId: job._id, status: 'running', dryRun: true, startedAt: new Date(), createdAt: new Date(Date.now() + 1000) });
+    await advanceResponsibility(id);
+    expect((await WorkResponsibility.findById(id))?.targets[0].status).toBe('working');
+    await JobRun.updateOne({ _id: retry._id }, { $set: { status: 'needs_review' } });
+    await advanceResponsibility(id);
+    const row = (await WorkResponsibility.findById(id))!;
+    expect(row.targets[0].status).toBe('review');
+    expect(row.targets[0].checkedAt).toBeUndefined();
+    expect(await Job.countDocuments({ responsibilityId: id })).toBe(1);
+    expect((await Job.findById(job._id))?.status).toBe('testing');
+    expect((await JobRun.findById(run._id))?.quality.status).toBe('incomplete');
 });
 it('requires every gate and live page evidence; rejects stale decisions and enforces the monthly allocation', async () => {
     const id = await active(); await advanceResponsibility(id); await advanceResponsibility(id);
@@ -108,6 +127,55 @@ it('defers an unreadable maintenance check instead of paying for an unnecessary 
     expect(row.status).toBe('monitoring'); expect(row.targets.every(t => t.status === 'current')).toBe(true);
     expect(row.targets[0].observationError).toContain('Could not verify'); expect(mocks.design).not.toHaveBeenCalled();
     expect(row.targets[0].lastObservedAt).toBeInstanceOf(Date);
+    expect(row.nextCheckAt?.getTime()).toBe(row.targets[0].lastObservedAt!.getTime() + 86_400_000);
+    await advanceResponsibility(id);
+    expect(mocks.page).toHaveBeenCalledTimes(2);
+});
+
+it('leaves completed pages untouched until exactly 30 days, even when their content has changed', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const accepted = new Date('2026-11-20T18:00:00Z'); vi.setSystemTime(accepted);
+    const id = await active();
+    await WorkResponsibility.updateOne({ _id: id }, { $set: {
+        'targets.0.status': 'current', 'targets.1.status': 'current',
+        'targets.0.checkedAt': accepted, 'targets.1.checkedAt': accepted,
+        'targets.0.pageRevision': 'older-page-hash', 'targets.1.pageRevision': 'older-page-hash',
+    } });
+    const due = accepted.getTime() + 30 * 86_400_000;
+    for (const time of [accepted.getTime(), accepted.getTime() + 86_400_000, due - 1]) {
+        vi.setSystemTime(time); await advanceResponsibility(id);
+        const row = (await WorkResponsibility.findById(id))!;
+        expect(row.status).toBe('monitoring'); expect(row.nextCheckAt?.getTime()).toBe(due);
+        expect(row.targets.every(t => t.status === 'current')).toBe(true);
+    }
+    expect(mocks.page).not.toHaveBeenCalled(); expect(mocks.design).not.toHaveBeenCalled();
+    expect(await Job.countDocuments({ responsibilityId: id })).toBe(0);
+    vi.setSystemTime(due); await advanceResponsibility(id);
+    expect(mocks.page).toHaveBeenCalledTimes(2); expect(mocks.design).toHaveBeenCalledTimes(1);
+    expect(await Job.countDocuments({ responsibilityId: id })).toBe(1);
+});
+
+it('maintains separate page cooldowns and restarts the 30 days only after a new passing assessment', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const now = new Date('2026-11-20T18:00:00Z'); vi.setSystemTime(now);
+    const id = await active();
+    await WorkResponsibility.updateOne({ _id: id }, { $set: {
+        'targets.0.status': 'current', 'targets.1.status': 'current',
+        'targets.0.checkedAt': new Date(now.getTime() - 30 * 86_400_000), 'targets.1.checkedAt': now,
+        'targets.0.lastObservedAt': now,
+    } });
+    await advanceResponsibility(id); await advanceResponsibility(id);
+    expect(mocks.page).toHaveBeenCalledExactlyOnceWith(agreement.targets[0]);
+    let row = (await WorkResponsibility.findById(id))!;
+    expect(row.targets[0].status).toBe('review'); expect(row.targets[1].status).toBe('current');
+    await updateResponsibility(viewer, id, { revision: row.revision, action: 'assess', targetKey: row.targets[0].key,
+        score: 92, evidence: 'Published page and dated sources verified again.', gatesPassed: agreement.gates });
+    mocks.page.mockClear(); mocks.design.mockClear();
+    vi.setSystemTime(now.getTime() + 86_400_000); await advanceResponsibility(id);
+    row = (await WorkResponsibility.findById(id))!;
+    expect(row.targets.every(t => t.status === 'current')).toBe(true);
+    expect(row.nextCheckAt?.getTime()).toBe(now.getTime() + 30 * 86_400_000);
+    expect(mocks.page).not.toHaveBeenCalled(); expect(mocks.design).not.toHaveBeenCalled();
 });
 
 it('releases known unused allowance on assessment and makes room for the next target', async () => {

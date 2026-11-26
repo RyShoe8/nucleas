@@ -1,6 +1,7 @@
 'use client';
 
 import { useWindowManager } from '@/hooks/os/useWindowManager';
+import ContentEvaluations from './ContentEvaluations';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -104,7 +105,7 @@ interface MediaRankView {
     total: number;
 }
 
-type EngineData = { checks: CheckRow[]; health: HealthIssue[]; defaultCostLevel: Level; priceCeilings: Ceilings; needs: NeedRow[]; models: ModelRow[]; benchmarks: BenchmarkStatus; rankings: Record<'plan' | 'code', RankRow[]>; mediaRankings: { image: MediaRankView; video: MediaRankView; error: string | null; fetchedAt: string | null } };
+type EngineData = { editorial?: Record<Level, Pick>; checks: CheckRow[]; health: HealthIssue[]; defaultCostLevel: Level; priceCeilings: Ceilings; needs: NeedRow[]; models: ModelRow[]; benchmarks: BenchmarkStatus; rankings: Record<'plan' | 'code', RankRow[]>; mediaRankings: { image: MediaRankView; video: MediaRankView; error: string | null; fetchedAt: string | null } };
 
 const LEVELS: { key: Level; label: string; hint: string }[] = [
     { key: 'free', label: 'Free', hint: 'Rogly models only, for every step. Never calls or retries on a paid model.' },
@@ -555,6 +556,7 @@ export default function AiRoutingModule() {
 
     return (
         <div className="h-full overflow-y-auto p-4 space-y-4 text-text-primary">
+            <ContentEvaluations models={data.models} onReviewed={() => reload()} />
             <section className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                     <h2 className="text-sm font-semibold">Cost levels</h2>
@@ -654,6 +656,7 @@ export default function AiRoutingModule() {
                 </div>
                 <p className="text-[11px] text-text-secondary mb-2">
                     Chosen automatically from every enabled credential. Rogly uses its best-checked model for the job (by name until checks have run). Use Change to choose a provider and model for one task at one plan level; Auto returns it to the engine&apos;s pick.
+                    {' '}Completed human content evaluations take precedence for writing and review. Benchmark rankings below remain general comparisons.
                 </p>
                 <div className="overflow-x-auto"><table className="w-full text-sm">
                     <thead>
@@ -711,6 +714,11 @@ export default function AiRoutingModule() {
                         ))}
                     </tbody>
                 </table></div>
+                {data.editorial && <details className="mt-3 rounded-lg border border-border p-3">
+                    <summary className="cursor-pointer text-sm font-medium">Editorial synthesis for substantial content</summary>
+                    <p className="my-2 text-xs text-text-secondary">Focused researchers gather evidence first. This editor develops depth and original analysis within the selected level&apos;s price ceiling. It uses writing scores and honors your Write choice. A separate review follows; Free remains free.</p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{LEVELS.map(l => <div className="min-w-0" key={l.key}><p className="text-xs text-text-secondary">{l.label}</p><PickCell pick={data.editorial![l.key]} /></div>)}</div>
+                </details>}
             </section>
         </div>
     );

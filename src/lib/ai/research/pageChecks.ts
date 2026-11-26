@@ -14,6 +14,7 @@ export type PageCheck = {
   status: 'opened' | 'gone' | 'blocked';
   title?: string;
   text?: string;
+  checkedAt?: string;
 };
 
 const NOT_FOUND_TITLE = /\b(?:page )?not found\b|\b404\b|doesn.t exist|does not exist|no longer available/i;
@@ -55,7 +56,7 @@ export async function checkPages(urls: string[], options: { signal?: AbortSignal
   const worker = async () => {
     for (let url = queue.shift(); url; url = queue.shift()) {
       if (options.signal?.aborted) return;
-      results.push(await checkPage(url, options.signal));
+      results.push({ ...await checkPage(url, options.signal), checkedAt: new Date().toISOString() });
     }
   };
   await Promise.all(Array.from({ length: options.concurrency ?? 3 }, worker));

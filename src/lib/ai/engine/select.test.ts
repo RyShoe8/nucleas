@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { dedupeAcrossCredentials, describeModel, type AvailableModel } from './catalog';
-import { DEFAULT_PRICE_CEILINGS, MAX_BACKUPS, backupsFrom, checkScore, mergeOverrides, selectFrom, selectModel, type CostLevel, type Need } from './select';
+import { DEFAULT_PRICE_CEILINGS, MAX_BACKUPS, backupsFrom, checkScore, mergeOverrides, selectFrom, selectEditorialFrom, selectModel, type CostLevel, type Need } from './select';
 import { buildModelMetaView } from '@/lib/ai/rolePipeline/modelMeta';
 
 function model(id: string, free: boolean, price: number | null, profile = free ? 'rogly' : 'paid'): AvailableModel {
@@ -43,6 +43,27 @@ const SCORED = [
   model('unscored-model', false, 3),
 ];
 const WITH_SCORES = [...ROGLY, ...SCORED];
+
+describe('human-reviewed content performance', () => {
+  const measured = (id: string, score: number, need: 'write' | 'review' = 'write') => ({ ...scored(id, 1, 20, 20), contentScores: [{ need, score, cases: 3, reviewedAt: new Date().toISOString() }] });
+  it('uses measured writing quality ahead of the general benchmark for editorial synthesis', () => {
+    const models = [...WITH_SCORES, measured('local-best-writer', 0.95)];
+    expect(selectEditorialFrom(models, 'high').primary?.model).toBe('local-best-writer');
+    expect(selectFrom(models, 'review', 'high').primary?.model).toBe('anthropic/claude-opus-5.5');
+  });
+  it('excludes critical factual failures and keeps free routing free', () => {
+    const models = [...WITH_SCORES, measured('unreliable-writer', 0.4)];
+    expect(selectEditorialFrom(models, 'high').primary?.model).not.toBe('unreliable-writer');
+    expect(selectEditorialFrom(models, 'free').primary?.free).toBe(true);
+    expect(selectEditorialFrom(models, 'free').backups).toEqual([]);
+  });
+  it('ignores stale or incomplete evaluations and honors the editorial price ceiling', () => {
+    const old = measured('old-evaluation', 1); old.contentScores[0].reviewedAt = '2020-01-01T00:00:00Z';
+    const partial = measured('incomplete-evaluation', 1); partial.contentScores[0].cases = 1;
+    expect(selectEditorialFrom([...WITH_SCORES, old, partial], 'high').primary?.model).toBe('anthropic/claude-opus-5.5');
+    expect(selectEditorialFrom(WITH_SCORES, 'low', { ...DEFAULT_PRICE_CEILINGS, low: 0.01 }).primary?.free).toBe(true);
+  });
+});
 
 describe('automatic model selection', () => {
   it('Rogly: always the strongest free model that fits the job', () => {

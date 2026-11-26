@@ -78,7 +78,7 @@ const deliverySchema = new Schema(
     assets: { type: [assetSchema], default: [] },
     /** Admin records: the form values (field key → value) and the filled form or saved page as a JPEG (base64). */
     values: { type: Schema.Types.Mixed },
-    voiceExample: { before: String, after: String, editedAt: Date },
+    voiceExample: { before: String, after: String, kind: String, editedAt: Date },
     valuesReviewed: { type: Boolean, default: false },
     screenshot: { type: String, maxlength: 1_200_000, select: false },
     postedUrl: { type: String, maxlength: 2000 },

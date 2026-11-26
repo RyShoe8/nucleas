@@ -206,7 +206,7 @@ export async function askMembers(viewer: CompanyViewer, companyId: string | null
     options.onProgress?.(`${name} is weighing in`);
     {
       const found = research ? evidenceFromFindings(research.findings) : [];
-      options.onEvent?.({ kind: 'found', from: ask.member, text: research ? `${name}'s intern read ${research.sources.length} page${research.sources.length === 1 ? '' : 's'} and brought back ${found.length} sourced fact${found.length === 1 ? '' : 's'}. ${name} is now weighing them against the company's details and plan.` : `${name}'s intern found nothing usable on the web. ${name} is answering from the company's details and plan, and will say what should be checked.`, facts: found.map((item) => item.fact), sources: research?.sources });
+      options.onEvent?.({ kind: 'found', from: ask.member, text: research ? `${name}'s intern returned ${found.length} observations with ${research.sources.length} source links. These still need verification. ${name} is weighing them against the company's details and plan.` : `${name}'s intern found nothing usable on the web. ${name} is answering from the company's details and plan, and will say what should be checked.`, facts: found.map((item) => item.fact), sources: research?.sources });
     }
     const answer = await askEngine({
       organizationId, userId: viewer.userId, need: PLAYBOOKS[ask.member].need, level: options.level, signal: options.signal, interactive: options.interactive,

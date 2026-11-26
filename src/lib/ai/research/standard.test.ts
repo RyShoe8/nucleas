@@ -14,7 +14,7 @@ describe('reading a gap check', () => {
   });
 
   it('says so when the reply cannot be read', () => {
-    expect(readGapCheck('not json')).toEqual({ readable: false, tasks: [], note: '' });
+    expect(readGapCheck('not json')).toMatchObject({ readable: false, complete: false, tasks: [], note: expect.stringContaining('could not be checked') });
   });
 
   it('gives the checker what counts and what has been tried, and the newest findings', () => {
@@ -28,6 +28,15 @@ describe('reading a gap check', () => {
 });
 
 describe('following up on gaps', () => {
+  it('distinguishes exhausted research from complete coverage', async () => {
+    const result = await followUpRounds({ check: async () => readGapCheck('{"complete":false,"exhausted":true,"note":"Official terms inaccessible"}'), follow: vi.fn(), stop: () => false });
+    expect(result).toMatchObject({ status: 'incomplete', reason: 'Official terms inaccessible' });
+  });
+  it('reports a failed checker and checks the result of the last permitted follow-up', async () => {
+    expect((await followUpRounds({ check: async () => readGapCheck('bad'), follow: vi.fn(), stop: () => false })).status).toBe('review_failed');
+    const check = vi.fn().mockResolvedValueOnce({ readable: true, complete: false, tasks: ['Read terms'], note: '' }).mockResolvedValueOnce({ readable: true, complete: true, tasks: [], note: 'Supported' });
+    expect((await followUpRounds({ maxRounds: 1, check, follow: vi.fn(), stop: () => false })).status).toBe('complete');
+  });
   it('works through tasks and stops when nothing is missing', async () => {
     const follow = vi.fn(async (_task: string) => undefined);
     const check = vi.fn<(tried: string[]) => Promise<{ readable: boolean; tasks: string[]; note: string }>>()

@@ -50,6 +50,7 @@ const OPEN: JobStatus[] = ['designing', 'needs_answers', 'proposed', 'testing', 
 const STUCK_MS = 20 * 60 * 1000;
 
 export interface JobRunView {
+  quality?: import('@/lib/ai/research/contentQuality').ContentQuality;
   adminDraftLinks?: string[];
   id: string;
   dryRun: boolean;
@@ -109,6 +110,7 @@ export interface JobView {
 }
 
 type JobLean = {
+  responsibilityId?: Types.ObjectId;
   assignedMemberId?: Types.ObjectId;
   ownerName?: string;
   workAgreement?: import('@/lib/work/agreements').WorkAgreement;
@@ -138,6 +140,7 @@ type JobLean = {
 };
 
 type RunLean = {
+  quality?: import('@/lib/ai/research/contentQuality').ContentQuality;
   decisionNote?: string;
   _id: Types.ObjectId;
   jobId: Types.ObjectId;
@@ -175,6 +178,7 @@ function runView(r: RunLean): JobRunView {
     progress: r.progress ?? [],
     progressState: { ...progressState, updatedAt: progressState.updatedAt.toISOString() },
     output: r.output ?? null,
+    quality: r.quality,
     issues: r.issues ?? [],
     review: r.review?.verdict ? r.review : null,
     costMicros: r.costMicros ?? 0,
@@ -426,7 +430,7 @@ async function runDesignUncapped(viewer: CompanyViewer, jobId: string, options: 
   if (job.workAgreement) {
     const { constrainDesign, workAgreementSchema } = await import('@/lib/work/agreements');
     const agreement = workAgreementSchema.safeParse(job.workAgreement);
-    if (agreement.success) result.design = constrainDesign(result.design, agreement.data);
+    if (agreement.success) result.design = constrainDesign(result.design, agreement.data, { responsibility: Boolean(job.responsibilityId) });
   }
   const status: JobStatus = result.design.questions.length ? 'needs_answers' : 'proposed';
   await Job.updateOne(

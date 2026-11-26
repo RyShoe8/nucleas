@@ -20,4 +20,17 @@ describe('work agreements', () => {
     it('blocks inactive testers, non-web targets, and unbounded queues', () => {
         for (const extra of [{ role: 'tester' }, { targets: ['file:///etc/passwd'] }, { maxPending: 11 }]) expect(workAgreementSchema.safeParse({ ...base, mode: 'ongoing', ...extra }).success).toBe(false);
     });
+    it('keeps every agreed check when the model supplies a long brief', () => {
+        const gates = Array.from({ length: 12 }, (_, i) => `Mandatory check ${i + 1}: `.padEnd(300, 'x'));
+        const agreement = workAgreementSchema.parse({ ...base, mode: 'once', standard: 'Full definition of done: '.padEnd(2000, 's'), gates });
+        const design = jobDesignSchema.parse({ title: 'Evidence audit', category: 'research', instructions: 'Model instructions. '.repeat(250), schedule: { kind: 'once' }, fields: [{ key: 'draft', label: 'Draft', type: 'long_text' }], delivery: { method: 'nucleas' } });
+        const bounded = constrainDesign(design, agreement, { responsibility: true });
+        expect(bounded.quality).toBe('in_depth');
+        expect(bounded.instructions).toContain(agreement.standard);
+        for (const gate of gates) expect(bounded.instructions).toContain(gate);
+        expect(bounded.instructions.length).toBeLessThanOrEqual(6000);
+        expect(jobDesignSchema.safeParse(bounded).success).toBe(true);
+        expect(bounded.schedule.kind).toBe('once');
+        expect(constrainDesign(design, agreement).quality).toBeUndefined();
+    });
 });

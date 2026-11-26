@@ -2,7 +2,7 @@ import 'server-only';
 import { createHash, randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { WorkResponsibility, WorkAssessment, WorkAgreementVersion } from '@/lib/models/WorkResponsibility';
-import { Job } from '@/lib/models/Job';
+import { Job, JobRun } from '@/lib/models/Job';
 import { WorkBudget } from '@/lib/models/WorkBudget';
 import { readItemCapMicros } from '@/lib/ai/control/itemCap';
 import { closeWorkBudget, responsibilityBudget, summarizeWorkBudgets } from './budgets';
@@ -13,6 +13,7 @@ import { validateWorkOwner } from '@/lib/companies/teamSpecialists';
 import { getCompanyProfile, isCompanyManager, loadCompanyViewer, listCompanyProfiles, type CompanyViewer } from '@/lib/companies/companyProfile';
 import { approveJob, executeJobRun, runDesign } from '@/lib/jobs/jobs';
 import { agreementBrief, workAgreementSchema, type WorkAgreement } from './agreements';
+import { targetRecheckTime } from './maintenance';
 
 export async function listResponsibilities(viewer: CompanyViewer, companyId?: string, includeClosed = false) {
     const profiles = companyId ? [await getCompanyProfile(viewer, companyId)].filter(Boolean) : await listCompanyProfiles(viewer);
@@ -67,6 +68,7 @@ export async function updateResponsibility(viewer: CompanyViewer, id: string, in
                 if (page.thin) throw Error('The target page could not be verified. Keep it open until readable evidence is available.');
                 set[`targets.${index}.pageRevision`] = createHash('sha256').update(page.text).digest('hex');
                 set[`targets.${index}.lastObservedAt`] = new Date();
+                set[`targets.${index}.observationError`] = null;
             }
             set[`targets.${index}.status`] = passes ? 'current' : row.targets[index].attempts >= 3 ? 'blocked' : 'queued';
             set[`targets.${index}.score`] = input.score; set[`targets.${index}.evidence`] = input.evidence.slice(0, 3000);
@@ -104,21 +106,27 @@ export async function advanceResponsibility(id: string) {
         const agreement = workAgreementSchema.parse(row.agreement);
         await validateWorkOwner(viewer, String(row.companyId), agreement.role, agreement.assignedMemberId);
         const targets = row.targets.map(t => ({ ...t }));
-        // Small deterministic maintenance pass. No LLM runs when unchanged pages remain current.
-        for (const t of targets.filter(t => t.status === 'current' && (!t.lastObservedAt || now.getTime() - t.lastObservedAt.getTime() >= 86_400_000)).sort((a, b) => (a.lastObservedAt?.getTime() ?? 0) - (b.lastObservedAt?.getTime() ?? 0)).slice(0, 3)) {
+        // Completed pages receive no fetches or model work during their 30-day cooldown.
+        for (const t of targets.filter(t => t.status === 'current' && targetRecheckTime(t) <= now.getTime()).sort((a, b) => targetRecheckTime(a) - targetRecheckTime(b)).slice(0, 3)) {
             const page = await webFetch(t.url).catch(() => null);
             t.lastObservedAt = now;
             if (!page || page.thin) { t.observationError = 'Could not verify the page. Its last assessment is retained; another check is due tomorrow.'; continue; }
             t.observationError = undefined;
-            const changed = createHash('sha256').update(page.text).digest('hex') !== t.pageRevision;
-            const stale = !t.checkedAt || now.getTime() - t.checkedAt.getTime() >= 30 * 86_400_000;
-            if (changed || stale) { t.status = 'queued'; t.attempts = 0; }
-            t.lastObservedAt = now;
+            // Even unchanged text needs fresh source verification once the assessment expires.
+            t.status = 'queued'; t.attempts = 0;
         }
         for (const t of targets.filter(t => t.status === 'working' && t.jobId)) {
             const job = await Job.findOne({ _id: t.jobId, organizationId: row.organizationId }).select('status').lean();
             if (!job || ['failed', 'rejected', 'archived'].includes(job.status)) t.status = 'blocked';
             else if (['ready', 'done', 'active', 'proposed', 'needs_answers'].includes(job.status)) t.status = 'review';
+            else if (job.status === 'testing') {
+                // A sample awaiting review leaves its parent job in testing. Look at the latest
+                // run so old failures cannot make a newer in-progress attempt look ready.
+                const latest = await JobRun.findOne({ jobId: t.jobId, organizationId: row.organizationId })
+                    .sort({ createdAt: -1, _id: -1 }).select('status').lean();
+                if (latest?.status === 'needs_review') t.status = 'review';
+                else if (latest?.status === 'failed' || latest?.status === 'rejected') t.status = 'blocked';
+            }
         }
         const budget = await responsibilityBudget(row.organizationId, row._id);
         const month = budget.month;
@@ -141,10 +149,12 @@ export async function advanceResponsibility(id: string) {
             next.jobId = oid; next.status = 'working'; next.attempts += 1; allocated += allowance;
         }
         const status = targets.every(t => t.status === 'current') ? 'monitoring' : 'active';
-        const maintenanceDue = targets.some(t => t.status === 'current' && (!t.lastObservedAt || now.getTime() - t.lastObservedAt.getTime() >= 86_400_000));
+        const nextMaintenance = Math.min(...targets.filter(t => t.status === 'current').map(targetRecheckTime));
+        const maintenanceDue = nextMaintenance <= now.getTime();
         const budgetReached = next && !newJob && allocated + allowance > row.monthlyBudgetMicros;
         const nextCheckAt = budgetReached ? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
-            : new Date(now.getTime() + (maintenanceDue ? 60_000 : status === 'monitoring' ? 86_400_000 : pending >= agreement.maxPending ? 15 * 60_000 : 60_000));
+            : status === 'monitoring' && !maintenanceDue && Number.isFinite(nextMaintenance) ? new Date(nextMaintenance)
+            : new Date(now.getTime() + (maintenanceDue ? 60_000 : pending >= agreement.maxPending ? 15 * 60_000 : 60_000));
         await aiTransaction(async session => {
             const changed = await WorkResponsibility.updateOne({ _id: row._id, leaseToken: token, revision: row.revision, status: { $in: ['active', 'monitoring'] } }, { $set: { targets, status, nextCheckAt, allocationMonth: month, allocatedMicros: allocated, error: null }, $inc: { revision: 1 } }, { session });
             if (!changed.matchedCount) throw Error('Responsibility lease changed.');

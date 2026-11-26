@@ -145,15 +145,16 @@ describe('the owner asking teammates', () => {
 });
 
 describe('the shared board', () => {
-  it('takes only facts that link to the page they came from', async () => {
+  it('retains distinct linked observations and removes exact duplicates without treating them as verified facts', async () => {
     const { evidenceFromFindings, splitPlanPoint } = await import('./teamBoard');
     expect(evidenceFromFindings([
       'Findings',
       '- Sweepstakes sign-ups rose 12% after a free-coin offer ([Source](https://example.com/study)).',
       '- An unsourced claim that sounds convincing.',
-      '- Same page again, different wording ([Source](https://example.com/study)).',
+      '- The offer required email verification ([Source](https://example.com/study)).',
+      '- The offer required email verification ([Source](https://example.com/study)).',
       'A paragraph with a link https://example.com/other that is not a finding.',
-    ].join('\n'))).toEqual([{ fact: 'Sweepstakes sign-ups rose 12% after a free-coin offer (Source).', url: 'https://example.com/study' }]);
+    ].join('\n'))).toEqual([{ fact: 'Sweepstakes sign-ups rose 12% after a free-coin offer (Source).', url: 'https://example.com/study' }, { fact: 'The offer required email verification (Source).', url: 'https://example.com/study' }]);
     expect(splitPlanPoint('Do this.\n**PLAN:** Lead with the free offer.')).toEqual({ advice: 'Do this.', point: 'Lead with the free offer.' });
     expect(splitPlanPoint('No plan line here.')).toEqual({ advice: 'No plan line here.', point: null });
   });

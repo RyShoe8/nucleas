@@ -63,6 +63,7 @@ export async function GET(request: NextRequest) {
         profileLabel: models.find((m) => m.profileId === h.profileId)?.profileLabel ?? 'Credential',
       })),
       needs,
+      editorial: Object.fromEntries(await Promise.all(COST_LEVELS.map(async level => [level, await selectModel(org, 'write', level, { models, settings, editorial: true })]))),
       checks: (await listModelChecks()).map((c) => ({ ...c, profileLabel: models.find((m) => m.profileId === c.profileId)?.profileLabel ?? 'Credential' })),
       rankings,
       mediaRankings: {

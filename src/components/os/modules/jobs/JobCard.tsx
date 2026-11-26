@@ -1,4 +1,5 @@
 'use client';
+import ContentQualityDetails from '../ContentQualityDetails';
 
 import { visibleInterval } from '@/lib/os/visibleInterval';
 import { TEAM } from '@/lib/companies/teamRoles';
@@ -72,6 +73,7 @@ interface LinkOpportunityView {
 }
 
 export interface JobRunView {
+    quality?: import('@/lib/ai/research/contentQuality').ContentQuality;
     adminDraftLinks?: string[];
     id: string;
     dryRun: boolean;
@@ -542,6 +544,7 @@ export function Results({ job, run }: { job: JobView; run: JobRunView }) {
     const records = run.output?.records ?? [];
     return (
         <div className="space-y-5 text-sm">
+            <ContentQualityDetails quality={run.quality} />
             {run.error && <p className="text-sm text-amber-300">{run.error}</p>}
             {run.output?.summary ? <section className="rounded-lg border border-border bg-background-elevated/40 p-4"><h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-secondary">Summary</h3><p className="whitespace-pre-wrap leading-6">{run.output.summary}</p></section> : null}
             {records.map((r, i) => (

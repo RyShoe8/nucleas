@@ -46,6 +46,7 @@ export const AiPricingRegistryCache: Model<RegistryDoc> =
   (mongoose.models.AiPricingRegistryCache as Model<RegistryDoc> | undefined) ?? mongoose.model<RegistryDoc>('AiPricingRegistryCache', registrySchema);
 
 export interface AvailableModel {
+  contentScores?: import('./contentEvaluations').ContentModelScore[];
   profileId: string;
   profileLabel: string;
   /** Credential provider (openai, openrouter, custom…). */

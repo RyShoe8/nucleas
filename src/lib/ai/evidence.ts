@@ -30,6 +30,7 @@ export interface EvidenceData {
   detail: string;
 }
 export interface AnswerEvidence {
+  quality?: import('@/lib/ai/research/contentQuality').ContentQuality;
   sources: EvidenceSource[];
   images: EvidenceImage[];
   data: EvidenceData[];
@@ -153,5 +154,5 @@ export function finishEvidence(evidence: AnswerEvidence, answer: string, notes =
   const sources = [...evidence.sources].sort((a, b) => weight(b) - weight(a)).slice(0, MAX_SOURCES);
   const images = chooseImages(evidence.images, sources);
   const data = evidence.data.slice(0, MAX_DATA).map((row) => ({ label: row.label.slice(0, 120), detail: row.detail.slice(0, 1500) }));
-  return sources.length || images.length || data.length ? { sources, images, data } : undefined;
+  return sources.length || images.length || data.length || evidence.quality ? { sources, images, data, ...(evidence.quality ? { quality: evidence.quality } : {}) } : undefined;
 }

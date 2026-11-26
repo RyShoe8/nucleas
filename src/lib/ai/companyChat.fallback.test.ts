@@ -115,6 +115,17 @@ describe('paid account stand-ins', () => {
     expect(mocks.invokeModel.mock.calls.map(call => call[0].model)).toEqual([input.model, 'affordable-planner']);
   });
 
+  it('applies human-reviewed task scores before choosing a paid replacement', async () => {
+    const failed = candidate('failed-content-review', 'c'.repeat(24), 99);
+    failed.contentScores = [{ need: 'review', score: 0.4, cases: 3, reviewedAt: new Date().toISOString() }];
+    vi.mocked(catalog.listAvailableModels).mockResolvedValue([failed, candidate('reliable-reviewer', 'd'.repeat(24), 70)]);
+    const enrich = vi.spyOn(selection, 'withContentScores').mockImplementation(async (_org, models) => models);
+    const turn = await attemptCompanyCredentialChat({ ...input, standIn: { need: 'review', level: 'medium' } });
+    expect(enrich).toHaveBeenCalledWith(input.organizationId, expect.any(Array), 'review');
+    expect(turn).toMatchObject({ role: 'assistant', model: 'reliable-reviewer' });
+    expect(mocks.invokeModel.mock.calls.map(call => call[0].model)).toEqual([input.model, 'reliable-reviewer']);
+  });
+
   it('tries distinct credentials instead of exhausting backup slots on one empty account', async () => {
     vi.mocked(catalog.listAvailableModels).mockResolvedValue([
       ...[90, 89, 88].map(score => candidate(`empty-${score}`, 'c'.repeat(24), score)),

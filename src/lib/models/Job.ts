@@ -112,6 +112,7 @@ const runSchema = new Schema(
     /** Persisted milestone shown after reloads and across clients. */
     progressState: { type: runProgressSchema },
     output: { type: Schema.Types.Mixed },
+    quality: { type: Schema.Types.Mixed },
     /** Deterministic check problems and the reviewer's notes. */
     issues: { type: Schema.Types.Mixed, default: [] },
     review: { verdict: { type: String, enum: ['pass', 'fail'] }, notes: String, model: String },

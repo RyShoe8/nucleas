@@ -145,6 +145,19 @@ async function proposed(design: JobDesign = DESIGN) {
 }
 
 describe('ongoing job settings', () => {
+  it('retains deep review when an ongoing responsibility compiles to a one-time research job', async () => {
+    const job = await proposed();
+    const responsibilityId = new Types.ObjectId();
+    await WorkBudget.create({ organizationId: org, responsibilityId, jobId: job.id, limitMicros: 2e6 });
+    await Job.updateOne({ _id: job.id }, { $set: {
+      status: 'designing', responsibilityId,
+      workAgreement: { mode: 'once', outcome: 'Improve this page with supported analysis.', standard: 'Every claim must have supporting evidence.', gates: ['Check original release notes.'], targets: ['https://playbound.club/games/deadlock'] },
+    } });
+    await runDesign(admin, job.id);
+    const saved = await Job.findById(job.id).lean();
+    expect(saved?.design).toMatchObject({ category: 'data', quality: 'in_depth', schedule: { kind: 'once' }, recommendedCompletion: 'review', delivery: { method: 'nucleas' } });
+    expect(saved?.design.instructions).toContain('Required check: Check original release notes.');
+  });
   it('rejects another run before creating it when the responsibility target allowance was closed', async () => {
     const job = await proposed();
     await WorkBudget.create({ organizationId: org, responsibilityId: new Types.ObjectId(), jobId: job.id, limitMicros: 2e6, closedAt: new Date() });
@@ -602,7 +615,7 @@ describe('approving and the dry run', () => {
     const paid = { model: 'paid-research', profileId: 'b'.repeat(24), free: false };
     mocks.select.mockResolvedValue({ primary: free, fallback: paid });
     mocks.chat.mockImplementation(async ({ systemPrompt, userText }) => {
-      let text = GOOD;
+      let text = GOOD.replace('https://store.example/deadlock', 'https://store.steampowered.com/app/1422450/Deadlock/');
       if (systemPrompt.startsWith('Choose a concrete')) text = JSON.stringify({ source: 'Founders', discovery: 'Find dated launches', rationale: 'Current prospects' });
       else if (systemPrompt.startsWith('Scout public')) text = 'Scouted founder listings.';
       else if (userText.includes('Prospect search retry')) text = JSON.stringify({ records: [], summary: 'Unavailable', gaps: [] });
@@ -1133,14 +1146,47 @@ describe('real runs', () => {
     expect(await approveJob(admin, String(job!._id), { completion: 'automatic' })).toMatchObject({ ok: true, job: { completion: 'review', design: { schedule: { kind: 'once' } } } });
   });
 
-  it('passes the approved Voice to both the content worker and reviewer', async () => {
+  it.each([false, true])('plans coverage, delegates, edits and verifies content (existing responsibility: %s)', async (responsibility) => {
     const persona = 'Write like a fellow player: practical, specific, and clear about what makes each game worth trying.';
     expect(await updateBrandVoice(admin, companyId, { persona, examples: '', status: 'approved', revision: 0 })).toMatchObject({ ok: true });
-    const job = await proposed({ ...DESIGN, category: 'content' });
+    const source = 'Deadlock has an official release date of 2026-03-01. This listing describes its release, not a first-hand review.';
+    research.pages.mockImplementation(async (urls: string[]) => urls.map(url => ({ url, status: 'opened', text: source, checkedAt: new Date().toISOString() })));
+    mocks.select.mockImplementation(async (_org: string, need: string, level: string, options?: { editorial?: boolean }) => ({ primary: { profileId: 'a'.repeat(24), model: need === 'plan' || need === 'review' || options?.editorial ? 'paid-editor' : 'free-researcher', free: !(need === 'plan' || need === 'review' || options?.editorial) }, fallback: null }));
+    mocks.chat.mockImplementation(async (input: { systemPrompt: string; userText: string }) => {
+      let text = GOOD.replace('https://store.example/deadlock', 'https://store.steampowered.com/app/1422450/Deadlock/');
+      if (input.systemPrompt.startsWith('Choose a concrete research method')) text = JSON.stringify({ source: 'Official release notes', discovery: 'Find the official game listing.', verification: 'Open and quote release details.', pivot: 'Inspect the publisher site.' });
+      else if (input.systemPrompt.startsWith('Independently review')) text = JSON.stringify({ verdict: 'pass', notes: 'Supported release facts.', allMaterialClaimsChecked: true,
+        claims: [{ claim: 'Deadlock has an official release date of 2026-03-01.', subject: 'Deadlock', sourceId: 'page-1', quote: source, scope: 'Release date in the official listing.', kind: 'fact', verdict: 'supported', reason: 'The listing gives this date.' }],
+        coverage: ['name', 'release_date', ...(responsibility ? ['agreement-standard', 'agreement-check-1'] : [])].map(id => ({ id, status: 'supported', reason: 'The field is supported by the listing.' })),
+        editorial: { depth: true, originality: true, voice: true, honestExperience: true, notes: 'Facts distinguished from observations.' },
+      });
+      return { role: 'assistant', text, costMicros: 100, toolsUsed: ['web_fetch'], requestId: 'quality' };
+    });
+    const job = await proposed({ ...DESIGN, category: responsibility ? 'research' : 'content' });
+    if (responsibility) {
+      const responsibilityId = new Types.ObjectId();
+      await WorkBudget.create({ organizationId: org, responsibilityId, jobId: job.id, limitMicros: 2e6 });
+      await Job.updateOne({ _id: job.id }, { $set: { responsibilityId, workAgreement: { mode: 'once', outcome: 'Improve the release information.', standard: 'Retain the exact release date and evidence.', gates: ['Check the original release listing.'] } } });
+    }
     const approved = await approveJob(admin, job.id, { completion: 'review' });
     await executeJobRun(approved.dryRunId!);
-    expect(mocks.chat.mock.calls.length).toBeGreaterThanOrEqual(2);
-    for (const [input] of mocks.chat.mock.calls) expect(input.userText).toContain(persona);
+    const calls = mocks.chat.mock.calls.map(([input]) => input);
+    const planner = calls.find(input => input.systemPrompt.startsWith('Choose a concrete research method'));
+    expect(planner).toBeTruthy();
+    expect(calls.filter(input => input.model === 'free-researcher' && input.userText.includes('Research only this requirement:'))).toHaveLength(responsibility ? 3 : 2);
+    const editor = calls.find(input => input.systemPrompt.includes('You are the content editor'));
+    expect(editor).toMatchObject({ model: 'paid-editor', toolProfile: 'none' });
+    expect(editor.userText).toContain(persona);
+    const reviewer = calls.find(input => input.systemPrompt.startsWith('Independently review'));
+    expect(reviewer.userText).toContain(persona);
+    expect(reviewer.userText).toContain(source);
+    if (responsibility) {
+      expect(reviewer.userText).toContain('Check the original release listing.');
+      expect(reviewer.userText).toContain('Required standard: Retain the exact release date and evidence.');
+    }
+    const saved = await JobRun.findById(approved.dryRunId!).lean();
+    expect(saved?.quality).toMatchObject({ status: 'ready', claims: [{ quoteMatched: true, subject: 'Deadlock' }] });
+    expect(saved?.output?.records).toHaveLength(1);
   });
 
   it('tracks a VPS Company Overview as a durable background job', async () => {

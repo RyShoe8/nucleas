@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
+import ContentQualityDetails from '../ContentQualityDetails';
 import type { AnswerEvidence, EvidenceImage, EvidenceSource } from '@/lib/ai/evidence';
 import { sameUrl } from '@/lib/ai/evidenceUrl';
 
@@ -59,7 +60,7 @@ function nameStep(stage: AnswerStage): Pick<AnswerStep, 'name' | 'detail' | 'war
       return { name: 'Researched', detail: note ? clip(sentence(note), 200) : undefined, warning: /^skipped|could not/i.test(note) };
     }
     case 'gaps':
-      return { name: 'Checked what was still missing', detail: note ? clip(sentence(note), 200) : undefined };
+      return { name: 'Checked what was still missing', detail: note ? clip(sentence(note), 200) : undefined, warning: /^(?:incomplete|review_failed)/i.test(note) };
     case 'team': {
       const [member, ...rest] = note.split(': ');
       const silent = /gave no answer$/.test(note);
@@ -68,6 +69,7 @@ function nameStep(stage: AnswerStage): Pick<AnswerStep, 'name' | 'detail' | 'war
     case 'work':
       return { name: 'Wrote the answer', detail: plainNote };
     case 'review': {
+      if (/^(?:incomplete|review_failed|review unavailable)/i.test(note)) return { name: 'Evidence review needs attention', detail: clip(sentence(note), 240), warning: true };
       const revised = /^revise:?\s*([\s\S]*)$/i.exec(note);
       if (revised) return { name: 'Reviewed and corrected the answer', detail: revised[1] ? clip(sentence(revised[1]), 240) : undefined };
       const accepted = /^accept:?\s*([\s\S]*)$/i.exec(note);
@@ -97,6 +99,7 @@ export function describeStages(stages: AnswerStage[]): AnswerStep[] {
       return [{ name: stage.stage === 'size' ? 'Looked up site sizes' : 'Opened the pages itself', detail: stage.note, cost: 'No model' }];
     }
     if (stage.stage === 'check') {
+      if (/^No numeric mismatch|^not applicable/i.test(stage.note ?? '')) return [{ name: 'Screened numeric claims', detail: stage.note, cost: 'No model', warning: false }];
       const passed = Boolean(stage.note?.startsWith('all'));
       return [{ name: passed ? 'Checked the numbers' : 'Numbers need a look', detail: stage.note ? sentence(stage.note) : undefined, cost: 'No model', warning: !passed }];
     }
@@ -272,9 +275,9 @@ export default function AnswerDetails({ stages, evidence, contextSources, costMi
   const data = evidence?.data ?? [];
   const context = contextSources ?? [];
   const summary = detailsSummary({ evidence, steps, costMicros });
-  if (!summary && !context.length) return null;
+  if (!summary && !context.length && !evidence?.quality) return null;
   // Only a cost to report: say it, with no button that would open onto nothing.
-  if (!steps.length && !used.length && !read.length && !seen.length && !otherImages.length && !data.length && !context.length) return <p className="mt-2 border-t border-border pt-1.5 text-[11px] text-text-secondary">{summary}</p>;
+  if (!steps.length && !used.length && !read.length && !seen.length && !otherImages.length && !data.length && !context.length && !evidence?.quality) return <p className="mt-2 border-t border-border pt-1.5 text-[11px] text-text-secondary">{summary}</p>;
   return (
     <div className="mt-2 border-t border-border pt-1.5">
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex w-full items-center justify-between gap-3 text-left text-[11px] text-text-secondary hover:text-text-primary">
@@ -283,6 +286,7 @@ export default function AnswerDetails({ stages, evidence, contextSources, costMi
       </button>
       {open ? (
         <div className="mt-2 space-y-4 text-[11px]">
+          <ContentQualityDetails quality={evidence?.quality} />
           {used.length ? (
             <section>
               <h4 className={HEADING}>Where this answer came from · {plural(sites.length, 'site')}</h4>

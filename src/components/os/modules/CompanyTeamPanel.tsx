@@ -14,21 +14,21 @@ import CompanyStaffEditor from './CompanyStaffEditor';
 type Member = { role: TeamRole; name: string; specialty?: string; reviewerEmployeeId?: string | null; remit: string; process: string; active: boolean; lessons: string; playbook?: { craft: string[]; bar: string[]; avoids: string[]; sources: string } };
 type TeamJob = JobView & { teamRole: TeamRole };
 type TeamBuild = BuildView & { teamRole?: 'design' | 'engineering' };
-type Board = { plan: { point: string; member: TeamRole; about?: string; at: string }[]; evidence: { fact: string; url: string; member: TeamRole; at: string }[] };
+type Board = import('@/lib/companies/teamBoard').TeamBoardView;
 type TeamData = { board?: Board; builds: TeamBuild[]; canManage: boolean; members: Member[]; jobs: TeamJob[]; reviewers?: { id: string; name: string }[] };
 const shortDay = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 const host = (url: string) => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return 'source'; } };
 
-/** What the team has worked out together so far: the plan it is building and the sourced facts it relies on. */
+/** What the team has worked out together so far: the plan it is building and the observations it relies on. */
 function SharedBoard({ board }: { board?: Board }) {
   if (!board || (!board.plan.length && !board.evidence.length)) return null;
   return <details className="rounded-2xl border border-border p-4">
-    <summary className="cursor-pointer text-sm font-semibold">Working plan and shared evidence <span className="font-normal text-text-secondary">{board.plan.length} plan point{board.plan.length === 1 ? '' : 's'} · {board.evidence.length} sourced fact{board.evidence.length === 1 ? '' : 's'}</span></summary>
+    <summary className="cursor-pointer text-sm font-semibold">Working plan and shared evidence <span className="font-normal text-text-secondary">{board.plan.length} plan point{board.plan.length === 1 ? '' : 's'} · {board.evidence.length} observation{board.evidence.length === 1 ? '' : 's'}</span></summary>
     <p className="mt-2 text-xs text-text-secondary">Built by the team as it works and given to every member with the company context. It never overrides your approved marketing plan or a brief.</p>
     {board.plan.length > 0 && <><h5 className="mt-3 text-[11px] uppercase tracking-wider text-text-secondary">Working plan, newest first</h5>
       <ul className="mt-1 space-y-1.5 text-sm">{board.plan.map((item, index) => <li key={index}><span className="text-text-secondary">{TEAM[item.member]?.name ?? item.member} · {shortDay(item.at)} · </span>{item.point}</li>)}</ul></>}
     {board.evidence.length > 0 && <><h5 className="mt-3 text-[11px] uppercase tracking-wider text-text-secondary">Shared evidence, newest first</h5>
-      <ul className="mt-1 space-y-1.5 text-sm">{board.evidence.map((item, index) => <li key={index}>{item.fact} <a href={item.url} target="_blank" rel="noreferrer" className="text-xs underline text-text-secondary">{host(item.url)}</a><span className="text-xs text-text-secondary"> · found for {TEAM[item.member]?.name ?? item.member}, {shortDay(item.at)}</span></li>)}</ul></>}
+      <ul className="mt-1 space-y-1.5 text-sm">{board.evidence.map((item, index) => <li key={index}>{item.fact} <span className="text-xs text-text-secondary">[{item.status ?? 'unverified'}]</span> <a href={item.url} target="_blank" rel="noreferrer" className="text-xs underline text-text-secondary">{host(item.url)}</a><span className="text-xs text-text-secondary"> · found for {TEAM[item.member]?.name ?? item.member}, {shortDay(item.at)}</span></li>)}</ul></>}
   </details>;
 }
 type Advice = NonNullable<JobView['teamAdvice']>;

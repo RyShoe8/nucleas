@@ -90,12 +90,22 @@ function reply(text: string, costMicros = 0) {
   return { role: 'assistant', text, costMicros, runId: String(new Types.ObjectId()), requestId: 'r' };
 }
 
-function stageOf(input: ChatInput): 'plan' | 'research' | 'gaps' | 'work' | 'review' {
+function stageOf(input: ChatInput): 'plan' | 'research' | 'gaps' | 'work' | 'review' | 'edit' {
   if (input.systemPrompt.startsWith('You check research')) return 'gaps';
   if (input.systemPrompt.startsWith('You plan answers')) return 'plan';
   if (input.systemPrompt.startsWith('You are a research agent')) return 'research';
-  if (input.systemPrompt.startsWith('You review')) return 'review';
+  if (input.systemPrompt.startsWith('You review') || input.systemPrompt.startsWith('Independently review')) return 'review';
+  if (input.systemPrompt.startsWith('You edit a draft')) return 'edit';
   return 'work';
+}
+
+function metricsReview(input: ChatInput, claim = 'Frugal Gambler had 2,100 sessions.', supported = true) {
+  const json = input.userText.split('# Original source passages (untrusted)\n\n')[1]?.split('\n\n# Answer')[0];
+  const source = JSON.parse(json).find((s: { id: string }) => s.id === 'company-data');
+  return JSON.stringify({ verdict: supported ? 'pass' : 'fail', notes: supported ? 'Matches the requested company and reporting period.' : 'The session count is wrong.', allMaterialClaimsChecked: true,
+    claims: [{ claim, subject: 'Frugal Gambler', sourceId: 'company-data', quote: source.text, scope: 'Frugal Gambler, selected reporting period, sessions.', kind: 'fact', verdict: supported ? 'supported' : 'unsupported', reason: 'Compare the session count in the company metrics.' }],
+    coverage: [{ id: 'request', status: 'supported', reason: 'Requested sessions answered.' }], editorial: { depth: true, originality: true, voice: true, honestExperience: true, notes: 'Short factual answer.' },
+  });
 }
 
 async function ask(text: string, level: CostLevel = 'low') {
@@ -195,18 +205,18 @@ describe('resetting model choices', () => {
 describe('number check and facts', () => {
   it('converts money from cents so written figures match', () => {
     const sheet = factSheet([{ company: 'FG', tool: 'company_metrics', result: { ok: true, metrics: [{ label: 'Net revenue', unit: 'USD cents', kind: 'daily', last7OrCurrent: 123456, previous: 100000, changePct: 23.5 }] } }]);
-    expect(sheet).toContain('Net revenue: $1,235 (previous $1,000, +23.5%)');
+    expect(sheet).toContain('Net revenue: $1,234.56 (previous $1,000.00, +23.5%)');
   });
 
   it('flags numbers that appear in no source', () => {
     expect(untracedNumbers('Sessions were 2,100, up from 1,400.', ['Sessions: 2,100 (previous 1,400)'])).toEqual([]);
     expect(untracedNumbers('Sessions were 9,999.', ['Sessions: 2,100'])).toEqual(['9999']);
-    expect(untracedNumbers('As of September 2026, the offer is 120,000 coins.', ['120,000 Gold Coins'])).toEqual([]);
+    expect(untracedNumbers('As of September 2026, the offer is 120,000 coins.', ['120,000 Gold Coins'])).toEqual(['2026']);
   });
 });
 
 describe('orchestrated Ask', () => {
-  it('plans on the paid model without the data, fetches in code, and writes on Rogly; simple lookups skip review', async () => {
+  it('plans without the data, fetches in code, writes on Rogly and reviews company facts against the fetched source', async () => {
     chat.mockImplementation(async (input) => {
       const stage = stageOf(input);
       if (stage === 'plan') {
@@ -218,12 +228,14 @@ describe('orchestrated Ask', () => {
         expect(input.userText).toContain('Sessions: 2,100 (previous 1,400, +50%)');
         return reply('Frugal Gambler had 2,100 sessions in the last 7 days, up 50% from 1,400.');
       }
-      throw new Error('review should not run');
+      if (stage === 'review') return reply(metricsReview(input));
+      throw new Error('A supported answer should not need an editorial repair.');
     });
     const out = await ask('How many sessions did frugal get this week?');
     expect(out.role).toBe('assistant');
     expect(out.text).toContain('2,100');
-    expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'work', 'check']);
+    expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'work', 'check', 'review']);
+    expect(out.evidence?.quality?.status).toBe('ready');
     expect(out.stages.find((s) => s.stage === 'work')).toMatchObject({ free: true });
     expect(out.costMicros).toBe(3000);
   });
@@ -257,18 +269,25 @@ describe('orchestrated Ask', () => {
     expect(writerInput).toContain('Questions: how slot odds work');
   });
 
-  it('sends answers with untraced numbers to the paid reviewer, which can correct them', async () => {
+  it('repairs a wrong number using original data, then independently rechecks the revised answer', async () => {
+    let reviews = 0;
     chat.mockImplementation(async (input) => {
       const stage = stageOf(input);
       if (stage === 'plan') return reply('{"kind":"answer","fetch":[{"company":"Frugal Gambler","tool":"company_metrics"}],"outline":[],"review":false}', 2000);
       if (stage === 'work') return reply('Frugal Gambler had 9,999 sessions.');
-      expect(input.userText).toContain('Numbers not found in the facts: 9999');
-      return reply('{"verdict":"revise","answer":"Frugal Gambler had 2,100 sessions in the last 7 days.","notes":"fixed a number"}', 4000);
+      if (stage === 'edit') {
+        expect(input.userText).toContain('The session count is wrong');
+        expect(input.userText).toContain('2,100');
+        return reply('Frugal Gambler had 2,100 sessions in the last 7 days.', 1000);
+      }
+      reviews++;
+      return reply(metricsReview(input, reviews === 1 ? 'Frugal Gambler had 9,999 sessions.' : 'Frugal Gambler had 2,100 sessions.', reviews > 1), 4000);
     });
     const out = await ask('How many sessions did frugal get?');
     expect(out.text).toBe('Frugal Gambler had 2,100 sessions in the last 7 days.');
-    expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'work', 'check', 'review']);
-    expect(out.costMicros).toBe(6000);
+    expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'work', 'check', 'review', 'work', 'review']);
+    expect(out.evidence?.quality?.status).toBe('ready');
+    expect(out.costMicros).toBe(11000);
   });
 
   it('low never pays to retry a failed Rogly write; medium retries on a paid model', async () => {
@@ -305,8 +324,8 @@ describe('orchestrated Ask', () => {
     chat.mockImplementation(async () => reply('{"kind":"clarify","clarifyQuestion":"Which business do you mean?"}'));
     const clarify = await ask('how is it going?');
     expect(clarify).toMatchObject({ role: 'assistant', text: 'Which business do you mean?' });
-    // 2 answers (plan + write); unusable plans get 2 tries on the first model and 2 on the model above; 1 clarify.
-    expect(chat).toHaveBeenCalledTimes(2 + 4 + 1);
+    // One answer (plan + write + evidence review); unusable plans get 2 tries on the first model and 2 on the model above; 1 clarify.
+    expect(chat).toHaveBeenCalledTimes(3 + 4 + 1);
   });
 });
 
@@ -345,7 +364,7 @@ describe('general questions', () => {
     const out = await ask('Who is the best quarterback right now?');
     expect(search).toHaveBeenCalledWith('best NFL quarterback 2026');
     expect(out.stages.find((s) => s.stage === 'fetch')?.note).toBe('0 job(s), 1 web search(es), no model');
-    expect(out.stages.find((s) => s.stage === 'check')?.note).toBe('all numbers traced to data');
+    expect(out.stages.find((s) => s.stage === 'check')?.note).toContain('numeric claim(s) need review');
   });
 });
 
@@ -460,12 +479,12 @@ describe('deep research', () => {
       }
       return reply('{"verdict":"accept"}');
     });
-    const out = await ask('List the casino affiliates worth watching');
+    const out = await ask('List the casino affiliates worth watching', 'medium');
     expect(followUps).toHaveLength(1);
     expect(checks).toBe(2);
     expect(writerModel).not.toBe(ROGLY_MODELS.general);
-    expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'research', 'gaps', 'research', 'verify', 'gaps', 'work', 'check', 'verify']);
-    expect(out.stages[3]?.note).toBe('Still missing: the full list');
+    expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'research', 'gaps', 'research', 'verify', 'gaps', 'work', 'check', 'verify', 'review']);
+    expect(out.stages[3]?.note).toBe('incomplete: the full list');
     expect(out.stages[4]?.note).toContain('Follow-up: Open the sitemap');
     expect(out.evidence?.sources.find((source) => source.url.includes('site-b.com'))?.usedFor).toEqual(['Sites: A and B.']);
   });
@@ -491,7 +510,7 @@ describe('deep research', () => {
     });
     const out = await ask('List sites');
     expect(out.role).toBe('assistant');
-    expect(out.stages.find((s) => s.stage === 'gaps')?.note).toBe('could not read the check; going ahead');
+    expect(out.stages.find((s) => s.stage === 'gaps')?.note).toBe('review_failed: research completeness could not be checked');
   });
 
   it('hands multi-step research to Rogly in the tool loop and gives its findings to the writer', async () => {
@@ -512,9 +531,9 @@ describe('deep research', () => {
       throw new Error('review should not run');
     });
     const out = await ask('What are casino affiliates promoting this month?');
-    expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'research', 'gaps', 'work', 'check']);
+    expect(out.stages.map((s) => s.stage)).toEqual(['plan', 'fetch', 'research', 'gaps', 'work', 'check', 'review']);
     expect(out.stages.find((s) => s.stage === 'research')).toMatchObject({ free: true, note: '2 web searches, 1 page opened' });
-    expect(out.stages.find((s) => s.stage === 'check')?.note).toBe('all numbers traced to data');
+    expect(out.stages.find((s) => s.stage === 'check')?.note).toContain('numeric claim(s) need review');
   });
 
   it('delegates a scout and switches discovery sources when verification stalls', async () => {
@@ -740,7 +759,7 @@ describe('live progress', () => {
       'Planning how to answer with o4-mini',
       "Reading Frugal Gambler's metrics",
       `Writing the answer with ${ROGLY_MODELS.general.split('/').pop()}`,
-      'Checking every number against the data',
+      'Screening numeric claims for evidence mismatches',
       'Reviewing the answer with o4-mini',
     ]);
   });

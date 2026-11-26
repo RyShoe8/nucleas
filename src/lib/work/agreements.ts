@@ -32,10 +32,15 @@ export type WorkAgreement = z.infer<typeof workAgreementSchema>;
 export function agreementBrief(agreement: WorkAgreement) {
     return `${agreement.outcome}\n\nDefinition of done: ${agreement.standard}\nWork mode: ${agreement.mode}.\nAuthority: research and draft preparation only. External changes require separate approval.\n${agreement.schedule ? `Agreed schedule (do not reinterpret): ${JSON.stringify(agreement.schedule)}` : 'Run once; do not invent a repeating schedule.'}`;
 }
+export function agreementRequirements(agreement: Pick<WorkAgreement, 'standard' | 'gates'>): string {
+    return `Required standard: ${agreement.standard}\n${agreement.gates.map(g => `Required check: ${g}`).join('\n')}`;
+}
 /** User decisions constrain the planner; a model may not create a schedule or broaden authority. */
-export function constrainDesign(design: JobDesign, agreement: WorkAgreement): JobDesign {
-    return { ...design, schedule: agreement.mode === 'repeating' ? agreement.schedule! : { kind: 'once' },
-        instructions: `${design.instructions.slice(0, 3300)}\n\nRequired standard: ${agreement.standard}\n${agreement.gates.map(g => `Required check: ${g}`).join('\n').slice(0, 600)}`.slice(0, 6000),
+export function constrainDesign(design: JobDesign, agreement: WorkAgreement, context: { responsibility?: boolean } = {}): JobDesign {
+    // Preserve the complete human agreement before spending the remaining space on model instructions.
+    const requirements = agreementRequirements(agreement);
+    return { ...design, quality: context.responsibility || agreement.mode === 'ongoing' || design.category === 'content' ? 'in_depth' : design.quality, schedule: agreement.mode === 'repeating' ? agreement.schedule! : { kind: 'once' },
+        instructions: `${requirements}\n\n${design.instructions.slice(0, Math.max(0, 6000 - requirements.length - 2))}`,
         recommendedCompletion: 'review', delivery: { method: 'nucleas', detail: 'Save the draft and evidence for review. External application is a separate decision.', setupSteps: [] },
         skill: undefined,
         safeguards: ['Never publish or alter external systems.', 'A draft is not proof that the live target meets the standard.', ...design.safeguards].slice(0, 10) };

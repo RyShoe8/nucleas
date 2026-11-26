@@ -76,6 +76,12 @@ export function benchmarkScore(m: AvailableModel, need: Need): number | null {
   return need === 'code' ? (m.benchmark.coding ?? m.benchmark.intelligence) : m.benchmark.intelligence;
 }
 
+/** Content tests have their own scale. A completed human review takes precedence, never a model self-rating. */
+export function measuredContentScore(m: AvailableModel, need: Need): number | null {
+  const score = m.contentScores?.find(s => s.need === need && s.cases >= 3 && Number.isFinite(s.score) && s.score >= 0 && s.score <= 1 && Date.parse(s.reviewedAt) >= Date.now() - 90 * 86_400_000 && Date.parse(s.reviewedAt) <= Date.now());
+  return score?.score ?? null;
+}
+
 /**
  * Paid models strongest first for the task: benchmark score, then price (the only signal when no
  * benchmark key is configured), then flagship, then id.
@@ -83,6 +89,7 @@ export function benchmarkScore(m: AvailableModel, need: Need): number | null {
 function rankByPower(models: AvailableModel[], need: Need): AvailableModel[] {
   return [...models].sort(
     (a, b) =>
+      (measuredContentScore(b, need) ?? -1) - (measuredContentScore(a, need) ?? -1) ||
       (benchmarkScore(b, need) ?? -1) - (benchmarkScore(a, need) ?? -1) ||
       (b.blendedPricePer1M ?? 0) - (a.blendedPricePer1M ?? 0) ||
       Number(b.flagship) - Number(a.flagship) ||
@@ -151,7 +158,7 @@ function freeFor(models: AvailableModel[], need: Need): AvailableModel | undefin
   // A failed check is newer availability evidence than the last completed score. Keep the old
   // scores visible in Admin for diagnosis, but do not route live work to that model until a later
   // check succeeds. Without this guard, a strong stale score can keep winning after a 504.
-  const free = models.filter((m) => m.free && m.autoEligible && m.checks?.status !== 'failed');
+  const free = models.filter((m) => m.free && m.autoEligible && m.checks?.status !== 'failed' && (measuredContentScore(m, need) ?? 1) >= 0.7);
   const tier = (m: AvailableModel) => {
     const score = checkScore(m, need);
     return score === null ? 1 : score >= PASSING_CHECK ? 0 : 2;
@@ -159,6 +166,7 @@ function freeFor(models: AvailableModel[], need: Need): AvailableModel | undefin
   const strongest = (pool: AvailableModel[]) =>
     [...pool].sort(
       (a, b) =>
+        (measuredContentScore(b, need) ?? -1) - (measuredContentScore(a, need) ?? -1) ||
         tier(a) - tier(b) ||
         (checkScore(b, need) ?? 0) - (checkScore(a, need) ?? 0) ||
         // Equal scores: the faster model (measured average reply time).
@@ -187,13 +195,13 @@ function freeFor(models: AvailableModel[], need: Need): AvailableModel | undefin
  * without one are used only when nothing is scored (no benchmark key yet), matched by strength tags.
  */
 function paidFor(models: AvailableModel[], need: Need): AvailableModel[] {
-  const paid = models.filter((m) => !m.free && m.autoEligible && m.blendedPricePer1M !== null);
+  const paid = models.filter((m) => !m.free && m.autoEligible && m.blendedPricePer1M !== null && (measuredContentScore(m, need) ?? 1) >= 0.7);
   if (need === 'vision') {
     const vision = withStrength(paid, 'vision');
     const scored = vision.filter((m) => benchmarkScore(m, need) !== null);
     return scored.length ? scored : vision;
   }
-  const scored = paid.filter((m) => benchmarkScore(m, need) !== null);
+  const scored = paid.filter((m) => benchmarkScore(m, need) !== null || measuredContentScore(m, need) !== null);
   if (scored.length) return scored;
   switch (need) {
     case 'plan':
@@ -226,6 +234,14 @@ export function backupsFrom(models: AvailableModel[], need: Need, level: CostLev
 export function selectFrom(models: AvailableModel[], need: Need, level: CostLevel, ceilings: PriceCeilings = DEFAULT_PRICE_CEILINGS): Omit<Selection, 'source'> {
   const picked = pickFrom(models, need, level, ceilings);
   return { ...picked, backups: backupsFrom(models, need, level, ceilings, [picked.primary, picked.fallback]) };
+}
+
+/** Substantial synthesis uses writing evidence and the selected level's paid allowance. Free stays free. */
+export function selectEditorialFrom(models: AvailableModel[], level: CostLevel, ceilings: PriceCeilings = DEFAULT_PRICE_CEILINGS): Omit<Selection, 'source'> {
+  const free = choice(freeFor(models, 'write'));
+  const paid = level === 'free' ? [] : paidFor(models, 'write').filter(m => ceilings[level] === null || m.blendedPricePer1M! <= ceilings[level]!);
+  const primary = choice(rankByPower(paid, 'write')[0]) ?? free;
+  return { need: 'write', level, primary, fallback: primary?.free ? null : free, backups: backupsFrom(models, 'write', level, ceilings, [primary]) };
 }
 
 function pickFrom(models: AvailableModel[], need: Need, level: CostLevel, ceilings: PriceCeilings): Omit<Selection, 'source' | 'backups'> {
@@ -324,13 +340,20 @@ export function isCostLevel(value: unknown): value is CostLevel {
 }
 
 /** Selects a model for a need at a level. A choice made for that level and need replaces the automatic one. */
+export async function withContentScores(organizationId: string, models: AvailableModel[], need: Need): Promise<AvailableModel[]> {
+  if (need !== 'write' && need !== 'review') return models;
+  const { contentModelScores } = await import('./contentEvaluations');
+  const measured = await contentModelScores(organizationId).catch(() => new Map());
+  return models.map(m => ({ ...m, contentScores: measured.get(`${m.profileId}:${m.model}`) ?? m.contentScores }));
+}
+
 export async function selectModel(
   organizationId: string,
   need: Need,
   level: CostLevel,
-  options: { models?: AvailableModel[]; settings?: Pick<EngineSettings, 'overrides' | 'priceCeilings'> } = {}
+  options: { models?: AvailableModel[]; settings?: Pick<EngineSettings, 'overrides' | 'priceCeilings'>; editorial?: boolean } = {}
 ): Promise<Selection> {
-  const models = options.models ?? (await listAvailableModels());
+  const models = await withContentScores(organizationId, options.models ?? (await listAvailableModels()), need);
   const settings = options.settings ?? (await readEngineSettings(organizationId));
   const pin = settings.overrides?.[level]?.[need];
   if (pin) {
@@ -338,7 +361,7 @@ export async function selectModel(
     // At the free level a paid pin does not apply.
     if (pinned && (level !== 'free' || pinned.free)) return { need, level, primary: choice(pinned), fallback: null, backups: backupsFrom(models, need, level, settings.priceCeilings, [choice(pinned)]), source: 'pinned' };
   }
-  const auto = selectFrom(models, need, level, settings.priceCeilings);
+  const auto = options.editorial && need === 'write' ? selectEditorialFrom(models, level, settings.priceCeilings) : selectFrom(models, need, level, settings.priceCeilings);
   return { ...auto, source: auto.primary ? 'auto' : 'none' };
 }
 

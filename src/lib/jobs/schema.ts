@@ -79,6 +79,8 @@ export const jobDesignSchema = z.object({
   skill: z.enum(['signature_outreach', 'casino_discovery', 'link_building', 'seo_brief', 'marketing_plan', 'brand_voice', 'social_media', 'ai_citations', 'property_overview', 'social_publish']).optional(),
   title: z.string().min(3).max(120),
   category: z.enum(JOB_CATEGORIES).catch('research'),
+  /** Evidence and editorial standards are independent of the model spending level. */
+  quality: z.enum(['standard', 'in_depth']).optional(),
   /** Exact, self-contained instructions for each run. */
   instructions: z.string().min(20).max(6000),
   fields: z.array(jobFieldSchema).min(1).max(30),

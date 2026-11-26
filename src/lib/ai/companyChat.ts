@@ -206,7 +206,7 @@ import { companyChatAdmissionMessage } from '@/lib/ai/companyChatAdmission';
 import { recordModelFailure, recordModelSuccess } from '@/lib/ai/engine/health';
 import type { RepositoryEvidenceReceipt } from '@/lib/ai/evidenceReceipts';
 import { describeToolCall, type ProgressFn } from '@/lib/ai/progress';
-import { backupsFrom, MAX_BACKUPS, readEngineSettings, type CostLevel, type Need } from '@/lib/ai/engine/select';
+import { backupsFrom, withContentScores, MAX_BACKUPS, readEngineSettings, type CostLevel, type Need } from '@/lib/ai/engine/select';
 import { contextBudgetChars, contextWindowFor, contextWindowFromProviderMessage, listAvailableModels, outputBudgetTokens, priceTokens, recordObservedContextWindow, type AvailableModel } from '@/lib/ai/engine/catalog';
 
 /**
@@ -243,6 +243,7 @@ export async function attemptCompanyCredentialChat(input: Parameters<typeof chat
     // Re-rank after each account refusal so sibling models on one empty account do not consume
     // all backup slots. Another credential at the same provider can still have its own credits.
     if (attempt > 0) models = await listAvailableModels().catch(() => [] as AvailableModel[]);
+    models = await withContentScores(input.organizationId, models, need);
     const choice = backupsFrom(models.filter((m) => !failedProfiles.has(m.profileId)), need, level, settings.priceCeilings)[0];
     if (!choice) break;
     attempted.push(choice.model);
